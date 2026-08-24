@@ -1,0 +1,107 @@
+name: Release
+
+# Tag-triggered like pai-android, PLUS workflow_dispatch — pai-android has only the tag trigger,
+# and because a pushed tag cannot be reused a failed release build there produced a tag literally
+# named "v0.15.0-fix". macOS minutes are metered, so being able to exercise this without minting
+# throwaway tags matters more here than it did on the free self-hosted Android runner.
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Marketing version (e.g. 0.1.0). Ignored for tag pushes.'
+        required: true
+        default: '0.0.1'
+      upload:
+        description: 'Upload to TestFlight'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    # A hung job at the 6-hour default costs roughly $22 on a metered macOS runner.
+    timeout-minutes: 45
+
+    env:
+      SCHEME: PAI
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      # The runner image's default Xcode changes underneath you; pin it.
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.0'
+
+      # fastlane is pinned in the Gemfile rather than installed via brew, so CI and the rented
+      # Mac resolve the same versions.
+      - uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm
+          key: spm-${{ runner.os }}-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      # The git tag is the single source of truth for the marketing version. pai-android keeps
+      # versionName/versionCode hand-edited in build.gradle.kts and uses the tag only to name the
+      # artifact — 75 tags meant 75 manual bumps of a monotonic counter, with nothing verifying
+      # the two agreed. run_number gives a monotonic build number for free.
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "marketing=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "marketing=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      # pai-android runs no tests in CI at all, and its most common failure is a release-config
+      # compile error that a debug build never surfaced. The runner is already up; use it.
+      - name: Test
+        run: bundle exec fastlane test
+
+      - name: Build and sign
+        run: bundle exec fastlane build
+        env:
+          MARKETING_VERSION: ${{ steps.version.outputs.marketing }}
+          CURRENT_PROJECT_VERSION: ${{ steps.version.outputs.build }}
+
+      - name: Upload to TestFlight
+        if: github.ref_type == 'tag' || github.event.inputs.upload == 'true'
+        run: bundle exec fastlane upload
+        env:
+          MARKETING_VERSION: ${{ steps.version.outputs.marketing }}
+          CURRENT_PROJECT_VERSION: ${{ steps.version.outputs.build }}
+
+      # The .ipa is useless outside TestFlight and ~50 MB per tag. The dSYMs are what you actually
+      # want later, for symbolicating a crash report.
+      - name: Package dSYMs
+        if: github.ref_type == 'tag'
+        run: |
+          if compgen -G "build/*.xcarchive/dSYMs" > /dev/null; then
+            zip -qr "pai-${{ steps.version.outputs.marketing }}-dSYMs.zip" build/*.xcarchive/dSYMs
+          fi
+
+      - name: GitHub release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: pai-*-dSYMs.zip

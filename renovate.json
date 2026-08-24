@@ -1,0 +1,21 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "//": "Concurrency is capped deliberately. pai-android leaves all three limits at 0 (unlimited); ten of its PRs merged in one batch and needed a follow-up commit to resolve the conflicts they created in a shared lockfile.",
+  "prConcurrentLimit": 3,
+  "prHourlyLimit": 2,
+  "branchConcurrentLimit": 3,
+  "packageRules": [
+    {
+      "description": "Group Swift package updates so they resolve against each other once",
+      "matchManagers": ["swift"],
+      "groupName": "swift packages"
+    },
+    {
+      "description": "GitHub Actions bumps are low-risk and noisy; batch them weekly",
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions",
+      "schedule": ["before 6am on monday"]
+    }
+  ]
+}

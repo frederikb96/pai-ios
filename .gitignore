@@ -1,0 +1,38 @@
+# Xcode
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+
+# Ruby / fastlane
+vendor/bundle/
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output/
+
+# Signing artefacts — never commit these
+*.mobileprovision
+*.p12
+*.cer
+*.certSigningRequest
+AuthKey_*.p8
+
+# Build output
+*.ipa
+*.dSYM.zip
+*.xcarchive
+
+# macOS
+.DS_Store
+
+# Its own git repo, per the PAI convention
+.claude/

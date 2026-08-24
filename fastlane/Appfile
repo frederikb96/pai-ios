@@ -1,0 +1,5 @@
+app_identifier("com.frederikberg.pai")
+
+# Deliberately no apple_id / itc_team_id here. Authentication goes through the App Store Connect
+# API key (ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_P8), which is what keeps every lane runnable
+# unattended — an Apple ID would mean interactive 2FA.

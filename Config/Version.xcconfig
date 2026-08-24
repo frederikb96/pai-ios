@@ -1,0 +1,18 @@
+// Version defaults for local builds.
+//
+// CI overrides both on the xcodebuild command line: MARKETING_VERSION from the git tag,
+// CURRENT_PROJECT_VERSION from the CI run number. The tag is the single source of truth — these
+// values exist only so a local build has something sane to use.
+//
+// App Store Connect requires the build number to be unique and increasing within a marketing
+// version, which is exactly what a monotonic CI run number gives for free.
+
+MARKETING_VERSION = 0.0.1
+CURRENT_PROJECT_VERSION = 1
+
+PRODUCT_BUNDLE_IDENTIFIER = com.frederikberg.pai
+PRODUCT_NAME = PAI
+
+IPHONEOS_DEPLOYMENT_TARGET = 26.0
+SWIFT_VERSION = 6.0
+TARGETED_DEVICE_FAMILY = 1
