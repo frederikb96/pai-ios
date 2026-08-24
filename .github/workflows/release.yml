@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-26
     # A hung job at the 6-hour default costs roughly $22 on a metered macOS runner.
     timeout-minutes: 45
 
@@ -43,7 +43,7 @@ jobs:
       # The runner image's default Xcode changes underneath you; pin it.
       - uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '26.0'
+          xcode-version: '26.6'
 
       # fastlane is pinned in the Gemfile rather than installed via brew, so CI and the rented
       # Mac resolve the same versions.
