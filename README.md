@@ -17,8 +17,8 @@ compiled yet — there is no Mac. See `.claude/CLAUDE.md` for how that is arrang
 
 | Path | What |
 |---|---|
-| `PAI/` | app sources — a buildable folder, so adding a file needs no project edit |
-| `PAITests/` | XCTest targets |
+| `PAIKit/` | Swift package holding the logic and its tests — **where the code is** |
+| `PAI/`, `PAITests/` | app target, empty until the Xcode project is created on the first Mac |
 | `Config/` | xcconfig files; `MARKETING_VERSION` is overridden by CI from the git tag |
 | `Tooling/mac-setup.sh` | turns a freshly rented Mac into a working build box |
 | `fastlane/` | build, sign and TestFlight upload — the same lanes locally and in CI |
