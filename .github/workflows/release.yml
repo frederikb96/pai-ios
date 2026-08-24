@@ -77,7 +77,7 @@ jobs:
       # DinD sidecar or a ~700 MB toolchain install per run. Xcode already ships swift-format,
       # so this costs seconds on a runner that is up regardless.
       - name: Format check
-        run: swift-format lint --recursive --strict PAIKit
+        run: xcrun swift-format lint --recursive --strict PAIKit
 
       # pai-android runs no tests in CI at all, and its most common failure is a release-config
       # compile error that a debug build never surfaced. The runner is already up; use it.
