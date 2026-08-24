@@ -66,13 +66,6 @@ jobs:
           fi
           echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
-      # Lint runs inside this job only because there is no PR CI yet — the repo is meant to have a
-      # Linux lint job on the self-hosted ARC runner, which needs a runner registration that does
-      # not exist. Until then a formatting nit fails a metered release before it builds anything,
-      # which is backwards; moving it is tracked in the spec.
-      - name: Format check
-        run: xcrun swift-format lint --recursive --strict PAIKit
-
       # pai-android runs no tests in CI at all, and its most common failure is a release-config
       # compile error that a debug build never surfaced. The runner is already up; use it.
       - name: Test

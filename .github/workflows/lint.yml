@@ -1,0 +1,57 @@
+name: Lint
+
+# Runs on the self-hosted ARC runner in Freddy's cluster — free and unmetered — so that a
+# formatting mistake is caught on a push rather than failing a metered macOS release run after
+# it has already spun up. macOS minutes bill at 10x; this is the whole reason lint lives here.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: arc-runner-pai-ios
+    timeout-minutes: 5
+    outputs:
+      swift: ${{ steps.filter.outputs.swift }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            swift:
+              - '**/*.swift'
+              - 'Package.swift'
+              - '.swift-format'
+
+  format:
+    needs: changes
+    if: needs.changes.outputs.swift == 'true'
+    runs-on: arc-runner-pai-ios
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      # The ARC runner image carries only git, bash and the runner binary — none of the ~200
+      # tools a hosted ubuntu-latest image pre-installs. Swift needs its runtime dependencies
+      # installed explicitly; the runner user has passwordless sudo.
+      - name: Install Swift toolchain dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            binutils libc6-dev libcurl4-openssl-dev libedit2 libgcc-13-dev \
+            libpython3-dev libstdc++-13-dev libxml2-dev libz3-dev pkg-config \
+            tzdata unzip zlib1g-dev
+
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.2'
+
+      # swift-format ships inside the toolchain from Swift 6.0 onward, so no separate install.
+      - name: Format check
+        run: swift format lint --recursive --strict PAIKit
