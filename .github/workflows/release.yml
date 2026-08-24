@@ -7,6 +7,11 @@ name: Release
 on:
   push:
     tags: ['v*.*.*']
+  # TestFlight builds expire after 90 days. Four documents said rebuilding was "a CI job, not a
+  # chore" while no job existed — this is that job. Runs well inside the window so a failure has
+  # room to be noticed and retried.
+  schedule:
+    - cron: '17 4 1 */2 *'
   workflow_dispatch:
     inputs:
       version:
@@ -31,12 +36,6 @@ jobs:
     # A hung job at the 6-hour default costs roughly $22 on a metered macOS runner.
     timeout-minutes: 45
 
-    env:
-      SCHEME: PAI
-      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
-
     steps:
       - uses: actions/checkout@v6
 
@@ -51,31 +50,26 @@ jobs:
         with:
           bundler-cache: true
 
-      - name: Cache SwiftPM
-        uses: actions/cache@v4
-        with:
-          path: ~/Library/Caches/org.swift.swiftpm
-          key: spm-${{ runner.os }}-${{ hashFiles('**/Package.resolved') }}
-          restore-keys: spm-${{ runner.os }}-
-
       # The git tag is the single source of truth for the marketing version. pai-android keeps
       # versionName/versionCode hand-edited in build.gradle.kts and uses the tag only to name the
       # artifact — 75 tags meant 75 manual bumps of a monotonic counter, with nothing verifying
       # the two agreed. run_number gives a monotonic build number for free.
       - name: Resolve version
         id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             echo "marketing=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           else
-            echo "marketing=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "marketing=${INPUT_VERSION#v}" >> "$GITHUB_OUTPUT"
           fi
           echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
-      # Lint runs here rather than in a separate Linux job. The self-hosted ARC runner is bare
-      # (git and bash only) and cannot host macOS, so checking Swift there would mean either a
-      # DinD sidecar or a ~700 MB toolchain install per run. Xcode already ships swift-format,
-      # so this costs seconds on a runner that is up regardless.
+      # Lint runs inside this job only because there is no PR CI yet — the repo is meant to have a
+      # Linux lint job on the self-hosted ARC runner, which needs a runner registration that does
+      # not exist. Until then a formatting nit fails a metered release before it builds anything,
+      # which is backwards; moving it is tracked in the spec.
       - name: Format check
         run: xcrun swift-format lint --recursive --strict PAIKit
 
@@ -87,6 +81,9 @@ jobs:
       - name: Build and sign
         run: bundle exec fastlane build
         env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           MARKETING_VERSION: ${{ steps.version.outputs.marketing }}
           CURRENT_PROJECT_VERSION: ${{ steps.version.outputs.build }}
 
@@ -94,21 +91,19 @@ jobs:
         if: github.ref_type == 'tag' || github.event.inputs.upload == 'true'
         run: bundle exec fastlane upload
         env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           MARKETING_VERSION: ${{ steps.version.outputs.marketing }}
           CURRENT_PROJECT_VERSION: ${{ steps.version.outputs.build }}
 
       # The .ipa is useless outside TestFlight and ~50 MB per tag. The dSYMs are what you actually
       # want later, for symbolicating a crash report.
-      - name: Package dSYMs
-        if: github.ref_type == 'tag'
-        run: |
-          if compgen -G "build/*.xcarchive/dSYMs" > /dev/null; then
-            zip -qr "pai-${{ steps.version.outputs.marketing }}-dSYMs.zip" build/*.xcarchive/dSYMs
-          fi
-
+      # gym writes its own dSYM zip into output_directory alongside the ipa. Globbing for an
+      # .xcarchive under build/ found nothing and failed silently, attaching no artifact.
       - name: GitHub release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: pai-*-dSYMs.zip
+          files: build/*.dSYM.zip

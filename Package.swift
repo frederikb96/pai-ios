@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 import PackageDescription
 
 // Nearly all of the app lives here rather than in the Xcode project, for two reasons.
@@ -12,7 +12,7 @@ import PackageDescription
 
 let package = Package(
     name: "PAIKit",
-    platforms: [.iOS(.v26)],
+    platforms: [.iOS(.v26), .macOS(.v26)],
     products: [
         .library(name: "PAIKit", targets: ["PAIKit"])
     ],

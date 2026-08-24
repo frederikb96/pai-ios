@@ -4,9 +4,28 @@ default_platform(:ios)
 # lane that drifts from the CI lane turns "works on my machine" into a class of release failure,
 # and with a build box that is destroyed after every burst that drift would go unnoticed.
 
-APP_IDENTIFIER = "com.frederikberg.pai"
-SCHEME         = "PAI"
-OUTPUT_DIR     = "build"
+SCHEME     = "PAI"
+OUTPUT_DIR = "build"
+
+# The bundle id lives in the Appfile; fastlane reads it from there. Repeating it as a constant
+# would be a second source of truth for the same value.
+APP_IDENTIFIER = CredentialsManager::AppfileConfig.try_fetch_value(:app_identifier)
+
+# Marketing version is injected by CI from the git tag. A local build with none set is "dev",
+# which is deliberately not a valid version so it can never be mistaken for a release.
+def ipa_name
+  "pai-#{ENV.fetch('MARKETING_VERSION', 'dev')}.ipa"
+end
+
+# Empty unless CI set them, so a local build falls through to Config/Version.xcconfig.
+def version_xcargs
+  args = []
+  args << "MARKETING_VERSION=#{ENV['MARKETING_VERSION']}" unless ENV['MARKETING_VERSION'].to_s.empty?
+  unless ENV['CURRENT_PROJECT_VERSION'].to_s.empty?
+    args << "CURRENT_PROJECT_VERSION=#{ENV['CURRENT_PROJECT_VERSION']}"
+  end
+  args.join(" ")
+end
 
 # Certificates and provisioning profiles are fetched on demand via the App Store Connect API key
 # rather than through `match`. `match` would need a second private git repository — one more
@@ -47,15 +66,16 @@ platform :ios do
     build_app(
       scheme: SCHEME,
       output_directory: OUTPUT_DIR,
-      output_name: "pai-#{ENV.fetch('MARKETING_VERSION', 'dev')}.ipa",
+      output_name: ipa_name,
       export_method: "app-store",
       # The git tag is the single source of truth for the marketing version; the build number is
       # the CI run number. Overriding on the command line keeps the checked-in project file
       # untouched, which `agvtool` would not.
-      xcargs: [
-        "MARKETING_VERSION=#{ENV.fetch('MARKETING_VERSION', '0.0.1')}",
-        "CURRENT_PROJECT_VERSION=#{ENV.fetch('CURRENT_PROJECT_VERSION', '1')}"
-      ].join(" ")
+      #
+      # Passed ONLY when CI actually set them. Passing them unconditionally with defaults would
+      # override Config/Version.xcconfig on every local build too, making that file dead while
+      # appearing to be the source of the values — a second default silently shadowing the first.
+      xcargs: version_xcargs
     )
   end
 
@@ -64,6 +84,9 @@ platform :ios do
     upload_to_testflight(
       api_key: asc_key,
       app_identifier: APP_IDENTIFIER,
+      # build and upload are separate fastlane processes in CI, so SharedValues is empty here
+      # and the default would glob the repo root for an ipa that lives in build/.
+      ipa: File.join(OUTPUT_DIR, ipa_name),
       # Without this the job idles 10-30 minutes on a metered macOS runner while Apple processes
       # the build. It is the single biggest cost trap in an iOS release pipeline, and it has no
       # Android equivalent.
