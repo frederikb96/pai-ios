@@ -79,6 +79,50 @@ final class PaiModelsTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(MessageType.self, from: json), .toolResult)
     }
 
+    // MARK: - Unrecognized enum values
+
+    /// The regression this guards: before `.unrecognized` existed, one session carrying a
+    /// status this build predates threw during `[Session].self` decoding — since that decode is
+    /// atomic, the *whole list* came back empty instead of the one row degrading.
+    func testSessionListSurvivesOneUnrecognizedStatusInsteadOfFailingEntirely() throws {
+        let json = Data("""
+        [
+          {"id":"s1","session_type":"claude","status":"active","state":null,"blocker":null,
+           "title":null,"title_locked":null,"initial_message":null,"pending_message":null,
+           "session_tokens":0,"claude_session_id":null,"cse_id":null,"created_at":null,
+           "updated_at":null,"last_activity_at":null,"working_dir":null},
+          {"id":"s2","session_type":"claude","status":"archived","state":null,"blocker":null,
+           "title":null,"title_locked":null,"initial_message":null,"pending_message":null,
+           "session_tokens":0,"claude_session_id":null,"cse_id":null,"created_at":null,
+           "updated_at":null,"last_activity_at":null,"working_dir":null}
+        ]
+        """.utf8)
+        let sessions = try JSONDecoder().decode([Session].self, from: json)
+
+        XCTAssertEqual(sessions.count, 2)
+        XCTAssertEqual(sessions[0].status, .active)
+        XCTAssertEqual(sessions[1].status, .unrecognized("archived"))
+    }
+
+    func testSessionStatusRoundTripsAnUnrecognizedValueRatherThanDroppingIt() throws {
+        let status = try JSONDecoder().decode(SessionStatus.self, from: Data(#""archived""#.utf8))
+        let reencoded = try JSONEncoder().encode(status)
+        XCTAssertEqual(String(data: reencoded, encoding: .utf8), #""archived""#)
+    }
+
+    /// `BlockerKind` already had a bare `unknown` case for the backend's own literal
+    /// `"unknown"` value before `.unrecognized` was added — this pins the two stay distinct.
+    func testBlockerKindDistinguishesBackendUnknownFromAnUnrecognizedValue() throws {
+        XCTAssertEqual(
+            try JSONDecoder().decode(BlockerKind.self, from: Data(#""unknown""#.utf8)),
+            .unknown
+        )
+        XCTAssertEqual(
+            try JSONDecoder().decode(BlockerKind.self, from: Data(#""future_kind""#.utf8)),
+            .unrecognized("future_kind")
+        )
+    }
+
     // MARK: - PutDraftResult
 
     /// The two branches of this union are told apart by a `deleted` flag that is *absent*, not

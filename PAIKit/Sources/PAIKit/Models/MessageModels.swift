@@ -52,11 +52,36 @@ extension PaiJSONValue: Codable {
     }
 }
 
-public enum MessageType: String, Codable, Sendable, Equatable {
+/// See `SessionStatus`'s doc comment: `.unrecognized` keeps a message decodable instead of
+/// failing the whole page it rides in over a type this build predates.
+public enum MessageType: Sendable, Hashable {
     case user
     case assistant
-    case toolResult = "tool_result"
+    case toolResult
     case system
+    case unrecognized(String)
+}
+
+extension MessageType: Codable {
+    private static let knownValues: [String: MessageType] = [
+        "user": .user, "assistant": .assistant, "tool_result": .toolResult, "system": .system,
+    ]
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = Self.knownValues[raw] ?? .unrecognized(raw)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .user: try container.encode("user")
+        case .assistant: try container.encode("assistant")
+        case .toolResult: try container.encode("tool_result")
+        case .system: try container.encode("system")
+        case let .unrecognized(raw): try container.encode(raw)
+        }
+    }
 }
 
 public struct ToolCall: Codable, Sendable, Equatable {

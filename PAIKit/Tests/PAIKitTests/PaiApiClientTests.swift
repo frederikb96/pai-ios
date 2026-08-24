@@ -87,6 +87,36 @@ final class PaiApiClientTests: XCTestCase {
         XCTAssertFalse(body.contains("name=\"working_dir\""), body)
     }
 
+    /// The regression this guards: `.urlPathAllowed` alone leaves `/` untouched (it is a legal
+    /// *path* character), so a slash inside a draft key was previously carried straight through
+    /// into a second path segment instead of staying part of the key.
+    func testDeleteDraftPercentEncodesSlashInKeyExactlyOnce() async throws {
+        stubJSON(#"{"key":"a/b","deleted":true}"#)
+        let client = try makeClient()
+        _ = try await client.deleteDraft(key: "a/b")
+
+        guard let url = PaiStubURLProtocol.capturedRequest?.url else {
+            return XCTFail("No request captured")
+        }
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        XCTAssertTrue((components?.percentEncodedPath ?? "").hasSuffix("/api/drafts/a%2Fb"))
+    }
+
+    /// A filename containing `"` must not be able to close the quoted `filename` parameter
+    /// early — that would let the remainder of the name become unintended header parameters.
+    func testPostMessageEscapesQuoteInFileFilename() async throws {
+        stubJSON(#"{"session_id":"s1","message_id":9}"#)
+        let client = try makeClient()
+        let file = PaiFileUpload(
+            filename: #"weird"name.txt"#, mimeType: "text/plain", data: Data("x".utf8)
+        )
+        _ = try await client.postMessage(message: "hello", files: [file])
+
+        let body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains(#"filename="weird\"name.txt""#), body)
+        XCTAssertFalse(body.contains(#"filename="weird"name.txt""#), body)
+    }
+
     func testPostMessageIncludesSessionIdWhenProvided() async throws {
         stubJSON(#"{"session_id":"s1","message_id":9}"#)
         let client = try makeClient()

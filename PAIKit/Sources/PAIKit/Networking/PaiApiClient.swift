@@ -247,13 +247,23 @@ public struct PaiApiClient: Sendable {
 
     private static func appendFormFile(_ body: inout Data, boundary: String, name: String, file: PaiFileUpload) {
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        let filename = Self.escapeContentDispositionValue(file.filename)
         body.append(
-            "Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(file.filename)\"\r\n"
+            "Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(filename)\"\r\n"
                 .data(using: .utf8)!
         )
         body.append("Content-Type: \(file.mimeType)\r\n\r\n".data(using: .utf8)!)
         body.append(file.data)
         body.append("\r\n".data(using: .utf8)!)
+    }
+
+    /// A filename Freddy picked (an attachment from the camera roll, say) can contain `"`, which
+    /// would otherwise close the quoted `filename` parameter early and let the rest of the name
+    /// spill into the header as unintended `Content-Disposition` parameters.
+    private static func escapeContentDispositionValue(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
     }
 
     public func cancelSession(sessionId: String) async throws -> CancelResponse {
@@ -311,17 +321,32 @@ public struct PaiApiClient: Sendable {
                 case workingDir = "working_dir"
             }
         }
-        let encodedKey = key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? key
         return try await send(
-            path: "/api/drafts/\(encodedKey)",
+            path: "/api/drafts/\(Self.encodeDraftKey(key))",
             method: "PUT",
             body: try Self.jsonBody(Body(text: text, sessionType: sessionType, workingDir: workingDir))
         )
     }
 
     public func deleteDraft(key: String) async throws -> PaiDraftDeleteResult {
-        let encodedKey = key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? key
-        return try await send(path: "/api/drafts/\(encodedKey)", method: "DELETE", body: nil, contentType: nil)
+        try await send(
+            path: "/api/drafts/\(Self.encodeDraftKey(key))",
+            method: "DELETE",
+            body: nil,
+            contentType: nil
+        )
+    }
+
+    /// `.urlPathAllowed` treats `/` as a legal *path* character (correct for a whole path, wrong
+    /// for a single path *segment*, where a literal `/` in a key must not be read as a segment
+    /// separator) — matches `client.ts`'s `encodeURIComponent(key)`, which escapes `/` too. Relies
+    /// on `PaiRequestFactory` assembling the request path with `percentEncodedPath` rather than
+    /// `appendingPathComponent`, which would otherwise re-encode the `%2F` this produces.
+    private static let draftKeyAllowedCharacters =
+        CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
+
+    private static func encodeDraftKey(_ key: String) -> String {
+        key.addingPercentEncoding(withAllowedCharacters: draftKeyAllowedCharacters) ?? key
     }
 
     // MARK: Plan usage

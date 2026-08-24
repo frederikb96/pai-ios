@@ -12,14 +12,18 @@ public final class PaiTerminalStreamClient {
         /// absent or malformed `live` flag defaults to **true** — a stuck "scrolled back"
         /// banner nothing can clear is worse than briefly claiming to be live
         /// (`terminalStream.ts:52-55`).
-        public var onFrame: @Sendable (_ chunk: String, _ live: Bool) -> Void
-        public var onConnected: @Sendable () -> Void
-        public var onDisconnected: @Sendable () -> Void
+        ///
+        /// Every closure is `@MainActor` as well as `@Sendable` — see `PaiSseClient.Callbacks`'s
+        /// doc comment for why: this type is `@MainActor` too, and a plain `@Sendable` closure
+        /// would force isolation boilerplate at every wiring site for no benefit.
+        public var onFrame: @MainActor @Sendable (_ chunk: String, _ live: Bool) -> Void
+        public var onConnected: @MainActor @Sendable () -> Void
+        public var onDisconnected: @MainActor @Sendable () -> Void
 
         public init(
-            onFrame: @escaping @Sendable (String, Bool) -> Void,
-            onConnected: @escaping @Sendable () -> Void,
-            onDisconnected: @escaping @Sendable () -> Void
+            onFrame: @escaping @MainActor @Sendable (String, Bool) -> Void,
+            onConnected: @escaping @MainActor @Sendable () -> Void,
+            onDisconnected: @escaping @MainActor @Sendable () -> Void
         ) {
             self.onFrame = onFrame
             self.onConnected = onConnected
@@ -38,6 +42,7 @@ public final class PaiTerminalStreamClient {
     private var backoffNanos = PaiTerminalStreamClient.initialBackoffNanos
     private var stopped = false
     private var streamTask: Task<Void, Never>?
+    private var reconnectTask: Task<Void, Never>?
 
     public init(
         sessionId: String,
@@ -53,12 +58,14 @@ public final class PaiTerminalStreamClient {
 
     public func connect() {
         guard !stopped else { return }
+        reconnectTask?.cancel()
         streamTask?.cancel()
         streamTask = Task { await self.runConnection() }
     }
 
     public func disconnect() {
         stopped = true
+        reconnectTask?.cancel()
         streamTask?.cancel()
         callbacks.onDisconnected()
     }
@@ -94,19 +101,34 @@ public final class PaiTerminalStreamClient {
                     continue
                 }
                 if line.hasPrefix("data:") {
-                    dataLines.append(String(line.dropFirst("data:".count)).trimmingCharacters(in: .whitespaces))
+                    dataLines.append(Self.sseDataValue(from: line.dropFirst("data:".count)))
                 }
                 // `event:` is read but not branched on, per the comment above; other fields are unused.
             }
 
-            if !stopped {
+            if Self.shouldReconnectAfterStreamEnded(cancelled: Task.isCancelled, stopped: stopped) {
                 handleDisconnect()
             }
         } catch {
-            if !stopped {
+            if Self.shouldReconnectAfterStreamEnded(cancelled: Task.isCancelled, stopped: stopped) {
                 handleDisconnect()
             }
         }
+    }
+
+    /// See `PaiSseClient.sseDataValue(from:)` — same SSE framing rule, this stream's own copy
+    /// since the two clients share no parsing code by design (see the type doc comment).
+    nonisolated static func sseDataValue(from line: Substring) -> String {
+        line.first == " " ? String(line.dropFirst()) : String(line)
+    }
+
+    /// See `PaiSseClient.shouldReconnectAfterStreamEnded(cancelled:terminal:stopped:)` — same
+    /// double-reconnect bug, this client's own copy since it has no watchdog to trigger it via,
+    /// but the same race exists whenever `connect()` cancels a still-running `streamTask`.
+    nonisolated static func shouldReconnectAfterStreamEnded(
+        cancelled: Bool, stopped: Bool
+    ) -> Bool {
+        !cancelled && !stopped
     }
 
     private func handleChunk(_ raw: String) {
@@ -135,13 +157,14 @@ public final class PaiTerminalStreamClient {
     }
 
     private func scheduleReconnect() {
+        reconnectTask?.cancel()
         streamTask?.cancel()
         guard !stopped else { return }
 
         let delay = backoffNanos
         backoffNanos = min(backoffNanos * 2, Self.maxBackoffNanos)
 
-        Task { [weak self] in
+        reconnectTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: delay)
             guard let self, !Task.isCancelled else { return }
             self.connect()

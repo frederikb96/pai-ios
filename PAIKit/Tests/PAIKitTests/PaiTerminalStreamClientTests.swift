@@ -40,4 +40,48 @@ final class PaiTerminalStreamClientTests: XCTestCase {
         XCTAssertEqual(chunk, raw)
         XCTAssertTrue(live)
     }
+
+    // MARK: - sseDataValue
+
+    func testSseDataValueStripsExactlyOneLeadingSpace() {
+        XCTAssertEqual(PaiTerminalStreamClient.sseDataValue(from: " hello"), "hello")
+    }
+
+    /// Terminal output legitimately carries meaningful leading/trailing whitespace (indentation,
+    /// padding); only the single SSE-framing space is protocol, not data.
+    func testSseDataValuePreservesInteriorAndTrailingWhitespace() {
+        let chunk = PaiTerminalStreamClient.sseDataValue(from: "  indented line  ")
+        XCTAssertEqual(chunk, " indented line  ")
+    }
+
+    func testSseDataValueLeavesLineWithoutLeadingSpaceUntouched() {
+        let chunk = PaiTerminalStreamClient.sseDataValue(from: "no-leading-space")
+        XCTAssertEqual(chunk, "no-leading-space")
+    }
+
+    // MARK: - shouldReconnectAfterStreamEnded
+
+    /// The regression this guards: a `streamTask` cancelled by `connect()`/`disconnect()` racing
+    /// a still-running connection must not also schedule its own reconnect on top of whichever
+    /// call cancelled it — that was the source of the doubled reconnect.
+    func testShouldReconnectAfterStreamEndedIsFalseWhenCancelled() {
+        let shouldReconnect = PaiTerminalStreamClient.shouldReconnectAfterStreamEnded(
+            cancelled: true, stopped: false
+        )
+        XCTAssertFalse(shouldReconnect)
+    }
+
+    func testShouldReconnectAfterStreamEndedIsFalseWhenStopped() {
+        let shouldReconnect = PaiTerminalStreamClient.shouldReconnectAfterStreamEnded(
+            cancelled: false, stopped: true
+        )
+        XCTAssertFalse(shouldReconnect)
+    }
+
+    func testShouldReconnectAfterStreamEndedIsTrueOtherwise() {
+        let shouldReconnect = PaiTerminalStreamClient.shouldReconnectAfterStreamEnded(
+            cancelled: false, stopped: false
+        )
+        XCTAssertTrue(shouldReconnect)
+    }
 }

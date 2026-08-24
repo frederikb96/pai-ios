@@ -16,19 +16,23 @@ import Foundation
 @MainActor
 public final class PaiSseClient {
 
+    /// Every closure is `@MainActor` as well as `@Sendable` — `PaiSseClient` itself is
+    /// `@MainActor`, and every realistic caller is a `@MainActor` view model, so a plain
+    /// `@Sendable` closure here would force `MainActor.assumeIsolated` boilerplate at every
+    /// wiring site just to hand over a closure that is already main-actor-isolated in practice.
     public struct Callbacks: Sendable {
-        public var onInit: @Sendable (SseInitEvent) -> Void
-        public var onBatch: @Sendable (SseBatchEvent) -> Void
-        public var onStatus: @Sendable (SseStatusEvent) -> Void
-        public var onConnected: @Sendable () -> Void
-        public var onDisconnected: @Sendable () -> Void
+        public var onInit: @MainActor @Sendable (SseInitEvent) -> Void
+        public var onBatch: @MainActor @Sendable (SseBatchEvent) -> Void
+        public var onStatus: @MainActor @Sendable (SseStatusEvent) -> Void
+        public var onConnected: @MainActor @Sendable () -> Void
+        public var onDisconnected: @MainActor @Sendable () -> Void
 
         public init(
-            onInit: @escaping @Sendable (SseInitEvent) -> Void,
-            onBatch: @escaping @Sendable (SseBatchEvent) -> Void,
-            onStatus: @escaping @Sendable (SseStatusEvent) -> Void,
-            onConnected: @escaping @Sendable () -> Void,
-            onDisconnected: @escaping @Sendable () -> Void
+            onInit: @escaping @MainActor @Sendable (SseInitEvent) -> Void,
+            onBatch: @escaping @MainActor @Sendable (SseBatchEvent) -> Void,
+            onStatus: @escaping @MainActor @Sendable (SseStatusEvent) -> Void,
+            onConnected: @escaping @MainActor @Sendable () -> Void,
+            onDisconnected: @escaping @MainActor @Sendable () -> Void
         ) {
             self.onInit = onInit
             self.onBatch = onBatch
@@ -56,6 +60,7 @@ public final class PaiSseClient {
     private var terminal = false
     private var streamTask: Task<Void, Never>?
     private var watchdogTask: Task<Void, Never>?
+    private var reconnectTask: Task<Void, Never>?
 
     public init(
         sessionId: String,
@@ -73,12 +78,14 @@ public final class PaiSseClient {
 
     public func connect() {
         guard !stopped, !terminal else { return }
+        reconnectTask?.cancel()
         streamTask?.cancel()
         streamTask = Task { await self.runConnection() }
     }
 
     public func disconnect() {
         stopped = true
+        reconnectTask?.cancel()
         streamTask?.cancel()
         watchdogTask?.cancel()
         callbacks.onDisconnected()
@@ -122,19 +129,43 @@ public final class PaiSseClient {
                 if line.hasPrefix("event:") {
                     eventName = String(line.dropFirst("event:".count)).trimmingCharacters(in: .whitespaces)
                 } else if line.hasPrefix("data:") {
-                    dataLines.append(String(line.dropFirst("data:".count)).trimmingCharacters(in: .whitespaces))
+                    dataLines.append(Self.sseDataValue(from: line.dropFirst("data:".count)))
                 }
                 // Any other field (id:, retry:, comments) goes unused by this stream, same as the web client.
             }
 
-            if !terminal && !stopped {
+            if Self.shouldReconnectAfterStreamEnded(
+                cancelled: Task.isCancelled, terminal: terminal, stopped: stopped
+            ) {
                 handleDisconnect()
             }
         } catch {
-            if !terminal && !stopped {
+            if Self.shouldReconnectAfterStreamEnded(
+                cancelled: Task.isCancelled, terminal: terminal, stopped: stopped
+            ) {
                 handleDisconnect()
             }
         }
+    }
+
+    /// Per the SSE spec, at most one leading space after `data:` is stripped — the rest of the
+    /// line, including any other leading or trailing whitespace, is data. `.trimmingCharacters`
+    /// over-strips; JSON payloads survive that by luck (whitespace outside string literals is
+    /// insignificant), but it is wrong on principle for a framing rule that events beyond JSON
+    /// can carry through this same parser.
+    nonisolated static func sseDataValue(from line: Substring) -> String {
+        line.first == " " ? String(line.dropFirst()) : String(line)
+    }
+
+    /// Whether the read loop ending unexpectedly should trigger a reconnect. `cancelled` is the
+    /// case that matters: the watchdog reconnects by cancelling `streamTask`, whose own `for try
+    /// await` then unwinds into this same exit path — reacting to that unwind as *another*
+    /// disconnect scheduled a second reconnect on top of the one `scheduleReconnect()` already
+    /// started. `nonisolated static` so the rule is testable without the streaming machinery.
+    nonisolated static func shouldReconnectAfterStreamEnded(
+        cancelled: Bool, terminal: Bool, stopped: Bool
+    ) -> Bool {
+        !cancelled && !terminal && !stopped
     }
 
     private func handleEvent(name: String, data: String) {
@@ -187,6 +218,7 @@ public final class PaiSseClient {
     }
 
     private func scheduleReconnect() {
+        reconnectTask?.cancel()
         streamTask?.cancel()
         watchdogTask?.cancel()
         guard !stopped, !terminal else { return }
@@ -194,7 +226,7 @@ public final class PaiSseClient {
         let delay = backoffNanos
         backoffNanos = min(backoffNanos * 2, Self.maxBackoffNanos)
 
-        Task { [weak self] in
+        reconnectTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: delay)
             guard let self, !Task.isCancelled else { return }
             self.connect()

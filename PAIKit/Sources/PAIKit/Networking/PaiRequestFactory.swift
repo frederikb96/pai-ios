@@ -48,13 +48,25 @@ public struct PaiRequestFactory: Sendable {
         body: Data? = nil,
         contentType: String? = nil
     ) throws -> URLRequest {
-        guard var components = URLComponents(
-            url: baseURL.appendingPathComponent(path),
-            resolvingAgainstBaseURL: false
-        ) else {
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
             throw ConfigurationError.malformedBaseURL
         }
-        if !query.isEmpty { components.queryItems = query }
+        // `percentEncodedPath`, not `appendingPathComponent` — the latter treats its argument as
+        // raw, unescaped text and re-encodes anything already percent-encoded in it. A caller
+        // that needs one character escaped inside a single path segment (a draft key that may
+        // contain `/`, see `PaiApiClient`) has to hand over an already-encoded path; passing that
+        // through `appendingPathComponent` would turn its `%2F` into `%252F`.
+        components.percentEncodedPath = baseURL.path + path
+        if !query.isEmpty {
+            components.queryItems = query
+            // `+` is a legal literal character in a URL query per RFC 3986, so `URLComponents`
+            // leaves one alone if a value contains it — but the backend parses the query as
+            // `application/x-www-form-urlencoded`, where a literal `+` decodes to a space.
+            // Escape it explicitly so a value that happens to contain one (a VM path, an
+            // attachment filename) round-trips instead of silently becoming a space server-side.
+            components.percentEncodedQuery = components.percentEncodedQuery?
+                .replacingOccurrences(of: "+", with: "%2B")
+        }
 
         guard let url = components.url else { throw ConfigurationError.malformedBaseURL }
 

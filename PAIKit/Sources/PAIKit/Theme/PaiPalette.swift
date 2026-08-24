@@ -1,9 +1,9 @@
 import SwiftUI
 
 /// Swift port of the design tokens in `pai-cloud/web/src/index.css`: the 21 `@theme` custom
-/// properties (`primary`/`surface`), plus the semantic red/amber/green/blue/yellow scale used
-/// directly as Tailwind utility classes there and never tokenised. A palette covering only the
-/// 21 is missing half the UI. `pai-cloud` owns this palette; this file mirrors it.
+/// properties (`primary`/`surface`), plus the semantic red/amber/green/blue/yellow/orange scale
+/// used directly as Tailwind utility classes there and never tokenised. A palette covering only
+/// the 21 is missing half the UI. `pai-cloud` owns this palette; this file mirrors it.
 ///
 /// The web picks a step per light/dark pair inline (`bg-surface-50 dark:bg-surface-900`, and
 /// so on for every colour in the app) rather than defining separate light/dark tokens. This
@@ -15,8 +15,8 @@ import SwiftUI
 /// own default palette, but `index.css` is what the web actually renders, so it is still the
 /// correct source to copy.
 ///
-/// The semantic red/amber/green/blue/yellow values are different in kind: nothing in this repo
-/// tokenises them, so there was no hex to copy. Tailwind v4 defines its default palette in
+/// The semantic red/amber/green/blue/yellow/orange values are different in kind: nothing in this
+/// repo tokenises them, so there was no hex to copy. Tailwind v4 defines its default palette in
 /// OKLCH, not the hex most people remember from v3 — confirmed against this project's own
 /// installed `tailwindcss/dist` package, whose v4 `red-500` is `oklch(63.7% 0.237 25.331)`,
 /// not v3's familiar `#ef4444`. The values below were computed from that installed package's
@@ -58,6 +58,7 @@ public enum PaiPalette {
     // `is_error` tool dot, `attention` state
 
     public static let red50 = "#fef2f2"
+    public static let red100 = "#ffe2e2"
     public static let red200 = "#ffc9c9"
     public static let red300 = "#ffa2a2"
     public static let red400 = "#ff6467"
@@ -86,6 +87,7 @@ public enum PaiPalette {
     // plan usage
 
     public static let green50 = "#f0fdf4"
+    public static let green100 = "#dcfce7"
     public static let green200 = "#b9f8cf"
     public static let green300 = "#7bf1a8"
     public static let green400 = "#05df72"
@@ -122,6 +124,19 @@ public enum PaiPalette {
     public static let yellow900 = "#733e0a"
     public static let yellow950 = "#432004"
 
+    // MARK: - Semantic: orange — session-state dot only
+
+    public static let orange50 = "#fff7ed"
+    public static let orange200 = "#ffd6a7"
+    public static let orange300 = "#ffb86a"
+    public static let orange400 = "#ff8904"
+    public static let orange500 = "#ff6900"
+    public static let orange600 = "#f54900"
+    public static let orange700 = "#ca3500"
+    public static let orange800 = "#9f2d00"
+    public static let orange900 = "#7e2a0c"
+    public static let orange950 = "#441306"
+
     // MARK: - Literal hex from index.css itself (not part of the Tailwind scale at all)
 
     /// Search-hit highlight colours. `::highlight()` rules cannot carry padding or a border —
@@ -137,11 +152,13 @@ public enum PaiPalette {
 extension Color {
     /// `PaiPalette` stores hex strings, not `Color` values, so the table above stays a plain,
     /// line-by-line diffable copy of `index.css` rather than a second place hex gets encoded.
-    /// Malformed input only ever means a typo in this file, so falling back to `.clear` signals
-    /// that loudly rather than crashing at launch over a design token.
+    /// Malformed input only ever means a typo in this file, so `.clear` is the release fallback
+    /// rather than crashing at launch over a design token — but `assertionFailure` still makes
+    /// the typo loud in debug builds and tests, where silently rendering nothing is easy to miss.
     public init(paiHex hex: String) {
         let sanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "#", with: "")
         guard sanitized.count == 6, let value = UInt32(sanitized, radix: 16) else {
+            assertionFailure("Malformed PaiPalette hex literal: \(hex)")
             self = .clear
             return
         }
