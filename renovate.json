@@ -1,21 +1,40 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
-  "//": "Concurrency is capped deliberately. pai-android leaves all three limits at 0 (unlimited); ten of its PRs merged in one batch and needed a follow-up commit to resolve the conflicts they created in a shared lockfile.",
-  "prConcurrentLimit": 3,
-  "prHourlyLimit": 2,
-  "branchConcurrentLimit": 3,
+  "timezone": "Europe/Berlin",
+  "schedule": ["* * * * 6"],
+  "prConcurrentLimit": 0,
+  "prHourlyLimit": 0,
+  "branchConcurrentLimit": 0,
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"]
+  },
+  "osvVulnerabilityAlerts": true,
+  "labels": ["dependencies", "renovate"],
   "packageRules": [
     {
-      "description": "Group Swift package updates so they resolve against each other once",
-      "matchManagers": ["swift"],
-      "groupName": "swift packages"
+      "description": "Patch updates: no delay",
+      "matchUpdateTypes": ["patch"],
+      "automerge": false,
+      "minimumReleaseAge": "0 days"
     },
     {
-      "description": "GitHub Actions bumps are low-risk and noisy; batch them weekly",
-      "matchManagers": ["github-actions"],
-      "groupName": "github actions",
-      "schedule": ["before 6am on monday"]
+      "description": "Minor updates: 14-day stability window",
+      "matchUpdateTypes": ["minor"],
+      "automerge": false,
+      "minimumReleaseAge": "14 days"
+    },
+    {
+      "description": "Major updates: 30-day stability window",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "minimumReleaseAge": "30 days"
+    },
+    {
+      "description": "Swift packages resolve against each other, so land them as one PR",
+      "matchManagers": ["swift"],
+      "groupName": "swift packages"
     }
   ]
 }
