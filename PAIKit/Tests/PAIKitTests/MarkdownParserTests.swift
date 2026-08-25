@@ -27,11 +27,11 @@ final class MarkdownParserTests: XCTestCase {
     func testSmartPunctuationIsDisabled() {
         let source = #"Run `git push --force` and pass "now" -- carefully."#
 
-        let text = plainText(of: MarkdownParser.parse(source))
+        let text = MarkdownParser.parse(source).plainText
         XCTAssertTrue(text.contains("--force"), "en dash substitution reached a command line: \(text)")
         XCTAssertTrue(text.contains("\"now\""), "quotes were curled: \(text)")
 
-        let unguarded = plainText(of: MarkdownParser.parse(source, options: []))
+        let unguarded = MarkdownParser.parse(source, options: []).plainText
         XCTAssertFalse(
             unguarded.contains(" -- "),
             "smart punctuation did not fire without the option, so this test proves nothing"
@@ -96,7 +96,7 @@ final class MarkdownParserTests: XCTestCase {
         let blocks = MarkdownParser.parse(source)
         XCTAssertGreaterThanOrEqual(blocks.count, 8, "the fixture did not produce every block kind: \(blocks)")
 
-        let text = plainText(of: blocks)
+        let text = blocks.plainText
         for word in [
             "headingword", "paragraphword", "quoteword", "listword",
             "taskword", "codeword", "headerword", "cellword", "htmlword",
@@ -131,8 +131,8 @@ final class MarkdownParserTests: XCTestCase {
     /// confused. Treating a soft break as a newline would change the measured height of most
     /// paragraphs in the transcript; the two assertions together pin which is which.
     func testSoftBreakIsASpaceAndHardBreakIsANewline() {
-        XCTAssertEqual(plainText(of: MarkdownParser.parse("one\ntwo")), "one two")
-        XCTAssertEqual(plainText(of: MarkdownParser.parse("one  \ntwo")), "one\ntwo")
+        XCTAssertEqual(MarkdownParser.parse("one\ntwo").plainText, "one two")
+        XCTAssertEqual(MarkdownParser.parse("one  \ntwo").plainText, "one\ntwo")
     }
 
     // MARK: - Structure a refactor could flatten
@@ -200,33 +200,6 @@ final class MarkdownParserTests: XCTestCase {
         XCTAssertNil(numbered.items.first?.checkbox, "an ordinary item was given a checkbox")
     }
 
-    // MARK: - Helpers
-
-    /// Flattens a block tree to its visible text, so a test can assert that content survived
-    /// without asserting the shape it survived in.
-    private func plainText(of blocks: [MarkdownBlock]) -> String {
-        blocks.map { block in
-            switch block {
-            case .paragraph(let text), .heading(_, let text):
-                return text.plainText
-            case .codeBlock(_, let code):
-                return code
-            case .htmlBlock(let raw):
-                return raw
-            case .thematicBreak:
-                return ""
-            case .blockQuote(let inner):
-                return plainText(of: inner)
-            case .list(let list):
-                return list.items.map { plainText(of: $0.blocks) }.joined(separator: "\n")
-            case .table(let table):
-                return ([table.header] + table.rows)
-                    .map { $0.map(\.plainText).joined(separator: " ") }
-                    .joined(separator: "\n")
-            }
-        }
-        .joined(separator: "\n")
-    }
 }
 
 extension [MarkdownBlock] {

@@ -28,6 +28,43 @@ public enum MarkdownBlock: Hashable, Sendable {
     case htmlBlock(String)
 }
 
+extension MarkdownBlock {
+    /// The visible text of this block — what a reader sees, and therefore what search matches.
+    ///
+    /// Derived from the block model rather than from the markdown source, so it *is* the
+    /// rendering by construction. The web client approximates the same thing with regexes over
+    /// the source and documents the leftover disagreement as deliberate slack; there is no
+    /// leftover here, because there is nothing to approximate.
+    public var plainText: String {
+        switch self {
+        case .paragraph(let text), .heading(_, let text):
+            return text.plainText
+        case .codeBlock(_, let code):
+            return code
+        case .htmlBlock(let raw):
+            return raw
+        case .thematicBreak:
+            // A rule is a border, not text. Matching it would send search somewhere with
+            // nothing to highlight.
+            return ""
+        case .blockQuote(let blocks):
+            return blocks.plainText
+        case .list(let list):
+            return list.items.map(\.blocks.plainText).joined(separator: "\n")
+        case .table(let table):
+            return ([table.header] + table.rows)
+                .map { row in row.map(\.plainText).joined(separator: " ") }
+                .joined(separator: "\n")
+        }
+    }
+}
+
+extension [MarkdownBlock] {
+    public var plainText: String {
+        map(\.plainText).joined(separator: "\n")
+    }
+}
+
 /// A run of inline content, already flattened out of the tree markdown parses into.
 ///
 /// Nested emphasis inside a link inside a table cell is three levels deep and produces one

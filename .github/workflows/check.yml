@@ -21,6 +21,7 @@ on:
     paths:
       - '**/*.swift'
       - 'Package.swift'
+      - '.github/workflows/check.yml'
   workflow_dispatch:
 
 concurrency:
