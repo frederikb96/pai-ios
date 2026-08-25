@@ -15,12 +15,16 @@ on:
     branches: [main]
     paths:
       - '**/*.swift'
-      - 'Package.swift'
+      - '**/Package.swift'
+      - 'PAI.xcodeproj/**'
+      - 'Config/**'
       - '.github/workflows/check.yml'
   pull_request:
     paths:
       - '**/*.swift'
-      - 'Package.swift'
+      - '**/Package.swift'
+      - 'PAI.xcodeproj/**'
+      - 'Config/**'
       - '.github/workflows/check.yml'
   workflow_dispatch:
 
@@ -51,10 +55,23 @@ jobs:
       - name: Build
         run: |
           set -o pipefail
-          swift build --build-tests 2>&1 | tee /tmp/build.log
+          swift build --package-path PAIKit --build-tests 2>&1 | tee /tmp/build.log
 
       - name: Test
-        run: swift test --skip-build
+        run: swift test --package-path PAIKit --skip-build
+
+      # Builds the app target itself. The project file is hand-written — there is no Xcode GUI
+      # on either peer to produce one — so this step is what makes it verified rather than
+      # hoped-for. A generic simulator destination avoids depending on which device names the
+      # runner image happens to ship, and signing is off because nothing here is installed.
+      - name: Build the app
+        run: |
+          set -o pipefail
+          xcodebuild -project PAI.xcodeproj -scheme PAI \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee /tmp/app-build.log
 
       # A failed build's errors scroll past in the step log; this makes them the first thing
       # visible in the run summary, since reading them is the entire point of this workflow.

@@ -27,7 +27,7 @@ jobs:
           filters: |
             swift:
               - '**/*.swift'
-              - 'Package.swift'
+              - '**/Package.swift'
               - '.swift-format'
               # This workflow filters itself, so that a change to it is actually exercised.
               # Without this line a fix here cannot be tested by pushing it.

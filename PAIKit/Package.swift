@@ -1,14 +1,11 @@
 // swift-tools-version: 6.2
 import PackageDescription
 
-// Nearly all of the app lives here rather than in the Xcode project, for two reasons.
+// Nearly all of the app lives here rather than in the Xcode project.
 //
-// It is authorable without a Mac: a Package.swift is a plain, reviewable file, whereas a
-// hand-written .xcodeproj is an opaque plist that cannot be validated without Xcode. Writing one
-// blind and hoping is the clever-over-boring choice; this is the boring one.
-//
-// It also keeps the app target thin enough that creating it on the first Mac session is a
-// two-minute job rather than a risk, and it means logic can be tested without an app host.
+// A Package.swift is plainly reviewable where a project file is not, it builds and tests on any
+// macOS runner without an Apple credential, and it keeps the app target thin — the app holds
+// views and wiring, and everything worth testing without an app host lives here.
 
 let package = Package(
     name: "PAIKit",
@@ -30,8 +27,7 @@ let package = Package(
             name: "PAIKit",
             dependencies: [
                 .product(name: "Markdown", package: "swift-markdown")
-            ],
-            path: "PAIKit/Sources/PAIKit"
+            ]
         ),
         .testTarget(
             name: "PAIKitTests",
@@ -40,8 +36,7 @@ let package = Package(
                 // Named explicitly, not left transitive: a markdown test calls the internal
                 // parse seam, whose signature is typed in this module.
                 .product(name: "Markdown", package: "swift-markdown"),
-            ],
-            path: "PAIKit/Tests/PAIKitTests"
+            ]
         )
     ]
 )
