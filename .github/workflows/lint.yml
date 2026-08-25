@@ -44,17 +44,21 @@ jobs:
       # The ARC runner image carries only git, bash and the runner binary — none of the ~200
       # tools a hosted ubuntu-latest image pre-installs. Swift needs its runtime dependencies
       # installed explicitly; the runner user has passwordless sudo.
-      # `curl`, `gnupg` and `file` are for the setup action itself rather than for Swift: it
-      # downloads a toolchain, verifies its signature, and identifies the archive with `file`.
-      # Their absence surfaces as "Unable to locate executable file", which reads like a broken
-      # action rather than a missing package.
+      # Swift's own documented Ubuntu dependency list, plus `curl`, `file` and `ca-certificates`
+      # for the setup action itself — it downloads a toolchain, verifies its signature, and
+      # identifies the archive with `file`.
+      #
+      # Everything here is needed because the ARC image carries only git, bash and the runner
+      # binary, where a hosted image would already have all of it. A missing package surfaces
+      # late and unhelpfully: as "Unable to locate executable file", or as the freshly unpacked
+      # toolchain failing to load a shared library.
       - name: Install Swift toolchain dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            binutils ca-certificates curl file gnupg libc6-dev libcurl4-openssl-dev libedit2 \
-            libgcc-13-dev libpython3-dev libstdc++-13-dev libxml2-dev libz3-dev pkg-config \
-            tzdata unzip zlib1g-dev
+            binutils ca-certificates curl file gnupg2 libc6-dev libcurl4-openssl-dev libedit2 \
+            libgcc-13-dev libncurses-dev libpython3-dev libsqlite3-0 libstdc++-13-dev \
+            libxml2-dev libz3-dev pkg-config tzdata unzip zlib1g-dev
 
       - uses: swift-actions/setup-swift@v2
         with:
