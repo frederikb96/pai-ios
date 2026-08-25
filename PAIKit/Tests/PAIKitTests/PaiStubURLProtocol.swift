@@ -48,19 +48,21 @@ final class PaiStubURLProtocol: URLProtocol {
 
     override func startLoading() {
         Self.capturedRequest = request
-        Self.capturedBody = request.httpBody ?? request.httpBodyStream.map { stream -> Data in
-            stream.open()
-            defer { stream.close() }
-            var data = Data()
-            let bufferSize = 4096
-            var buffer = [UInt8](repeating: 0, count: bufferSize)
-            while stream.hasBytesAvailable {
-                let read = stream.read(&buffer, maxLength: bufferSize)
-                if read <= 0 { break }
-                data.append(buffer, count: read)
+        Self.capturedBody =
+            request.httpBody
+            ?? request.httpBodyStream.map { stream -> Data in
+                stream.open()
+                defer { stream.close() }
+                var data = Data()
+                let bufferSize = 4096
+                var buffer = [UInt8](repeating: 0, count: bufferSize)
+                while stream.hasBytesAvailable {
+                    let read = stream.read(&buffer, maxLength: bufferSize)
+                    if read <= 0 { break }
+                    data.append(buffer, count: read)
+                }
+                return data
             }
-            return data
-        }
 
         guard let stub = Self.stub, let url = request.url else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))

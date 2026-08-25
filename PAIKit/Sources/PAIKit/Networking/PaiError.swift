@@ -41,7 +41,8 @@ extension PaiError {
     /// Build from a response the transport already has in hand.
     public static func from(statusCode: Int, body: Data) -> PaiError {
         if let parsed = try? JSONDecoder().decode(ErrorBody.self, from: body),
-           !parsed.detail.isEmpty {
+            !parsed.detail.isEmpty
+        {
             return .detail(parsed.detail, statusCode: statusCode)
         }
         return .http(

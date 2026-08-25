@@ -142,8 +142,8 @@ public final class PaiTerminalStreamClient {
     /// `static` because it is pure and worth testing without the streaming machinery around it.
     nonisolated static func parseFrame(_ raw: String) -> (chunk: String, live: Bool) {
         guard let jsonData = raw.data(using: .utf8),
-              let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-              let data = parsed["data"] as? String
+            let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+            let data = parsed["data"] as? String
         else {
             return (raw, true)
         }

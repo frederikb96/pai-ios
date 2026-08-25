@@ -500,7 +500,8 @@ public struct PaiApiClient: Sendable {
         let request = try requestFactory.makeRequest(path: "/api/session/\(sessionId)/export", query: query)
         let (data, response) = try await urlSession.data(for: request)
         try Self.checkStatus(response: response, data: data)
-        let filename = (response as? HTTPURLResponse)
+        let filename =
+            (response as? HTTPURLResponse)
             .flatMap { $0.value(forHTTPHeaderField: "Content-Disposition") }
             .flatMap(Self.parseContentDispositionFilename)
             ?? "pai-session-\(sessionId)-export.json"
@@ -515,7 +516,7 @@ public struct PaiApiClient: Sendable {
         guard let regex = try? NSRegularExpression(pattern: #"filename="?([^";]+)"?"#) else { return nil }
         let range = NSRange(header.startIndex..., in: header)
         guard let match = regex.firstMatch(in: header, range: range),
-              let group = Range(match.range(at: 1), in: header)
+            let group = Range(match.range(at: 1), in: header)
         else { return nil }
         return String(header[group])
     }

@@ -192,7 +192,7 @@ public final class PaiSseClient {
             }
 
         case "processing", "ping":
-            break // No-op handlers that exist only to advance `lastEventTime`, already done above.
+            break  // No-op handlers that exist only to advance `lastEventTime`, already done above.
 
         default:
             break

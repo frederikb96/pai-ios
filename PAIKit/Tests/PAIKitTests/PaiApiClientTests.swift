@@ -144,10 +144,11 @@ final class PaiApiClientTests: XCTestCase {
         // backend (`api.py`) sends `'ok' | 'unavailable'` plus `credential`. This proves the
         // deliberately loose `HealthResponse` (plain `String`s) survives that mismatch rather
         // than throwing a decode error on a live, healthy pod.
-        stubJSON(#"""
-        {"status":"unavailable","database":"unavailable","agent":"disconnected",
-         "credential":"unknown","timestamp":"2026-08-24T00:00:00Z"}
-        """#)
+        stubJSON(
+            #"""
+            {"status":"unavailable","database":"unavailable","agent":"disconnected",
+             "credential":"unknown","timestamp":"2026-08-24T00:00:00Z"}
+            """#)
         let client = try makeClient()
         let health = try await client.getHealth()
 

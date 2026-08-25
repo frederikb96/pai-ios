@@ -50,17 +50,18 @@ final class PaiModelsTests: XCTestCase {
     /// `CodingKeys` case anywhere in the struct shows up as a wrong/nil property instead of
     /// passing silently because only a subset of fields was ever fed through a test.
     func testMessageDecodesEveryFieldOntoTheRightProperty() throws {
-        let json = Data("""
-        {
-          "id": 5, "session_id": "s1", "type": "assistant", "subtype": null,
-          "timestamp": "2026-08-24T00:00:00Z", "content": "hi", "thinking": "hmm",
-          "tool_calls": [{"id":"t1","name":"Bash","input":{"command":"ls"}}],
-          "tool_result": {"tool_use_id":"t1","tool_name":"Bash","content":"ok","is_error":false},
-          "hook_summary": {"hook_names":["h1"],"has_errors":false,"errors":[],"prevented_continuation":false},
-          "tokens": {"input_tokens": 3},
-          "created_at": "2026-08-24T00:00:01Z"
-        }
-        """.utf8)
+        let json = Data(
+            """
+            {
+              "id": 5, "session_id": "s1", "type": "assistant", "subtype": null,
+              "timestamp": "2026-08-24T00:00:00Z", "content": "hi", "thinking": "hmm",
+              "tool_calls": [{"id":"t1","name":"Bash","input":{"command":"ls"}}],
+              "tool_result": {"tool_use_id":"t1","tool_name":"Bash","content":"ok","is_error":false},
+              "hook_summary": {"hook_names":["h1"],"has_errors":false,"errors":[],"prevented_continuation":false},
+              "tokens": {"input_tokens": 3},
+              "created_at": "2026-08-24T00:00:01Z"
+            }
+            """.utf8)
         let message = try JSONDecoder().decode(Message.self, from: json)
 
         XCTAssertEqual(message.sessionId, "s1")
@@ -85,18 +86,19 @@ final class PaiModelsTests: XCTestCase {
     /// status this build predates threw during `[Session].self` decoding — since that decode is
     /// atomic, the *whole list* came back empty instead of the one row degrading.
     func testSessionListSurvivesOneUnrecognizedStatusInsteadOfFailingEntirely() throws {
-        let json = Data("""
-        [
-          {"id":"s1","session_type":"claude","status":"active","state":null,"blocker":null,
-           "title":null,"title_locked":null,"initial_message":null,"pending_message":null,
-           "session_tokens":0,"claude_session_id":null,"cse_id":null,"created_at":null,
-           "updated_at":null,"last_activity_at":null,"working_dir":null},
-          {"id":"s2","session_type":"claude","status":"archived","state":null,"blocker":null,
-           "title":null,"title_locked":null,"initial_message":null,"pending_message":null,
-           "session_tokens":0,"claude_session_id":null,"cse_id":null,"created_at":null,
-           "updated_at":null,"last_activity_at":null,"working_dir":null}
-        ]
-        """.utf8)
+        let json = Data(
+            """
+            [
+              {"id":"s1","session_type":"claude","status":"active","state":null,"blocker":null,
+               "title":null,"title_locked":null,"initial_message":null,"pending_message":null,
+               "session_tokens":0,"claude_session_id":null,"cse_id":null,"created_at":null,
+               "updated_at":null,"last_activity_at":null,"working_dir":null},
+              {"id":"s2","session_type":"claude","status":"archived","state":null,"blocker":null,
+               "title":null,"title_locked":null,"initial_message":null,"pending_message":null,
+               "session_tokens":0,"claude_session_id":null,"cse_id":null,"created_at":null,
+               "updated_at":null,"last_activity_at":null,"working_dir":null}
+            ]
+            """.utf8)
         let sessions = try JSONDecoder().decode([Session].self, from: json)
 
         XCTAssertEqual(sessions.count, 2)
