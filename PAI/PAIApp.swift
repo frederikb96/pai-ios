@@ -55,11 +55,14 @@ struct PAIApp: App {
             router.register("POST", "/markdown") { request in
                 let source = String(decoding: request.body, as: UTF8.self)
                 let blocks = MarkdownParser.parse(source)
-                return .encoding([
+                // Annotated because `encoding` takes `some Encodable`, which gives the literal
+                // nothing to infer its element type from.
+                let payload: [String: DebugValue] = [
                     "blockCount": .int(blocks.count),
                     "kinds": .strings(blocks.map(kind(of:))),
                     "plainText": .string(blocks.plainText),
-                ])
+                ]
+                return .encoding(payload)
             }
 
             router.register("GET", "/logs") { request in
