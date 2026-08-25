@@ -42,14 +42,15 @@ def asc_key
 end
 
 platform :ios do
-  desc "Run the test suite on a simulator"
+  desc "Run the test suite"
   lane :test do
-    run_tests(
-      scheme: SCHEME,
-      devices: ["iPhone 17 Pro"],
-      result_bundle: true,
-      output_directory: "#{OUTPUT_DIR}/test_output"
-    )
+    # The tests live in the PAIKit package, not in an Xcode test target, so this runs SwiftPM
+    # rather than `run_tests`. Pointing `run_tests` at the PAI scheme would be worse than wrong:
+    # that scheme has no testables, so it would report success having run nothing.
+    #
+    # When app-level UI tests arrive they will need a real test target, and this lane grows a
+    # second half rather than replacing this one.
+    sh("swift test --package-path ../PAIKit")
   end
 
   desc "Archive and sign a release build"
