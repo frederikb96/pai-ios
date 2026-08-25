@@ -67,3 +67,20 @@ jobs:
       # swift-format ships inside the toolchain from Swift 6.0 onward, so no separate install.
       - name: Format check
         run: swift format lint --recursive --strict PAIKit
+
+      # swift-format can fix everything it reports, but there is no Swift toolchain on either
+      # peer to run it on. Publishing the correction as a patch means a formatting failure is
+      # resolved with `gh run download` and `git apply`, rather than by hand-editing from line
+      # numbers — which is slow, and wrong often enough to need another round to find out.
+      - name: Publish the correction as a patch
+        if: failure()
+        run: |
+          swift format --in-place --recursive PAIKit
+          git diff > format.patch
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: format-patch
+          path: format.patch
+          retention-days: 5
