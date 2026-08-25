@@ -37,16 +37,16 @@ final class PaiRequestFactoryTests: XCTestCase {
     /// The token is read per request, so entering one in settings takes effect immediately
     /// rather than on the next launch.
     func testTokenIsReadAtSendTimeNotConstructionTime() throws {
-        nonisolated(unsafe) var token: String? = nil
+        let token = TokenBox()
         let factory = try PaiRequestFactory(
             baseURL: "https://pai.example.com",
-            tokenProvider: { token }
+            tokenProvider: { token.value }
         )
 
         let before = try factory.makeRequest(path: "/api/health")
         XCTAssertNil(before.value(forHTTPHeaderField: "Authorization"))
 
-        token = "jwt-value"
+        token.value = "jwt-value"
         let after = try factory.makeRequest(path: "/api/health")
         XCTAssertEqual(after.value(forHTTPHeaderField: "Authorization"), "Bearer jwt-value")
     }
@@ -100,4 +100,11 @@ final class PaiRequestFactoryTests: XCTestCase {
         let error = PaiError.from(statusCode: 502, body: Data("<html>".utf8))
         XCTAssertTrue(error.userMessage.hasPrefix("HTTP 502:"))
     }
+}
+
+/// A `var` captured by an escaping sendable closure and mutated afterwards is a data race the
+/// compiler cannot rule out, even where the test is single-threaded. A reference box makes the
+/// sharing explicit instead of asserting it away.
+private final class TokenBox: @unchecked Sendable {
+    var value: String?
 }

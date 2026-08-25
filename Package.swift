@@ -16,9 +16,21 @@ let package = Package(
     products: [
         .library(name: "PAIKit", targets: ["PAIKit"])
     ],
+    dependencies: [
+        // Apple's cmark-gfm wrapper, so GFM tables, task lists and strikethrough are
+        // spec-correct rather than approximated by hand. Foundation's own
+        // `AttributedString(markdown:)` cannot express a table at all, which rules it out.
+        //
+        // Pinned to the next minor rather than the next major: this is pre-1.0, where a minor
+        // bump is allowed to break API, and `from:` would accept every one of them.
+        .package(url: "https://github.com/apple/swift-markdown.git", .upToNextMinor(from: "0.8.0"))
+    ],
     targets: [
         .target(
             name: "PAIKit",
+            dependencies: [
+                .product(name: "Markdown", package: "swift-markdown")
+            ],
             path: "PAIKit/Sources/PAIKit"
         ),
         .testTarget(
