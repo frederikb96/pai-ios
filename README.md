@@ -10,8 +10,11 @@ model and the scrolling behaviour.
 
 ## Status
 
-Early. The repository is scaffolded and the release pipeline is written, but nothing has been
-compiled yet — there is no Mac. See `.claude/CLAUDE.md` for how that is arranged.
+Early, but no longer unverified. There is still no Mac: `PAIKit` is compiled and tested on a
+macOS CI runner, which needs no Apple credential and so works long before the release pipeline
+can. The app target itself does not exist yet — it is created in the first Mac session, along
+with anything that needs a simulator or a signature. See `.claude/CLAUDE.md` for how that is
+arranged.
 
 ## Layout
 
