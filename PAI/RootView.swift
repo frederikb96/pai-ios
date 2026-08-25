@@ -60,7 +60,7 @@ private struct BlockView: View {
                 .font(level <= 1 ? .largeTitle : .title2)
                 .bold()
         case .paragraph(let text):
-            Text(inlineString(text))
+            Text(attributed(text))
         case .codeBlock(_, let code):
             Text(code)
                 .font(.system(.footnote, design: .monospaced))
@@ -103,18 +103,26 @@ private struct BlockView: View {
         }
     }
 
-    /// Applies the run styling an `InlineText` carries. Concatenating `Text` values is the only
-    /// way SwiftUI composes differing styles into one wrapping paragraph.
-    private func inlineString(_ text: InlineText) -> Text {
-        text.runs.reduce(Text("")) { accumulated, run in
-            var piece = Text(run.text)
-            if run.style.contains(.code) { piece = piece.font(.system(.body, design: .monospaced)) }
-            if run.style.contains(.bold) { piece = piece.bold() }
-            if run.style.contains(.italic) { piece = piece.italic() }
-            if run.style.contains(.strikethrough) { piece = piece.strikethrough() }
-            if run.destination != nil { piece = piece.foregroundColor(.accentColor) }
-            return accumulated + piece
+    /// Applies the styling an `InlineText`'s runs carry.
+    ///
+    /// Built as one `AttributedString` rather than by concatenating `Text` values: `Text + Text`
+    /// is deprecated from iOS 26, and an attributed string is what the measuring renderer will
+    /// need anyway, since a height can be computed from one without a view existing.
+    private func attributed(_ text: InlineText) -> AttributedString {
+        var result = AttributedString()
+        for run in text.runs {
+            var piece = AttributedString(run.text)
+            var font: Font = run.style.contains(.code) ? .system(.body, design: .monospaced) : .body
+            if run.style.contains(.bold) { font = font.bold() }
+            if run.style.contains(.italic) { font = font.italic() }
+            piece.font = font
+            if run.style.contains(.strikethrough) { piece.strikethroughStyle = .single }
+            if let destination = run.destination, let url = URL(string: destination) {
+                piece.link = url
+            }
+            result.append(piece)
         }
+        return result
     }
 
     private func marker(for kind: MarkdownList.Marker, at index: Int, checkbox: MarkdownListItem.Checkbox?)
