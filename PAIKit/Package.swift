@@ -37,6 +37,6 @@ let package = Package(
                 // parse seam, whose signature is typed in this module.
                 .product(name: "Markdown", package: "swift-markdown"),
             ]
-        )
+        ),
     ]
 )
