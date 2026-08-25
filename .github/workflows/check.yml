@@ -44,8 +44,13 @@ jobs:
           xcodebuild -version
           swift --version
 
+      # `set -o pipefail` is load-bearing: without it the step takes `tee`'s exit status, so a
+      # failed compile reports success and the run instead fails further down with a missing
+      # test bundle — which reads as an infrastructure fault rather than a compiler error.
       - name: Build
-        run: swift build --build-tests 2>&1 | tee /tmp/build.log
+        run: |
+          set -o pipefail
+          swift build --build-tests 2>&1 | tee /tmp/build.log
 
       - name: Test
         run: swift test --skip-build

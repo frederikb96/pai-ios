@@ -106,12 +106,10 @@ public struct BrowseResult: Codable, Sendable, Equatable {
 
 // MARK: - Health
 
-/// `types.ts` declares `status: 'ok' | 'degraded'`, but the running backend
-/// (`backend/src/pai_cloud/api.py`, `health()`) actually returns `'ok' | 'unavailable'` for
-/// `status`/`database`, and adds a `credential` field the TS type does not declare at all. The
-/// two disagree; since a wrong literal here would fail decoding entirely rather than just
-/// mis-displaying a badge, every field is a plain `String` instead of a closed enum matching
-/// either source, and `credential` is included as the actual backend sends it.
+/// Every field is a plain `String` rather than a closed enum. A literal this type does not know
+/// would fail the whole decode, taking the health check down instead of mis-labelling one badge
+/// — and this is the endpoint that reports whether anything is wrong, so it is the last one that
+/// should break first.
 public struct HealthResponse: Codable, Sendable, Equatable {
     public let status: String
     public let database: String

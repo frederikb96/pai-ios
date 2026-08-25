@@ -103,9 +103,13 @@ public enum MarkdownParser {
     // MARK: - Tables
 
     private static func convertTable(_ table: Table) -> MarkdownTable {
+        // `cells` and `rows` are lazy sequences, whose `map` stays lazy. Making each an array
+        // first keeps the result a plain `[[InlineText]]` rather than nested lazy views.
         let alignments = table.columnAlignments.map(alignment(from:))
-        let header = table.head.cells.map { inlineText(from: $0.children) }
-        let rows = table.body.rows.map { row in row.cells.map { inlineText(from: $0.children) } }
+        let header = Array(table.head.cells).map { inlineText(from: $0.children) }
+        let rows = Array(table.body.rows).map { row in
+            Array(row.cells).map { inlineText(from: $0.children) }
+        }
 
         // GFM decides a table's width from its delimiter row, but a malformed source can still
         // produce rows of differing length. One column count applied to every row means the

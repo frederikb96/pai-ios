@@ -35,7 +35,12 @@ let package = Package(
         ),
         .testTarget(
             name: "PAIKitTests",
-            dependencies: ["PAIKit"],
+            dependencies: [
+                "PAIKit",
+                // Named explicitly, not left transitive: a markdown test calls the internal
+                // parse seam, whose signature is typed in this module.
+                .product(name: "Markdown", package: "swift-markdown"),
+            ],
             path: "PAIKit/Tests/PAIKitTests"
         )
     ]
