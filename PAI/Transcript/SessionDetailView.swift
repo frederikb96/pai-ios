@@ -1,5 +1,6 @@
 import PAIKit
 import SwiftUI
+import UIKit
 
 /// A session's transcript, and the composer under it.
 ///

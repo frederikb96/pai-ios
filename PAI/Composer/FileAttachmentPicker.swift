@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 /// The "Add File" half of the plus menu — `UIDocumentPickerViewController` reaches the whole
