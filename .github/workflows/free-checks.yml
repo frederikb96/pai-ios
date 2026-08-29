@@ -53,14 +53,14 @@ jobs:
           key: spm-${{ runner.os }}-${{ hashFiles('PAIKit/Package.swift') }}
           restore-keys: spm-${{ runner.os }}-
 
-      - name: Format
-        run: swift format lint --recursive --strict PAIKit
-
       - name: Build and test the package
         run: |
           set -o pipefail
           swift build --package-path PAIKit --build-tests 2>&1 | tee /tmp/build.log
           swift test --package-path PAIKit --skip-build
+
+      - name: Format
+        run: swift format lint --recursive --strict PAIKit
 
       # Compiler errors sit far above the last lines of a long build, so a truncated log leaves a
       # failure reporting nothing but an exit code.
