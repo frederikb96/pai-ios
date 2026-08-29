@@ -4,7 +4,7 @@ import XCTest
 
 /// A fake clock the test advances by hand — proves the hold window without a real sleep, and
 /// lets a test express "one second before it expires" exactly rather than approximately.
-private final class FakeTranscriptClock: TranscriptClock, @unchecked Sendable {
+private final class FakeWallClock: WallClock, @unchecked Sendable {
     var current: Date
     init(_ date: Date = Date(timeIntervalSince1970: 0)) { current = date }
     func now() -> Date { current }
@@ -45,7 +45,7 @@ final class TranscriptHoldTests: XCTestCase {
     }
 
     func testControllerReleaseEndsAnActiveHoldImmediately() async {
-        let clock = FakeTranscriptClock()
+        let clock = FakeWallClock()
         let controller = TranscriptHoldController(clock: clock)
 
         controller.begin(.bottom)
@@ -57,7 +57,7 @@ final class TranscriptHoldTests: XCTestCase {
     }
 
     func testControllerIsActiveBecomesFalseOnceTheClockPassesTheWindowWithoutExtension() async {
-        let clock = FakeTranscriptClock()
+        let clock = FakeWallClock()
         let controller = TranscriptHoldController(clock: clock)
 
         controller.begin(.search(messageId: 3))
@@ -67,7 +67,7 @@ final class TranscriptHoldTests: XCTestCase {
     }
 
     func testControllerExtendKeepsItActivePastWhatTheOriginalWindowAloneWouldCover() async {
-        let clock = FakeTranscriptClock()
+        let clock = FakeWallClock()
         let controller = TranscriptHoldController(clock: clock)
 
         controller.begin(.bottom)

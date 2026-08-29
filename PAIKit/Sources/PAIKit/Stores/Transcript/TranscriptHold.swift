@@ -1,13 +1,15 @@
 import Foundation
 
-/// Supplies "now" to anything on the transcript path that reasons about elapsed time — a
-/// protocol rather than a bare closure so a call site can hand over ``SystemTranscriptClock``
-/// once, while a test hands over a fake it advances by hand instead of sleeping.
-public protocol TranscriptClock: Sendable {
+/// Supplies "now" to anything in the package that reasons about elapsed time — a protocol
+/// rather than a bare closure so a call site can hand over ``SystemWallClock`` once, while a
+/// test hands over a fake it advances by hand instead of sleeping. Named for what it is (a plain
+/// wall clock), not for its first caller — ``DraftStore``'s debounce reconciliation needs the
+/// same "now", not a transcript-specific one.
+public protocol WallClock: Sendable {
     func now() -> Date
 }
 
-public struct SystemTranscriptClock: TranscriptClock {
+public struct SystemWallClock: WallClock {
     public init() {}
     public func now() -> Date { Date() }
 }
@@ -59,9 +61,9 @@ public struct TranscriptHold: Equatable, Sendable {
 @MainActor
 public final class TranscriptHoldController {
     public private(set) var hold: TranscriptHold?
-    private let clock: TranscriptClock
+    private let clock: WallClock
 
-    public init(clock: TranscriptClock = SystemTranscriptClock()) {
+    public init(clock: WallClock = SystemWallClock()) {
         self.clock = clock
     }
 
