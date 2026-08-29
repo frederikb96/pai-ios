@@ -14,6 +14,7 @@ import PackageDescription
     let applePlatformOnly = [
         "Networking/PaiSseClient.swift",
         "Networking/PaiTerminalStreamClient.swift",
+        "Layout/TextKitBlockMeasurer.swift",
     ]
     let applePlatformOnlyTests = [
         "PaiSseClientTests.swift",
