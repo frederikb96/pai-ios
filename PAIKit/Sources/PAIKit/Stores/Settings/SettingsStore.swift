@@ -38,6 +38,7 @@ public final class SettingsStore {
         static let sentMessages = "sentMessages"
         static let recordings = "recordings"
         static let expandPreferences = "expandPreferences"
+        static let theme = "theme"
     }
 
     static let maxSentMessages = 10
@@ -53,6 +54,9 @@ public final class SettingsStore {
     /// Keyed by `ExpandPreferences.toolExpandKey`/`.systemExpandKey`. An absent key reads as
     /// `false` — see `isExpandEnabled`.
     public private(set) var expandPreferences: [String: Bool]
+
+    /// Client-side only, like the web's. Nothing about the appearance reaches the server.
+    public private(set) var theme: AppTheme
 
     public let elevenLabsKey: WriteOnlySecretField
     public let smtp: SmtpSettingsStore
@@ -82,9 +86,15 @@ public final class SettingsStore {
         sentMessages = storage.value(forKey: Keys.sentMessages) ?? []
         recordings = storage.value(forKey: Keys.recordings) ?? []
         expandPreferences = storage.value(forKey: Keys.expandPreferences) ?? [:]
+        theme = storage.value(forKey: Keys.theme) ?? .system
     }
 
     // MARK: - Client-side settings, immediate apply
+
+    public func setTheme(_ theme: AppTheme) {
+        self.theme = theme
+        storage.setValue(theme, forKey: Keys.theme)
+    }
 
     public func setSttLanguage(_ language: SttLanguage) {
         sttLanguage = language
