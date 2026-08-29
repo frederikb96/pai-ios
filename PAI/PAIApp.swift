@@ -11,6 +11,7 @@ struct PAIApp: App {
 
     init() {
         #if DEBUG
+            FixtureBootstrap.installIfRequested()
             Self.debugBridge.start()
         #endif
     }
@@ -48,6 +49,14 @@ struct PAIApp: App {
 
             router.register("GET", "/routes") { _ in
                 .encoding(["routes": routeNames])
+            }
+
+            // What the fixture screenshot workflow asks first: which named screens can it launch
+            // straight into. Reads `Route.namedScreens` rather than a list kept here in sync by
+            // hand, so a screen becomes photographable the moment its case exists — no second
+            // place to remember to update.
+            router.register("GET", "/screens") { _ in
+                .encoding(["screens": Route.namedScreens])
             }
 
             // Parses through the real parser, so this reports what the renderer would actually be

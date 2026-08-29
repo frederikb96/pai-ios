@@ -87,39 +87,88 @@ jobs:
           xcrun simctl boot "$udid" || true
           xcrun simctl bootstatus "$udid" -b
 
-      - name: Run it, and look at it
+      - name: Install the app
         if: inputs.run_app != false
         run: |
-          mkdir -p artifacts
           udid="${{ steps.sim.outputs.udid }}"
           app=$(find build/dd/Build/Products -name '*.app' -maxdepth 3 | head -1)
           [ -n "$app" ] || { echo 'build produced no .app'; exit 1; }
           xcrun simctl install "$udid" "$app"
+
+      # Fixture mode, the launch-argument router and the debug bridge are all `#if DEBUG` — none
+      # of them exist in a Release build, so this only runs for Debug. One launch per screen,
+      # each with `-PaiFixtureMode` so the app answers from `PaiFixtures` instead of the network,
+      # and `-PaiFixtureRoute <name>` to seed the navigation path straight to that screen. The
+      # first launch (no route — the root session list) also asks the bridge's `/screens` for the
+      # rest of the list, so a screen becomes photographable the moment its `Route` case exists,
+      # with no edit here.
+      #
+      # Every screen is attempted even after one fails: a run that stops at the second of five
+      # screens has already spent the minutes for all five and answered the fewest questions per
+      # minute it could have. Failures accumulate in `$fail` and the job fails once, at the end.
+      - name: Screenshot every screen fixture mode can reach
+        if: inputs.run_app != false && (inputs.configuration || 'Debug') == 'Debug'
+        run: |
+          set -o pipefail
+          mkdir -p artifacts
+          udid="${{ steps.sim.outputs.udid }}"
+          bundle=com.frederikberg.pai
+          fail=0
+
+          screenshot() {
+            name="$1"; shift
+            xcrun simctl launch "$udid" "$bundle" -PaiFixtureMode "$@" > /dev/null
+            ok=0
+            for attempt in $(seq 1 10); do
+              if curl -sS --max-time 3 "http://127.0.0.1:8765/health" -o "artifacts/health-$name.json"; then
+                ok=1
+                break
+              fi
+              sleep 2
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "::warning::$name: debug bridge never answered"
+              fail=1
+            fi
+            xcrun simctl io "$udid" screenshot "artifacts/screen-$name.png"
+            bytes=$(stat -f %z "artifacts/screen-$name.png")
+            echo "$name: ${bytes} bytes"
+            # A blank screen still produces a valid PNG, just a small one — the one thing every
+            # other check here can pass while the screen itself renders nothing.
+            if [ "$bytes" -le 20000 ]; then
+              echo "::warning::$name: screenshot suspiciously small — the screen may be blank"
+              fail=1
+            fi
+          }
+
+          screenshot root
+          curl -sS --max-time 5 "http://127.0.0.1:8765/screens" -o artifacts/screens.json \
+            || echo '{"screens":[]}' > artifacts/screens.json
+          xcrun simctl terminate "$udid" "$bundle" || true
+
+          names=$(python3 -c "import json; print('\n'.join(json.load(open('artifacts/screens.json'))['screens']))")
+          while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            screenshot "$name" -PaiFixtureRoute "$name"
+            xcrun simctl terminate "$udid" "$bundle" || true
+          done <<< "$names"
+
+          [ "$fail" -eq 0 ] || { echo 'one or more screens failed — see the warnings above'; exit 1; }
+
+      # No fixture mode and no debug bridge in Release — this is the plain "does it draw
+      # anything" check the Debug path above replaces with one screenshot per screen.
+      - name: Screenshot the running app
+        if: inputs.run_app != false && (inputs.configuration || 'Debug') == 'Release'
+        run: |
+          mkdir -p artifacts
+          udid="${{ steps.sim.outputs.udid }}"
           xcrun simctl launch "$udid" com.frederikberg.pai
           # launch returns once the process exists, which is before it has drawn anything.
           sleep 8
           xcrun simctl io "$udid" screenshot artifacts/screen.png
           bytes=$(stat -f %z artifacts/screen.png)
           echo "screenshot is $bytes bytes"
-          # A blank screen still produces a valid PNG, just a small one. Every other check here
-          # can pass while the app renders nothing, so this is the one that catches it.
           [ "$bytes" -gt 20000 ] || { echo 'suspiciously small — the screen may be blank'; exit 1; }
-
-      - name: Ask the app what it thinks
-        if: inputs.run_app != false
-        run: |
-          # A simulator shares the host's network stack, so the app's loopback listener answers
-          # here directly — no port forwarding. Structured state beats reading pixels.
-          for attempt in $(seq 1 10); do
-            if curl -sS --max-time 3 http://127.0.0.1:8765/health -o artifacts/health.json; then
-              echo "bridge answered on attempt $attempt"; cat artifacts/health.json
-              curl -sS --max-time 5 http://127.0.0.1:8765/routes -o artifacts/routes.json
-              exit 0
-            fi
-            sleep 2
-          done
-          echo 'debug bridge never answered'
-          exit 1
 
       - name: Application logs
         if: always() && inputs.run_app != false
