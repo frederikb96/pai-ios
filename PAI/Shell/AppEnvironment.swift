@@ -34,11 +34,20 @@ final class AppEnvironment {
     /// Grouped rather than a set of optionals so "configured" is one question with one answer;
     /// separate optionals drift into states where some are set and some are not.
     struct Connection {
+        /// Exposed as well as the client because the two streaming clients take the factory
+        /// directly rather than going through `PaiApiClient`. A screen that needs a stream must be
+        /// handed this one — building a second factory would put a second copy of the base URL and
+        /// the bearer header in the app, which is the thing having one factory prevents.
+        let requestFactory: PaiRequestFactory
         let apiClient: PaiApiClient
         let sessions: SessionListStore
         let machines: MachineStore
         let transcript: TranscriptStore
         let settings: SettingsStore
+        /// App-wide rather than per-composer: a draft is how a half-written message reaches
+        /// another device, and the web syncs them on the same tick as sessions. Scoped to a screen
+        /// it would only sync while that screen happened to be open.
+        let drafts: DraftStore
     }
 
     private static let backendURLKey = "backendURL"
@@ -95,11 +104,13 @@ final class AppEnvironment {
 
         let client = PaiApiClient(requestFactory: factory)
         connection = Connection(
+            requestFactory: factory,
             apiClient: client,
             sessions: SessionListStore(api: client),
             machines: MachineStore(api: client),
             transcript: TranscriptStore(),
-            settings: SettingsStore(apiClient: client, storage: defaults)
+            settings: SettingsStore(apiClient: client, storage: defaults),
+            drafts: DraftStore(api: client)
         )
         lastAuthFailure = nil
         router.gate = .ready

@@ -34,6 +34,14 @@ struct RootView: View {
                 .environment(connection.machines)
                 .environment(connection.transcript)
                 .environment(connection.settings)
+                .environment(connection.drafts)
+                .environment(\.terminalStreamClientFactory) { sessionID, callbacks in
+                    PaiTerminalStreamClient(
+                        sessionId: sessionID,
+                        requestFactory: connection.requestFactory,
+                        callbacks: callbacks
+                    )
+                }
             } else {
                 // `ready` without a connection should be unreachable; showing sign-in is the only
                 // state a user can act on, and a blank screen is the alternative.

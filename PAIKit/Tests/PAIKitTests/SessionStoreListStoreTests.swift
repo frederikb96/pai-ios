@@ -316,7 +316,10 @@ final class SessionStoreListStoreTests: XCTestCase {
         }
         let store = makeStore(api: api)
         store.setMachineFilter("vm")
-        try? await Task.sleep(nanoseconds: 5_000_000)
+        // Wait for the browse to land rather than guessing how long it takes: the id filter below
+        // is applied on top of whatever the server source holds, so filtering before it arrives
+        // tests nothing and fails whenever the machine is busy.
+        await awaitRows(store, ["abcd1234efgh", "zzzz9999wwww"])
 
         store.updateFilterText("abcd1234")
 

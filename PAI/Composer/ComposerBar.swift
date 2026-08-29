@@ -12,6 +12,7 @@ import SwiftUI
 /// rather than merely disabling a text field.
 struct ComposerBar: View {
     @Environment(AppEnvironment.self) private var environment
+    @Environment(DraftStore.self) private var drafts
     @Environment(TranscriptStore.self) private var transcript
     @Environment(SettingsStore.self) private var settings
     @Environment(MachineStore.self) private var machines
@@ -52,7 +53,7 @@ struct ComposerBar: View {
         }
         .task {
             guard draftStore == nil, let connection = environment.connection else { return }
-            let newDraftStore = DraftStore(api: connection.apiClient)
+            let newDraftStore = drafts
             let newVoiceController = VoiceRecorderController(
                 apiClient: connection.apiClient, settingsStore: connection.settings)
             draftStore = newDraftStore
