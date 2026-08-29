@@ -1,11 +1,15 @@
+require "base64"
+require "tmpdir"
+
 default_platform(:ios)
 
 # One set of lanes for both the rented Mac and CI. Keeping them shared is deliberate: a local
 # lane that drifts from the CI lane turns "works on my machine" into a class of release failure,
 # and with a build box that is destroyed after every burst that drift would go unnoticed.
 
-SCHEME     = "PAI"
-OUTPUT_DIR = "build"
+SCHEME       = "PAI"
+PROFILE_NAME = "PAI App Store"
+OUTPUT_DIR   = "build"
 
 # The bundle id lives in the Appfile; fastlane reads it from there. Repeating it as a constant
 # would be a second source of truth for the same value.
@@ -27,18 +31,35 @@ def version_xcargs
   args.join(" ")
 end
 
-# Certificates and provisioning profiles are fetched on demand via the App Store Connect API key
-# rather than through `match`. `match` would need a second private git repository — one more
-# secret, one more thing to keep in sync — and on a box with no persistent state there is nothing
-# to restore anyway. Provisioning runs every session either way.
+# 🚨 Signing uses an identity minted once and stored as secrets, NOT created per build.
+#
+# A signing certificate's private key is generated locally and can never be downloaded from
+# Apple. So any build machine that does not already hold the key must create a NEW certificate —
+# and Apple caps distribution certificates per account. A fresh CI runner every build therefore
+# burns through that cap in a few runs and then fails permanently until one is revoked by hand.
+#
+# Owning the key removes the whole failure mode: CI imports it and never calls Apple's
+# certificate endpoints. `match` solves this too, by keeping the identity in a second private git
+# repo — that costs an extra repository, a push credential and a passphrase to hold one file,
+# where a secret store already exists here.
+#
+# Mint or renew with the ios skill's setup-signing.sh; both expire two years from issue.
 def asc_key
   app_store_connect_api_key(
     key_id:      ENV.fetch("ASC_KEY_ID"),
     issuer_id:   ENV.fetch("ASC_ISSUER_ID"),
-    key_content: ENV.fetch("ASC_KEY_P8"),
-    is_key_content_base64: false,
+    key_content: ENV.fetch("ASC_KEY_P8_BASE64"),
+    is_key_content_base64: true,
     in_house:    false
   )
+end
+
+# Decoded here rather than in the workflow so `fastlane build` behaves identically on a rented
+# Mac and in CI — the lanes are shared precisely so local and CI cannot drift.
+def decode_secret(var, filename)
+  path = File.join(Dir.tmpdir, filename)
+  File.binwrite(path, Base64.decode64(ENV.fetch(var)))
+  path
 end
 
 platform :ios do
@@ -55,13 +76,19 @@ platform :ios do
 
   desc "Archive and sign a release build"
   lane :build do
-    api_key = asc_key
+    # On CI this creates a throwaway keychain and unlocks it; locally it is a no-op, so the
+    # lane stays runnable on a rented Mac without polluting the login keychain.
+    setup_ci
 
-    sync_code_signing(
-      type: "appstore",
-      app_identifier: APP_IDENTIFIER,
-      api_key: api_key,
-      readonly: false
+    import_certificate(
+      certificate_path: decode_secret("IOS_BUILD_CERTIFICATE_BASE64", "distribution.p12"),
+      certificate_password: ENV.fetch("IOS_P12_PASSWORD"),
+      keychain_name: ENV.fetch("MATCH_KEYCHAIN_NAME", "fastlane_tmp_keychain"),
+      keychain_password: ENV.fetch("MATCH_KEYCHAIN_PASSWORD", "")
+    )
+
+    install_provisioning_profile(
+      path: decode_secret("IOS_PROVISIONING_PROFILE_BASE64", "profile.mobileprovision")
     )
 
     build_app(
@@ -69,6 +96,14 @@ platform :ios do
       output_directory: OUTPUT_DIR,
       output_name: ipa_name,
       export_method: "app-store",
+      # Manual signing, because the identity is supplied rather than discovered. Automatic
+      # signing here would ask Apple for a certificate and reintroduce exactly the cap problem
+      # the stored identity exists to avoid.
+      export_options: {
+        signingStyle: "manual",
+        teamID: ENV.fetch("IOS_TEAM_ID"),
+        provisioningProfiles: { APP_IDENTIFIER => PROFILE_NAME }
+      },
       # The git tag is the single source of truth for the marketing version; the build number is
       # the CI run number. Overriding on the command line keeps the checked-in project file
       # untouched, which `agvtool` would not.
