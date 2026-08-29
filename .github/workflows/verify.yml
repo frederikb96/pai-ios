@@ -1,0 +1,114 @@
+name: Verify
+
+# Runs the app and looks at it — the loop an agent needs, on a runner instead of a rented Mac.
+#
+# Building proves the code compiles; it says nothing about whether the app draws anything. This
+# boots a simulator, installs, launches, screenshots, and queries the app's own debug bridge, then
+# publishes all of it as artifacts. A change can therefore be *seen* without anyone owning a Mac.
+#
+# A rented Mac is still better for tight iteration — seconds per cycle instead of minutes — but
+# nothing here needs one, and nothing here needs an Apple credential either.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'PAI/**'
+      - 'PAIKit/Sources/**'
+      - '.github/workflows/verify.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  run-it:
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.6'
+
+      - name: Build for the simulator
+        run: |
+          set -o pipefail
+          xcodebuild -project PAI.xcodeproj -scheme PAI \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug -derivedDataPath build/dd \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tail -20
+
+      - name: Boot a simulator
+        id: sim
+        run: |
+          # Chosen from what the image actually has rather than hardcoded: runner images change
+          # their device list between releases, and a missing name fails late and confusingly.
+          udid=$(xcrun simctl list devices available -j | python3 -c "
+          import json,sys
+          devices = json.load(sys.stdin)['devices']
+          for runtime in sorted(devices, reverse=True):
+              if 'iOS' not in runtime: continue
+              for d in devices[runtime]:
+                  if d.get('isAvailable') and 'iPhone' in d['name']:
+                      print(d['udid']); raise SystemExit
+          ")
+          [ -n "$udid" ] || { echo 'no iPhone simulator available'; exit 1; }
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$udid" || true
+          xcrun simctl bootstatus "$udid" -b
+
+      - name: Install and launch
+        run: |
+          app=$(find build/dd/Build/Products -name '*.app' -maxdepth 3 | head -1)
+          [ -n "$app" ] || { echo 'build produced no .app'; exit 1; }
+          xcrun simctl install "${{ steps.sim.outputs.udid }}" "$app"
+          xcrun simctl launch "${{ steps.sim.outputs.udid }}" com.frederikberg.pai
+          # launch returns once the process exists, which is before it has drawn anything.
+          sleep 8
+
+      - name: Screenshot
+        run: |
+          mkdir -p artifacts
+          xcrun simctl io "${{ steps.sim.outputs.udid }}" screenshot artifacts/screen.png
+          bytes=$(stat -f %z artifacts/screen.png)
+          echo "screenshot is $bytes bytes"
+          # A blank screen still produces a valid PNG, just a tiny one. Every other check in this
+          # job can pass while the app renders nothing, so this is the one that catches it.
+          [ "$bytes" -gt 20000 ] || { echo 'suspiciously small — the screen may be blank'; exit 1; }
+
+      - name: Query the debug bridge
+        run: |
+          # A simulator shares the host's network stack, so the app's loopback listener is
+          # reachable from here directly — no port forwarding. If this works, an agent can read
+          # real application state instead of inferring it from pixels.
+          for attempt in $(seq 1 10); do
+            if curl -sS --max-time 3 http://127.0.0.1:8765/health -o artifacts/health.json; then
+              echo "bridge answered on attempt $attempt"
+              cat artifacts/health.json
+              curl -sS --max-time 5 http://127.0.0.1:8765/routes -o artifacts/routes.json && cat artifacts/routes.json
+              printf '# Heading\n\n- one\n- two\n' > /tmp/sample.md
+              curl -sS --max-time 5 -X POST --data-binary @/tmp/sample.md \
+                http://127.0.0.1:8765/markdown -o artifacts/markdown.json && cat artifacts/markdown.json
+              exit 0
+            fi
+            sleep 2
+          done
+          echo 'debug bridge never answered'
+          exit 1
+
+      - name: Application logs
+        if: always()
+        run: |
+          xcrun simctl spawn "${{ steps.sim.outputs.udid }}" log show --last 3m --style compact \
+            --predicate 'processImagePath CONTAINS "PAI"' > artifacts/app.log 2>&1 || true
+          tail -30 artifacts/app.log || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-artifacts
+          path: artifacts/
+          retention-days: 14
