@@ -1,5 +1,11 @@
 import Foundation
 
+// URLSession and friends live in FoundationNetworking on Linux, where the free CI runner builds
+// this package. On Apple platforms the module does not exist and Foundation already has them.
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
+
 /// Swift port of `pai-cloud/web/src/api/sse.ts` — the resumable transcript stream. The web
 /// authenticates it with a cookie only because a browser `EventSource` cannot send headers;
 /// `URLSession` can, so this client sends the same `Authorization` header as every other

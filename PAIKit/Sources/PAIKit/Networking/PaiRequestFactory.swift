@@ -1,5 +1,11 @@
 import Foundation
 
+// URLSession and friends live in FoundationNetworking on Linux, where the free CI runner builds
+// this package. On Apple platforms the module does not exist and Foundation already has them.
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
+
 /// Builds every request the app sends.
 ///
 /// pai-android constructs the `Authorization` header independently in three places — the REST

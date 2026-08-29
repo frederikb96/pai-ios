@@ -1,5 +1,11 @@
 import Foundation
 
+// URLSession and friends live in FoundationNetworking on Linux, where the free CI runner builds
+// this package. On Apple platforms the module does not exist and Foundation already has them.
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
+
 /// Swift port of `pai-cloud/web/src/api/terminalStream.ts`. Deliberately not `PaiSseClient`: no
 /// cursor, no replay — a terminal is a raw live view, not a resumable log — and a different
 /// backoff. See that type's doc comment for why this authenticates natively via

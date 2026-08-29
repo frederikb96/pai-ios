@@ -1,5 +1,11 @@
 import Foundation
 
+// URLSession and friends live in FoundationNetworking on Linux, where the free CI runner builds
+// this package. On Apple platforms the module does not exist and Foundation already has them.
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
+
 /// The backend's error contract is exactly one field: `{ "detail": String }`.
 ///
 /// The web client throws `new Error(error.detail)` and every catch site surfaces that string

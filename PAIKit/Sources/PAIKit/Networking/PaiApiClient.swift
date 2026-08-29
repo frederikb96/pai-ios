@@ -1,5 +1,11 @@
 import Foundation
 
+// URLSession and friends live in FoundationNetworking on Linux, where the free CI runner builds
+// this package. On Apple platforms the module does not exist and Foundation already has them.
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
+
 // MARK: - Shapes with no equivalent in types.ts
 
 // `client.ts` defines a couple of union return shapes inline rather than in `types.ts`; they

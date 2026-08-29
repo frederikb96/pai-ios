@@ -1,5 +1,11 @@
 import Foundation
 
+// URLSession and friends live in FoundationNetworking on Linux, where the free CI runner builds
+// this package. On Apple platforms the module does not exist and Foundation already has them.
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
+
 /// A minimal `URLProtocol` stub so `PaiApiClient` tests exercise the real request-building and
 /// response-decoding path — query items, body, headers, status handling — without a network
 /// call. Static state is lock-protected rather than actor-isolated: `URLProtocol` callbacks run
