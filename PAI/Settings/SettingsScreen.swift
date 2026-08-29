@@ -1,7 +1,9 @@
 import PAIKit
 import SwiftUI
 
-/// Everything the web's settings panel offers, minus the deferred sections.
+/// Everything the web's settings panel offers, minus what is out of scope: the VM shell and the
+/// apps/memory section. Built from the settings inventory report attached to this block's spec
+/// row rather than re-reading the web from scratch.
 struct SettingsScreen: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(SettingsStore.self) private var settings
@@ -16,6 +18,19 @@ struct SettingsScreen: View {
                 }
                 .accessibilityIdentifier("theme-picker")
             }
+
+            SmtpSection(smtp: settings.smtp)
+
+            VoiceSection(settings: settings)
+
+            Section("Messages") {
+                NavigationLink("Message Display") {
+                    ExpandPreferencesScreen(settings: settings)
+                }
+                .accessibilityIdentifier("open-expand-preferences")
+            }
+
+            DiagnosticsSection(settings: settings)
 
             Section {
                 Button("Sign out", role: .destructive) { environment.signOut() }
