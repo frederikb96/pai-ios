@@ -111,18 +111,22 @@ final class WorstCaseLayoutTimingTests: XCTestCase {
             "composing \(blocks.count) blocks for the first time took \(firstPassElapsed)")
 
         // The scroll-time case: the same message laid out again, as happens whenever a cell
-        // scrolls back on screen. Every block should hit the cache, so this pass measures nothing
-        // and must be far faster than the first — the property the whole design exists for.
+        // scrolls back on screen. Every block should hit the cache, so this pass measures nothing.
         let rescoreStart = clock.now
         _ = MessageContentLayoutComposer.layout(
             of: blocks, width: 350, environment: environment, metrics: metrics, measurer: measurer, cache: cache
         )
         let secondPassElapsed = clock.now - rescoreStart
 
+        // The call count is the honest assertion, because it states the property directly: the
+        // second pass measured nothing. Comparing the two elapsed times instead asserts a verdict
+        // about a shared machine, and a CI runner or a busy dev box makes it fail for reasons that
+        // have nothing to do with the cache. The timings are reported, not judged.
         XCTAssertEqual(
             measurer.callCount, blocks.count,
             "the second pass re-measured at least one block instead of hitting the cache for every one of them")
-        XCTAssertLessThan(
-            secondPassElapsed, firstPassElapsed, "a fully-cached re-layout was not faster than the first, uncached one")
+        print(
+            "worst-case layout: \(blocks.count) blocks, first pass \(firstPassElapsed), "
+                + "fully-cached pass \(secondPassElapsed)")
     }
 }
