@@ -45,7 +45,8 @@ jobs:
       # above the last twenty lines. Without this a failure says only "exit code 65".
       - name: Surface compiler errors
         if: failure()
-        run: grep -E "error:" /tmp/build.log | head -40 || echo "no error: lines found"
+        run: |
+          grep -E "error:" /tmp/build.log | head -40 || echo "no compiler errors in the log"
 
       - name: Boot a simulator
         id: sim
