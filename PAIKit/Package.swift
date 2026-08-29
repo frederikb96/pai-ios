@@ -1,6 +1,29 @@
 // swift-tools-version: 6.2
 import PackageDescription
 
+// The two streaming clients use `URLSession.bytes(for:)`, which swift-corelibs-foundation does
+// not implement — so they are the only thing standing between this package and a free Linux CI
+// runner. Excluding them there keeps every other model, parser and client testable for nothing.
+//
+// A manifest is compiled and run on the build host, so this reflects where the build happens:
+// false under Xcode on macOS, true on the Linux runner.
+//
+// The right long-term fix is to lift the event-framing loop out of the transport, which is the
+// part actually worth testing; the URLSession glue around it barely is.
+#if os(Linux)
+    let applePlatformOnly = [
+        "Networking/PaiSseClient.swift",
+        "Networking/PaiTerminalStreamClient.swift",
+    ]
+    let applePlatformOnlyTests = [
+        "PaiSseClientTests.swift",
+        "PaiTerminalStreamClientTests.swift",
+    ]
+#else
+    let applePlatformOnly: [String] = []
+    let applePlatformOnlyTests: [String] = []
+#endif
+
 // Nearly all of the app lives here rather than in the Xcode project.
 //
 // A Package.swift is plainly reviewable where a project file is not, it builds and tests on any
@@ -27,7 +50,8 @@ let package = Package(
             name: "PAIKit",
             dependencies: [
                 .product(name: "Markdown", package: "swift-markdown")
-            ]
+            ],
+            exclude: applePlatformOnly
         ),
         .testTarget(
             name: "PAIKitTests",
@@ -36,7 +60,8 @@ let package = Package(
                 // Named explicitly, not left transitive: a markdown test calls the internal
                 // parse seam, whose signature is typed in this module.
                 .product(name: "Markdown", package: "swift-markdown"),
-            ]
+            ],
+            exclude: applePlatformOnlyTests
         ),
     ]
 )

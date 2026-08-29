@@ -41,8 +41,14 @@ jobs:
           key: dd-${{ runner.os }}-${{ hashFiles('PAIKit/Package.swift', 'PAI.xcodeproj/project.pbxproj') }}
           restore-keys: dd-${{ runner.os }}-
 
-      # The package and its tests run free on Linux (see free-checks.yml), so this builds only
-      # the app target — the part that needs an iOS SDK.
+      # Most of the package is tested free on Linux, but the two streaming clients are excluded
+      # there — swift-corelibs-foundation has no `URLSession.bytes(for:)`. This is the only place
+      # their tests can run, so it is where they run.
+      - name: Test what Linux cannot
+        run: swift test --package-path PAIKit --filter 'Sse|Terminal'
+
+      # Everything else in the package is already green from free-checks, so this builds only the
+      # app target — the part that needs an iOS SDK.
       - name: Build the app
         run: |
           set -o pipefail
