@@ -160,6 +160,110 @@
             public static let currentBackground = Color("searchHighlightCurrentBackground")
             public static let currentForeground = Color("searchHighlightCurrentForeground")
         }
+
+        // MARK: - Semantic (light/dark pairs, mirrored from web/src/**/*.tsx's `bg-X dark:Y` usage)
+
+        /// Named UI roles, each an asset-catalog colour set with a genuine light AND dark
+        /// appearance entry — unlike the raw scale above, whose values never vary by appearance.
+        /// The web never tokenises these either: every component picks its own light/dark pair
+        /// inline (`bg-surface-50 dark:bg-surface-900`, and so on), so a view here would otherwise
+        /// have to branch on `colorScheme` by hand at every call site, once per component. These
+        /// exist to make that branching unnecessary — a call site reaches for `.textPrimary` and
+        /// the asset catalog resolves the pair for the system appearance.
+        ///
+        /// Names and pairings come from a frequency sweep of `web/src/**/*.tsx` (`__tests__`
+        /// excluded), counting exact `PROPERTY-light dark:PROPERTY-dark` pairs with no other
+        /// modifier (`hover:`, `focus:`, …) — those don't port to a touch UI and were excluded.
+        /// The web is inconsistent with itself: several near-identical pairs recur for what's
+        /// clearly the same role (`text-surface-500 dark:text-surface-400` in 19 files vs.
+        /// `text-surface-600 dark:text-surface-400` in 14, both reading as "muted text"). Rather
+        /// than name every variant, the most frequent exact pair became the named colour and the
+        /// rest were folded into it — each fold recorded on the property it landed on. A pairing
+        /// used in only one or two files was named only where it fills a role no other named
+        /// colour covers (the warning/error banner text and backgrounds); otherwise it was left
+        /// unnamed — `PaiPalette`'s raw scale is still there for a one-off call site.
+        public enum Semantic {
+
+            // MARK: Background
+
+            /// `bg-white dark:bg-surface-950` — the outermost full-screen containers (`App.tsx`,
+            /// `ErrorBoundary.tsx`, `AppPage.tsx`), 3 files.
+            public static let screenBackground = Color("screenBackground")
+            /// `bg-white dark:bg-surface-900` — modals, panels and overlays sitting above
+            /// `screenBackground`, 10 files. A shallower dark value than `screenBackground` reads
+            /// as "raised" the same way a lighter shadow would in light mode.
+            public static let panelBackground = Color("panelBackground")
+            /// `bg-surface-100 dark:bg-surface-800` — inputs, hover rows, elevated blocks, 13
+            /// files — the most common non-page background in the app.
+            public static let raisedSurface = Color("raisedSurface")
+            /// `bg-surface-50 dark:bg-surface-800/50` — subtle inset highlight rows, 3 files. The
+            /// 50% alpha on the dark value only is copied as-is from the web; light mode is fully
+            /// opaque.
+            public static let insetBackground = Color("insetBackground")
+            /// `bg-primary-50 dark:bg-primary-900/20` — the active/selected state for a picker
+            /// option or nav item, 3 files. Folds in `bg-primary-50 dark:bg-primary-900/30` (1
+            /// file), a 10-point-alpha variant of the same role.
+            public static let accentBackground = Color("accentBackground")
+            /// `bg-amber-50 dark:bg-amber-950/30` — the "blocked" banner background
+            /// (`BlockerBanner.tsx`, `ClaudeAuthBanner.tsx`), 2 files.
+            public static let warningBackground = Color("warningBackground")
+            /// `bg-red-50 dark:bg-red-950/30` — the error/attention banner background, same 2
+            /// files. Folds in `bg-red-50 dark:bg-red-950/40` (1 file).
+            public static let errorBackground = Color("errorBackground")
+
+            // MARK: Text (visual-weight tiers, strongest to faintest)
+
+            /// `text-surface-900 dark:text-surface-100` — near-maximum contrast, 9 files.
+            public static let textStrong = Color("textStrong")
+            /// `text-surface-800 dark:text-surface-200` — default emphasised text, 14 files, the
+            /// most common of the two strong tiers. Folds in `text-surface-700 dark:text-surface-200`
+            /// (2 files).
+            public static let textPrimary = Color("textPrimary")
+            /// `text-surface-700 dark:text-surface-300` — 8 files.
+            public static let textSecondary = Color("textSecondary")
+            /// `text-surface-500 dark:text-surface-400` — 19 files, the single most common text
+            /// pairing in the app. Folds in `text-surface-600 dark:text-surface-400` (14 files) —
+            /// the two are indistinguishable in dark mode and one step apart in light mode.
+            public static let textMuted = Color("textMuted")
+            /// `text-surface-400 dark:text-surface-500` — the faintest text tier, 12 files. Also
+            /// covers `placeholder-surface-400 dark:placeholder-surface-500` (8 files): SwiftUI has
+            /// no separate "placeholder colour" CSS property, and the two pairings share identical
+            /// values, so a placeholder call site reaches for this rather than a redundant twin.
+            public static let textFaint = Color("textFaint")
+            /// `text-surface-500 dark:text-surface-500` — 7 files. The one text tier that stays the
+            /// same colour across appearance, unlike every other entry here — named separately
+            /// because that behaviour is real, not an oversight.
+            public static let textConstant = Color("textConstant")
+            /// `text-primary-700 dark:text-primary-300` — accent-coloured text, paired with
+            /// `accentBackground`, 5 files. Folds in `text-primary-600 dark:text-primary-400` (3
+            /// files).
+            public static let accentText = Color("accentText")
+            /// `text-amber-600 dark:text-amber-400` — general warning text/badges, 4 files.
+            public static let warningText = Color("warningText")
+            /// `text-amber-900 dark:text-amber-200` — the "blocked" banner's own heading text, 2
+            /// files — stronger contrast than `warningText`, a distinct role rather than a fold.
+            public static let warningBannerText = Color("warningBannerText")
+            /// `text-red-600 dark:text-red-400` — general error text, 5 files. Folds in
+            /// `text-red-700 dark:text-red-400` (2 files).
+            public static let errorText = Color("errorText")
+            /// `text-red-900 dark:text-red-200` — the error banner's own heading text, 2 files,
+            /// mirroring `warningBannerText`.
+            public static let errorBannerText = Color("errorBannerText")
+
+            // MARK: Border
+
+            /// `border-surface-200 dark:border-surface-800` — the default divider, 18 files, by
+            /// far the most common border pairing.
+            public static let borderDefault = Color("borderDefault")
+            /// `border-surface-200 dark:border-surface-700` — a more visible border for a handful
+            /// of prominent boundaries (pickers, modals), 8 files. Folds in
+            /// `border-surface-300 dark:border-surface-700` (2 files).
+            public static let borderStrong = Color("borderStrong")
+            /// `border-red-300 dark:border-red-800` — the error banner's border, 3 files.
+            public static let errorBorder = Color("errorBorder")
+            /// `border-amber-300 dark:border-amber-800` — the "blocked" banner's border, 2 files.
+            public static let warningBorder = Color("warningBorder")
+        }
     }
 
 #endif

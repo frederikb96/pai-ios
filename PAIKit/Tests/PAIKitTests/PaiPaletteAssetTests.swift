@@ -55,8 +55,13 @@ final class PaiPaletteAssetTests: XCTestCase {
                 }
                 let colorSpace: String
             }
+            struct Appearance: Decodable {
+                let appearance: String
+                let value: String
+            }
             let idiom: String
             let color: ColorValue
+            let appearances: [Appearance]?
         }
         let colors: [ColorEntry]
     }
@@ -70,38 +75,64 @@ final class PaiPaletteAssetTests: XCTestCase {
         )
         XCTAssertGreaterThan(
             Self.referencedNames.count,
-            50,
-            "expected ~86 Color(name:) references, found \(Self.referencedNames.count) — "
-                + "the extraction regex or the source layout changed"
+            100,
+            "expected ~108 Color(name:) references (86 raw + 22 semantic), found "
+                + "\(Self.referencedNames.count) — the extraction regex or the source layout changed"
         )
     }
 
+    /// The raw scale (`Colors/<Family>/`) never varies by appearance, so a well-formed entry
+    /// there is a single universal colour. `Colors/Semantic/` is the opposite: every entry must
+    /// carry a genuine light AND dark appearance, or the whole point of the semantic layer — no
+    /// `colorScheme` branching at the call site — silently stops holding.
     func testEveryReferencedAssetHasAWellFormedColorSet() throws {
         for name in Self.referencedNames {
             let colorSetDir = try Self.findColorSet(named: name)
             let decoded = try Self.decodeColorSet(at: colorSetDir)
+            let isSemantic = colorSetDir.deletingLastPathComponent().lastPathComponent == "Semantic"
 
-            XCTAssertEqual(
-                decoded.colors.count,
-                1,
-                "\(name): expected a single universal entry — none of these values vary by "
-                    + "appearance, so a per-appearance variant would be a duplicate, not a fix"
-            )
-            guard let entry = decoded.colors.first else { continue }
-            XCTAssertEqual(entry.idiom, "universal", "\(name): wrong idiom")
-            XCTAssertEqual(entry.color.colorSpace, "srgb", "\(name): wrong color-space")
+            if isSemantic {
+                XCTAssertEqual(
+                    decoded.colors.count, 2,
+                    "\(name): expected a light entry and a dark-appearance entry")
+                let darkEntries = decoded.colors.filter {
+                    $0.appearances?.contains { $0.appearance == "luminosity" && $0.value == "dark" }
+                        ?? false
+                }
+                XCTAssertEqual(
+                    darkEntries.count, 1,
+                    "\(name): expected exactly one entry tagged luminosity/dark")
+                let lightEntries = decoded.colors.filter { $0.appearances == nil }
+                XCTAssertEqual(
+                    lightEntries.count, 1,
+                    "\(name): expected exactly one entry with no appearances array (the light default)"
+                )
+            } else {
+                XCTAssertEqual(
+                    decoded.colors.count,
+                    1,
+                    "\(name): expected a single universal entry — none of these values vary by "
+                        + "appearance, so a per-appearance variant would be a duplicate, not a fix"
+                )
+            }
 
-            let channels = [
-                ("red", entry.color.components.red),
-                ("green", entry.color.components.green),
-                ("blue", entry.color.components.blue),
-                ("alpha", entry.color.components.alpha),
-            ]
-            for (channel, value) in channels {
-                let parsed = try XCTUnwrap(
-                    Double(value), "\(name).\(channel) is not a decimal string: \(value)")
-                XCTAssertTrue(
-                    (0...1).contains(parsed), "\(name).\(channel) = \(parsed) is outside 0...1")
+            for entry in decoded.colors {
+                XCTAssertEqual(entry.idiom, "universal", "\(name): wrong idiom")
+                XCTAssertEqual(entry.color.colorSpace, "srgb", "\(name): wrong color-space")
+
+                let channels = [
+                    ("red", entry.color.components.red),
+                    ("green", entry.color.components.green),
+                    ("blue", entry.color.components.blue),
+                    ("alpha", entry.color.components.alpha),
+                ]
+                for (channel, value) in channels {
+                    let parsed = try XCTUnwrap(
+                        Double(value), "\(name).\(channel) is not a decimal string: \(value)")
+                    XCTAssertTrue(
+                        (0...1).contains(parsed), "\(name).\(channel) = \(parsed) is outside 0...1"
+                    )
+                }
             }
         }
     }
