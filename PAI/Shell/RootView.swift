@@ -10,6 +10,7 @@ struct RootView: View {
             .preferredColorScheme(colorScheme)
             .task(id: environment.connection == nil) {
                 await environment.loadStartupState()
+                await environment.pollMachines()
             }
     }
 

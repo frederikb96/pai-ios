@@ -45,6 +45,33 @@ final class SessionStoreListStoreTests: XCTestCase {
         return calls
     }
 
+
+    /// Poll until the store's rows match, or fail after a generous ceiling.
+    private func awaitRows(
+        _ store: SessionListStore, _ expected: [String], file: StaticString = #filePath, line: UInt = #line
+    ) async {
+        let deadline = ContinuousClock().now + .seconds(5)
+        while ContinuousClock().now < deadline {
+            if store.rows.map(\.id) == expected { return }
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        XCTAssertEqual(store.rows.map(\.id), expected, file: file, line: line)
+    }
+
+    /// Assert the rows hold a value for a window rather than at one instant.
+    private func assertRowsStay(
+        _ store: SessionListStore, _ expected: [String], file: StaticString = #filePath, line: UInt = #line
+    ) async {
+        let deadline = ContinuousClock().now + .milliseconds(300)
+        while ContinuousClock().now < deadline {
+            guard store.rows.map(\.id) == expected else {
+                XCTFail("rows became \(store.rows.map(\.id)) instead of staying \(expected)", file: file, line: line)
+                return
+            }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+    }
+
     // MARK: - Filter routing: id fragment vs empty vs text
 
     func testIdFragmentNeverReachesTheServer() async {
@@ -237,13 +264,15 @@ final class SessionStoreListStoreTests: XCTestCase {
         store.commitFilterTextNow()
 
         await api.gate.release("search:beta")
-        try? await Task.sleep(nanoseconds: 5_000_000)
-        XCTAssertEqual(store.rows.map(\.id), ["beta-session"])
+        await awaitRows(store, ["beta-session"])
 
+        // Releasing the stale request is the actual subject: it answers last and must lose. A
+        // fixed sleep here asserts that a loaded machine finishes a continuation within a few
+        // milliseconds, which is a claim about the machine — and it failed once under a full
+        // suite. Holding the assertion over a window instead can only fail if the stale result
+        // genuinely wins, which is the thing being tested.
         await api.gate.release("search:alpha")
-        try? await Task.sleep(nanoseconds: 5_000_000)
-
-        XCTAssertEqual(store.rows.map(\.id), ["beta-session"])
+        await assertRowsStay(store, ["beta-session"])
     }
 
     // MARK: - rows: subagent filtering, id-query on top of a server-filtered source

@@ -116,4 +116,22 @@ final class AppEnvironment {
         await connection.settings.refreshSecretPresence()
         await connection.machines.refresh()
     }
+
+    /// Keep the machine directory current for as long as the app is in front of the user.
+    ///
+    /// A laptop coming online or going offline is the one thing here that genuinely changes minute
+    /// to minute — it decides which machines the launch picker offers, so a stale answer offers a
+    /// machine that cannot take the session. The web polls this on its own faster tick for the
+    /// same reason; the interval is taken from there rather than picked.
+    ///
+    /// The loop ends when the task is cancelled, which SwiftUI does when the view it is attached
+    /// to goes away.
+    func pollMachines() async {
+        guard let connection else { return }
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled else { return }
+            await connection.machines.refresh()
+        }
+    }
 }
