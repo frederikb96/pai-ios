@@ -135,7 +135,9 @@ public struct TerminalFrameEvent: Codable, Sendable, Equatable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         data = try container.decode(String.self, forKey: .data)
-        live = try container.decodeIfPresent(Bool.self, forKey: .live) ?? true
+        // Absent *or malformed* means live. `decodeIfPresent` would throw on a present non-bool,
+        // which loses the frame entirely — the web tolerates the same garbage for the same reason.
+        live = (try? container.decode(Bool.self, forKey: .live)) ?? true
     }
 
     private enum CodingKeys: String, CodingKey {

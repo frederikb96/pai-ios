@@ -130,6 +130,14 @@ final class FixtureDecodingTests: XCTestCase {
         XCTAssertTrue(frame.live)
     }
 
+    func testAMalformedLiveFieldIsTreatedAsLiveRatherThanLosingTheFrame() throws {
+        // Throwing here would discard the frame's text as well as its flag, which is a far worse
+        // outcome than an ignored flag. The web tolerates the same garbage for the same reason.
+        let frame = try decode(TerminalFrameEvent.self, from: #"{"data":"hello","live":"nope"}"#, "malformed live")
+        XCTAssertEqual(frame.data, "hello")
+        XCTAssertTrue(frame.live)
+    }
+
     // MARK: - Errors
 
     func testErrorBodiesDecodeAsTheContractShape() throws {

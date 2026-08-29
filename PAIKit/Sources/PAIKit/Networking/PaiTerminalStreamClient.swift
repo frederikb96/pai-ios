@@ -147,14 +147,15 @@ public final class PaiTerminalStreamClient {
     /// than failing a frame outright just because its shape was unexpected. `nonisolated` and
     /// `static` because it is pure and worth testing without the streaming machinery around it.
     nonisolated static func parseFrame(_ raw: String) -> (chunk: String, live: Bool) {
+        // `TerminalFrameEvent` owns the wire shape, including the rule that an absent or
+        // malformed `live` means live. Decoding through it keeps that rule in one place; a second
+        // copy here would be free to drift and nothing would notice which one was wrong.
         guard let jsonData = raw.data(using: .utf8),
-            let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-            let data = parsed["data"] as? String
+            let event = try? JSONDecoder().decode(TerminalFrameEvent.self, from: jsonData)
         else {
             return (raw, true)
         }
-        let live = parsed["live"] as? Bool ?? true
-        return (data, live)
+        return (event.data, event.live)
     }
 
     private func handleDisconnect() {
