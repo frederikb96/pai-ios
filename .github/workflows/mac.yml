@@ -1,28 +1,30 @@
-name: Verify
+name: Mac
 
-# Runs the app and looks at it — the loop an agent needs, on a runner instead of a rented Mac.
+# The metered half: everything that genuinely needs Apple hardware — building the app target,
+# and running it in a simulator to see what it draws.
 #
-# Building proves the code compiles; it says nothing about whether the app draws anything. This
-# boots a simulator, installs, launches, screenshots, and queries the app's own debug bridge, then
-# publishes all of it as artifacts. A change can therefore be *seen* without anyone owning a Mac.
+# 🚨 **Not triggered by pushes to main, deliberately.** macOS bills at 10× and the monthly
+# allowance is roughly 200 macOS minutes; a session that pushes twenty commits and runs this on
+# each would spend the month in an evening. Work on a branch, then ask for one run when there is
+# something worth looking at — `gh workflow run mac.yml` — or open a pull request.
 #
-# A rented Mac is still better for tight iteration — seconds per cycle instead of minutes — but
-# nothing here needs one, and nothing here needs an Apple credential either.
+# One job, one checkout, one build. An earlier split into "compile it" and "run it" workflows
+# built the app twice on every push, for nothing.
 on:
+  pull_request:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'PAI/**'
-      - 'PAIKit/Sources/**'
-      - '.github/workflows/verify.yml'
+    inputs:
+      run_app:
+        description: 'Boot a simulator and run the app (slower; skip for a compile-only check)'
+        type: boolean
+        default: true
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  run-it:
+  build:
     runs-on: macos-26
     timeout-minutes: 30
 
@@ -33,7 +35,15 @@ jobs:
         with:
           xcode-version: '26.6'
 
-      - name: Build for the simulator
+      - uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: dd-${{ runner.os }}-${{ hashFiles('PAIKit/Package.swift', 'PAI.xcodeproj/project.pbxproj') }}
+          restore-keys: dd-${{ runner.os }}-
+
+      # The package and its tests run free on Linux (see free-checks.yml), so this builds only
+      # the app target — the part that needs an iOS SDK.
+      - name: Build the app
         run: |
           set -o pipefail
           xcodebuild -project PAI.xcodeproj -scheme PAI \
@@ -41,8 +51,6 @@ jobs:
             -configuration Debug -derivedDataPath build/dd \
             CODE_SIGNING_ALLOWED=NO build 2>&1 | tee /tmp/build.log | tail -20
 
-      # `tail` on the build above keeps the log readable but hides the errors, which are far
-      # above the last twenty lines. Without this a failure says only "exit code 65".
       - name: Surface compiler errors
         if: failure()
         run: |
@@ -50,9 +58,10 @@ jobs:
 
       - name: Boot a simulator
         id: sim
+        if: inputs.run_app != false
         run: |
-          # Chosen from what the image actually has rather than hardcoded: runner images change
-          # their device list between releases, and a missing name fails late and confusingly.
+          # Chosen from what the image actually has: runner images change their device list
+          # between releases, and a hardcoded name fails late and confusingly.
           udid=$(xcrun simctl list devices available -j | python3 -c "
           import json,sys
           devices = json.load(sys.stdin)['devices']
@@ -67,38 +76,33 @@ jobs:
           xcrun simctl boot "$udid" || true
           xcrun simctl bootstatus "$udid" -b
 
-      - name: Install and launch
-        run: |
-          app=$(find build/dd/Build/Products -name '*.app' -maxdepth 3 | head -1)
-          [ -n "$app" ] || { echo 'build produced no .app'; exit 1; }
-          xcrun simctl install "${{ steps.sim.outputs.udid }}" "$app"
-          xcrun simctl launch "${{ steps.sim.outputs.udid }}" com.frederikberg.pai
-          # launch returns once the process exists, which is before it has drawn anything.
-          sleep 8
-
-      - name: Screenshot
+      - name: Run it, and look at it
+        if: inputs.run_app != false
         run: |
           mkdir -p artifacts
-          xcrun simctl io "${{ steps.sim.outputs.udid }}" screenshot artifacts/screen.png
+          udid="${{ steps.sim.outputs.udid }}"
+          app=$(find build/dd/Build/Products -name '*.app' -maxdepth 3 | head -1)
+          [ -n "$app" ] || { echo 'build produced no .app'; exit 1; }
+          xcrun simctl install "$udid" "$app"
+          xcrun simctl launch "$udid" com.frederikberg.pai
+          # launch returns once the process exists, which is before it has drawn anything.
+          sleep 8
+          xcrun simctl io "$udid" screenshot artifacts/screen.png
           bytes=$(stat -f %z artifacts/screen.png)
           echo "screenshot is $bytes bytes"
-          # A blank screen still produces a valid PNG, just a tiny one. Every other check in this
-          # job can pass while the app renders nothing, so this is the one that catches it.
+          # A blank screen still produces a valid PNG, just a small one. Every other check here
+          # can pass while the app renders nothing, so this is the one that catches it.
           [ "$bytes" -gt 20000 ] || { echo 'suspiciously small — the screen may be blank'; exit 1; }
 
-      - name: Query the debug bridge
+      - name: Ask the app what it thinks
+        if: inputs.run_app != false
         run: |
-          # A simulator shares the host's network stack, so the app's loopback listener is
-          # reachable from here directly — no port forwarding. If this works, an agent can read
-          # real application state instead of inferring it from pixels.
+          # A simulator shares the host's network stack, so the app's loopback listener answers
+          # here directly — no port forwarding. Structured state beats reading pixels.
           for attempt in $(seq 1 10); do
             if curl -sS --max-time 3 http://127.0.0.1:8765/health -o artifacts/health.json; then
-              echo "bridge answered on attempt $attempt"
-              cat artifacts/health.json
-              curl -sS --max-time 5 http://127.0.0.1:8765/routes -o artifacts/routes.json && cat artifacts/routes.json
-              printf '# Heading\n\n- one\n- two\n' > /tmp/sample.md
-              curl -sS --max-time 5 -X POST --data-binary @/tmp/sample.md \
-                http://127.0.0.1:8765/markdown -o artifacts/markdown.json && cat artifacts/markdown.json
+              echo "bridge answered on attempt $attempt"; cat artifacts/health.json
+              curl -sS --max-time 5 http://127.0.0.1:8765/routes -o artifacts/routes.json
               exit 0
             fi
             sleep 2
@@ -107,15 +111,15 @@ jobs:
           exit 1
 
       - name: Application logs
-        if: always()
+        if: always() && inputs.run_app != false
         run: |
+          mkdir -p artifacts
           xcrun simctl spawn "${{ steps.sim.outputs.udid }}" log show --last 3m --style compact \
             --predicate 'processImagePath CONTAINS "PAI"' > artifacts/app.log 2>&1 || true
-          tail -30 artifacts/app.log || true
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: verify-artifacts
+          name: mac-artifacts
           path: artifacts/
           retention-days: 14

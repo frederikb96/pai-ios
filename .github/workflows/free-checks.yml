@@ -1,0 +1,86 @@
+name: Free checks
+
+# Everything that does not require Apple hardware, on the self-hosted runner, at no cost.
+#
+# 🚨 This exists because macOS runners bill at **10×**: a private repo's monthly allowance is
+# roughly 200 macOS minutes, and a careless day spends a third of it. Only two files in `PAIKit`
+# touch an Apple-only framework, so the package — all the models, the markdown block model, the
+# display layer, the networking, and every one of its tests — compiles and runs here instead.
+#
+# Anything failing here would have failed on macOS too, at ten times the price. Keep it that way:
+# when adding code, prefer a shape that builds on Linux, and guard an Apple-only import rather
+# than letting it pull the whole package onto a metered runner.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: arc-runner-pai-ios
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+
+      # Swift's own documented Ubuntu dependency list, plus curl/file/ca-certificates for the
+      # setup action itself — it downloads a toolchain, verifies its signature, and identifies
+      # the archive with `file`. The ARC image carries only git, bash and the runner binary, so a
+      # missing package surfaces late: as "Unable to locate executable file", or as the freshly
+      # unpacked toolchain failing to load a shared library.
+      - name: Install Swift toolchain dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            binutils ca-certificates curl file gnupg2 libc6-dev libcurl4-openssl-dev libedit2 \
+            libgcc-13-dev libncurses-dev libpython3-dev libsqlite3-0 libstdc++-13-dev \
+            libxml2-dev libz3-dev pkg-config tzdata unzip zlib1g-dev
+
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.2'
+
+      # Dependencies are fetched and rebuilt on every run otherwise, which is most of the wall
+      # time here. Keyed on the manifest so a dependency change invalidates it.
+      - uses: actions/cache@v4
+        with:
+          path: PAIKit/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('PAIKit/Package.swift') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Format
+        run: swift format lint --recursive --strict PAIKit
+
+      - name: Build and test the package
+        run: |
+          set -o pipefail
+          swift build --package-path PAIKit --build-tests 2>&1 | tee /tmp/build.log
+          swift test --package-path PAIKit --skip-build
+
+      # Compiler errors sit far above the last lines of a long build, so a truncated log leaves a
+      # failure reporting nothing but an exit code.
+      - name: Surface compiler errors
+        if: failure()
+        run: |
+          grep -E "error:" /tmp/build.log | head -40 || echo "no compiler errors in the log"
+
+      # swift-format can fix everything it reports, but neither peer has a Swift toolchain to run
+      # it on. Publishing the correction means a formatting failure is resolved with
+      # `gh run download` and `git apply` rather than by hand-editing from line numbers.
+      - name: Publish the formatting correction as a patch
+        if: failure()
+        run: |
+          swift format --in-place --recursive PAIKit
+          git diff > format.patch
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: format-patch
+          path: format.patch
+          retention-days: 5

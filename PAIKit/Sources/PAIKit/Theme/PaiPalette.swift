@@ -1,3 +1,7 @@
+// Guarded so the rest of the package builds on Linux, where CI is free. SwiftUI is the only
+// Apple-only dependency here, and nothing outside an app target consumes the palette.
+#if canImport(SwiftUI)
+
 import SwiftUI
 
 /// Swift port of the design tokens in `pai-cloud/web/src/index.css`: the 21 `@theme` custom
@@ -168,3 +172,5 @@ extension Color {
         self.init(.sRGB, red: red, green: green, blue: blue, opacity: 1)
     }
 }
+
+#endif

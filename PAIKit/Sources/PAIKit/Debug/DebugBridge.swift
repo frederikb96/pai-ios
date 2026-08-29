@@ -1,4 +1,6 @@
-#if DEBUG
+// Network.framework is Apple-only; the router and log ring beside this file are not, and
+// they hold the logic worth testing.
+#if DEBUG && canImport(Network)
 
     import Foundation
     import Network

@@ -66,10 +66,11 @@ jobs:
           fi
           echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
-      # pai-android runs no tests in CI at all, and its most common failure is a release-config
-      # compile error that a debug build never surfaced. The runner is already up; use it.
-      - name: Test
-        run: bundle exec fastlane test
+      # No test step: the package and its tests run on every push to main in `free-checks`,
+      # on a free runner. Repeating them here would rebuild the whole package on a runner
+      # billing at 10× to re-prove what is already green on this commit. The release-config
+      # compile error a debug build would miss is still caught — by `fastlane build` below,
+      # which archives Release.
 
       - name: Build and sign
         run: bundle exec fastlane build
