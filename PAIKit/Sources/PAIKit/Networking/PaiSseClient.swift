@@ -13,7 +13,9 @@ import Foundation
 ///
 /// `EventSource` has no Foundation equivalent, so this parses the `text/event-stream` framing
 /// (`event:` / `data:` lines, a blank line as the record terminator) by hand over
-/// `URLSession.bytes(for:)`.
+/// `URLSession.bytes(for:)` — the accumulation itself lives in `SseEventAccumulator`, a pure
+/// value type, so the framing rules are testable without a live stream (mirrors
+/// `PaiTerminalStreamClient.parseFrame`, which the same reasoning already produced there).
 ///
 /// `@MainActor`-isolated rather than protected with locks: every caller is UI-driven (a chat
 /// view model deciding when to (re)connect), every callback exists to update UI state, and the
@@ -119,25 +121,13 @@ public final class PaiSseClient {
             callbacks.onConnected()
             startWatchdog()
 
-            var eventName: String?
-            var dataLines: [String] = []
+            var accumulator = SseEventAccumulator()
 
             for try await line in bytes.lines {
                 if Task.isCancelled || terminal { break }
-                if line.isEmpty {
-                    if let name = eventName, !dataLines.isEmpty {
-                        handleEvent(name: name, data: dataLines.joined(separator: "\n"))
-                    }
-                    eventName = nil
-                    dataLines = []
-                    continue
+                if let event = accumulator.ingest(line: line) {
+                    handleEvent(name: event.name, data: event.data)
                 }
-                if line.hasPrefix("event:") {
-                    eventName = String(line.dropFirst("event:".count)).trimmingCharacters(in: .whitespaces)
-                } else if line.hasPrefix("data:") {
-                    dataLines.append(Self.sseDataValue(from: line.dropFirst("data:".count)))
-                }
-                // Any other field (id:, retry:, comments) goes unused by this stream, same as the web client.
             }
 
             if Self.shouldReconnectAfterStreamEnded(
@@ -154,13 +144,11 @@ public final class PaiSseClient {
         }
     }
 
-    /// Per the SSE spec, at most one leading space after `data:` is stripped — the rest of the
-    /// line, including any other leading or trailing whitespace, is data. `.trimmingCharacters`
-    /// over-strips; JSON payloads survive that by luck (whitespace outside string literals is
-    /// insignificant), but it is wrong on principle for a framing rule that events beyond JSON
-    /// can carry through this same parser.
+    /// Re-exposed under this type's name for existing call sites and tests — the framing rule
+    /// itself lives in `SseEventAccumulator.sseDataValue(from:)`, once, so it is covered on the
+    /// free Linux runner even though this class is not.
     nonisolated static func sseDataValue(from line: Substring) -> String {
-        line.first == " " ? String(line.dropFirst()) : String(line)
+        SseEventAccumulator.sseDataValue(from: line)
     }
 
     /// Whether the read loop ending unexpectedly should trigger a reconnect. `cancelled` is the

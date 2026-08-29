@@ -1,9 +1,10 @@
 import Foundation
 
 /// Swift port of the remaining sections of `pai-cloud/web/src/api/types.ts`: drafts, folder
-/// favorites, plan usage, browse, health, Claude sign-in, auth/sharing, and the small named API
-/// response shapes. Grouped together because each is a handful of fields with no shared story,
-/// unlike `SessionModels.swift` / `MessageModels.swift` / `StreamingModels.swift`.
+/// favorites, plan usage, browse, health, Claude sign-in, auth, app secrets, SMTP settings, and
+/// the small named API response shapes. Grouped together because each is a handful of fields
+/// with no shared story, unlike `SessionModels.swift` / `MessageModels.swift` /
+/// `StreamingModels.swift`.
 
 // MARK: - Drafts
 
@@ -73,21 +74,46 @@ public struct UsageWindow: Codable, Sendable, Equatable {
     }
 }
 
+/// A weekly cap that applies to one model rather than the whole plan.
+public struct ScopedUsageWindow: Codable, Sendable, Equatable {
+    public let model: String
+    public let utilization: Double
+    /// Absent while the window has not started counting.
+    public let resetsAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case model, utilization
+        case resetsAt = "resets_at"
+    }
+
+    public init(model: String, utilization: Double, resetsAt: String?) {
+        self.model = model
+        self.utilization = utilization
+        self.resetsAt = resetsAt
+    }
+}
+
 /// Windows are absent when the agent has not reported recently.
 public struct Usage: Codable, Sendable, Equatable {
     public let fiveHour: UsageWindow?
     public let sevenDay: UsageWindow?
+    /// Missing from an agent too old to report per-model caps.
+    public let sevenDayModels: [ScopedUsageWindow]?
     public let reportedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case fiveHour = "five_hour"
         case sevenDay = "seven_day"
+        case sevenDayModels = "seven_day_models"
         case reportedAt = "reported_at"
     }
 
-    public init(fiveHour: UsageWindow?, sevenDay: UsageWindow?, reportedAt: String?) {
+    public init(
+        fiveHour: UsageWindow?, sevenDay: UsageWindow?, sevenDayModels: [ScopedUsageWindow]?, reportedAt: String?
+    ) {
         self.fiveHour = fiveHour
         self.sevenDay = sevenDay
+        self.sevenDayModels = sevenDayModels
         self.reportedAt = reportedAt
     }
 }
@@ -97,10 +123,14 @@ public struct Usage: Codable, Sendable, Equatable {
 public struct BrowseResult: Codable, Sendable, Equatable {
     public let path: String
     public let directories: [String]
+    /// The folders this machine allows browsing. Empty from an agent too old to report them —
+    /// read that as "no boundary known", never as "nothing allowed".
+    public let roots: [String]
 
-    public init(path: String, directories: [String]) {
+    public init(path: String, directories: [String], roots: [String]) {
         self.path = path
         self.directories = directories
+        self.roots = roots
     }
 }
 
@@ -266,10 +296,14 @@ public struct ClaudeLoginCodeResponse: Codable, Sendable, Equatable {
     }
 }
 
-// MARK: - Auth / sharing
+// MARK: - Auth
 
+/// There is one user, and every route is owner-only — sharing a session with another person
+/// comes back as access for sandboxed agents, never as a guest role, so this carries no second
+/// case to guard against. See `pai-cloud/.claude/CLAUDE.md` "There is one user, and every route
+/// is owner-only".
 public enum UserRole: String, Codable, Sendable, Equatable {
-    case owner, guest
+    case owner
 }
 
 public struct MeResponse: Codable, Sendable, Equatable {
@@ -286,41 +320,6 @@ public struct MeResponse: Codable, Sendable, Equatable {
         self.identity = identity
         self.role = role
         self.allowedSessionIds = allowedSessionIds
-    }
-}
-
-public struct KnownUser: Codable, Sendable, Equatable, Identifiable {
-    public var id: String { email }
-    public let email: String
-    public let displayName: String?
-
-    enum CodingKeys: String, CodingKey {
-        case email
-        case displayName = "display_name"
-    }
-
-    public init(email: String, displayName: String?) {
-        self.email = email
-        self.displayName = displayName
-    }
-}
-
-public struct SessionShare: Codable, Sendable, Equatable, Identifiable {
-    public enum Role: String, Codable, Sendable, Equatable { case guest }
-    public var id: String { email }
-    public let email: String
-    public let role: Role
-    public let createdAt: String?
-
-    enum CodingKeys: String, CodingKey {
-        case email, role
-        case createdAt = "created_at"
-    }
-
-    public init(email: String, role: Role, createdAt: String?) {
-        self.email = email
-        self.role = role
-        self.createdAt = createdAt
     }
 }
 
@@ -389,5 +388,192 @@ public struct AnswerBlockerResponse: Codable, Sendable, Equatable {
     public init(status: Status, detail: String?) {
         self.status = status
         self.detail = detail
+    }
+}
+
+/// Resuming a session PAI is not currently driving — one it started itself and closed, or one it
+/// only ever observed. The same managed launch either way; see `docs/ARCHITECTURE.md` "Session
+/// lifecycle".
+public struct ResumeResponse: Codable, Sendable, Equatable {
+    public enum Status: String, Codable, Sendable, Equatable {
+        case resumed
+        case alreadyRunning = "already_running"
+        case refused
+    }
+    public let status: Status
+    public let detail: String?
+    /// The session as the launch left it. Absent from a backend that predates this field, in
+    /// which case the caller waits for its next poll instead — see `PaiApiClient.resumeSession`.
+    public let session: Session?
+
+    public init(status: Status, detail: String?, session: Session?) {
+        self.status = status
+        self.detail = detail
+        self.session = session
+    }
+}
+
+// MARK: - App secrets
+//
+// A secret's value never appears in any of these — every shape here is presence and a
+// timestamp, or a short-lived third-party token, never the stored value itself.
+
+/// Every allowlisted secret name the backend currently recognizes.
+public enum SecretName: String, Sendable, Equatable {
+    case elevenlabs
+    case smtpPassword = "smtp_password"
+}
+
+public struct SecretStatus: Codable, Sendable, Equatable {
+    public let set: Bool
+    public let updatedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case set
+        case updatedAt = "updated_at"
+    }
+
+    public init(set: Bool, updatedAt: String?) {
+        self.set = set
+        self.updatedAt = updatedAt
+    }
+}
+
+/// `types.ts` types this as `Partial<Record<SecretName, SecretStatus>>` — an object keyed by
+/// whichever of the two allowlisted names the backend chose to report, both optional. A plain
+/// `[String: SecretStatus]` would decode a JSON *array* of alternating keys and values rather
+/// than the object the backend actually sends (`Dictionary`'s synthesized `Decodable` only takes
+/// the keyed-object path for `String`/`Int` keys via a raw string fast path, which a
+/// `RawRepresentable` enum key does not qualify for) — named fields sidestep that entirely.
+public struct SecretStatusMap: Codable, Sendable, Equatable {
+    public let elevenlabs: SecretStatus?
+    public let smtpPassword: SecretStatus?
+
+    enum CodingKeys: String, CodingKey {
+        case elevenlabs
+        case smtpPassword = "smtp_password"
+    }
+
+    public init(elevenlabs: SecretStatus?, smtpPassword: SecretStatus?) {
+        self.elevenlabs = elevenlabs
+        self.smtpPassword = smtpPassword
+    }
+}
+
+public struct VoiceToken: Codable, Sendable, Equatable {
+    public let token: String
+    public let expiresIn: Int
+
+    enum CodingKeys: String, CodingKey {
+        case token
+        case expiresIn = "expires_in"
+    }
+
+    public init(token: String, expiresIn: Int) {
+        self.token = token
+        self.expiresIn = expiresIn
+    }
+}
+
+// MARK: - SMTP settings
+//
+// Everything about how PAI sends its own alert mail except the password, which is a separate
+// write-only secret (`smtp_password`, see `SecretStatusMap` above) and never appears here.
+
+/// See `SessionStatus`'s doc comment for why `.unrecognized` exists rather than throwing.
+public enum SmtpSecurity: Sendable, Hashable {
+    case ssl, starttls, none
+    case unrecognized(String)
+}
+
+extension SmtpSecurity: Codable {
+    private static let knownValues: [String: SmtpSecurity] = [
+        "ssl": .ssl, "starttls": .starttls, "none": .none,
+    ]
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = Self.knownValues[raw] ?? .unrecognized(raw)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .ssl: try container.encode("ssl")
+        case .starttls: try container.encode("starttls")
+        case .none: try container.encode("none")
+        case let .unrecognized(raw): try container.encode(raw)
+        }
+    }
+}
+
+public struct SmtpSettings: Codable, Sendable, Equatable {
+    public let host: String?
+    public let port: Int
+    public let security: SmtpSecurity
+    public let username: String?
+    public let fromAddress: String?
+    public let recipient: String
+    public let enabled: Bool
+    public let updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case host, port, security, username
+        case fromAddress = "from_address"
+        case recipient, enabled
+        case updatedAt = "updated_at"
+    }
+
+    public init(
+        host: String?, port: Int, security: SmtpSecurity, username: String?, fromAddress: String?,
+        recipient: String, enabled: Bool, updatedAt: String
+    ) {
+        self.host = host
+        self.port = port
+        self.security = security
+        self.username = username
+        self.fromAddress = fromAddress
+        self.recipient = recipient
+        self.enabled = enabled
+        self.updatedAt = updatedAt
+    }
+}
+
+/// Any subset of `SmtpSettings`'s writable fields (everything but `updatedAt`) — the server
+/// leaves an omitted key as-is.
+///
+/// ⚠️ Every field here is a plain `Optional`, which Swift's synthesized `Encodable` omits from
+/// the wire when `nil` — so this type can express "leave `host` alone" (by never setting it) but
+/// cannot express "clear `host` to null" (setting it to `Optional.some(nil)` and an omitted key
+/// look identical once encoded). The web client never needs the second case either: its Save
+/// button PUTs the whole draft object every time, values and blanks alike, never a selective
+/// patch. Match that pattern here — populate every field before sending — until an actual need
+/// for a real tri-state patch shows up.
+public struct SmtpSettingsUpdate: Encodable, Sendable, Equatable {
+    public var host: String?
+    public var port: Int?
+    public var security: SmtpSecurity?
+    public var username: String?
+    public var fromAddress: String?
+    public var recipient: String?
+    public var enabled: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case host, port, security, username
+        case fromAddress = "from_address"
+        case recipient, enabled
+    }
+
+    public init(
+        host: String? = nil, port: Int? = nil, security: SmtpSecurity? = nil, username: String? = nil,
+        fromAddress: String? = nil, recipient: String? = nil, enabled: Bool? = nil
+    ) {
+        self.host = host
+        self.port = port
+        self.security = security
+        self.username = username
+        self.fromAddress = fromAddress
+        self.recipient = recipient
+        self.enabled = enabled
     }
 }

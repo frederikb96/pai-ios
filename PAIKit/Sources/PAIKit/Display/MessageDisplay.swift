@@ -260,7 +260,9 @@ extension [String: PaiJSONValue] {
     }
 
     fileprivate func number(_ key: String) -> Double? {
-        if case .number(let value) = self[key] { return value }
+        // `PaiJSONValue.number` carries `Decimal` (see its doc comment), not `Double` — converted
+        // here at the one call site that wants display precision, not exactness.
+        if case .number(let value) = self[key] { return Double(truncating: NSDecimalNumber(decimal: value)) }
         return nil
     }
 }

@@ -54,11 +54,13 @@ final class PaiModelsTests: XCTestCase {
             """
             {
               "id": 5, "session_id": "s1", "type": "assistant", "subtype": null,
+              "outbox_id": 42,
               "timestamp": "2026-08-24T00:00:00Z", "content": "hi", "thinking": "hmm",
               "tool_calls": [{"id":"t1","name":"Bash","input":{"command":"ls"}}],
               "tool_result": {"tool_use_id":"t1","tool_name":"Bash","content":"ok","is_error":false},
               "hook_summary": {"hook_names":["h1"],"has_errors":false,"errors":[],"prevented_continuation":false},
               "tokens": {"input_tokens": 3},
+              "origin": "agent", "origin_meta": {"from": "laptop", "group": "g1"},
               "created_at": "2026-08-24T00:00:01Z"
             }
             """.utf8)
@@ -66,13 +68,40 @@ final class PaiModelsTests: XCTestCase {
 
         XCTAssertEqual(message.sessionId, "s1")
         XCTAssertEqual(message.type, .assistant)
+        XCTAssertEqual(message.outboxId, 42)
         XCTAssertEqual(message.toolCalls?.first?.name, "Bash")
         XCTAssertEqual(message.toolResult?.toolUseId, "t1")
         XCTAssertEqual(message.toolResult?.isError, false)
         XCTAssertEqual(message.hookSummary?.hasErrors, false)
         XCTAssertEqual(message.hookSummary?.preventedContinuation, false)
         XCTAssertEqual(message.tokens?.inputTokens, 3)
+        XCTAssertEqual(message.origin, "agent")
+        XCTAssertEqual(message.originMeta?["from"], "laptop")
         XCTAssertEqual(message.createdAt, "2026-08-24T00:00:01Z")
+    }
+
+    // MARK: - PaiJSONValue number precision (Decimal, not Double)
+
+    /// The bug row 37 named: an id or count above 2^53 loses precision the moment it passes
+    /// through `Double`. `Decimal` decodes straight from the JSON literal's text, so this must
+    /// survive exactly rather than landing on the nearest representable `Double`.
+    func testToolCallInputPreservesIntegerPrecisionBeyondDoubleSafeRange() throws {
+        let json = Data(#"{"id":"t1","name":"Bash","input":{"count":123456789012345678}}"#.utf8)
+        let call = try JSONDecoder().decode(ToolCall.self, from: json)
+
+        guard case let .number(count)? = call.input["count"] else {
+            return XCTFail("Expected input[\"count\"] to decode as .number")
+        }
+        XCTAssertEqual(count, Decimal(string: "123456789012345678"))
+    }
+
+    /// The other half of the same bug: a whole number must not gain a spurious `.0` when it
+    /// round-trips back out — `Decimal` normalizes `100` to `100`, where `Double` would encode
+    /// it as `100.0`.
+    func testPaiJSONValueRoundTripsWholeNumberWithoutGainingADecimalPoint() throws {
+        let value = try JSONDecoder().decode(PaiJSONValue.self, from: Data("100".utf8))
+        let reencoded = try JSONEncoder().encode(value)
+        XCTAssertEqual(String(data: reencoded, encoding: .utf8), "100")
     }
 
     func testMessageTypeToolResultUsesSnakeCaseRawValue() throws {
@@ -125,6 +154,161 @@ final class PaiModelsTests: XCTestCase {
         )
     }
 
+    // MARK: - Session: multi-agent and subagent fields
+
+    /// The trap the contract analysis called out by name: `Session.kind == .subagent` names a
+    /// Claude Code sub-conversation, and `agent` (a plain machine-slug `String`) names the
+    /// physical box the session runs on — unrelated concepts that a wrong port could conflate.
+    /// One decode exercising every field this port adds, so a typo'd `CodingKeys` case among
+    /// them shows up as a wrong/nil property rather than passing on a test that only fed a
+    /// subset through.
+    func testSessionDecodesMultiAgentAndSubagentFieldsOntoTheRightProperty() throws {
+        let json = Data(
+            """
+            {"id":"s1","session_type":"claude","status":"active","state":"ready","blocker":null,
+             "working":true,"title":"t","title_locked":true,"initial_message":null,
+             "pending_message":null,"session_tokens":0,"claude_session_id":null,
+             "idle_timeout_minutes":30,"effective_idle_timeout_minutes":30,"cse_id":null,
+             "created_at":null,"updated_at":null,"last_activity_at":null,"working_dir":null,
+             "agent":"laptop","kind":"subagent","parent_session_id":"parent-1",
+             "subagent_name":"aria","subagent_type":"general-purpose",
+             "subagent_description":"heavy lifting","remote_control":true,"discovered":false,
+             "project_id":"proj-1","phase_id":"phase-1","project_name":"PAIKit"}
+            """.utf8)
+        let session = try JSONDecoder().decode(Session.self, from: json)
+
+        XCTAssertEqual(session.working, true)
+        XCTAssertEqual(session.idleTimeoutMinutes, 30)
+        XCTAssertEqual(session.effectiveIdleTimeoutMinutes, 30)
+        XCTAssertEqual(session.agent, "laptop")
+        XCTAssertEqual(session.kind, .subagent)
+        XCTAssertEqual(session.parentSessionId, "parent-1")
+        XCTAssertEqual(session.subagentName, "aria")
+        XCTAssertEqual(session.subagentType, "general-purpose")
+        XCTAssertEqual(session.subagentDescription, "heavy lifting")
+        XCTAssertEqual(session.remoteControl, true)
+        XCTAssertEqual(session.discovered, false)
+        XCTAssertEqual(session.projectId, "proj-1")
+        XCTAssertEqual(session.phaseId, "phase-1")
+        XCTAssertEqual(session.projectName, "PAIKit")
+    }
+
+    /// Same guard as `SessionStatus`: a session list must not go empty just because one row
+    /// carries a `kind` this build predates.
+    func testSessionKindRoundTripsAnUnrecognizedValueRatherThanDroppingIt() throws {
+        let kind = try JSONDecoder().decode(SessionKind.self, from: Data(#""orchestrator""#.utf8))
+        XCTAssertEqual(kind, .unrecognized("orchestrator"))
+        let reencoded = try JSONEncoder().encode(kind)
+        XCTAssertEqual(String(data: reencoded, encoding: .utf8), #""orchestrator""#)
+    }
+
+    // MARK: - Machine
+
+    func testMachineDecodesNestedCapabilitiesAndSessionTypes() throws {
+        let json = Data(
+            """
+            {"slug":"vm","display_name":"Cloud Kai","online":true,"last_seen_at":null,
+             "ingest_enabled":true,
+             "capabilities":{"fast_sessions":true,"reboot":false,"shell":true},
+             "session_types":[{"id":"fast","name":"Fast","icon":"bolt","working_dir":"/root"}]}
+            """.utf8)
+        let machine = try JSONDecoder().decode(Machine.self, from: json)
+
+        XCTAssertEqual(machine.id, "vm")
+        XCTAssertEqual(machine.displayName, "Cloud Kai")
+        XCTAssertEqual(machine.capabilities.fastSessions, true)
+        XCTAssertEqual(machine.capabilities.reboot, false)
+        XCTAssertEqual(machine.sessionTypes.first?.workingDir, "/root")
+    }
+
+    // MARK: - SessionSearchResult
+
+    /// `SessionSearchResult` decodes `Session`'s fields and `score` from the SAME flat JSON
+    /// object rather than a nested one (`types.ts` expresses it as a structural extension) — the
+    /// regression this guards is that composition mistake silently losing either half.
+    func testSessionSearchResultDecodesSessionFieldsAlongsideScore() throws {
+        let json = Data(
+            """
+            {"id":"s1","session_type":"claude","status":"active","state":null,"blocker":null,
+             "working":null,"title":"Found me","title_locked":null,"initial_message":null,
+             "pending_message":null,"session_tokens":0,"claude_session_id":null,
+             "idle_timeout_minutes":null,"effective_idle_timeout_minutes":null,"cse_id":null,
+             "created_at":null,"updated_at":null,"last_activity_at":null,"working_dir":null,
+             "agent":null,"kind":null,"parent_session_id":null,"subagent_name":null,
+             "subagent_type":null,"subagent_description":null,"remote_control":null,
+             "discovered":null,"project_id":null,"phase_id":null,"project_name":null,
+             "score":0.8421}
+            """.utf8)
+        let result = try JSONDecoder().decode(SessionSearchResult.self, from: json)
+
+        XCTAssertEqual(result.session.title, "Found me")
+        XCTAssertEqual(result.score, 0.8421)
+
+        let reencoded = try JSONEncoder().encode(result)
+        let roundTripped = try JSONDecoder().decode(SessionSearchResult.self, from: reencoded)
+        XCTAssertEqual(roundTripped, result)
+    }
+
+    /// A fuzzy hit's `score` is `null`, not absent — distinct from a semantic hit's `0...1`.
+    func testSessionSearchResultDecodesNullScoreForAFuzzyHit() throws {
+        let json = Data(
+            """
+            {"id":"s1","session_type":"claude","status":"active","state":null,"blocker":null,
+             "working":null,"title":null,"title_locked":null,"initial_message":null,
+             "pending_message":null,"session_tokens":0,"claude_session_id":null,
+             "idle_timeout_minutes":null,"effective_idle_timeout_minutes":null,"cse_id":null,
+             "created_at":null,"updated_at":null,"last_activity_at":null,"working_dir":null,
+             "agent":null,"kind":null,"parent_session_id":null,"subagent_name":null,
+             "subagent_type":null,"subagent_description":null,"remote_control":null,
+             "discovered":null,"project_id":null,"phase_id":null,"project_name":null,
+             "score":null}
+            """.utf8)
+        let result = try JSONDecoder().decode(SessionSearchResult.self, from: json)
+        XCTAssertNil(result.score)
+    }
+
+    // MARK: - ResumeResponse
+
+    func testResumeResponseDecodesEmbeddedSessionWhenPresent() throws {
+        let json = Data(
+            """
+            {"status":"resumed",
+             "session":{"id":"s1","session_type":"claude","status":"active","state":"ready",
+              "blocker":null,"working":null,"title":null,"title_locked":null,
+              "initial_message":null,"pending_message":null,"session_tokens":0,
+              "claude_session_id":null,"idle_timeout_minutes":null,
+              "effective_idle_timeout_minutes":null,"cse_id":null,"created_at":null,
+              "updated_at":null,"last_activity_at":null,"working_dir":null,"agent":null,
+              "kind":null,"parent_session_id":null,"subagent_name":null,"subagent_type":null,
+              "subagent_description":null,"remote_control":null,"discovered":null,
+              "project_id":null,"phase_id":null,"project_name":null}}
+            """.utf8)
+        let response = try JSONDecoder().decode(ResumeResponse.self, from: json)
+
+        XCTAssertEqual(response.status, .resumed)
+        XCTAssertEqual(response.session?.state, .ready)
+    }
+
+    func testResumeResponseSessionIsAbsentFromAnOlderBackend() throws {
+        let response = try JSONDecoder().decode(ResumeResponse.self, from: Data(#"{"status":"refused"}"#.utf8))
+        XCTAssertNil(response.session)
+    }
+
+    // MARK: - SecretStatusMap
+
+    /// Named fields, not a `[String: SecretStatus]` dictionary — see the type's doc comment for
+    /// why. This proves the two allowlisted names route to the right property rather than being
+    /// silently dropped by a dictionary decode that doesn't match the JSON shape at all.
+    func testSecretStatusMapRoutesEachAllowlistedNameToItsOwnField() throws {
+        let json = Data(
+            #"{"elevenlabs":{"set":true,"updated_at":"2026-08-24T00:00:00Z"}}"#.utf8
+        )
+        let map = try JSONDecoder().decode(SecretStatusMap.self, from: json)
+
+        XCTAssertEqual(map.elevenlabs?.set, true)
+        XCTAssertNil(map.smtpPassword, "absent from the response, must not default to some placeholder")
+    }
+
     // MARK: - PutDraftResult
 
     /// The two branches of this union are told apart by a `deleted` flag that is *absent*, not
@@ -159,5 +343,16 @@ final class PaiModelsTests: XCTestCase {
 
         XCTAssertFalse(auth.known)
         XCTAssertNil(auth.loggedIn)
+    }
+
+    // MARK: - UserRole
+
+    /// The backend removed guest access; `UserRole` carries only `.owner` now — this pins that a
+    /// value from before that removal (or any other unexpected role) genuinely fails the decode
+    /// rather than silently degrading, since a wrong guess about who is looking at the app is a
+    /// security-relevant one to get loudly wrong.
+    func testMeResponseThrowsOnAnUnrecognizedRoleRatherThanGuessing() throws {
+        let json = Data(#"{"identity":"freddy","role":"guest","allowed_session_ids":[]}"#.utf8)
+        XCTAssertThrowsError(try JSONDecoder().decode(MeResponse.self, from: json))
     }
 }
