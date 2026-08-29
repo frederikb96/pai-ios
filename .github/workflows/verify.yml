@@ -39,7 +39,13 @@ jobs:
           xcodebuild -project PAI.xcodeproj -scheme PAI \
             -destination 'generic/platform=iOS Simulator' \
             -configuration Debug -derivedDataPath build/dd \
-            CODE_SIGNING_ALLOWED=NO build 2>&1 | tail -20
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee /tmp/build.log | tail -20
+
+      # `tail` on the build above keeps the log readable but hides the errors, which are far
+      # above the last twenty lines. Without this a failure says only "exit code 65".
+      - name: Surface compiler errors
+        if: failure()
+        run: grep -E "error:" /tmp/build.log | head -40 || echo "no error: lines found"
 
       - name: Boot a simulator
         id: sim

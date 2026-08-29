@@ -39,6 +39,8 @@
                 // listener then never binds, while `start` still reports no error. Silent.
                 parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: port)
 
+                // Read out of `self` before the closure below, which must not capture it.
+                let boundPort = port.rawValue
                 let listener = try NWListener(using: parameters)
                 listener.newConnectionHandler = { [weak self] connection in
                     self?.accept(connection)
@@ -50,7 +52,7 @@
                     switch state {
                     case .ready:
                         DebugLogBuffer.shared.append(
-                            .info, "debug-bridge", "listening on 127.0.0.1:\(port.rawValue)")
+                            .info, "debug-bridge", "listening on 127.0.0.1:\(boundPort)")
                     case .failed(let error), .waiting(let error):
                         DebugLogBuffer.shared.append(.error, "debug-bridge", "listener: \(error)")
                     default:
