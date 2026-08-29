@@ -22,8 +22,9 @@ private final class FakeRecordingAudioStorage: RecordingAudioStorage, @unchecked
 @MainActor
 final class RecordingsStoreTests: XCTestCase {
 
+    /// Identity comes from the timestamp, so a test that wants a particular id sets that.
     private func meta(id: String) -> RecordingMeta {
-        RecordingMeta(id: id, timestampMs: Int(id) ?? 0, durationMs: 1000)
+        RecordingMeta(timestampMs: Double(id) ?? 0, durationMs: 1000)
     }
 
     func testAddingWithinCapacityKeepsEveryRecording() async throws {
@@ -58,32 +59,32 @@ final class RecordingsStoreTests: XCTestCase {
         let storage = FakeRecordingAudioStorage()
         let store = RecordingsStore(storage: storage)
 
-        try await store.add(meta(id: "first"), raw: nil, sent: Data())
-        try await store.add(meta(id: "second"), raw: nil, sent: Data())
+        try await store.add(meta(id: "100"), raw: nil, sent: Data())
+        try await store.add(meta(id: "200"), raw: nil, sent: Data())
 
-        XCTAssertEqual(store.recordings.first?.id, "second")
+        XCTAssertEqual(store.recordings.first?.id, "200")
     }
 
     func testRemovingDeletesFromTheListAndFromStorage() async throws {
         let storage = FakeRecordingAudioStorage()
         let store = RecordingsStore(storage: storage)
-        try await store.add(meta(id: "only"), raw: nil, sent: Data())
+        try await store.add(meta(id: "42"), raw: nil, sent: Data())
 
-        await store.remove(id: "only")
+        await store.remove(id: "42")
 
         XCTAssertTrue(store.recordings.isEmpty)
-        XCTAssertEqual(storage.deletedIds, ["only"])
+        XCTAssertEqual(storage.deletedIds, ["42"])
     }
 
     /// Every field past `durationMs` is optional by design — an entry decoded with none of them
     /// set (an old recording from a version that did not record levels, say) must still decode
     /// rather than fail the whole list.
     func testMetaWithOnlyRequiredFieldsRoundTripsThroughJSON() throws {
-        let minimal = RecordingMeta(id: "x", timestampMs: 0, durationMs: 500)
+        let minimal = RecordingMeta(timestampMs: 0, durationMs: 500)
         let data = try JSONEncoder().encode(minimal)
         let decoded = try JSONDecoder().decode(RecordingMeta.self, from: data)
         XCTAssertEqual(decoded, minimal)
         XCTAssertNil(decoded.transcript)
-        XCTAssertNil(decoded.silenceTriggered)
+        XCTAssertNil(decoded.silence)
     }
 }

@@ -1,63 +1,6 @@
 import Foundation
 import Observation
 
-/// One past recording's metadata. Every field past `durationMs` is optional by design, mirroring
-/// the web's `RecordingMeta`: an old entry decoded on a later app version must still open, and
-/// nothing here is ever re-derived from another field, so there is no "optional because it can
-/// be computed" case to special-case.
-public struct RecordingMeta: Sendable, Equatable, Codable, Identifiable {
-    /// The recording's own timestamp, matching the web's IndexedDB key — stable identity that
-    /// does not depend on list position, which changes every time a newer recording is added.
-    public var id: String
-    public var timestampMs: Int
-    public var durationMs: Int
-    public var sampleRate: Int?
-    public var rawSampleRate: Int?
-    /// `false` when the raw capture was dropped (quota pressure, or the `RAW_BUDGET_BYTES` cap
-    /// mid-take) and only the sent (already-converted) audio survives.
-    public var rawStored: Bool
-    public var endedBy: RecordingEndReason?
-    public var silenceDetectionEnabled: Bool?
-    public var silenceThreshold: Double?
-    public var silenceDurationMs: Int?
-    public var silenceTriggered: Bool?
-    public var transcript: String?
-    public var narrowband: Bool?
-    public var mutedMs: Int?
-
-    public init(
-        id: String,
-        timestampMs: Int,
-        durationMs: Int,
-        sampleRate: Int? = nil,
-        rawSampleRate: Int? = nil,
-        rawStored: Bool = false,
-        endedBy: RecordingEndReason? = nil,
-        silenceDetectionEnabled: Bool? = nil,
-        silenceThreshold: Double? = nil,
-        silenceDurationMs: Int? = nil,
-        silenceTriggered: Bool? = nil,
-        transcript: String? = nil,
-        narrowband: Bool? = nil,
-        mutedMs: Int? = nil
-    ) {
-        self.id = id
-        self.timestampMs = timestampMs
-        self.durationMs = durationMs
-        self.sampleRate = sampleRate
-        self.rawSampleRate = rawSampleRate
-        self.rawStored = rawStored
-        self.endedBy = endedBy
-        self.silenceDetectionEnabled = silenceDetectionEnabled
-        self.silenceThreshold = silenceThreshold
-        self.silenceDurationMs = silenceDurationMs
-        self.silenceTriggered = silenceTriggered
-        self.transcript = transcript
-        self.narrowband = narrowband
-        self.mutedMs = mutedMs
-    }
-}
-
 /// Where a recording's bytes actually live — deliberately not this package's concern. Writing
 /// files is not Apple-only, but *where* (`FileManager.default.urls(for:in:)`'s sandbox
 /// directories) is a real-device concept this package cannot exercise on Linux, and every other

@@ -1,15 +1,5 @@
 import Foundation
 
-/// Why a recording ended — mirrors the web's `RecordingEnd` union (`useVoiceRecording.ts`),
-/// which every saved recording's metadata and every UI message keys off.
-public enum RecordingEndReason: String, Sendable, Equatable, Codable {
-    case user
-    case silence
-    case interrupted
-    case error
-    case connectionLost = "connection-lost"
-}
-
 /// The recording's lifecycle. `.connecting` covers everything between the user's tap and the
 /// realtime socket actually accepting audio — token mint, transport connect, waiting for
 /// `session_started` — so the UI has one spinner state for all of it rather than several.

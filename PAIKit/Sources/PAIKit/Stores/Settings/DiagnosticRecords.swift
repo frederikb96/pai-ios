@@ -116,7 +116,11 @@ public struct RecordingStartup: Codable, Sendable, Equatable {
 /// Every field past `durationMs` is optional because a recording made by an earlier app version
 /// is still in the list and must still open — nothing here is ever re-derived once stored, so a
 /// reader degrades rather than assumes a field it predates is present.
-public struct RecordingMeta: Codable, Sendable, Equatable {
+public struct RecordingMeta: Codable, Sendable, Equatable, Identifiable {
+    /// The capture's own timestamp, which is also the web's IndexedDB key for the audio. Identity
+    /// that does not depend on list position — that changes every time a newer recording lands.
+    public var id: String { String(Int(timestampMs)) }
+
     public let timestampMs: Double
     public let durationMs: Double
     /// Rate the audio was sent at. Absent on recordings from before this was tracked.
