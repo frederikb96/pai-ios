@@ -33,11 +33,15 @@
             let path = request.url?.path ?? ""
             let match = Self.route(method: method, path: path)
 
+            // Neither streaming client checks the content type — both look only at the status —
+            // but sending the honest one costs nothing and stops a future reader concluding the
+            // stream fixtures are being served wrong when something else is broken.
+            let isStream = path.hasSuffix("/stream") || path.hasSuffix("/terminal")
             let response = HTTPURLResponse(
                 url: request.url ?? URL(string: "https://fixture.invalid")!,
                 statusCode: match.status,
                 httpVersion: "HTTP/1.1",
-                headerFields: ["Content-Type": "application/json"]
+                headerFields: ["Content-Type": isStream ? "text/event-stream" : "application/json"]
             )!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: match.body())
@@ -109,6 +113,12 @@
             exact("GET", "/api/favorites") { PaiFixtures.folderFavorites },
             exact("POST", "/api/voice/token") { PaiFixtures.voiceToken },
             sessionScoped("GET", suffix: "/messages") { PaiFixtures.transcript },
+            // The two streams. Without these the terminal photographs blank — its content arrives
+            // over the stream and nowhere else — and the transcript's live half never runs at all,
+            // so the one screen whose whole design is about streaming would be the one screen
+            // fixture mode never exercised.
+            sessionScoped("GET", suffix: "/stream") { PaiFixtures.sseStream },
+            sessionScoped("GET", suffix: "/terminal") { PaiFixtures.terminalStream },
         ]
     }
 
