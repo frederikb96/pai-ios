@@ -59,8 +59,14 @@ jobs:
           swift build --package-path PAIKit --build-tests 2>&1 | tee /tmp/build.log
           swift test --package-path PAIKit --skip-build
 
+      # `swiftc -parse` stops before name resolution, so it needs no SwiftUI and no iOS SDK. It is
+      # the only check the app target gets outside a metered runner: it catches unbalanced
+      # delimiters and malformed declarations, and cannot catch a wrong type or a misspelled API.
+      - name: Syntax-check the app target
+        run: ./Tooling/parse-app-target.sh
+
       - name: Format
-        run: swift format lint --recursive --strict PAIKit
+        run: swift format lint --recursive --strict PAIKit PAI
 
       # Compiler errors sit far above the last lines of a long build, so a truncated log leaves a
       # failure reporting nothing but an exit code.
