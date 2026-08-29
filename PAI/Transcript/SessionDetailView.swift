@@ -16,19 +16,18 @@ struct SessionDetailView: View {
 
     var body: some View {
         Group {
-            if let connection = environment.connection, let requestFactory = streamRequestFactory {
+            if let connection = environment.connection {
                 VStack(spacing: 0) {
                     TranscriptCollectionView(
                         sessionID: sessionID, store: transcript, apiClient: connection.apiClient, settings: settings,
-                        requestFactory: requestFactory)
+                        requestFactory: connection.requestFactory)
                     Divider()
-                    TranscriptComposerBar(sessionID: sessionID, store: transcript, apiClient: connection.apiClient)
+                    ComposerBar(sessionID: sessionID)
                 }
             } else {
-                // `ready` with no connection or an unusable backend URL should be unreachable —
-                // `RootView` only shows this screen once `AppEnvironment.connection` exists, and
-                // that connection is what validated the same URL this reconstructs the stream's
-                // request factory from.
+                // Unreachable in practice: `RootView` only shows this screen once the connection
+                // exists. A spinner rather than an empty screen, so the impossible case still
+                // reads as "not yet" instead of as a broken view.
                 ProgressView()
             }
         }
@@ -58,8 +57,4 @@ struct SessionDetailView: View {
     /// transport does (`PaiRequestFactory`'s doc comment) — `PaiApiClient` keeps its copy
     /// private, so this rebuilds one from the same backend URL and the same Keychain entry
     /// `AppEnvironment` itself reads, rather than reaching into its private state.
-    private var streamRequestFactory: PaiRequestFactory? {
-        let tokens = KeychainTokenStore()
-        return try? PaiRequestFactory(baseURL: environment.backendURL, tokenProvider: { tokens.read() })
-    }
 }
