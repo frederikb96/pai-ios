@@ -19,6 +19,20 @@ public enum PaiError: Error, Equatable {
     case transport(String)
     case decoding(String)
 
+    /// The server refused the credential rather than the request.
+    ///
+    /// Worth asking of the error rather than of a status code at each call site: every caller
+    /// that has to remember to check is a caller that can forget, and forgetting means the app
+    /// shows an empty screen instead of asking for a new token.
+    public var isAuthenticationFailure: Bool {
+        switch self {
+        case .detail(_, let statusCode), .http(let statusCode, _):
+            return statusCode == 401 || statusCode == 403
+        case .transport, .decoding:
+            return false
+        }
+    }
+
     /// What the user should see. Always non-empty.
     public var userMessage: String {
         switch self {

@@ -102,7 +102,14 @@ final class AppEnvironment {
             return false
         }
 
-        let client = PaiApiClient(requestFactory: factory)
+        // Weak, and hopped to the main actor: the callback fires from whatever task made the
+        // request, and a strong reference here would be a retain cycle through the client the
+        // connection holds.
+        let client = PaiApiClient(requestFactory: factory) { [weak self] error in
+            Task { @MainActor [weak self] in
+                self?.handleAuthenticationFailure(detail: error.userMessage)
+            }
+        }
         connection = Connection(
             requestFactory: factory,
             apiClient: client,

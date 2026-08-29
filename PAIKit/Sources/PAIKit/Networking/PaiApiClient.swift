@@ -123,10 +123,23 @@ public enum PaiAttachmentResult: Sendable {
 public struct PaiApiClient: Sendable {
     private let requestFactory: PaiRequestFactory
     private let urlSession: URLSession
+    private let onAuthenticationFailure: (@Sendable (PaiError) -> Void)?
 
-    public init(requestFactory: PaiRequestFactory, urlSession: URLSession = .shared) {
+    /// `onAuthenticationFailure` is called whenever the server refuses the credential, before the
+    /// error is thrown to the caller.
+    ///
+    /// It exists because the alternative does not work: a first-load path is full of calls whose
+    /// failure is genuinely not worth surfacing, so they discard the error — and an expired token
+    /// then reads as an app with nothing in it and no way back. Noticing here means no caller has
+    /// to remember, and a caller that swallows its error still cannot swallow this.
+    public init(
+        requestFactory: PaiRequestFactory,
+        urlSession: URLSession = .shared,
+        onAuthenticationFailure: (@Sendable (PaiError) -> Void)? = nil
+    ) {
         self.requestFactory = requestFactory
         self.urlSession = urlSession
+        self.onAuthenticationFailure = onAuthenticationFailure
     }
 
     // MARK: Core request helpers
@@ -171,16 +184,18 @@ public struct PaiApiClient: Sendable {
             path: path, method: method, query: query, body: body, contentType: contentType
         )
         let (data, response) = try await urlSession.data(for: request)
-        try Self.checkStatus(response: response, data: data)
+        try checkStatus(response: response, data: data)
         return (data, response)
     }
 
-    private static func checkStatus(response: URLResponse, data: Data) throws {
+    private func checkStatus(response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else {
             throw PaiError.transport("Response was not HTTP")
         }
         guard (200..<300).contains(http.statusCode) else {
-            throw PaiError.from(statusCode: http.statusCode, body: data)
+            let error = PaiError.from(statusCode: http.statusCode, body: data)
+            if error.isAuthenticationFailure { onAuthenticationFailure?(error) }
+            throw error
         }
     }
 
@@ -246,7 +261,7 @@ public struct PaiApiClient: Sendable {
 
         let request = try requestFactory.makeRequest(path: "/api/sessions", query: query)
         let (data, response) = try await urlSession.data(for: request)
-        try Self.checkStatus(response: response, data: data)
+        try checkStatus(response: response, data: data)
         let sessions: [Session]
         do {
             sessions = try JSONDecoder().decode([Session].self, from: data)
@@ -684,7 +699,7 @@ public struct PaiApiClient: Sendable {
         if let since { query.append(URLQueryItem(name: "since", value: since)) }
         let request = try requestFactory.makeRequest(path: "/api/session/\(sessionId)/export", query: query)
         let (data, response) = try await urlSession.data(for: request)
-        try Self.checkStatus(response: response, data: data)
+        try checkStatus(response: response, data: data)
         let filename =
             (response as? HTTPURLResponse)
             .flatMap { $0.value(forHTTPHeaderField: "Content-Disposition") }
