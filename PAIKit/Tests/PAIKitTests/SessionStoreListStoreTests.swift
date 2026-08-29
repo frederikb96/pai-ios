@@ -45,7 +45,6 @@ final class SessionStoreListStoreTests: XCTestCase {
         return calls
     }
 
-
     /// Poll until the store's rows match, or fail after a generous ceiling.
     private func awaitRows(
         _ store: SessionListStore, _ expected: [String], file: StaticString = #filePath, line: UInt = #line
