@@ -60,11 +60,6 @@ public enum TranscriptRowPlan {
     /// those messages out of the row list entirely, rather than giving a collection view a row
     /// with nothing in it.
     ///
-    /// 🚨 `MessageRouting.route(for:)` has no case for `subtype == "pai_message"` — it falls
-    /// through to `.systemFallback`, where the web instead draws a distinct `RelayedBubble`
-    /// (`MessageBubble.tsx` branch 5, ahead of the generic `SystemCard` fallback at branch 7).
-    /// Reproduced here rather than in `MessageRouting` itself, which is outside this block's
-    /// directory scope — see this block's report for the upstream fix this should get instead.
     public static func cards(for message: Message, isExpanded: (String) -> Bool) -> [TranscriptCardPlan] {
         switch MessageRouting.route(for: message) {
         case .system:
@@ -123,19 +118,19 @@ public enum TranscriptRowPlan {
                 )
             ]
 
+        case .relayedUser:
+            let text = message.content ?? ""
+            let sender = message.originMeta?["from"] ?? "Another session"
+            let group = message.origin == "agent" ? message.originMeta?["group"] : nil
+            return [
+                TranscriptCardPlan(
+                    kind: .relayedBubble(text: text, sender: sender, group: group),
+                    expandKey: nil,
+                    blocks: text.isEmpty ? [] : [paragraph(text)]
+                )
+            ]
+
         case .systemFallback(let subtype, let content):
-            if subtype == "pai_message" {
-                let text = content ?? ""
-                let sender = message.originMeta?["from"] ?? "Another session"
-                let group = message.origin == "agent" ? message.originMeta?["group"] : nil
-                return [
-                    TranscriptCardPlan(
-                        kind: .relayedBubble(text: text, sender: sender, group: group),
-                        expandKey: nil,
-                        blocks: text.isEmpty ? [] : [paragraph(text)]
-                    )
-                ]
-            }
             return [
                 systemCard(subtype: subtype, content: content, hookSummary: message.hookSummary, isExpanded: isExpanded)
             ]

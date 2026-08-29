@@ -325,7 +325,7 @@ extension PaiFixtures {
             "thinking": null, "tool_calls": null, "tool_result": null, "hook_summary": null, "tokens": null,
             "created_at": "2026-08-29T09:26:00Z" },
 
-          { "id": 9049, "session_id": "305df4d3-1554-4fc3-be04-39a354a9e619", "type": "system", "subtype": "pai_message",
+          { "id": 9049, "session_id": "305df4d3-1554-4fc3-be04-39a354a9e619", "type": "user", "subtype": "pai_message",
             "timestamp": "2026-08-29T09:27:00Z", "content": "New message from the laptop session: repository setup finished.",
             "thinking": null, "tool_calls": null, "tool_result": null, "hook_summary": null, "tokens": null,
             "created_at": "2026-08-29T09:27:00Z" },

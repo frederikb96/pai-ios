@@ -190,8 +190,20 @@ final class PaiFixturesTests: XCTestCase {
             subtypes,
             [
                 "skill", "context", "command_output", "image", "compact", "compact_summary",
-                "hook", "duration", "interrupt", "notification", "scheduled", "pai_message",
+                "hook", "duration", "interrupt", "notification", "scheduled",
             ])
+    }
+
+    /// A relayed prompt is `type: "user"`, not `type: "system"` — the parser emits it that way
+    /// and the web intercepts it ahead of the generic system card. `systemLabel()` carries an
+    /// entry for it too, which is a defensive label rather than evidence of its type, and reading
+    /// that map as the source is how it ends up filed under machinery instead of as a real
+    /// message someone sent.
+    func testTranscriptHasARelayedPromptTypedAsAUserMessage() {
+        let relayed = jsonArray(PaiFixtures.transcript)
+            .filter { $0["subtype"] as? String == "pai_message" }
+        XCTAssertEqual(relayed.count, 1)
+        XCTAssertEqual(relayed.first?["type"] as? String, "user")
     }
 
     /// The two "permanent legacy row" shapes `messageDisplay.ts` still guards against — content

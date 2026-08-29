@@ -27,6 +27,11 @@ public enum MessageRouting {
         /// attachment paths already split out of the displayed text.
         case user(text: String, attachmentPaths: [String])
         case agentMessage
+        /// A genuine prompt relayed here from another session by the backend
+        /// (`subtype: "pai_message"`). It reads like a typed message rather than framework
+        /// plumbing, because that is what it is — someone said it, just not into this session.
+        /// Falling through to a system card would file a real instruction under machinery.
+        case relayedUser
         /// A slash command or skill invocation, already in the clean `"{name}\n\n{args}"` shape.
         case command
         /// Any other `type == "user"` subtype, and a `command` row whose content is still the
@@ -61,6 +66,9 @@ public enum MessageRouting {
 
         case .user where message.subtype == "agent_message":
             return .agentMessage
+
+        case .user where message.subtype == "pai_message":
+            return .relayedUser
 
         case .user where message.subtype == "command":
             return MessageDisplay.isUnparsedCommandXml(message.content ?? "")
