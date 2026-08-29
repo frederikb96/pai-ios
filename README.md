@@ -10,10 +10,10 @@ model and the scrolling behaviour.
 
 ## Status
 
-Early, but not unverified. There is still no Mac: CI on a macOS runner builds and tests the
-package and builds the app, needing no Apple credential, so it works long before the release
-pipeline can. What still wants a real Mac is running the thing — a booted simulator, a
-screenshot, a signature. See `.claude/CLAUDE.md`.
+Early, but not unverified. There is no Mac, and most of the work does not need one: the package
+builds and its tests run on Linux, locally and on a free CI runner. What needs Apple hardware is
+the app target and everything downstream of it — a booted simulator, a screenshot, a signature.
+See `.claude/CLAUDE.md`.
 
 ## Layout
 
@@ -27,15 +27,16 @@ screenshot, a signature. See `.claude/CLAUDE.md`.
 
 ## Building
 
-CI builds and tests everything on a macOS runner, so a push is the fastest way to check a change
-compiles. Running it — simulator, screenshot, gestures — needs a rented Apple silicon box; the
-`ios` skill owns that lifecycle end to end, including the scripts that create, provision, verify
-and destroy one.
+The package needs only a Swift toolchain:
 
 ```
-bundle install
-bundle exec fastlane beta
+swift build --package-path PAIKit --build-tests
+swift test  --package-path PAIKit --skip-build
 ```
+
+The app target needs Xcode, so it is built by CI on a macOS runner — or on a rented Apple silicon
+box when the round trip becomes the bottleneck. The `ios` skill owns that lifecycle end to end,
+including the scripts that create, provision, verify and destroy one.
 
 ## Releasing
 
