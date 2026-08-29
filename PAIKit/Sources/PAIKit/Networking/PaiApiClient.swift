@@ -58,10 +58,6 @@ public struct PaiDraftDeleteResult: Codable, Sendable, Equatable {
     public let deleted: Bool
 }
 
-public struct PaiShareRemovalResult: Codable, Sendable, Equatable {
-    public let removed: Bool
-}
-
 public struct PaiFavoriteRemovalResult: Codable, Sendable, Equatable {
     public let path: String
     public let removed: Bool
@@ -77,6 +73,27 @@ public struct PaiVmShellHandle: Codable, Sendable, Equatable {
 
 public enum PaiTerminalScrollDirection: String, Sendable, Equatable {
     case up, down, live
+}
+
+public struct PaiSecretRemovalResult: Codable, Sendable, Equatable {
+    public let name: String
+    public let removed: Bool
+}
+
+public struct PaiSmtpTestResult: Codable, Sendable, Equatable {
+    public let sent: Bool
+}
+
+/// `client.ts`'s `searchSessions` inlines this union rather than naming it in `types.ts`.
+public enum SessionSearchMode: String, Sendable, Equatable {
+    case fuzzy, semantic
+}
+
+/// Which ElevenLabs endpoint the minted token is for — `client.ts`'s `mintVoiceToken` inlines
+/// this union rather than naming it in `types.ts`, so it lives here for the same reason
+/// `PaiTerminalScrollDirection` does.
+public enum VoiceTokenPurpose: String, Sendable, Equatable {
+    case realtime, batch
 }
 
 /// Raw bytes plus the server-assigned filename — a download, not a JSON response.
@@ -191,11 +208,92 @@ public struct PaiApiClient: Sendable {
 
     // MARK: Sessions
 
-    public func getSessions(since: String? = nil, limit: Int? = nil) async throws -> [Session] {
+    /// `since` and `cursor` are two different ways to page this endpoint, never combined:
+    /// `since` is the incremental-sync mode (ascending by `updatedAt`, for the poll that keeps
+    /// the list current — `agent`/`kind`/`parent`/`q` are ignored there, since it deliberately
+    /// answers "what changed" across every machine); `cursor` walks newest-first through the
+    /// whole table (descending by `lastActivityAt`), honouring every filter, for loading older
+    /// rows the current page didn't include. See `docs/ARCHITECTURE.md`.
+    ///
+    /// Bypasses `send()`: the next page's cursor comes back as the `X-Next-Cursor` response
+    /// header, not a body field — opaque, so callers pass it straight back rather than deriving
+    /// one from a row.
+    public func getSessions(
+        since: String? = nil,
+        limit: Int? = nil,
+        cursor: String? = nil,
+        agent: String? = nil,
+        kind: SessionKind? = nil,
+        parent: String? = nil,
+        q: String? = nil
+    ) async throws -> SessionsPage {
         var query: [URLQueryItem] = []
         if let since { query.append(URLQueryItem(name: "since", value: since)) }
         if let limit { query.append(URLQueryItem(name: "limit", value: String(limit))) }
-        return try await send(path: "/api/sessions", query: query)
+        if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
+        if let agent { query.append(URLQueryItem(name: "agent", value: agent)) }
+        if let kind {
+            let raw: String
+            switch kind {
+            case .conversation: raw = "conversation"
+            case .subagent: raw = "subagent"
+            case let .unrecognized(value): raw = value
+            }
+            query.append(URLQueryItem(name: "kind", value: raw))
+        }
+        if let parent { query.append(URLQueryItem(name: "parent", value: parent)) }
+        if let q { query.append(URLQueryItem(name: "q", value: q)) }
+
+        let request = try requestFactory.makeRequest(path: "/api/sessions", query: query)
+        let (data, response) = try await urlSession.data(for: request)
+        try Self.checkStatus(response: response, data: data)
+        let sessions: [Session]
+        do {
+            sessions = try JSONDecoder().decode([Session].self, from: data)
+        } catch {
+            throw PaiError.decoding("\(error)")
+        }
+        let nextCursor = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "X-Next-Cursor")
+        return SessionsPage(sessions: sessions, nextCursor: nextCursor)
+    }
+
+    /// `GET /api/sessions/search` — the fuzzy/semantic matcher `csm` reads through too. An
+    /// invalid `mode` or an unknown `agent` both 400.
+    public func searchSessions(
+        q: String,
+        mode: SessionSearchMode? = nil,
+        agent: String? = nil,
+        limit: Int? = nil
+    ) async throws -> [SessionSearchResult] {
+        var query = [URLQueryItem(name: "q", value: q)]
+        if let mode { query.append(URLQueryItem(name: "mode", value: mode.rawValue)) }
+        if let agent { query.append(URLQueryItem(name: "agent", value: agent)) }
+        if let limit { query.append(URLQueryItem(name: "limit", value: String(limit))) }
+        return try await send(path: "/api/sessions/search", query: query)
+    }
+
+    public func getMachines() async throws -> [Machine] {
+        try await send(path: "/api/agents")
+    }
+
+    /// Every value this endpoint answers with — asserted rather than trusted, since this app's
+    /// reverse proxy serves the SPA's `index.html` for any unmatched path on the web, and a
+    /// route not yet deployed would otherwise decode a status this client cannot recognise
+    /// instead of surfacing that as an error.
+    private static let recognizedResumeStatuses: [ResumeResponse.Status] = [.resumed, .alreadyRunning, .refused]
+
+    /// Turn a session PAI is not driving into an ordinary managed one — the "resume here" action
+    /// on a grey session. Runs the same launch path as any other resume; the only thing new is
+    /// that PAI did not start this conversation in the first place. Refused for a subagent,
+    /// which has no conversation uuid of its own.
+    public func resumeSession(sessionId: String) async throws -> ResumeResponse {
+        let result: ResumeResponse = try await send(
+            path: "/api/session/\(sessionId)/resume", method: "POST", body: nil, contentType: nil
+        )
+        guard Self.recognizedResumeStatuses.contains(result.status) else {
+            throw PaiError.decoding("Resume did not answer with a recognised status")
+        }
+        return result
     }
 
     public func getMessages(sessionId: String, page: MessagesPage) async throws -> [Message] {
@@ -221,7 +319,8 @@ public struct PaiApiClient: Sendable {
         message: String,
         files: [PaiFileUpload] = [],
         sessionType: String? = nil,
-        workingDir: String? = nil
+        workingDir: String? = nil,
+        agent: String? = nil
     ) async throws -> PostMessageResponse {
         let boundary = "PAIKit-\(UUID().uuidString)"
         var body = Data()
@@ -234,6 +333,9 @@ public struct PaiApiClient: Sendable {
             Self.appendFormField(&body, boundary: boundary, name: "session_type", value: sessionType)
         }
         if let workingDir { Self.appendFormField(&body, boundary: boundary, name: "working_dir", value: workingDir) }
+        // Which machine a brand new session launches on. Ignored server-side once `sessionId`
+        // names an existing one.
+        if let agent { Self.appendFormField(&body, boundary: boundary, name: "agent", value: agent) }
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 
         return try await send(
@@ -305,6 +407,55 @@ public struct PaiApiClient: Sendable {
         )
     }
 
+    /// How long the session may sit idle before it is closed: `nil` to follow the deployment's
+    /// default, `0` to keep it up indefinitely, or minutes.
+    public func setIdleTimeout(sessionId: String, minutes: Int?) async throws -> Session {
+        struct Body: Encodable {
+            let idleTimeoutMinutes: Int?
+            enum CodingKeys: String, CodingKey { case idleTimeoutMinutes = "idle_timeout_minutes" }
+            // `nil` here means "reset to the deployment default", a real value to send — not
+            // "leave this field alone" the way an omitted PATCH key normally would. Swift's
+            // synthesized `Encodable` uses `encodeIfPresent` for an `Optional` property and
+            // would drop the key entirely on `nil`, silently turning "reset the timeout" into a
+            // no-op PATCH body (`{}`). `encode(_:forKey:)` instead writes `null`.
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(idleTimeoutMinutes, forKey: .idleTimeoutMinutes)
+            }
+        }
+        return try await send(
+            path: "/api/session/\(sessionId)",
+            method: "PATCH",
+            body: try Self.jsonBody(Body(idleTimeoutMinutes: minutes))
+        )
+    }
+
+    /// Move a session to an existing project, landing it in a fresh blank phase.
+    public func switchSessionProject(sessionId: String, projectId: String) async throws -> Session {
+        struct Body: Encodable {
+            let projectId: String
+            enum CodingKeys: String, CodingKey { case projectId = "project_id" }
+        }
+        return try await send(
+            path: "/api/session/\(sessionId)/switch-project",
+            method: "POST",
+            body: try Self.jsonBody(Body(projectId: projectId))
+        )
+    }
+
+    /// Move a session to an existing phase within its current project.
+    public func switchSessionPhase(sessionId: String, phaseId: String) async throws -> Session {
+        struct Body: Encodable {
+            let phaseId: String
+            enum CodingKeys: String, CodingKey { case phaseId = "phase_id" }
+        }
+        return try await send(
+            path: "/api/session/\(sessionId)/switch-phase",
+            method: "POST",
+            body: try Self.jsonBody(Body(phaseId: phaseId))
+        )
+    }
+
     // MARK: Drafts
 
     public func getDrafts() async throws -> [Draft] {
@@ -361,43 +512,21 @@ public struct PaiApiClient: Sendable {
         try await send(path: "/api/usage")
     }
 
-    // MARK: Auth / sharing
+    // MARK: Auth
 
     public func getMe() async throws -> MeResponse {
         try await send(path: "/api/me")
     }
 
-    public func getKnownUsers() async throws -> [KnownUser] {
-        try await send(path: "/api/known-users")
-    }
-
-    public func getSessionShares(sessionId: String) async throws -> [SessionShare] {
-        try await send(path: "/api/session/\(sessionId)/shares")
-    }
-
-    public func shareSession(sessionId: String, email: String) async throws -> SessionShare {
-        struct Body: Encodable { let email: String }
-        return try await send(
-            path: "/api/session/\(sessionId)/share",
-            method: "POST",
-            body: try Self.jsonBody(Body(email: email))
-        )
-    }
-
-    public func unshareSession(sessionId: String, email: String) async throws -> PaiShareRemovalResult {
-        struct Body: Encodable { let email: String }
-        return try await send(
-            path: "/api/session/\(sessionId)/share",
-            method: "DELETE",
-            body: try Self.jsonBody(Body(email: email))
-        )
-    }
-
     // MARK: VM folder browsing & favorites
 
-    public func browse(path: String? = nil) async throws -> BrowseResult {
+    /// `agent` matters: every browsable path is a `/home/frederik/...` path that exists on both
+    /// machines and means a different tree on each, so browsing the VM while launching on the
+    /// laptop would pick a directory that is not the one shown.
+    public func browse(path: String? = nil, agent: String? = nil) async throws -> BrowseResult {
         var query: [URLQueryItem] = []
         if let path { query.append(URLQueryItem(name: "path", value: path)) }
+        if let agent { query.append(URLQueryItem(name: "agent", value: agent)) }
         return try await send(path: "/api/browse", query: query)
     }
 
@@ -431,6 +560,56 @@ public struct PaiApiClient: Sendable {
             path: "/api/session/\(sessionId)/blocker/answer",
             method: "POST",
             body: try Self.jsonBody(Body(key: key))
+        )
+    }
+
+    // MARK: App secrets
+
+    public func getSecretStatuses() async throws -> SecretStatusMap {
+        try await send(path: "/api/settings/secrets")
+    }
+
+    public func setSecret(name: SecretName, value: String) async throws -> SecretStatus {
+        struct Body: Encodable { let value: String }
+        return try await send(
+            path: "/api/settings/secrets/\(name.rawValue)",
+            method: "PUT",
+            body: try Self.jsonBody(Body(value: value))
+        )
+    }
+
+    public func clearSecret(name: SecretName) async throws -> PaiSecretRemovalResult {
+        try await send(
+            path: "/api/settings/secrets/\(name.rawValue)", method: "DELETE", body: nil, contentType: nil
+        )
+    }
+
+    // MARK: SMTP settings
+
+    public func getSmtpSettings() async throws -> SmtpSettings {
+        try await send(path: "/api/settings/smtp")
+    }
+
+    public func updateSmtpSettings(_ update: SmtpSettingsUpdate) async throws -> SmtpSettings {
+        try await send(path: "/api/settings/smtp", method: "PUT", body: try Self.jsonBody(update))
+    }
+
+    /// Sends one real test mail through the currently saved settings — not this in-flight draft,
+    /// which is why the caller must save first.
+    public func testSmtpSettings() async throws -> PaiSmtpTestResult {
+        try await send(path: "/api/settings/smtp/test", method: "POST", body: nil, contentType: nil)
+    }
+
+    // MARK: Voice token
+
+    /// Mints a single-use, short-lived ElevenLabs token for the app's own STT call — the app
+    /// never asks Freddy for that key directly.
+    public func mintVoiceToken(purpose: VoiceTokenPurpose) async throws -> VoiceToken {
+        struct Body: Encodable { let purpose: String }
+        return try await send(
+            path: "/api/voice/token",
+            method: "POST",
+            body: try Self.jsonBody(Body(purpose: purpose.rawValue))
         )
     }
 
