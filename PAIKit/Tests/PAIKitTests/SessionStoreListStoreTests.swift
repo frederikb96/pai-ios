@@ -24,6 +24,27 @@ final class SessionStoreListStoreTests: XCTestCase {
         try? await Task.sleep(nanoseconds: Self.shortDebounceNanos * 3)
     }
 
+    /// Wait until the fake has recorded `count` searches, or give up after a generous ceiling.
+    ///
+    /// Sleeping a fixed multiple of the debounce asserts that a loaded machine schedules a task
+    /// within a fixed wall-clock window, which is a claim about the machine rather than about the
+    /// debounce. Under a full suite it loses that race and reports a debounce failure that is not
+    /// one. Waiting for the condition keeps the assertion honest and still fails when the search
+    /// genuinely never fires.
+    private func awaitSearchCalls(
+        _ api: FakeSessionListApi, count: Int, file: StaticString = #filePath, line: UInt = #line
+    ) async -> [FakeSessionListApi.SearchCall] {
+        let deadline = ContinuousClock().now + .seconds(5)
+        while ContinuousClock().now < deadline {
+            let calls = await api.searchCalls
+            if calls.count >= count { return calls }
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        let calls = await api.searchCalls
+        XCTFail("expected \(count) search call(s), saw \(calls.count)", file: file, line: line)
+        return calls
+    }
+
     // MARK: - Filter routing: id fragment vs empty vs text
 
     func testIdFragmentNeverReachesTheServer() async {
@@ -62,9 +83,7 @@ final class SessionStoreListStoreTests: XCTestCase {
         let callsBeforeWaiting = await api.searchCalls
         XCTAssertTrue(callsBeforeWaiting.isEmpty, "a search must not fire before the debounce elapses")
 
-        await sleepPastDebounce()
-
-        let callsAfterWaiting = await api.searchCalls
+        let callsAfterWaiting = await awaitSearchCalls(api, count: 1)
         XCTAssertEqual(callsAfterWaiting.map(\.q), ["release notes"])
     }
 
@@ -78,9 +97,7 @@ final class SessionStoreListStoreTests: XCTestCase {
         store.updateFilterText("re")
         store.updateFilterText("release")
 
-        await sleepPastDebounce()
-
-        let calls = await api.searchCalls
+        let calls = await awaitSearchCalls(api, count: 1)
         XCTAssertEqual(calls.map(\.q), ["release"])
     }
 
@@ -135,8 +152,7 @@ final class SessionStoreListStoreTests: XCTestCase {
         store.setSemanticMode(true)
         store.commitFilterTextNow()  // no-op (empty text), just establishing state
         store.updateFilterText("meaning search")
-        await sleepPastDebounce()
-        let callsAfterSearch = await api.searchCalls
+        let callsAfterSearch = await awaitSearchCalls(api, count: 1)
         XCTAssertEqual(callsAfterSearch.count, 1)
 
         store.setThreshold(0.5)
@@ -164,7 +180,7 @@ final class SessionStoreListStoreTests: XCTestCase {
         let store = makeStore(api: api)
         store.setSemanticMode(true)
         store.updateFilterText("meaning search")
-        await sleepPastDebounce()
+        _ = await awaitSearchCalls(api, count: 1)
 
         store.setThreshold(0.3)
 

@@ -27,9 +27,13 @@ if [ ${#files[@]} -eq 0 ]; then
     exit 0
 fi
 
+# The language mode has to match what actually compiles this code (`SWIFT_VERSION` in
+# Config/Version.xcconfig, and the package manifest's own tools version). Parsing in the default
+# mode rejects syntax the real build accepts — a bare regex literal being the one that bites — and
+# a check that reports errors in correct code stops being read at all.
 failed=0
 for f in "${files[@]}"; do
-    if ! swiftc -parse "$f" 2>/tmp/parse-swift.err; then
+    if ! swiftc -parse -swift-version 6 "$f" 2>/tmp/parse-swift.err; then
         echo "--- ${f#"$root/"}"
         cat /tmp/parse-swift.err
         failed=1
