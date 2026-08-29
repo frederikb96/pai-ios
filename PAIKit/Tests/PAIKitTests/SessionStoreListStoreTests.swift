@@ -131,16 +131,15 @@ final class SessionStoreListStoreTests: XCTestCase {
     /// through — the asymmetry the report calls out by name.
     func testCommitFilterTextNowBypassesTheDebounce() async {
         let api = FakeSessionListApi()
-        let store = makeStore(api: api)
+        // A debounce far longer than any wait below, so a search arriving at all can only mean it
+        // bypassed the debounce. Sleeping a couple of milliseconds instead makes the test a claim
+        // about how fast the machine schedules a task, which fails under a loaded suite.
+        let store = makeStore(api: api, debounceNanos: 600_000_000_000)
         store.updateFilterText("release notes")
 
         store.commitFilterTextNow()
 
-        // A short yield for the spawned fetch to actually reach the fake actor — far under the
-        // debounce interval, so a call already present here proves this bypassed it rather than
-        // merely landing lucky.
-        try? await Task.sleep(nanoseconds: 2_000_000)
-        let calls = await api.searchCalls
+        let calls = await awaitSearchCalls(api, count: 1)
         XCTAssertEqual(calls.map(\.q), ["release notes"])
     }
 
@@ -157,11 +156,17 @@ final class SessionStoreListStoreTests: XCTestCase {
 
     func testMachineChipSelectionIsImmediate() async {
         let api = FakeSessionListApi()
-        let store = makeStore(api: api)
+        // Same reasoning as the Enter key above: a debounce this long means a browse arriving at
+        // all proves the chip did not go through it.
+        let store = makeStore(api: api, debounceNanos: 600_000_000_000)
 
         store.setMachineFilter("laptop")
 
-        try? await Task.sleep(nanoseconds: 2_000_000)
+        let deadline = ContinuousClock().now + .seconds(5)
+        while ContinuousClock().now < deadline {
+            if await !api.getSessionsCalls.isEmpty { break }
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
         let calls = await api.getSessionsCalls
         XCTAssertEqual(calls.map(\.agent), ["laptop"])
     }
