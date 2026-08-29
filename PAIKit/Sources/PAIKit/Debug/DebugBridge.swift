@@ -33,16 +33,32 @@
         public func start() {
             do {
                 let parameters = NWParameters.tcp
-                parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: port)
                 parameters.allowLocalEndpointReuse = true
+                // The port goes here and *only* here. Passing it to `NWListener(using:on:)` as
+                // well is rejected — "Local endpoint has port set, cannot override" — and the
+                // listener then never binds, while `start` still reports no error. Silent.
+                parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: port)
 
-                let listener = try NWListener(using: parameters, on: port)
+                let listener = try NWListener(using: parameters)
                 listener.newConnectionHandler = { [weak self] connection in
                     self?.accept(connection)
                 }
+                // `start` returns without error even when the listener goes on to fail, so
+                // without this a dead bridge is indistinguishable from a working one until
+                // something tries to connect and times out.
+                listener.stateUpdateHandler = { state in
+                    switch state {
+                    case .ready:
+                        DebugLogBuffer.shared.append(
+                            .info, "debug-bridge", "listening on 127.0.0.1:\(port.rawValue)")
+                    case .failed(let error), .waiting(let error):
+                        DebugLogBuffer.shared.append(.error, "debug-bridge", "listener: \(error)")
+                    default:
+                        break
+                    }
+                }
                 listener.start(queue: queue)
                 self.listener = listener
-                DebugLogBuffer.shared.append(.info, "debug-bridge", "listening on 127.0.0.1:\(port.rawValue)")
             } catch {
                 DebugLogBuffer.shared.append(.error, "debug-bridge", "could not listen: \(error)")
             }
