@@ -7,9 +7,15 @@ import Foundation
 /// fields to over time. Decoded directly as `[String: PaiJSONValue]` — never through a keyed
 /// container with `CodingKeys` — so nested key names are preserved byte-for-byte rather than
 /// risking a key-transform strategy silently renaming someone else's field.
+///
+/// `.number` carries `Decimal`, not `Double`: `JSONDecoder` decodes a `Decimal` field straight
+/// from the literal's text, without an intermediate `Double`, so an id or count above 2^53
+/// survives exactly and a whole number re-encodes as `100` rather than `100.0`. `Bool`/`String`/
+/// `null` decode attempts still fail correctly against a numeric literal (and vice versa) with
+/// this type, so the try-cascade below stays sound.
 public indirect enum PaiJSONValue: Sendable, Equatable {
     case string(String)
-    case number(Double)
+    case number(Decimal)
     case bool(Bool)
     case object([String: PaiJSONValue])
     case array([PaiJSONValue])
@@ -23,7 +29,7 @@ extension PaiJSONValue: Codable {
             self = .null
         } else if let value = try? container.decode(Bool.self) {
             self = .bool(value)
-        } else if let value = try? container.decode(Double.self) {
+        } else if let value = try? container.decode(Decimal.self) {
             self = .number(value)
         } else if let value = try? container.decode(String.self) {
             self = .string(value)
@@ -150,7 +156,7 @@ public struct TokenUsage: Sendable, Equatable {
     }
 
     private func intValue(_ key: String) -> Int? {
-        if case let .number(number)? = values[key] { return Int(number) }
+        if case let .number(number)? = values[key] { return Int(truncating: NSDecimalNumber(decimal: number)) }
         return nil
     }
 
@@ -177,6 +183,12 @@ public struct Message: Codable, Sendable, Equatable, Identifiable {
     public let sessionId: String
     public let type: MessageType
     public let subtype: String?
+    /// The outgoing-send row this entry confirms, when the server could tell — the first entry
+    /// of any kind to arrive after a send was relayed. What a message *looks* like on arrival
+    /// says nothing (a slash command arrives as `subtype: "command"`, an attachment as its own
+    /// kind), which is why this is the only sound way to know a particular send has landed; see
+    /// `SseStatusEvent.pendingSends`.
+    public let outboxId: Int?
     public let timestamp: String?
     public let content: String?
     public let thinking: String?
@@ -184,16 +196,27 @@ public struct Message: Codable, Sendable, Equatable, Identifiable {
     public let toolResult: ToolResult?
     public let hookSummary: HookSummary?
     public let tokens: TokenUsage?
+    /// Who put this prompt here, when nobody typed it — `"agent"` for a `subtype: "pai_message"`
+    /// row relayed from another PAI session, `nil` for a plain prompt Freddy typed (and for every
+    /// row ingested before this field existed — read an absent value as "typed by Freddy", never
+    /// as "unknown").
+    public let origin: String?
+    /// The rest of the marker's attributes — `from`, `session`, `group`, `sent`, …
+    public let originMeta: [String: String]?
     public let createdAt: String?
 
     enum CodingKeys: String, CodingKey {
         case id
         case sessionId = "session_id"
-        case type, subtype, timestamp, content, thinking
+        case type, subtype
+        case outboxId = "outbox_id"
+        case timestamp, content, thinking
         case toolCalls = "tool_calls"
         case toolResult = "tool_result"
         case hookSummary = "hook_summary"
         case tokens
+        case origin
+        case originMeta = "origin_meta"
         case createdAt = "created_at"
     }
 
@@ -202,6 +225,7 @@ public struct Message: Codable, Sendable, Equatable, Identifiable {
         sessionId: String,
         type: MessageType,
         subtype: String?,
+        outboxId: Int?,
         timestamp: String?,
         content: String?,
         thinking: String?,
@@ -209,12 +233,15 @@ public struct Message: Codable, Sendable, Equatable, Identifiable {
         toolResult: ToolResult?,
         hookSummary: HookSummary?,
         tokens: TokenUsage?,
+        origin: String?,
+        originMeta: [String: String]?,
         createdAt: String?
     ) {
         self.id = id
         self.sessionId = sessionId
         self.type = type
         self.subtype = subtype
+        self.outboxId = outboxId
         self.timestamp = timestamp
         self.content = content
         self.thinking = thinking
@@ -222,6 +249,8 @@ public struct Message: Codable, Sendable, Equatable, Identifiable {
         self.toolResult = toolResult
         self.hookSummary = hookSummary
         self.tokens = tokens
+        self.origin = origin
+        self.originMeta = originMeta
         self.createdAt = createdAt
     }
 }
