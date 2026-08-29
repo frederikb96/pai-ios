@@ -1,5 +1,9 @@
 import Observation
 
+#if DEBUG
+    import Foundation
+#endif
+
 /// A destination the app can navigate to.
 ///
 /// `NavigationStack` accepts a plain array binding, so routing needs no SwiftUI and lives here
@@ -13,6 +17,29 @@ public enum Route: Hashable, Sendable {
     case session(id: String)
     case terminal(sessionID: String)
     case settings
+}
+
+extension Route {
+    /// Every screen name the fixture screenshot workflow can launch straight into.
+    ///
+    /// The root session list is not listed here — it needs no route, since it is what
+    /// `RootView` shows for an empty navigation path, and the workflow always photographs it
+    /// first regardless. Extend this array and `named(_:sessionID:)` together whenever `Route`
+    /// gains a case; the workflow itself asks the running app for this list rather than
+    /// hardcoding it, so a new screen becomes photographable without a CI file edit.
+    public static let namedScreens: [String] = ["session", "terminal", "settings"]
+
+    /// Parses a launch-argument screen name into a route. `sessionID` fills in every
+    /// session-scoped case — the fixture corpus answers identically for any id, so the caller
+    /// need not know which one fixture mode picked.
+    public static func named(_ name: String, sessionID: String) -> Route? {
+        switch name {
+        case "session": return .session(id: sessionID)
+        case "terminal": return .terminal(sessionID: sessionID)
+        case "settings": return .settings
+        default: return nil
+        }
+    }
 }
 
 /// What the app shows instead of the navigation stack.
@@ -42,7 +69,26 @@ public final class Router {
 
     public init(gate: AppGate = .needsConfiguration) {
         self.gate = gate
+        #if DEBUG
+            // The one hook the fixture screenshot workflow needs into navigation: seed the
+            // initial path from a launch argument, entirely inside the type that already owns
+            // `path`, so no caller of `Router.init` has to know fixture mode exists.
+            self.path = Router.fixtureInitialPath()
+        #endif
     }
+
+    #if DEBUG
+        /// Split out of `init` so a test can inject an argument array instead of depending on the
+        /// live process's own — the process running the test suite never carries
+        /// `-PaiFixtureMode`, so `init` alone would never exercise this branch.
+        static func fixtureInitialPath(arguments: [String] = ProcessInfo.processInfo.arguments) -> [Route] {
+            guard PaiFixtureLaunch.isEnabled(arguments: arguments),
+                let name = PaiFixtureLaunch.requestedRouteName(arguments: arguments),
+                let route = Route.named(name, sessionID: PaiFixtureLaunch.sessionID)
+            else { return [] }
+            return [route]
+        }
+    #endif
 
     public func push(_ route: Route) {
         path.append(route)

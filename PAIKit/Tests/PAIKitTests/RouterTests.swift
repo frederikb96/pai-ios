@@ -53,4 +53,28 @@ final class RouterTests: XCTestCase {
         XCTAssertEqual(Route.session(id: "abc"), Route.session(id: "abc"))
         XCTAssertNotEqual(Route.session(id: "abc"), Route.terminal(sessionID: "abc"))
     }
+
+    // MARK: - Fixture launch-argument seeding
+
+    func testFixtureInitialPathIsEmptyWithoutTheModeFlag() {
+        XCTAssertEqual(Router.fixtureInitialPath(arguments: ["/app", "-PaiFixtureRoute", "settings"]), [])
+    }
+
+    func testFixtureInitialPathIsEmptyWithModeButNoRoute() {
+        XCTAssertEqual(Router.fixtureInitialPath(arguments: ["/app", "-PaiFixtureMode"]), [])
+    }
+
+    func testFixtureInitialPathSeedsTheRequestedRoute() {
+        let path = Router.fixtureInitialPath(
+            arguments: ["/app", "-PaiFixtureMode", "-PaiFixtureRoute", "settings"]
+        )
+        XCTAssertEqual(path, [.settings])
+    }
+
+    func testFixtureInitialPathIsEmptyForAnUnrecognisedRouteName() {
+        let path = Router.fixtureInitialPath(
+            arguments: ["/app", "-PaiFixtureMode", "-PaiFixtureRoute", "not-a-screen"]
+        )
+        XCTAssertEqual(path, [])
+    }
 }
