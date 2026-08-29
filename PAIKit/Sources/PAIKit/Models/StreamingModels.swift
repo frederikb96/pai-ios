@@ -116,7 +116,30 @@ public struct SseProcessingEvent: Codable, Sendable, Equatable {
 public struct TerminalFrameEvent: Codable, Sendable, Equatable {
     public let data: String
 
-    public init(data: String) {
+    /// False while the frame is anchored to a scrolled-back offset rather than following the
+    /// live pane.
+    ///
+    /// Absent or malformed decodes as `true`, matching the web client. The safe failure mode is
+    /// "assume live": a wrongly-shown "scrolled back" banner is one nothing can clear, while a
+    /// wrongly-hidden one costs nothing.
+    ///
+    /// The backend sends this and `web/src/api/types.ts` does not declare it — the type
+    /// undercounts the wire. Read `terminalStream.ts`, which parses it, rather than the interface.
+    public let live: Bool
+
+    public init(data: String, live: Bool = true) {
         self.data = data
+        self.live = live
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        data = try container.decode(String.self, forKey: .data)
+        live = try container.decodeIfPresent(Bool.self, forKey: .live) ?? true
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case data
+        case live
     }
 }
