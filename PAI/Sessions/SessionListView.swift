@@ -141,9 +141,16 @@ struct SessionListView: View {
                     }
                     .tint(PaiPalette.primary500)
                 }
-                .onLongPressGesture(minimumDuration: 0.45) {
-                    actionsSheetTarget = SessionActionsTarget(id: row.id)
-                }
+                // `.highPriorityGesture`, not `.onLongPressGesture`: the row is a `Button`, and a
+                // bare gesture modifier competes with the button's own tap recognition rather than
+                // taking precedence over it — which resolves inconsistently, and the way it goes
+                // wrong is a long press that opens the sheet *and* navigates into the session on
+                // release. A long press that never reaches its duration still fails cleanly and
+                // leaves the tap to the button.
+                .highPriorityGesture(
+                    LongPressGesture(minimumDuration: 0.45)
+                        .onEnded { _ in actionsSheetTarget = SessionActionsTarget(id: row.id) }
+                )
                 .onAppear {
                     guard sessions.hasMoreRows, !sessions.isLoadingMoreRows,
                         index >= sessions.rows.count - Self.loadMoreLeadRows
@@ -388,18 +395,7 @@ struct ActivityBadges: View {
 /// The row's timestamp string — pure presentation over `SessionListFormat.timeBucket`, which is
 /// the tested half; picking a `DateFormatter`/`Date.FormatStyle` template per bucket is left to
 /// the view on purpose (see that type's doc comment).
-/// `@MainActor` because `ISO8601DateFormatter` is a reference type and not thread-safe, so a
-/// shared instance needs an isolation domain rather than a promise. Every caller is a view body,
-/// which is already on the main actor — so this costs nothing and is honest, where marking the
-/// statics `nonisolated(unsafe)` would have claimed a safety the formatter does not have.
-@MainActor
 enum SessionTimeFormat {
-    private static let fractionalParser: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
-    private static let parser = ISO8601DateFormatter()
 
     static func text(for isoString: String?) -> String? {
         guard let isoString, let date = parse(isoString) else { return nil }
@@ -413,16 +409,7 @@ enum SessionTimeFormat {
         }
     }
 
-    /// 🚨 The two-parser fallback is load-bearing, not defensive. `ISO8601DateFormatter`'s
-    /// default options reject fractional seconds outright, and the backend emits both shapes: a
-    /// window's `resets_at` arrives from `new Date(...).toISOString()` with `.000Z` on it, while
-    /// other timestamps have none. A single default parser therefore returns `nil` for a
-    /// perfectly good timestamp — which reads downstream as "the server didn't send one".
-    static func date(from text: String) -> Date? {
-        fractionalParser.date(from: text) ?? parser.date(from: text)
-    }
-
     private static func parse(_ text: String) -> Date? {
-        date(from: text)
+        IsoTimestamp.date(from: text)
     }
 }

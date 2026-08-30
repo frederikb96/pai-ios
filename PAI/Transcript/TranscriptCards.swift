@@ -85,7 +85,7 @@ struct TranscriptRowContent: View {
     }
 
     private var formattedTimestamp: String {
-        guard let raw = message.timestamp, let date = ISO8601DateFormatter().date(from: raw) else { return "" }
+        guard let raw = message.timestamp, let date = IsoTimestamp.date(from: raw) else { return "" }
         return Self.timeFormatter.string(from: date)
     }
 

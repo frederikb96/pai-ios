@@ -183,10 +183,6 @@ struct SessionDetailView: View {
 /// the web keeps it even on its narrowest layout for that reason. The seven-day figure moves
 /// slowly but is the one that ends a week early when it runs out, and a percentage with no window
 /// named beside it is ambiguous about which of the two it is.
-// Isolated because `resetsAt` reaches `SessionTimeFormat`, whose cached formatters are
-// main-actor-isolated — a `View` conformance isolates `body` and nothing else, so a computed
-// property beside it is not covered by it.
-@MainActor
 private struct PlanUsageBadge: View {
     let usage: Usage
 
@@ -214,12 +210,12 @@ private struct PlanUsageBadge: View {
         return "\(Int(window.utilization.rounded()))%"
     }
 
-    /// 🚨 Parsed through `SessionTimeFormat`, which tries the fractional-seconds shape first.
-    /// This field arrives from the agent as `new Date(...).toISOString()`, so it always carries
-    /// `.000Z` — and a bare `ISO8601DateFormatter` rejects that outright, which is silently
-    /// indistinguishable from the server never having sent a reset time at all.
+    /// 🚨 Through `IsoTimestamp`, never a bare `ISO8601DateFormatter` — this field arrives with
+    /// six fractional digits and a numeric offset, which the default parser rejects outright.
+    /// That rejection is a `nil`, indistinguishable here from the server never having sent a
+    /// reset time, which is exactly why nothing reported it while the time was simply missing.
     private var resetsAt: String? {
-        guard let iso = usage.fiveHour?.resetsAt, let date = SessionTimeFormat.date(from: iso) else { return nil }
+        guard let iso = usage.fiveHour?.resetsAt, let date = IsoTimestamp.date(from: iso) else { return nil }
         return date.formatted(date: .omitted, time: .shortened)
     }
 

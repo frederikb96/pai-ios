@@ -59,6 +59,15 @@ final class VoiceRecorderController {
     /// restores.
     private var preVoiceText = ""
     private var liveTextTask: Task<Void, Never>?
+    /// Held for the whole of `start()`, which is `async` and therefore interleaves.
+    ///
+    /// 🚨 `voiceSession.state` does not leave `.idle` until well after `start()`'s first `await`,
+    /// so for that entire window every `canStart` check — including the one behind the record
+    /// button — still says yes. A second tap, or a tap in another session's composer, then enters
+    /// `start()` again, takes `activeDraftKey` from the first caller and starts a second capture
+    /// on the one `AVAudioEngine`. This is the only thing that closes that window, because it is
+    /// the only state set before an `await` can hand control away.
+    private var isStarting = false
 
     private let settingsStore: SettingsStore
     private let drafts: DraftStore
@@ -138,7 +147,7 @@ final class VoiceRecorderController {
     }
 
     var canStart: Bool {
-        voiceSession.canStart && settingsStore.elevenLabsKey.status?.set != false
+        !isStarting && voiceSession.canStart && settingsStore.elevenLabsKey.status?.set != false
     }
 
     // MARK: - Start / stop
@@ -152,7 +161,9 @@ final class VoiceRecorderController {
     /// replacing it. Passed in rather than read from `drafts` here so the caller's own idea of
     /// what is in the field — which may include an edit still inside the flush debounce — wins.
     func start(draftKey: String?, preText: String) async {
-        guard voiceSession.canStart else { return }
+        guard !isStarting, voiceSession.canStart else { return }
+        isStarting = true
+        defer { isStarting = false }
         setupFailure = nil
         activeDraftKey = draftKey
         preVoiceText = preText

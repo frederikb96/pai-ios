@@ -56,6 +56,17 @@ struct CreateSessionView: View {
                     }
                 }
         }
+        .onDisappear {
+            // 🚨 The recorder is app-wide now, so it survives this sheet — and nothing else can
+            // reach a take started here, because this is the only screen that recognises a take
+            // with no draft key as its own. Left running it would hold the one microphone
+            // indefinitely, disabling the record button in every session's composer with no
+            // visible cause. The audio itself is still saved, so it is recoverable from Past
+            // Recordings; only the live transcript, which had nowhere durable to go from this
+            // screen, is lost.
+            guard let voiceController = environment.connection?.voice, isRecordingHere(voiceController) else { return }
+            Task { await voiceController.stop() }
+        }
         .task {
             guard createSession == nil, let connection = environment.connection else { return }
             let store = CreateSessionStore(machines: machines, api: connection.apiClient)
@@ -282,6 +293,23 @@ struct CreateSessionView: View {
                 }
             }
         }
+        // This screen's composer text is local rather than a draft (see this type's own note), so
+        // unlike `ComposerBar` the live transcript has to be polled into it here. `.task(id:)`
+        // rather than a free-standing `Task` so it keeps running across `.paused`/`.reconnecting`
+        // but stops with the view, instead of outliving it once per visit.
+        .task(id: isRecordingHere(voiceController)) {
+            guard isRecordingHere(voiceController) else { return }
+            var lastPartial = ""
+            while !Task.isCancelled, voiceController.state != .idle {
+                let partial = voiceController.transcribedText
+                if partial != lastPartial {
+                    lastPartial = partial
+                    text = VoiceRecorderController.composeLiveText(pre: preVoiceText, partial: partial)
+                    scrollToTailOnNextUpdate = true
+                }
+                try? await Task.sleep(for: .milliseconds(150))
+            }
+        }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.bar)
@@ -376,7 +404,6 @@ struct CreateSessionView: View {
             // own note on the "new" draft), so the transcript is polled below rather than written
             // into `DraftStore` the way the chat composer's is.
             await voiceController.start(draftKey: nil, preText: text)
-            observeLiveTranscript(voiceController: voiceController)
         case .recording, .connecting, .paused, .reconnecting:
             // A tap always means "end the take", regardless of which of these mid-take states it
             // caught — `VoiceRecordingSession.stop` accepts all of them. Same rule as
@@ -386,30 +413,6 @@ struct CreateSessionView: View {
         case .stopping:
             break
         }
-    }
-
-    /// Keeps polling through `.paused`/`.reconnecting` rather than exiting — a take resumed after
-    /// an interruption or a dropped connection needs this same loop still running to pick its live
-    /// text back up, and nothing else restarts it. Same rule as `ComposerBar`'s own loop.
-    private func observeLiveTranscript(voiceController: VoiceRecorderController) {
-        Task {
-            var lastPartial = ""
-            while voiceController.state != .idle {
-                let partial = voiceController.transcribedText
-                if partial != lastPartial {
-                    lastPartial = partial
-                    text = Self.composeLiveText(pre: preVoiceText, partial: partial)
-                    scrollToTailOnNextUpdate = true
-                }
-                try? await Task.sleep(for: .milliseconds(150))
-            }
-        }
-    }
-
-    private static func composeLiveText(pre: String, partial: String) -> String {
-        guard !partial.isEmpty else { return pre }
-        let prefixed = "\(VoiceRecordingResult.sttPrefix)\(partial)"
-        return pre.isEmpty ? prefixed : "\(pre) \(prefixed)"
     }
 
     private func applyVoiceResult(_ prefixedText: String) {
