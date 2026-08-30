@@ -22,7 +22,7 @@ final class PushRegistrar: NSObject, UIApplicationDelegate, UNUserNotificationCe
     /// most common one for a notification.
     func application(
         _ application: UIApplication,
-        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
         return true
@@ -35,7 +35,7 @@ final class PushRegistrar: NSObject, UIApplicationDelegate, UNUserNotificationCe
     /// onto sessions running elsewhere, so a push about one of them is news whether or not
     /// another session happens to be on screen. Delivery was never the problem; the app was
     /// declining to draw it.
-    nonisolated func userNotificationCenter(
+    func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
@@ -48,13 +48,13 @@ final class PushRegistrar: NSObject, UIApplicationDelegate, UNUserNotificationCe
     /// signed-in user, on a cold launch — so anything that navigated here would navigate against
     /// a sign-in screen and be lost. `RootView` takes it out of the inbox once it has somewhere
     /// to put it.
-    nonisolated func userNotificationCenter(
+    func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
         let payload = Self.stringPayload(response.notification.request.content.userInfo)
         guard let link = DeepLink.from(payload: payload) else { return }
-        await MainActor.run { DeepLinkInbox.shared.receive(link) }
+        DeepLinkInbox.shared.receive(link)
     }
 
     /// Flattens the system's `[AnyHashable: Any]` to the string pairs `DeepLink` parses.

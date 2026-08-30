@@ -49,7 +49,7 @@ struct NoteBodyView: View {
         .environment(
             \.openURL,
             OpenURLAction { url in
-                guard case .note(let id) = DeepLink.from(url: url) else { return .systemAction }
+                guard case .note(let id)? = DeepLink.from(url: url) else { return .systemAction }
                 environment.router.push(.note(id: id))
                 return .handled
             })

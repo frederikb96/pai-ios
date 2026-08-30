@@ -112,11 +112,18 @@ enum NoteEditorTheme {
     private static func addTrait(
         _ trait: UIFontDescriptor.SymbolicTraits, to attributed: NSMutableAttributedString, range: NSRange
     ) {
+        // Collected first, applied after. Mutating an attributed string from inside its own
+        // `enumerateAttribute` is undefined — it can skip ranges or trap, and neither shows up
+        // until the string in question is one a real note happens to produce.
+        var replacements: [(NSRange, UIFont)] = []
         attributed.enumerateAttribute(.font, in: range) { value, subrange, _ in
             guard let font = value as? UIFont else { return }
             let traits = font.fontDescriptor.symbolicTraits.union(trait)
             guard let descriptor = font.fontDescriptor.withSymbolicTraits(traits) else { return }
-            attributed.addAttribute(.font, value: UIFont(descriptor: descriptor, size: font.pointSize), range: subrange)
+            replacements.append((subrange, UIFont(descriptor: descriptor, size: font.pointSize)))
+        }
+        for (subrange, font) in replacements {
+            attributed.addAttribute(.font, value: font, range: subrange)
         }
     }
 }
