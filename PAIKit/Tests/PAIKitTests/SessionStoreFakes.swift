@@ -68,6 +68,9 @@ actor FakeSessionListApi: SessionListApiClient {
 
     func deleteSession(sessionId: String) async throws -> DeleteResponse {
         deleteSessionCalls.append(sessionId)
+        // Recorded before the gate, not after, so a test can observe the request having started
+        // and hold it there — the shape an undo-races-the-in-flight-DELETE test needs.
+        await gate.wait(for: "delete:\(sessionId)")
         switch deleteSessionResult {
         case let .success(response): return response
         case let .failure(error): throw error
