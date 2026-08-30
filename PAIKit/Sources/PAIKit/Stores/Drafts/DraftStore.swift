@@ -46,8 +46,11 @@ public final class DraftStore {
     /// `inFlightFlush` should forget" — a newer flush started while it was in the air must not
     /// have its own in-flight marker erased from under it.
     private var flushSequence: [String: Int] = [:]
-    /// Recently discarded keys, so a sync already in flight cannot resurrect one.
-    private var clearedAt: [String: Date] = [:]
+    /// Recently discarded keys, so a sync already in flight cannot resurrect one. Pruned in
+    /// `syncFromServer` once an entry's grace window has passed — left unpruned this is the one
+    /// unbounded map in an otherwise careful type, one `Date` held for the process lifetime per
+    /// discard. Not `private`, so a test can observe the prune directly.
+    var clearedAt: [String: Date] = [:]
 
     public init(
         api: some DraftsFetching, clock: WallClock = SystemWallClock(), scheduler: DraftScheduler = RealDraftScheduler()
@@ -179,6 +182,8 @@ public final class DraftStore {
         } catch {
             return
         }
+
+        clearedAt = clearedAt.filter { clock.now().timeIntervalSince($0.value) < Self.clearedGraceSeconds }
 
         var seen = Set<String>()
         for row in remote {

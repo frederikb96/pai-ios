@@ -144,6 +144,34 @@ final class TranscriptStoreTests: XCTestCase {
         XCTAssertNil(store.messages["s2"], "s2, never re-touched, should be the one evicted")
     }
 
+    /// `evictOldSessions`'s own doc comment promises it drops "messages, window and send-tracking
+    /// state" — `pendingMessages` and `delivery` used to survive it regardless, so revisiting an
+    /// evicted session before its next status event replayed a stale pending-send as a phantom
+    /// "queued" bubble under a transcript that had already moved on to other messages entirely.
+    func testEvictingASessionDropsItsPendingSendsAndDeliveryStateToo() async {
+        let store = TranscriptStore()
+        let send = Task<PostMessageResponse, Error> {
+            try? await Task.sleep(nanoseconds: 3_600_000_000_000)
+            return PostMessageResponse(sessionId: "s1", messageId: 1)
+        }
+        store.applyBootstrap(sessionId: "s1", entries: [message(id: 1, sessionId: "s1")], requestedLimit: 300)
+        store.trackSend(sessionId: "s1", text: "hello", send: send)
+        store.setDelivery(sessionId: "s1", pendingSends: [PendingSend(id: 2, text: "hi")], lastError: "boom")
+        XCTAssertFalse(store.pendingBubbleTexts(sessionId: "s1").isEmpty, "the send must be tracked before eviction")
+
+        for index in 2...6 {
+            store.applyBootstrap(
+                sessionId: "s\(index)", entries: [message(id: index, sessionId: "s\(index)")], requestedLimit: 300)
+        }
+
+        XCTAssertNil(store.messages["s1"], "s1 should have been the one evicted")
+        XCTAssertTrue(
+            store.pendingBubbleTexts(sessionId: "s1").isEmpty,
+            "an evicted session's pending sends must not survive it")
+        XCTAssertEqual(store.delivery(for: "s1"), .empty, "an evicted session's delivery state must not survive it")
+        send.cancel()
+    }
+
     // MARK: - SSE application
 
     func testSseInitAndBatchMergeIntoTheSameWindowSseSessionTokensUpdate() async {
@@ -161,6 +189,23 @@ final class TranscriptStoreTests: XCTestCase {
         XCTAssertEqual(store.sessionTokens["s1"], 150)
     }
 
+    /// `applySseInit` calls `evictOldSessions()`; `applySseBatch` used not to, even though
+    /// `touch()` still grew `sessionAccessOrder` on every batch — a session that only ever
+    /// receives live batches (never a fresh bootstrap or init) could push the cache past
+    /// ``TranscriptStore``'s cap without ever being trimmed back down.
+    func testApplySseBatchEnforcesTheCacheCapEvenWithoutABootstrapOrInit() async {
+        let store = TranscriptStore()
+        for index in 1...6 {
+            store.applySseBatch(
+                sessionId: "s\(index)",
+                event: SseBatchEvent(entries: [message(id: index, sessionId: "s\(index)")], sessionTokens: nil)
+            )
+        }
+
+        XCTAssertEqual(store.messages.count, 5, "a batch-only path must still respect the session cache cap")
+        XCTAssertNil(store.messages["s1"], "the least-recently-touched session should have been evicted")
+    }
+
     func testSseStatusDerivesIsProcessingFromPendingOrActiveOnly() async {
         let store = TranscriptStore()
         store.applySseStatus(
@@ -170,7 +215,7 @@ final class TranscriptStoreTests: XCTestCase {
                 queued: nil, queuedTexts: nil, pendingSends: nil, lastError: nil
             )
         )
-        XCTAssertTrue(store.isProcessing)
+        XCTAssertTrue(store.isProcessing(for: "s1"))
 
         store.applySseStatus(
             sessionId: "s1",
@@ -179,7 +224,30 @@ final class TranscriptStoreTests: XCTestCase {
                 queued: nil, queuedTexts: nil, pendingSends: nil, lastError: nil
             )
         )
-        XCTAssertFalse(store.isProcessing)
+        XCTAssertFalse(store.isProcessing(for: "s1"))
+    }
+
+    /// The scalar these two used to be showed a session that had just been switched to whatever
+    /// the previous session's stream last reported, until its own first status/connect event
+    /// landed. Keyed by session, a session that has reported nothing yet must read as idle and
+    /// disconnected regardless of what another session is doing right now.
+    func testIsProcessingAndSseConnectedAreKeyedPerSessionNotGlobal() async {
+        let store = TranscriptStore()
+        store.applySseStatus(
+            sessionId: "s1",
+            event: SseStatusEvent(
+                status: .active, state: nil, blocker: nil, working: nil,
+                queued: nil, queuedTexts: nil, pendingSends: nil, lastError: nil
+            )
+        )
+        store.setSseConnected(sessionId: "s1", connected: true)
+
+        XCTAssertTrue(store.isProcessing(for: "s1"))
+        XCTAssertTrue(store.sseConnected(for: "s1"))
+        XCTAssertFalse(
+            store.isProcessing(for: "s2"), "a session with no status event yet must not inherit s1's spinner")
+        XCTAssertFalse(
+            store.sseConnected(for: "s2"), "a session with no connect event yet must not inherit s1's connection")
     }
 
     // MARK: - Display filtering

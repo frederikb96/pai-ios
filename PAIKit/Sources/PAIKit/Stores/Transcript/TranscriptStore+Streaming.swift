@@ -16,6 +16,7 @@ extension TranscriptStore {
     public func applySseBatch(sessionId: String, event: SseBatchEvent) {
         touch(sessionId)
         merge(event.entries, into: sessionId)
+        evictOldSessions()
         if let tokens = event.sessionTokens { sessionTokens[sessionId] = tokens }
         reconcilePending(sessionId)
     }
@@ -28,10 +29,10 @@ extension TranscriptStore {
     /// itself shows.
     public func applySseStatus(sessionId: String, event: SseStatusEvent) {
         setDelivery(sessionId: sessionId, pendingSends: event.pendingSends ?? [], lastError: event.lastError)
-        isProcessing = event.status == .pending || event.status == .active
+        isProcessing[sessionId] = event.status == .pending || event.status == .active
     }
 
-    public func setSseConnected(_ connected: Bool) {
-        sseConnected = connected
+    public func setSseConnected(sessionId: String, connected: Bool) {
+        sseConnected[sessionId] = connected
     }
 }

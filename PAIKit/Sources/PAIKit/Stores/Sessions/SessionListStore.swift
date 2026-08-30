@@ -101,6 +101,11 @@ public final class SessionListStore {
     /// Only the response matching the current generation may ever write state — the guard
     /// against an older, slower request landing after a newer one.
     private var generation = 0
+    /// The `(machine, query)` pair `serverFilteredResults` currently reflects — lets a refetch
+    /// tell "the filter actually changed" from "the same filter re-fired" (the id-fragment fast
+    /// path in `updateFilterText` always calls `refetchServerFiltered` even when neither the
+    /// machine chip nor the effective query moved). Only the former should blank the array.
+    private var resultsSourceKey: String?
     private var debounceTask: Task<Void, Never>?
     private var serverFilteredTask: Task<Void, Never>?
     private var pollTask: Task<Void, Never>?
@@ -166,6 +171,22 @@ public final class SessionListStore {
 
     public func loadMoreRows() async {
         if isServerFiltered { await loadMoreServerFiltered() } else { await loadMoreSyncedSessions() }
+    }
+
+    /// Looks a session up by id across every source this store has already loaded — the synced
+    /// list first, then whatever machine-browse or search results are current. A session found
+    /// only by search (source C) is not necessarily in the synced list (source A): it may be
+    /// older than the pages loaded so far, and the synced list has no id-lookup endpoint of its
+    /// own to fall back to.
+    ///
+    /// This is the cheap correct fix, not the thorough one: it only ever answers from what is
+    /// already in memory, so a session found by search and then never touched by browse or the
+    /// synced poll stays unresolved after `serverFilteredResults` is next overwritten (a fresh
+    /// search, a cleared filter). The web's `ensureSessionLoaded` (`session.ts`) covers that case
+    /// with a dedicated fetch-if-missing request; nothing here has a port of it.
+    public func session(withId id: String) -> Session? {
+        syncedSessions.first(where: { $0.id == id })
+            ?? serverFilteredResults.first(where: { $0.session.id == id })?.session
     }
 
     // MARK: - Filter bar actions
@@ -331,6 +352,18 @@ public final class SessionListStore {
         let mode: SessionSearchMode = semanticMode ? .semantic : .fuzzy
         serverFilteredLoading = true
         serverFilteredError = nil
+        // Only when the filter genuinely changed: the id-fragment fast path in
+        // `updateFilterText` calls this on every keystroke even when neither the machine chip
+        // nor the effective query moved, and blanking the array there would defeat its own
+        // "matched client-side against what is already loaded" contract. When it did change,
+        // this is what stops switching straight from one machine chip to another (or a fresh
+        // search replacing the last one) from showing the previous filter's rows for as long as
+        // the new fetch is in flight — `isLoadingFirstResults` requires
+        // `serverFilteredResults.isEmpty`, which a stale-but-nonempty array defeats.
+        let requestKey = Self.resultsSourceKey(machine: machine, query: query, mode: mode)
+        if requestKey != resultsSourceKey {
+            serverFilteredResults = []
+        }
 
         serverFilteredTask = Task { [weak self] in
             guard let self else { return }
@@ -343,6 +376,7 @@ public final class SessionListStore {
                     self.serverFilteredResults = results
                     self.serverFilteredCursor = nil
                     self.serverFilteredHasMore = false
+                    self.resultsSourceKey = requestKey
                 } catch {
                     guard !Task.isCancelled, self.generation == myGeneration else { return }
                     if error is CancellationError { return }
@@ -358,6 +392,7 @@ public final class SessionListStore {
                     self.serverFilteredResults = page.sessions.map { SessionSearchResult(session: $0, score: nil) }
                     self.serverFilteredCursor = page.nextCursor
                     self.serverFilteredHasMore = page.nextCursor != nil
+                    self.resultsSourceKey = requestKey
                 } catch {
                     guard !Task.isCancelled, self.generation == myGeneration else { return }
                     if error is CancellationError { return }
@@ -366,6 +401,10 @@ public final class SessionListStore {
             }
             if self.generation == myGeneration { self.serverFilteredLoading = false }
         }
+    }
+
+    private static func resultsSourceKey(machine: String?, query: String?, mode: SessionSearchMode) -> String {
+        "\(machine ?? "")\u{0}\(query ?? "")\u{0}\(mode.rawValue)"
     }
 
     /// Only for the browse source (B) — a ranked search result (C) has no natural next page.
@@ -406,7 +445,12 @@ public final class SessionListStore {
             else { return }
             if page.sessions.isEmpty { break }
             changed.append(contentsOf: page.sessions)
-            guard let pageMax = Self.maxUpdatedAt(page.sessions) else { break }
+            // A full page whose rows all share one `updated_at` (all changed inside the same
+            // clock tick) leaves `pageMax` equal to `cursor` — resending that same `since` would
+            // fetch the identical page forever. Requiring forward progress bounds the loop; the
+            // rare rows left beyond this page's size at that exact timestamp are picked up by the
+            // next poll tick, same as `.hasOlder` paging catching up incrementally elsewhere.
+            guard let pageMax = Self.maxUpdatedAt(page.sessions), pageMax > cursor else { break }
             cursor = pageMax
             if page.sessions.count < Self.sessionsPageSize { break }
         }

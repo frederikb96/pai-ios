@@ -284,6 +284,24 @@ final class DraftStoreTests: XCTestCase {
         XCTAssertEqual(store.draft(for: "s1").text, "a fresh edit from elsewhere")
     }
 
+    /// `clearedAt` is the one unbounded map in this store — a discarded key's marker survived
+    /// past its own grace window forever, for the life of the process, unless something prunes
+    /// it. `syncFromServer` is the natural periodic hook to do that from.
+    func testSyncPrunesAClearedAtMarkerOnceItsGraceWindowHasPassed() async {
+        let fake = FakeDraftsFetching()
+        let clock = FakeWallClock()
+        let store = DraftStore(api: fake, clock: clock, scheduler: InstantDraftScheduler())
+
+        store.clearDraft(key: "s1")
+        XCTAssertEqual(store.clearedAt.count, 1)
+
+        clock.advance(by: DraftStore.clearedGraceSeconds + 0.1)
+        await store.syncFromServer()
+
+        XCTAssertTrue(
+            store.clearedAt.isEmpty, "an expired cleared-key marker must not be held for the process lifetime")
+    }
+
     /// A key this device once reconciled with the server (it carries a `remoteUpdatedAt`) but
     /// that the server no longer lists means another client sent or discarded it — drop it.
     func testSyncDropsALocalKeyOnceReconciledThatTheServerNoLongerLists() async {

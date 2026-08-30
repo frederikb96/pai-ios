@@ -141,6 +141,39 @@ final class PaiModelsTests: XCTestCase {
         XCTAssertEqual(String(data: reencoded, encoding: .utf8), #""archived""#)
     }
 
+    /// `SessionState` is the field that decides whether a session can be typed into at all — and
+    /// unlike `SessionStatus`, `SessionKind`, `BlockerKind` and `MessageType`, nothing pinned its
+    /// `.unrecognized` fallback: a `state` string this build predates threw during `[Session]`
+    /// decoding with no test catching it, which blanks the *entire* session list rather than
+    /// degrading the one row carrying it, since `getSessions` decodes the array in one shot.
+    func testSessionListSurvivesOneUnrecognizedStateInsteadOfFailingEntirely() throws {
+        let json = Data(
+            """
+            [
+              {"id":"s1","session_type":"claude","status":"active","state":"ready","blocker":null,
+               "title":null,"title_locked":null,"initial_message":null,"pending_message":null,
+               "session_tokens":0,"claude_session_id":null,"cse_id":null,"created_at":null,
+               "updated_at":null,"last_activity_at":null,"working_dir":null},
+              {"id":"s2","session_type":"claude","status":"active","state":"orchestrating","blocker":null,
+               "title":null,"title_locked":null,"initial_message":null,"pending_message":null,
+               "session_tokens":0,"claude_session_id":null,"cse_id":null,"created_at":null,
+               "updated_at":null,"last_activity_at":null,"working_dir":null}
+            ]
+            """.utf8)
+        let sessions = try JSONDecoder().decode([Session].self, from: json)
+
+        XCTAssertEqual(sessions.count, 2)
+        XCTAssertEqual(sessions[0].state, .ready)
+        XCTAssertEqual(sessions[1].state, .unrecognized("orchestrating"))
+    }
+
+    func testSessionStateRoundTripsAnUnrecognizedValueRatherThanDroppingIt() throws {
+        let state = try JSONDecoder().decode(SessionState.self, from: Data(#""orchestrating""#.utf8))
+        XCTAssertEqual(state, .unrecognized("orchestrating"))
+        let reencoded = try JSONEncoder().encode(state)
+        XCTAssertEqual(String(data: reencoded, encoding: .utf8), #""orchestrating""#)
+    }
+
     /// `BlockerKind` already had a bare `unknown` case for the backend's own literal
     /// `"unknown"` value before `.unrecognized` was added — this pins the two stay distinct.
     func testBlockerKindDistinguishesBackendUnknownFromAnUnrecognizedValue() throws {

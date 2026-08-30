@@ -279,6 +279,31 @@ final class SessionStoreListStoreTests: XCTestCase {
         await assertRowsStay(store, ["beta-session"])
     }
 
+    /// Re-applying a filter (a fresh machine chip, replacing an already-loaded one) must not keep
+    /// showing the previous filter's rows while its own fetch is in flight — a stale-but-nonempty
+    /// `serverFilteredResults` defeats `isLoadingFirstResults`'s emptiness check, so the old rows
+    /// sit there silently, looking like the new filter's answer.
+    func testReapplyingAMachineFilterClearsStaleResultsWhileTheNewFetchIsInFlight() async {
+        let api = FakeSessionListApi()
+        await api.gate.arm("browse:laptop")
+        await api.setGetSessionsResult { call in
+            let id = call.agent == "vm" ? "vm-session" : "laptop-session"
+            return .success(SessionsPage(sessions: [SessionFixture.make(id: id, agent: call.agent)], nextCursor: nil))
+        }
+        let store = makeStore(api: api)
+
+        store.setMachineFilter("vm")
+        await awaitRows(store, ["vm-session"])
+
+        store.setMachineFilter("laptop")  // gated — does not resolve yet
+
+        XCTAssertTrue(store.rows.isEmpty, "the previous filter's rows must not linger while the new fetch is in flight")
+        XCTAssertEqual(store.emptyState, .loadingFirstResults)
+
+        await api.gate.release("browse:laptop")
+        await awaitRows(store, ["laptop-session"])
+    }
+
     // MARK: - rows: subagent filtering, id-query on top of a server-filtered source
 
     func testRowsExcludeSubagentsFromTheSyncedList() async {
@@ -428,10 +453,14 @@ final class SessionStoreListStoreTests: XCTestCase {
         let store = makeStore(api: api)
         await store.loadInitialSessions()
 
+        // Comfortably past any real wall-clock "now" the test runs at: `fetchIncremental`'s
+        // cursor starts at `lastSessionSync`, which was stamped from the real clock by the
+        // `loadInitialSessions()` call above, and a page must sort *after* that cursor to count
+        // as forward progress.
         let fullPage = (0..<SessionListStore.sessionsPageSize).map {
-            SessionFixture.make(id: "full-\($0)", updatedAt: "2026-01-01T00:00:0\($0 % 10)Z")
+            SessionFixture.make(id: "full-\($0)", updatedAt: "2099-01-01T00:00:0\($0 % 10)Z")
         }
-        let partialPage = [SessionFixture.make(id: "tail", updatedAt: "2026-01-02T00:00:00Z")]
+        let partialPage = [SessionFixture.make(id: "tail", updatedAt: "2099-01-02T00:00:00Z")]
         let callIndex = CallCounter()
         await api.setGetSessionsResult { call in
             guard call.since != nil else { return .success(SessionsPage(sessions: [], nextCursor: nil)) }
@@ -445,6 +474,71 @@ final class SessionStoreListStoreTests: XCTestCase {
         XCTAssertEqual(sinceCalls.count, 2, "a full page must trigger exactly one more page")
         XCTAssertTrue(store.syncedSessions.contains { $0.id == "tail" })
         XCTAssertEqual(store.syncedSessions.count, SessionListStore.sessionsPageSize + 1)
+    }
+
+    /// A full page whose rows all share one `updated_at` leaves the cursor unable to advance —
+    /// with no forward-progress guard, `fetchIncremental`'s `while true` never terminates and
+    /// hammers the backend with the identical `since` forever. The fake fails outright past a
+    /// handful of repeats, which turns a regression into an ordinary fast test failure instead of
+    /// a hang.
+    func testIncrementalPollStopsWhenAFullPageMakesNoCursorProgress() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { call in
+            guard call.since == nil else { return .success(SessionsPage(sessions: [], nextCursor: nil)) }
+            return .success(SessionsPage(sessions: [], nextCursor: nil))
+        }
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        let stuckPage = (0..<SessionListStore.sessionsPageSize).map {
+            SessionFixture.make(id: "stuck-\($0)", updatedAt: "2099-01-01T00:00:00Z")
+        }
+        let callIndex = CallCounter()
+        await api.setGetSessionsResult { call in
+            guard call.since != nil else { return .success(SessionsPage(sessions: [], nextCursor: nil)) }
+            defer { callIndex.value += 1 }
+            guard callIndex.value < 5 else { return .failure(.transport("test: loop did not terminate")) }
+            return .success(SessionsPage(sessions: stuckPage, nextCursor: nil))
+        }
+
+        await store.pollSyncedSessions()
+
+        // The first call still advances the cursor from `lastSessionSync` (the real clock, well
+        // before 2099) to the stuck page's shared timestamp — genuine progress. The second call
+        // sends that same cursor back and gets the identical page again: no further progress, so
+        // the loop must stop there rather than repeating it forever.
+        let sinceCalls = (await api.getSessionsCalls).filter { $0.since != nil }
+        XCTAssertEqual(
+            sinceCalls.count, 2,
+            "no further cursor progress must stop the loop instead of resending the identical `since` forever")
+        XCTAssertEqual(store.syncedSessions.count, SessionListStore.sessionsPageSize, "the one stuck page still merges")
+    }
+
+    // MARK: - session(withId:)
+
+    /// The case the report named directly: a session found only by search (source C) may be
+    /// older than the pages already loaded into the synced list (source A) and so is absent from
+    /// it — a lookup that only ever checks the synced list resolves to nothing for it.
+    func testSessionWithIdFallsBackToServerFilteredResultsWhenAbsentFromTheSyncedList() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { call in
+            guard call.since == nil else { return .success(SessionsPage(sessions: [], nextCursor: nil)) }
+            return .success(SessionsPage(sessions: [SessionFixture.make(id: "synced-1")], nextCursor: nil))
+        }
+        await api.setSearchResult { _ in
+            .success([SessionSearchResult(session: SessionFixture.make(id: "search-only"), score: nil)])
+        }
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+        store.updateFilterText("old session")
+        store.commitFilterTextNow()
+        _ = await awaitSearchCalls(api, count: 1)
+
+        XCTAssertEqual(store.session(withId: "synced-1")?.id, "synced-1")
+        XCTAssertEqual(
+            store.session(withId: "search-only")?.id, "search-only",
+            "a search-only result must still resolve rather than falling back to nothing")
+        XCTAssertNil(store.session(withId: "never-seen"))
     }
 
     // MARK: - loadMoreSyncedSessions
