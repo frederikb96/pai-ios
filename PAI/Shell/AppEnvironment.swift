@@ -176,6 +176,27 @@ final class AppEnvironment {
         connection.sessions.startPolling()
     }
 
+    /// An API client built from stored credentials alone, for code that runs without an
+    /// `AppEnvironment` — an App Intent can be invoked while the app is not running, and the
+    /// Shortcuts app asks it for a list of notes before anything of this app's own has started.
+    ///
+    /// Lives here rather than at that call site so the two facts this type exists to own — where
+    /// the backend URL is stored, and what the app is signed in as — still have exactly one
+    /// home. `nil` means not signed in, which an intent must present as such rather than as an
+    /// empty vault.
+    ///
+    /// No auth-failure callback: there is no screen to send anyone to, and clearing the token
+    /// from a background invocation would sign the app out without the person ever seeing why.
+    static func standaloneClient(
+        defaults: UserDefaults = .standard, tokens: KeychainTokenStore = KeychainTokenStore()
+    ) -> PaiApiClient? {
+        guard tokens.read() != nil else { return nil }
+        let url = defaults.string(forKey: Self.backendURLKey) ?? Self.defaultBackendURL
+        guard let factory = try? PaiRequestFactory(baseURL: url, tokenProvider: { tokens.read() })
+        else { return nil }
+        return PaiApiClient(requestFactory: factory)
+    }
+
     /// Keep the machine directory current for as long as the app is in front of the user.
     ///
     /// A laptop coming online or going offline is the one thing here that genuinely changes minute

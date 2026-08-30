@@ -8,6 +8,11 @@ struct RootView: View {
     /// than continuously, since nothing after launch can change what already happened before it.
     @State private var pendingCrash: CrashRecord?
 
+    /// The parked deep link, if one is waiting. Read through the observable inbox rather than
+    /// polled, so a notification tapped while the app is already open navigates immediately
+    /// rather than on whatever the next redraw happens to be.
+    private var deepLinks: DeepLinkInbox { DeepLinkInbox.shared }
+
     var body: some View {
         content
             .preferredColorScheme(colorScheme)
@@ -16,6 +21,17 @@ struct RootView: View {
                 await environment.pollMachines()
             }
             .onAppear { pendingCrash = CrashReporter.readLast() }
+            // Two triggers, because a link and a usable app arrive in either order: tapped while
+            // the app is open, the link is last; tapped from cold, the gate opening is last.
+            .onChange(of: deepLinks.pending) { _, _ in consumeDeepLink() }
+            .onChange(of: environment.router.gate) { _, _ in consumeDeepLink() }
+            // The URL half — a shortcut or widget that opens the app by URL rather than through
+            // an App Intent. Parked through the same inbox so there is one path to a screen from
+            // outside, not two that can disagree.
+            .onOpenURL { url in
+                guard let link = DeepLink.from(url: url) else { return }
+                deepLinks.receive(link)
+            }
             .sheet(item: $pendingCrash, onDismiss: { CrashReporter.clearLast() }) { crash in
                 CrashReportSheet(record: crash)
             }
@@ -102,6 +118,17 @@ struct RootView: View {
         case .noteContainers:
             NoteContainersScreen()
         }
+    }
+
+    /// Act on a parked deep link, but only once there is a signed-in app to act on it in.
+    ///
+    /// Left in the inbox otherwise rather than dropped: a notification tapped from cold arrives
+    /// well before the token has been read and the connection built, and discarding it there is
+    /// exactly the case this whole mechanism exists for.
+    private func consumeDeepLink() {
+        guard environment.router.gate == .ready, environment.connection != nil else { return }
+        guard let link = deepLinks.consume() else { return }
+        environment.router.replace(with: link.routes)
     }
 
     /// `nil` is "follow the system", which is what an absent override means to SwiftUI too.

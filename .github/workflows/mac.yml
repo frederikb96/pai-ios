@@ -82,7 +82,10 @@ jobs:
           grep -q 'NSMicrophoneUsageDescription' /tmp/built-info.txt \
             || { echo '::error::the generated Info.plist keys were not merged in'; \
                  cat /tmp/built-info.txt; exit 1; }
-          echo 'background mode and generated keys both present'
+          grep -q '"pai"' /tmp/built-info.txt \
+            || { echo '::error::the pai:// URL scheme is missing — every note shortcut opens nothing'; \
+                 cat /tmp/built-info.txt; exit 1; }
+          echo 'background mode, URL scheme and generated keys all present'
 
       # Runs after the app build on purpose. This step compiles the whole package on a macOS host,
       # which is the only place the UIKit-guarded files compile at all — so it fails for reasons

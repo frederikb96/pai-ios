@@ -17,5 +17,25 @@
 	<array>
 		<string>audio</string>
 	</array>
+
+	<!-- `pai://session/<id>` and `pai://note/<id>`, so a Shortcuts action or a widget can open
+	     one screen directly. Array-valued and nested two levels, so it has the same reason to
+	     live here rather than in an INFOPLIST_KEY_ build setting as the background mode above.
+
+	     A scheme the system does not know about is not an error — it is a link that silently
+	     opens nothing, which reads as a broken shortcut rather than a missing declaration. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.frederikberg.pai.deeplink</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>pai</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

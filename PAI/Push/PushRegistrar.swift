@@ -14,7 +14,63 @@ import UserNotifications
 /// nothing. This file is the part that cannot be tested at all, so it holds as little as
 /// possible.
 @MainActor
-final class PushRegistrar: NSObject, UIApplicationDelegate {
+final class PushRegistrar: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+
+    /// Claiming the notification-centre delegate has to happen before launch finishes, or a tap
+    /// that *started* the app is delivered to nobody — the system hands it over once, at launch,
+    /// and drops it if there is no delegate yet. That is the cold-launch case, which is also the
+    /// most common one for a notification.
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        UNUserNotificationCenter.current().delegate = self
+        return true
+    }
+
+    /// What to show for a notification that arrives while the app is frontmost.
+    ///
+    /// Without this method iOS shows nothing at all — the default is that an app in front of the
+    /// user is assumed to be already telling them. That default is wrong here: this app is a view
+    /// onto sessions running elsewhere, so a push about one of them is news whether or not
+    /// another session happens to be on screen. Delivery was never the problem; the app was
+    /// declining to draw it.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .list, .sound]
+    }
+
+    /// A tapped notification.
+    ///
+    /// Parked rather than acted on: this fires before there is a router — before there is a
+    /// signed-in user, on a cold launch — so anything that navigated here would navigate against
+    /// a sign-in screen and be lost. `RootView` takes it out of the inbox once it has somewhere
+    /// to put it.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        let payload = Self.stringPayload(response.notification.request.content.userInfo)
+        guard let link = DeepLink.from(payload: payload) else { return }
+        await MainActor.run { DeepLinkInbox.shared.receive(link) }
+    }
+
+    /// Flattens the system's `[AnyHashable: Any]` to the string pairs `DeepLink` parses.
+    ///
+    /// The one step that genuinely cannot be tested — everything past it is a pure function with
+    /// tests that run on Linux for nothing. Non-string values are dropped rather than described,
+    /// since a link key is always a string and `String(describing:)` on the `aps` dictionary
+    /// would only manufacture a value that looks like one.
+    private static func stringPayload(_ userInfo: [AnyHashable: Any]) -> [String: String] {
+        var payload: [String: String] = [:]
+        for (key, value) in userInfo {
+            guard let key = key as? String, let value = value as? String else { continue }
+            payload[key] = value
+        }
+        return payload
+    }
 
     /// Set once the app has a connection, since a token is worth nothing until there is a
     /// backend to send it to. Until then the callbacks below simply have nowhere to put their
