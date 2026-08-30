@@ -1,4 +1,4 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 
 /// Captures mono PCM from the microphone and hands it to whoever is listening — the one piece of
 /// `VoiceRecordingSession`'s contract the package cannot supply itself
