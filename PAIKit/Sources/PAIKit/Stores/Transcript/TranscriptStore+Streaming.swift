@@ -34,12 +34,7 @@ extension TranscriptStore {
         )
     }
 
-    public func setSseConnected(sessionId: String, connected: Bool) {
-        sseConnected[sessionId] = connected
-    }
-
-    /// Called for `onConnected` — see `setSseConnected`'s own call site, and `StreamActivity`'s
-    /// doc comment for why this is tracked separately from it.
+    /// Called for `onConnected`.
     public func recordSseConnected(sessionId: String, at date: Date) {
         var activity = sseActivity[sessionId] ?? StreamActivity()
         activity.recordConnected(at: date)

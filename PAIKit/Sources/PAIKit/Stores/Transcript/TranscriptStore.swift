@@ -32,12 +32,10 @@ public final class TranscriptStore {
     public internal(set) var sessionTokens: [String: Int] = [:]
     /// Keyed like `sessionTokens` and for the same reason: a scalar here showed the previous
     /// session's connection/spinner state on screen until the newly-switched-to session's first
-    /// status event arrived and overwrote it.
-    public internal(set) var sseConnected: [String: Bool] = [:]
-    /// Keyed like `sseConnected` and for the same reason. Separate from it rather than folded in,
-    /// since "a socket is open" and "content is actually flowing through it" are different
-    /// questions — a connection can sit open with nothing arriving, which is exactly the state a
-    /// bare `sseConnected` reads identically to a healthy one.
+    /// status event arrived and overwrote it. Carries strictly more than a plain "socket is open"
+    /// flag would — "a socket is open" and "content is actually flowing through it" are different
+    /// questions, and a connection can sit open with nothing arriving, which is exactly the state
+    /// a bare connected/disconnected flag reads identically to a healthy one.
     public internal(set) var sseActivity: [String: StreamActivity] = [:]
     public internal(set) var isProcessing: [String: Bool] = [:]
     /// The session-level half of the latest `status` event, keyed like `sessionTokens` — the
@@ -69,10 +67,6 @@ public final class TranscriptStore {
 
     public func window(for sessionId: String) -> TranscriptWindow {
         windows[sessionId] ?? .empty
-    }
-
-    public func sseConnected(for sessionId: String) -> Bool {
-        sseConnected[sessionId] ?? false
     }
 
     public func sseActivity(for sessionId: String) -> StreamActivity {
@@ -199,7 +193,7 @@ public final class TranscriptStore {
             sessionTokens.removeValue(forKey: oldest)
             pendingMessages.removeValue(forKey: oldest)
             delivery.removeValue(forKey: oldest)
-            sseConnected.removeValue(forKey: oldest)
+            sseActivity.removeValue(forKey: oldest)
             isProcessing.removeValue(forKey: oldest)
             liveStatus.removeValue(forKey: oldest)
         }
