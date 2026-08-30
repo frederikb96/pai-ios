@@ -40,6 +40,7 @@ struct SessionDetailView: View {
                 ProgressView()
             }
         }
+        .paiScreenBackground()
         .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("session-detail")

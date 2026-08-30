@@ -64,6 +64,8 @@ struct RootView: View {
             TerminalScreen(sessionID: sessionID)
         case .settings:
             SettingsScreen()
+        case .createSession:
+            CreateSessionRouteScreen()
         }
     }
 
@@ -81,5 +83,20 @@ struct RootView: View {
             get: { environment.router.path },
             set: { environment.router.replace(with: $0) }
         )
+    }
+}
+
+/// What `.createSession` pushes to — reproduces the real presentation (a sheet from the session
+/// list) rather than pushing `CreateSessionView` directly, so the fixture screenshot workflow
+/// photographs the exact thing Freddy sees rather than that view's own `NavigationStack` nested
+/// inside this one with different, misleading chrome. See `Route.createSession`'s doc comment.
+private struct CreateSessionRouteScreen: View {
+    @State private var isPresented = true
+
+    var body: some View {
+        Color.clear
+            .sheet(isPresented: $isPresented) {
+                CreateSessionView()
+            }
     }
 }
