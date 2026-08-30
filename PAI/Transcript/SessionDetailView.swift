@@ -11,6 +11,7 @@ struct SessionDetailView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(TranscriptStore.self) private var transcript
     @Environment(SettingsStore.self) private var settings
+    @State private var searchState = TranscriptSearchState()
 
     let sessionID: String
 
@@ -20,9 +21,13 @@ struct SessionDetailView: View {
                 VStack(spacing: 0) {
                     TranscriptCollectionView(
                         sessionID: sessionID, store: transcript, apiClient: connection.apiClient, settings: settings,
-                        requestFactory: connection.requestFactory)
+                        requestFactory: connection.requestFactory, searchState: searchState)
                     Divider()
-                    ComposerBar(sessionID: sessionID)
+                    if searchState.isActive {
+                        TranscriptSearchBar(state: searchState)
+                    } else {
+                        ComposerBar(sessionID: sessionID)
+                    }
                 }
             } else {
                 // Unreachable in practice: `RootView` only shows this screen once the connection
@@ -42,6 +47,14 @@ struct SessionDetailView: View {
                     Image(systemName: "terminal")
                 }
                 .accessibilityIdentifier("open-terminal")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    searchState.open()
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+                .accessibilityIdentifier("open-transcript-search")
             }
         }
     }
