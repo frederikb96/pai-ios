@@ -23,9 +23,9 @@ final class VoiceRecorderController {
     private(set) var voiceSession: VoiceRecordingSession
     private(set) var isCapturing = false
     private(set) var setupFailure: SetupFailure?
-    /// Recordings this device has ever kept, newest first — seeded from `SettingsStore.recordings`
-    /// (the persisted metadata) at construction, kept in sync with it on every new capture.
-    private(set) var recordings: RecordingsStore
+    /// The bytes behind past recordings. The list itself belongs to `SettingsStore`, which is
+    /// what the settings screen renders and what persists.
+    private let recordingAudio: RecordingAudioLibrary
 
     var state: VoiceRecordingState { voiceSession.state }
     var isMuted: Bool { voiceSession.isMuted }
@@ -59,7 +59,7 @@ final class VoiceRecorderController {
     init(apiClient: PaiApiClient, settingsStore: SettingsStore) {
         self.apiClient = apiClient
         self.settingsStore = settingsStore
-        self.recordings = RecordingsStore(storage: audioStorage, initial: settingsStore.recordings)
+        self.recordingAudio = RecordingAudioLibrary(storage: audioStorage)
 
         voiceSession = VoiceRecordingSession(
             dependencies: VoiceRecordingDependencies(
@@ -72,14 +72,11 @@ final class VoiceRecorderController {
             )
         )
 
-        // `SettingsStore` is the persisted metadata authority and has no audio storage of its
-        // own — this is the seam its own doc comment describes for whoever does. Kept even
-        // though `persistRecording()` below drives both lists from the same call and they never
-        // actually disagree: it is what makes that agreement a property of the wiring rather than
-        // an invariant a future change could quietly break.
-        let recordingsStore = recordings
+        // The list evicts; the audio follows. This is the only thing that deletes a blob, so a
+        // recording's bytes cannot outlive its metadata.
+        let audio = recordingAudio
         settingsStore.onRecordingEvicted = { meta in
-            Task { await recordingsStore.remove(id: meta.id) }
+            Task { await audio.delete(id: meta.id) }
         }
 
         observeInterruptions()
@@ -304,7 +301,7 @@ final class VoiceRecorderController {
         )
 
         do {
-            try await recordings.add(meta, raw: rawWav, sent: sentWav)
+            try await recordingAudio.save(id: meta.id, raw: rawWav, sent: sentWav)
             settingsStore.saveRecording(meta)
         } catch {
             // Losing a diagnostics recording is not worth surfacing to Freddy — the transcript
