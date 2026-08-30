@@ -55,4 +55,25 @@ final class VoiceStartFailureTests: XCTestCase {
             return XCTFail("expected .other for a non-PaiError")
         }
     }
+
+    // MARK: - userMessage
+
+    /// The one case with real conditional logic: the backend's own detail text wins when it sent
+    /// one, since that is more specific than any fixed wording this client could write.
+    func testServiceUnavailableUsesTheBackendDetailWhenPresent() {
+        XCTAssertEqual(VoiceStartFailure.serviceUnavailable("upstream rejected").userMessage, "upstream rejected")
+    }
+
+    func testServiceUnavailableFallsBackToAFixedMessageWhenNoDetailWasSent() {
+        XCTAssertEqual(
+            VoiceStartFailure.serviceUnavailable(nil).userMessage, "Speech-to-text is unavailable right now.")
+    }
+
+    /// `.other` must read through to the wrapped `PaiError`'s own message rather than restating a
+    /// fixed string — otherwise a transport error's actual detail (network unreachable, say) gets
+    /// thrown away in favour of something generic.
+    func testOtherDelegatesToTheWrappedErrorsOwnMessage() {
+        let error = PaiError.transport("no network")
+        XCTAssertEqual(VoiceStartFailure.other(error).userMessage, error.userMessage)
+    }
 }

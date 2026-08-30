@@ -18,6 +18,13 @@ final class VoiceRecorderController {
     enum SetupFailure: Equatable {
         case microphoneDenied
         case audioSessionFailed
+
+        var userMessage: String {
+            switch self {
+            case .microphoneDenied: "Microphone access is off — enable it in Settings to record."
+            case .audioSessionFailed: "Couldn't start the microphone. Try again."
+            }
+        }
     }
 
     private(set) var voiceSession: VoiceRecordingSession
