@@ -47,14 +47,11 @@ struct SessionDetailView: View {
     }
 
     private var navigationTitle: String {
-        guard let session = environment.connection?.sessions.syncedSessions.first(where: { $0.id == sessionID }) else {
+        // Searched, not just synced: a search result older than the loaded pages is not in the
+        // synced list at all, and looking only there titles it "Session".
+        guard let session = environment.connection?.sessions.session(withId: sessionID) else {
             return "Session"
         }
         return SessionListFormat.displayTitle(for: session)
     }
-
-    /// The transcript stream needs its own `Authorization` header the same way every other
-    /// transport does (`PaiRequestFactory`'s doc comment) — `PaiApiClient` keeps its copy
-    /// private, so this rebuilds one from the same backend URL and the same Keychain entry
-    /// `AppEnvironment` itself reads, rather than reaching into its private state.
 }

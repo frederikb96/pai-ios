@@ -2,13 +2,12 @@ import XCTest
 
 @testable import PAIKit
 
-/// Pins down the consequence of a real wiring decision in `TranscriptCollectionViewController`:
-/// its `PaiSseClient.Callbacks.onInit` must route to `TranscriptStore.applySseInit(sessionId:event:)`,
-/// never to `applySseBatch(sessionId:event:)` — the two differ by exactly one call,
-/// `evictOldSessions()` (see `applySseInit`'s own doc comment), which only the real init event
-/// should trigger. Routing `onInit` to `applySseBatch` instead — which is what shipped before this
-/// was wired up — compiles, passes every existing test, and only shows up as an LRU cap that never
-/// actually evicts for a run of sessions that only ever streamed, never bootstrapped.
+/// The session cache stays capped no matter which stream event arrives.
+///
+/// Both paths are asserted, because the cap used to depend on which one a caller happened to
+/// route to: only the init path evicted, so a run of sessions that streamed without ever
+/// bootstrapping grew without limit, and nothing failed. The two are now equivalent in that
+/// respect, and these tests are what stops one of them quietly losing the call again.
 ///
 /// Every method is `async` for the same Linux test-discovery trap `TranscriptStoreTests`'s doc
 /// comment describes.
@@ -42,10 +41,8 @@ final class ScrollWiringSseInitEvictionTests: XCTestCase {
         XCTAssertEqual(store.messages.count, 5)
     }
 
-    /// The reverse case, pinned down deliberately: `applySseBatch` alone never evicts, which is
-    /// exactly why an init event landing there instead of at `applySseInit` would be silent —
-    /// nothing fails, the cap just stops being enforced.
-    func testSseBatchAloneNeverEvictsEvenPastTheCap() async {
+    /// The path that used to be the leak: batch events alone must still respect the cap.
+    func testSseBatchAloneAlsoEvictsPastTheCap() async {
         let store = TranscriptStore()
         for index in 1...5 {
             store.applySseBatch(
@@ -57,9 +54,8 @@ final class ScrollWiringSseInitEvictionTests: XCTestCase {
             sessionId: "s6",
             event: SseBatchEvent(entries: [message(id: 6, sessionId: "s6")], sessionTokens: nil))
 
-        XCTAssertNotNil(
-            store.messages["s1"], "batch alone must not evict — that gap is what makes routing init correctly matter")
-        XCTAssertEqual(
-            store.messages.count, 6, "the cap was exceeded here on purpose, to show what batch-only never catches")
+        XCTAssertNil(
+            store.messages["s1"], "a streamed batch must evict too — a cap only one path enforces is not a cap")
+        XCTAssertEqual(store.messages.count, 5)
     }
 }
