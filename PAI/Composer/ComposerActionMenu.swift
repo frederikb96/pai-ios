@@ -43,8 +43,12 @@ struct ComposerActionMenu: View {
                 }
             }
         } label: {
-            Image(systemName: "plus.circle.fill")
-                .font(.system(size: 28))
+            // Unfilled — a solid white disc here was the single brightest object on the whole
+            // transcript, louder than any message in it. An attachment menu is a secondary
+            // affordance beside the conversation; it does not need to outshine it, matching the
+            // web's own plain, low-key icon button for the same control.
+            Image(systemName: "plus.circle")
+                .font(.system(size: 24, weight: .regular))
                 .foregroundStyle(PaiPalette.Semantic.textSecondary)
         }
         .accessibilityIdentifier("composer-action-menu")
