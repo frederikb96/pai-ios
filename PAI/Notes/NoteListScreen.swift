@@ -175,9 +175,13 @@ struct NoteListScreen: View {
                         selectedTags.append(option.key)
                     }
                 } label: {
-                    Label(
-                        "\(option.label) (\(option.count))",
-                        systemImage: selectedTags.contains(option.key) ? "checkmark" : "")
+                    // A `Label` needs a symbol name that exists; an empty one draws nothing and
+                    // leaves the two states differing only by a gap nobody can see.
+                    if selectedTags.contains(option.key) {
+                        Label("\(option.label) (\(option.count))", systemImage: "checkmark")
+                    } else {
+                        Text("\(option.label) (\(option.count))")
+                    }
                 }
             }
             if !selectedTags.isEmpty {

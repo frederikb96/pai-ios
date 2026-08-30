@@ -63,8 +63,7 @@ struct NoteEntityQuery: EntityQuery, EntityStringQuery {
     /// What the picker shows before anything is typed. Favourites first, because a shortcut is
     /// something Freddy makes for a note he returns to, and that is what a favourite already is.
     func suggestedEntities() async throws -> [NoteEntity] {
-        let all = await allNotes()
-        return all
+        await allNotes()
     }
 
     private func allNotes() async -> [NoteEntity] {
