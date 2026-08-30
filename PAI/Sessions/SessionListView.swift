@@ -1,15 +1,17 @@
 import PAIKit
 import SwiftUI
 
-/// The app's first screen: the filter bar, the machine chips, and the session list itself.
+/// The app's first screen: the machine chips, the session list, and the system search field.
 ///
-/// Filter/chips sit above the `List` rather than inside it — the web keeps them fixed while the
-/// rows scroll underneath, and a plain `List` already gives fixed-height rows the virtualization
-/// the `scrolling` skill asks for, so nothing beyond that is needed here.
+/// The search field is `.searchable`, not a hand-rolled one — the platform gives scroll-to-reveal
+/// and a Cancel button for free, which is exactly what the web has to build by hand because it
+/// has no such control to reach for. A plain `List` already gives fixed-height rows the
+/// virtualization the `scrolling` skill asks for, so nothing beyond that is needed here.
 struct SessionListView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(SessionListStore.self) private var sessions
     @Environment(MachineStore.self) private var machines
+    @Environment(ToastCenter.self) private var toasts
 
     /// The synced list (source A) has no loading state of its own in the store — it starts life
     /// already loaded via `loadInitialSessions()`. This tracks the one gap that leaves: the
@@ -17,6 +19,7 @@ struct SessionListView: View {
     /// genuinely empty but showing "No sessions yet" would be a false claim.
     @State private var hasLoadedInitialSessions = false
     @State private var isPresentingCreateSession = false
+    @State private var actionsSheetTarget: SessionActionsTarget?
 
     /// How many rows before the end trigger the next page — a screen or so at this row's fixed
     /// height, never at the last row itself, per the `scrolling` skill.
@@ -24,20 +27,23 @@ struct SessionListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            filterBar
             if showsMachineChips {
                 machineChips
             }
-            Divider()
             list
         }
+        .paiScreenBackground()
         .navigationTitle("Sessions")
+        // The system search field: scroll-to-reveal and a Cancel button for free, rather than
+        // the hand-rolled field the web needs (it has no such control to reach for).
+        .searchable(text: filterTextBinding, prompt: filterPlaceholder)
+        .onSubmit(of: .search) { sessions.commitFilterTextNow() }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     isPresentingCreateSession = true
                 } label: {
-                    Image(systemName: "square.and.pencil")
+                    Image(systemName: "plus")
                 }
                 .accessibilityIdentifier("new-session")
             }
@@ -49,11 +55,19 @@ struct SessionListView: View {
                 }
                 .accessibilityIdentifier("open-settings")
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    sessions.setSemanticMode(!sessions.semanticMode)
+                } label: {
+                    Image(systemName: "sparkles")
+                }
+                .tint(sessions.semanticMode ? PaiPalette.Semantic.accentText : nil)
+                .accessibilityLabel("Search by meaning, not just text")
+                .accessibilityAddTraits(sessions.semanticMode ? [.isSelected] : [])
+                .accessibilityIdentifier("semantic-toggle")
+            }
         }
         .task {
-            // Guarded, because pushing a session and coming back may re-run this: a second
-            // `loadInitialSessions` replaces the list wholesale and resets the paging cursor, so
-            // returning from a session would silently discard everything scrolled to so far.
             // Guarded, because pushing a session and coming back re-runs this: a second
             // `loadInitialSessions` replaces the list wholesale and resets the paging cursor, so
             // returning from a session would silently discard everything scrolled to so far.
@@ -64,15 +78,27 @@ struct SessionListView: View {
         .sheet(isPresented: $isPresentingCreateSession) {
             CreateSessionView()
         }
+        .sheet(item: $actionsSheetTarget) { target in
+            SessionActionsSheet(sessionId: target.id)
+        }
     }
 
     // MARK: - The list
 
     private var list: some View {
         List {
+            if showsThresholdSlider {
+                thresholdRow
+                    .listRowSeparator(.hidden)
+            }
+            if let error = sessions.searchError {
+                searchErrorRow(error)
+                    .listRowSeparator(.hidden)
+            }
             content
         }
         .listStyle(.plain)
+        .scrollContentBackground(.hidden)
         .refreshable {
             // Server-filtered results (a machine chip or a query) go stale by design while
             // active — nothing pushes into them, and this pull only ever refreshes the synced
@@ -103,6 +129,25 @@ struct SessionListView: View {
                 SessionRowButton(row: row) {
                     environment.router.push(.session(id: row.id))
                 }
+                .swipeActions(edge: .trailing) {
+                    Button(role: .destructive) {
+                        deleteWithUndoToast(id: row.id)
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                }
+                .contextMenu {
+                    Button {
+                        actionsSheetTarget = SessionActionsTarget(id: row.id)
+                    } label: {
+                        Label("Session actions…", systemImage: "ellipsis.circle")
+                    }
+                    Button(role: .destructive) {
+                        deleteWithUndoToast(id: row.id)
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                }
                 .onAppear {
                     guard sessions.hasMoreRows, !sessions.isLoadingMoreRows,
                         index >= sessions.rows.count - Self.loadMoreLeadRows
@@ -115,6 +160,15 @@ struct SessionListView: View {
                 centeredRow { ProgressView() }
             }
         }
+    }
+
+    private func deleteWithUndoToast(id: String) {
+        sessions.deleteSessionWithHold(id: id)
+        toasts.show(
+            "Session deleted",
+            action: .init(label: "Undo") { [sessions] in sessions.undoDelete() },
+            lifetimeNanos: SessionListStore.deleteUndoNanos
+        )
     }
 
     @ViewBuilder
@@ -135,74 +189,35 @@ struct SessionListView: View {
             .foregroundStyle(PaiPalette.Semantic.textMuted)
     }
 
-    // MARK: - Filter bar
+    // MARK: - Filter accessories
+    //
+    // The search FIELD itself is `.searchable` on the body above — these are the two things that
+    // do not fit that control: the semantic-match threshold slider, and a search-specific error.
+    // Both live as ordinary first rows in the list rather than pinned chrome, since neither
+    // applies outside an active semantic search.
 
-    private var filterBar: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(PaiPalette.Semantic.textFaint)
-                    TextField(filterPlaceholder, text: filterTextBinding)
-                        .textFieldStyle(.plain)
-                        .submitLabel(.search)
-                        .autocorrectionDisabled()
-                        .onSubmit { sessions.commitFilterTextNow() }
-                        .accessibilityIdentifier("session-filter-field")
-                    if !sessions.filterQueryText.isEmpty {
-                        Button {
-                            sessions.updateFilterText("")
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(PaiPalette.Semantic.textFaint)
-                        }
-                        .accessibilityIdentifier("session-filter-clear")
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .background(PaiPalette.Semantic.raisedSurface, in: RoundedRectangle(cornerRadius: 8))
-
-                Button {
-                    sessions.setSemanticMode(!sessions.semanticMode)
-                } label: {
-                    Image(systemName: "sparkles")
-                        .frame(width: 20, height: 20)
-                }
-                .buttonStyle(.bordered)
-                .tint(sessions.semanticMode ? PaiPalette.Semantic.accentText : PaiPalette.Semantic.textMuted)
-                .accessibilityLabel("Search by meaning, not just text")
-                .accessibilityAddTraits(sessions.semanticMode ? [.isSelected] : [])
-                .accessibilityIdentifier("semantic-toggle")
-            }
-
-            if showsThresholdSlider {
-                HStack(spacing: 8) {
-                    Text("Match")
-                        .font(PaiTypography.caption.font)
-                        .foregroundStyle(PaiPalette.Semantic.textMuted)
-                    Slider(value: thresholdBinding, in: 0...1, step: 0.01)
-                        .accessibilityLabel("Minimum match score")
-                    Text(thresholdPercentText)
-                        .font(PaiTypography.monoLabel.font)
-                        .foregroundStyle(PaiPalette.Semantic.textMuted)
-                        .monospacedDigit()
-                        .frame(minWidth: 36, alignment: .trailing)
-                }
-            }
-
-            if let error = sessions.searchError {
-                HStack(spacing: 4) {
-                    Image(systemName: "exclamationmark.circle.fill")
-                    Text(error).lineLimit(1)
-                }
+    private var thresholdRow: some View {
+        HStack(spacing: 8) {
+            Text("Match")
                 .font(PaiTypography.caption.font)
-                .foregroundStyle(PaiPalette.Semantic.errorText)
-            }
+                .foregroundStyle(PaiPalette.Semantic.textMuted)
+            Slider(value: thresholdBinding, in: 0...1, step: 0.01)
+                .accessibilityLabel("Minimum match score")
+            Text(thresholdPercentText)
+                .font(PaiTypography.monoLabel.font)
+                .foregroundStyle(PaiPalette.Semantic.textMuted)
+                .monospacedDigit()
+                .frame(minWidth: 36, alignment: .trailing)
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
-        .padding(.bottom, 4)
+    }
+
+    private func searchErrorRow(_ error: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "exclamationmark.circle.fill")
+            Text(error).lineLimit(1)
+        }
+        .font(PaiTypography.caption.font)
+        .foregroundStyle(PaiPalette.Semantic.errorText)
     }
 
     private var filterTextBinding: Binding<String> {
@@ -301,19 +316,23 @@ private struct MachineChip: View {
     }
 }
 
-/// One row: state dot, warnings, title, when it last did anything.
-///
-/// Deliberately spare, matching the web. The machine a session runs on is **not** shown, so with
-/// no machine filter applied a VM row and a laptop row look identical — that is the web's choice
-/// and changing it is an addition, not a port.
+/// The `.sheet(item:)` target for the session actions sheet — a plain id wrapped just enough to
+/// be `Identifiable`, since `String` alone cannot be used as a sheet item.
+private struct SessionActionsTarget: Identifiable {
+    let id: String
+}
+
+/// One row: state dot (or a working spinner in its place), warnings, title, when it last did
+/// anything, token count, and what it has running — matching what the web's row shows, denser
+/// than the row this replaces. 🚨 The spinner is sized to the dot it replaces so a working row is
+/// never taller than an idle one — see `SessionStateIndicator`'s doc comment and the `scrolling`
+/// skill.
 struct SessionRow: View {
     let row: SessionListRow
 
     var body: some View {
         HStack(spacing: 10) {
-            Circle()
-                .fill(dotColor)
-                .frame(width: 8, height: 8)
+            SessionStateIndicator(dotState: row.dotState, isWorking: row.isWorking)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(row.displayTitle)
@@ -321,12 +340,17 @@ struct SessionRow: View {
                     .foregroundStyle(PaiPalette.Semantic.textPrimary)
                     .lineLimit(1)
 
-                if let activity = SessionTimeFormat.text(for: row.lastActivityAt) {
-                    Text(activity)
-                        .font(PaiTypography.caption.font)
-                        .foregroundStyle(PaiPalette.Semantic.textMuted)
-                        .lineLimit(1)
+                HStack(spacing: 6) {
+                    if let activity = SessionTimeFormat.text(for: row.lastActivityAt) {
+                        Text(activity)
+                            .lineLimit(1)
+                    }
+                    if let counts = row.activityCounts, counts.agents > 0 || counts.tasks > 0 {
+                        ActivityBadges(counts: counts)
+                    }
                 }
+                .font(PaiTypography.caption.font)
+                .foregroundStyle(PaiPalette.Semantic.textMuted)
             }
 
             Spacer()
@@ -349,16 +373,26 @@ struct SessionRow: View {
         }
         .padding(.vertical, 2)
     }
+}
 
-    /// Grey is normal, not an error — it means the session is not driven by the backend, which is
-    /// true of a subagent and of anything Freddy runs in his own terminal.
-    private var dotColor: Color {
-        switch row.dotState {
-        case .ready, .legacyActive: PaiPalette.green500
-        case .starting, .blocked, .legacyPending: PaiPalette.amber500
-        case .attention, .legacyError: PaiPalette.red500
-        case .closed, .grey, .legacyCompleted, .legacyInterrupted: PaiPalette.surface400
+/// What a session has running right now — subagents and background shells/monitors — beside the
+/// timestamp. Each half disappears on its own at zero, matching `ActivityBadges.tsx`.
+private struct ActivityBadges: View {
+    let counts: ActivityCounts
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if counts.agents > 0 {
+                Label("\(counts.agents)", systemImage: "cpu")
+                    .accessibilityLabel("\(counts.agents) subagent(s) working right now")
+            }
+            if counts.tasks > 0 {
+                Label("\(counts.tasks)", systemImage: "terminal")
+                    .accessibilityLabel("\(counts.tasks) background task(s) running")
+            }
         }
+        .labelStyle(.titleAndIcon)
+        .font(PaiTypography.caption.font)
     }
 }
 

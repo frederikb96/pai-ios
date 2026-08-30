@@ -1,0 +1,483 @@
+import PAIKit
+import SwiftUI
+
+/// Every action the web's `SessionActionsMenu` offers, in one sheet — reached from the session
+/// list row (long-press) and from the chat header ("…"), matching the web's own claim that a
+/// session behaves the same however the menu was reached.
+///
+/// SwiftUI's `.sheet` already gives the bottom-sheet-on-phone shape the web builds by hand
+/// (`isCompact` + a portalled `fixed inset-x-0 bottom-0` panel); a `NavigationStack` inside it is
+/// what the web's `view`/`setView` state machine becomes natively, push-based rather than a
+/// hand-rolled back button.
+struct SessionActionsSheet: View {
+    let sessionId: String
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(SessionListStore.self) private var sessionList
+    @Environment(MeStore.self) private var me
+    @Environment(ToastCenter.self) private var toasts
+
+    @State private var actions: SessionActionsStore?
+    @State private var path: [ActionsRoute] = []
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            Group {
+                if let actions {
+                    RootActionsList(actions: actions, isOwner: me.isOwner, path: $path) {
+                        actions.deleteWithHold()
+                        dismiss()
+                        toasts.show(
+                            "Session deleted",
+                            action: .init(label: "Undo") { [sessionList] in sessionList.undoDelete() },
+                            lifetimeNanos: SessionListStore.deleteUndoNanos
+                        )
+                    } onCloseFailed: {
+                        toasts.show(actions.errorMessage ?? "Could not close the session", kind: .error)
+                    }
+                } else {
+                    ProgressView()
+                }
+            }
+            .navigationDestination(for: ActionsRoute.self) { route in
+                if let actions {
+                    destination(for: route, actions: actions)
+                }
+            }
+            .navigationTitle(actions?.session.map { SessionListDomain.sessionHeaderTitle(for: $0) } ?? "Session")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+        .task {
+            guard actions == nil, let client = environment.connection?.apiClient else { return }
+            actions = SessionActionsStore(sessionId: sessionId, sessionList: sessionList, api: client)
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    @ViewBuilder
+    private func destination(for route: ActionsRoute, actions: SessionActionsStore) -> some View {
+        switch route {
+        case .rename:
+            RenameActionView(actions: actions, toasts: toasts, onDone: { dismiss() })
+        case .timeout:
+            IdleTimeoutActionView(actions: actions, toasts: toasts)
+        case .export:
+            ExportActionView(actions: actions)
+        case .moveProject:
+            MoveToProjectActionView(actions: actions, toasts: toasts, onDone: { dismiss() })
+        case .movePhase:
+            if let projectId = actions.session?.projectId {
+                MoveToPhaseActionView(actions: actions, projectId: projectId, toasts: toasts, onDone: { dismiss() })
+            }
+        }
+    }
+}
+
+private enum ActionsRoute: Hashable {
+    case rename, timeout, export, moveProject, movePhase
+}
+
+// MARK: - Root list
+
+private struct RootActionsList: View {
+    let actions: SessionActionsStore
+    let isOwner: Bool
+    @Binding var path: [ActionsRoute]
+    let onDelete: () -> Void
+    let onCloseFailed: () -> Void
+
+    @State private var copiedConversationId = false
+
+    var body: some View {
+        List {
+            if let session = actions.session {
+                if isOwner {
+                    Button {
+                        path.append(.rename)
+                    } label: {
+                        Label("Rename", systemImage: "pencil")
+                    }
+                }
+
+                if isOwner, session.kind != .subagent {
+                    Button {
+                        path.append(.moveProject)
+                    } label: {
+                        Label("Move to project…", systemImage: "folder")
+                    }
+                    if session.projectId != nil {
+                        Button {
+                            path.append(.movePhase)
+                        } label: {
+                            Label("Move to phase…", systemImage: "arrow.triangle.branch")
+                        }
+                    }
+                }
+
+                if let url = SessionListDomain.claudeCodeUrl(cseId: session.cseId) {
+                    Link(destination: url) {
+                        Label("Open in Claude Code", systemImage: "arrow.up.forward.app")
+                    }
+                }
+
+                if let conversationId = session.claudeSessionId {
+                    Button {
+                        UIPasteboard.general.string = conversationId
+                        copiedConversationId = true
+                        Task {
+                            try? await Task.sleep(for: .seconds(1.5))
+                            copiedConversationId = false
+                        }
+                    } label: {
+                        Label(
+                            "Copy conversation id", systemImage: copiedConversationId ? "checkmark" : "doc.on.doc")
+                    }
+                }
+
+                Button {
+                    path.append(.export)
+                } label: {
+                    Label("Export transcript…", systemImage: "square.and.arrow.down")
+                }
+
+                if isOwner {
+                    Button {
+                        path.append(.timeout)
+                    } label: {
+                        HStack {
+                            Label("Close when idle…", systemImage: "timer")
+                            Spacer()
+                            Text(Self.formatIdleWindow(session.effectiveIdleTimeoutMinutes))
+                                .font(PaiTypography.caption.font)
+                                .foregroundStyle(PaiPalette.Semantic.textFaint)
+                        }
+                    }
+
+                    if session.state != nil, session.state != .closed {
+                        Button {
+                            Task {
+                                if !(await actions.close()) { onCloseFailed() }
+                            }
+                        } label: {
+                            Label("Close session", systemImage: "power")
+                        }
+                    }
+
+                    Button(role: .destructive, action: onDelete) {
+                        Label("Delete session", systemImage: "trash")
+                    }
+                }
+            } else {
+                ProgressView()
+            }
+        }
+        .accessibilityIdentifier("session-actions-list")
+    }
+
+    private static func formatIdleWindow(_ minutes: Int?) -> String {
+        guard let minutes else { return "" }
+        if minutes == 0 { return "never" }
+        if minutes % 60 == 0 { return "\(minutes / 60) h" }
+        return "\(minutes) min"
+    }
+}
+
+// MARK: - Rename
+
+private struct RenameActionView: View {
+    let actions: SessionActionsStore
+    let toasts: ToastCenter
+    let onDone: () -> Void
+
+    @State private var text: String
+    @State private var followsPhaseName: Bool
+    @State private var isSaving = false
+
+    init(actions: SessionActionsStore, toasts: ToastCenter, onDone: @escaping () -> Void) {
+        self.actions = actions
+        self.toasts = toasts
+        self.onDone = onDone
+        _text = State(initialValue: actions.session?.title ?? "")
+        // Checked means unlocked (`!titleLocked`) — see `SessionActionsStore.setTitleLocked`'s
+        // doc comment for why the checkbox is phrased this way.
+        _followsPhaseName = State(initialValue: !(actions.session?.titleLocked ?? false))
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Session name", text: $text)
+                    .accessibilityIdentifier("session-rename-field")
+            }
+            Section {
+                Toggle("Follow the phase name from the VM", isOn: $followsPhaseName)
+            } footer: {
+                Text("Until a name is chosen here, the session carries whatever the VM is calling the work.")
+            }
+        }
+        .navigationTitle("Rename session")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") { Task { await save() } }
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving)
+            }
+        }
+    }
+
+    private func save() async {
+        isSaving = true
+        defer { isSaving = false }
+        let renamed = await actions.rename(title: text)
+        let lockChanged = await actions.setTitleLocked(!followsPhaseName)
+        if renamed && lockChanged {
+            onDone()
+        } else {
+            toasts.show(actions.errorMessage ?? "Rename failed", kind: .error)
+        }
+    }
+}
+
+// MARK: - Idle timeout
+
+private struct IdleTimeoutActionView: View {
+    let actions: SessionActionsStore
+    let toasts: ToastCenter
+
+    /// `nil` follows the deployment default and `0` never closes — the two values the API takes
+    /// for those, so nothing here has to know what the default currently is.
+    private static let choices: [(label: String, minutes: Int?)] = [
+        ("Default", nil), ("1 hour", 60), ("3 hours", 180), ("12 hours", 720), ("24 hours", 1440),
+        ("Never close", 0),
+    ]
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(Self.choices, id: \.label) { choice in
+                    Button {
+                        Task {
+                            if !(await actions.setIdleTimeout(minutes: choice.minutes)) {
+                                toasts.show(actions.errorMessage ?? "Could not change the idle timeout", kind: .error)
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Text(choice.label)
+                                .foregroundStyle(PaiPalette.Semantic.textPrimary)
+                            Spacer()
+                            if choice.minutes == actions.session?.idleTimeoutMinutes {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(PaiPalette.green500)
+                            }
+                        }
+                    }
+                }
+            } footer: {
+                Text(
+                    "The process is stopped after this long with nothing sent. The conversation is kept either way, and sending again resumes it."
+                )
+            }
+        }
+        .navigationTitle("Close when idle for")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - Export
+
+private struct ExportActionView: View {
+    let actions: SessionActionsStore
+
+    @State private var customDate = Date()
+    @State private var isExporting = false
+    @State private var errorMessage: String?
+    @State private var exportedFile: URL?
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(Array(ExportPreset.allCases.enumerated()), id: \.offset) { _, preset in
+                    Button {
+                        Task { await export(since: preset.sinceIso()) }
+                    } label: {
+                        Text(preset.label)
+                            .foregroundStyle(PaiPalette.Semantic.textPrimary)
+                    }
+                    .disabled(isExporting)
+                }
+            }
+            Section {
+                DatePicker("Custom start time", selection: $customDate)
+                    .datePickerStyle(.compact)
+                Button("Export from this time") {
+                    Task { await export(since: ISO8601DateFormatter().string(from: customDate)) }
+                }
+                .disabled(isExporting)
+            }
+            if let errorMessage {
+                Section {
+                    Text(errorMessage)
+                        .foregroundStyle(PaiPalette.Semantic.errorText)
+                }
+            }
+        }
+        .navigationTitle("Export transcript")
+        .navigationBarTitleDisplayMode(.inline)
+        .overlay {
+            if isExporting { ProgressView() }
+        }
+        .sheet(item: Binding(get: { exportedFile.map(ShareItem.init) }, set: { exportedFile = $0?.url })) { item in
+            ShareSheet(activityItems: [item.url])
+        }
+    }
+
+    private func export(since: String?) async {
+        isExporting = true
+        errorMessage = nil
+        defer { isExporting = false }
+        guard let result = await actions.exportTranscript(since: since) else {
+            errorMessage = actions.errorMessage ?? "Export failed"
+            return
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(result.filename)
+        do {
+            try result.data.write(to: url, options: .atomic)
+            exportedFile = url
+        } catch {
+            errorMessage = "Could not save the export"
+        }
+    }
+}
+
+private struct ShareItem: Identifiable {
+    let url: URL
+    var id: String { url.path }
+}
+
+private struct ShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+// MARK: - Move to project / phase
+
+private struct MoveToProjectActionView: View {
+    let actions: SessionActionsStore
+    let toasts: ToastCenter
+    let onDone: () -> Void
+
+    @State private var picker: OffsetPagedListStore<MemoryProject>?
+
+    var body: some View {
+        Group {
+            if let picker {
+                MemoryPickerList(picker: picker, currentId: actions.session?.projectId) { project in
+                    Task {
+                        if await actions.switchProject(project.id) {
+                            onDone()
+                        } else {
+                            toasts.show(actions.errorMessage ?? "Could not move this session", kind: .error)
+                        }
+                    }
+                } rowLabel: {
+                    $0.name ?? "Unnamed project"
+                }
+                .searchable(text: Binding(get: { picker.query }, set: { picker.query = $0 }), prompt: "Search projects")
+            } else {
+                ProgressView()
+            }
+        }
+        .navigationTitle("Move to project")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            guard picker == nil else { return }
+            let store = actions.makeProjectPicker()
+            picker = store
+            await store.reload()
+        }
+    }
+}
+
+private struct MoveToPhaseActionView: View {
+    let actions: SessionActionsStore
+    let projectId: String
+    let toasts: ToastCenter
+    let onDone: () -> Void
+
+    @State private var picker: OffsetPagedListStore<MemoryPhase>?
+
+    var body: some View {
+        Group {
+            if let picker {
+                MemoryPickerList(picker: picker, currentId: actions.session?.phaseId) { phase in
+                    Task {
+                        if await actions.switchPhase(phase.id) {
+                            onDone()
+                        } else {
+                            toasts.show(actions.errorMessage ?? "Could not move this session", kind: .error)
+                        }
+                    }
+                } rowLabel: {
+                    $0.name ?? $0.phaseKey
+                }
+                .searchable(text: Binding(get: { picker.query }, set: { picker.query = $0 }), prompt: "Search phases")
+            } else {
+                ProgressView()
+            }
+        }
+        .navigationTitle("Move to phase")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            guard picker == nil else { return }
+            let store = actions.makePhasePicker(projectId: projectId)
+            picker = store
+            await store.reload()
+        }
+    }
+}
+
+/// Shared list body for both move pickers — a searchable, offset-paged list of single-line rows,
+/// not virtualized (see `OffsetPagedListStore`'s doc comment for why that is fine at this scale).
+private struct MemoryPickerList<Item: Sendable & Identifiable & Equatable>: View where Item.ID == String {
+    let picker: OffsetPagedListStore<Item>
+    let currentId: String?
+    let onSelect: (Item) -> Void
+    let rowLabel: (Item) -> String
+
+    var body: some View {
+        List {
+            ForEach(picker.items.filter { $0.id != currentId }) { item in
+                Button {
+                    onSelect(item)
+                } label: {
+                    Text(rowLabel(item))
+                        .foregroundStyle(PaiPalette.Semantic.textPrimary)
+                }
+            }
+            if picker.hasMore {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .onAppear { Task { await picker.loadMore() } }
+            }
+            if let error = picker.errorMessage {
+                Text(error).foregroundStyle(PaiPalette.Semantic.errorText)
+            }
+            if picker.items.isEmpty, !picker.isLoading {
+                Text(picker.query.isEmpty ? "No results yet" : "No matches")
+                    .foregroundStyle(PaiPalette.Semantic.textMuted)
+            }
+        }
+    }
+}

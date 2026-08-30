@@ -19,6 +19,7 @@ struct ExpandPreferencesScreen: View {
                 }
             }
         }
+        .paiListBackground()
         .navigationTitle("Message Display")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("expand-preferences-screen")

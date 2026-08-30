@@ -23,11 +23,14 @@ struct RootView: View {
             SignInView(environment: environment, reason: .rejected(environment.lastAuthFailure))
         case .ready:
             if let connection = environment.connection {
-                NavigationStack(path: navigationPath) {
-                    SessionListView()
-                        .navigationDestination(for: Route.self) { route in
-                            destination(for: route)
-                        }
+                ZStack(alignment: .bottom) {
+                    NavigationStack(path: navigationPath) {
+                        SessionListView()
+                            .navigationDestination(for: Route.self) { route in
+                                destination(for: route)
+                            }
+                    }
+                    ToastOverlay(toasts: connection.toasts)
                 }
                 .environment(environment)
                 .environment(connection.sessions)
@@ -35,6 +38,8 @@ struct RootView: View {
                 .environment(connection.transcript)
                 .environment(connection.settings)
                 .environment(connection.drafts)
+                .environment(connection.me)
+                .environment(connection.toasts)
                 .environment(\.terminalStreamClientFactory) { sessionID, callbacks in
                     PaiTerminalStreamClient(
                         sessionId: sessionID,

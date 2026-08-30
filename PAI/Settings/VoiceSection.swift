@@ -7,7 +7,7 @@ struct VoiceSection: View {
     let settings: SettingsStore
 
     var body: some View {
-        Section("Voice Settings") {
+        Section {
             SecretField(
                 title: "ElevenLabs API Key", identifier: "elevenlabs-key", field: settings.elevenLabsKey)
 
@@ -47,6 +47,12 @@ struct VoiceSection: View {
                 }
                 .accessibilityIdentifier("silence-duration")
             }
+        } header: {
+            Text("Voice Settings")
+        } footer: {
+            Text(
+                "The API key is required for voice transcription. Held encrypted on the server; never shown again once set."
+            )
         }
     }
 
