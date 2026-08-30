@@ -2,6 +2,28 @@ import PAIKit
 import SwiftUI
 import UIKit
 
+/// A floating control shown once the reader has scrolled away from the live edge — the control
+/// `EdgeFollowLatch.isAtLiveEdge`'s own doc comment names as its reason for being a stateless
+/// check ("safe to compute … for whether to show a jump-to-bottom control"). Hosted as SwiftUI,
+/// matching every other button in the app, rather than a bare `UIButton`.
+private struct JumpToLatestButton: View {
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            Image(systemName: "arrow.down")
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: 36, height: 36)
+                .foregroundStyle(.white)
+                .background(PaiPalette.primary500)
+                .clipShape(Circle())
+                .shadow(radius: 3)
+        }
+        .accessibilityLabel("Jump to latest")
+        .accessibilityIdentifier("transcript-jump-to-latest")
+    }
+}
+
 /// One measured row, ready to hand to ``TranscriptLayout``.
 private struct TranscriptRow {
     let id: Int
@@ -82,6 +104,19 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     private var isLoadingOlder = false
     private var lastMeasuredWidth: Double = -1
     private var sseClient: PaiSseClient?
+    /// Where a session's own bootstrap-resolved restore target goes until it can actually be
+    /// applied — `recomputeRows` is a no-op below a measured width of zero, and the bootstrap can
+    /// resolve before `viewDidLayoutSubviews` has ever run once (see `apply(_:intent:)`'s
+    /// `.initialLoad` case). Whichever of the two runs second is the one that applies it.
+    private var pendingInitialLoad: TranscriptRestoreTarget?
+    /// Every session's last recorded read position, kept only for the life of the process — the
+    /// view controller itself is recreated on every navigation into a session, so an instance
+    /// property alone would forget it on every return. An app relaunch always opens at the live
+    /// edge; see this block's report for why that scope was chosen over persisting to disk.
+    private static var lastAnchors: [String: TranscriptAnchor] = [:]
+
+    private lazy var jumpToLatestHostingController = UIHostingController(
+        rootView: JumpToLatestButton(onTap: { [weak self] in self?.jumpToLatestTapped() }))
 
     init(
         sessionID: String, store: TranscriptStore, apiClient: PaiApiClient, settings: SettingsStore,
@@ -112,6 +147,19 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         collectionView.register(UICollectionViewCell.self, forCellWithReuseIdentifier: Self.cellReuseIdentifier)
         view.addSubview(collectionView)
 
+        addChild(jumpToLatestHostingController)
+        jumpToLatestHostingController.view.backgroundColor = .clear
+        jumpToLatestHostingController.view.translatesAutoresizingMaskIntoConstraints = false
+        jumpToLatestHostingController.view.isHidden = true
+        view.addSubview(jumpToLatestHostingController.view)
+        jumpToLatestHostingController.didMove(toParent: self)
+        NSLayoutConstraint.activate([
+            jumpToLatestHostingController.view.trailingAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            jumpToLatestHostingController.view.bottomAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+        ])
+
         Task { await bootstrap() }
     }
 
@@ -120,9 +168,15 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         let width = measurementWidth()
         guard width > 0, width != lastMeasuredWidth else { return }
         lastMeasuredWidth = width
-        // A width change re-wraps every block; the whole window is re-measured and the reader's
-        // own position is corrected by the anchor delta rather than lost.
-        recomputeRows(applying: .compensateFromTopVisibleRow)
+        if let target = pendingInitialLoad {
+            // The bootstrap already resolved a restore target before this ever ran — see
+            // `pendingInitialLoad`'s doc comment.
+            recomputeRows(applying: .initialLoad(target))
+        } else {
+            // A width change re-wraps every block; the whole window is re-measured and the
+            // reader's own position is corrected by the anchor delta rather than lost.
+            recomputeRows(applying: .compensateFromTopVisibleRow)
+        }
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -147,15 +201,17 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             store.setBootstrapError(sessionID, error: (error as? PaiError)?.userMessage ?? "Couldn't load messages")
             return
         }
-        recomputeRows(applying: .jumpToBottom)
+        let loadedIds = TranscriptStore.displayMessages(store.messages[sessionID] ?? []).map(\.id)
+        let target = TranscriptRestore.target(for: Self.lastAnchors[sessionID], loadedMessageIds: loadedIds)
+        pendingInitialLoad = target
+        recomputeRows(applying: .initialLoad(target))
         connectStream(initialCursor: store.maxMessageId(for: sessionID))
     }
 
     private func connectStream(initialCursor: Int?) {
         let callbacks = PaiSseClient.Callbacks(
-            onInit: { [weak self] event in self?.applySse(entries: event.entries, sessionTokens: event.sessionTokens) },
-            onBatch: { [weak self] event in self?.applySse(entries: event.entries, sessionTokens: event.sessionTokens)
-            },
+            onInit: { [weak self] event in self?.applySseInit(event) },
+            onBatch: { [weak self] event in self?.applySseBatch(event) },
             onStatus: { [weak self] event in self?.applyStatus(event) },
             onConnected: { [weak self] in self?.store.setSseConnected(true) },
             onDisconnected: { [weak self] in self?.store.setSseConnected(false) }
@@ -166,8 +222,16 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         client.connect()
     }
 
-    private func applySse(entries: [Message], sessionTokens: Int?) {
-        store.applySseBatch(sessionId: sessionID, event: SseBatchEvent(entries: entries, sessionTokens: sessionTokens))
+    /// Routed separately from ``applySseBatch(_:)`` — the two differ by exactly one call,
+    /// `evictOldSessions()` (`TranscriptStore.applySseInit`'s own doc comment), which only the
+    /// real init event should trigger.
+    private func applySseInit(_ event: SseInitEvent) {
+        store.applySseInit(sessionId: sessionID, event: event)
+        recomputeRows(applying: .stickToBottomIfPinned)
+    }
+
+    private func applySseBatch(_ event: SseBatchEvent) {
+        store.applySseBatch(sessionId: sessionID, event: event)
         recomputeRows(applying: .stickToBottomIfPinned)
     }
 
@@ -216,8 +280,10 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         /// New content arrived (SSE). Sticks to the bottom only if the latch says the reader was
         /// already following; otherwise nothing above the fold moves, so nothing is corrected.
         case stickToBottomIfPinned
-        /// The very first load.
-        case jumpToBottom
+        /// The very first load — lands at the resolved restore target (the live edge, or a row
+        /// from a previous visit still in the loaded window) and begins the matching hold, since
+        /// the layout is still settling immediately after `reloadData()`.
+        case initialLoad(TranscriptRestoreTarget)
     }
 
     private func recomputeRows(applying intent: UpdateIntent) {
@@ -266,13 +332,36 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         let delta = RowDelta.compute(old: oldIds, new: newIds)
 
         switch intent {
-        case .jumpToBottom:
+        case .initialLoad(let target):
+            pendingInitialLoad = nil
             rows = newRows
             layout.rows = newRows.map { TranscriptLayout.Row(id: $0.id, height: $0.height) }
             collectionView.reloadData()
-            edgeFollow = EdgeFollowLatch(isPinned: true)
-            scrollToBottom(animated: false)
-            holdController.begin(.bottom)
+            // `scrollToItem` right after `reloadData()` runs before the new layout's `prepare()`
+            // has — forcing it here is the usual guard against landing at the wrong place, or not
+            // moving at all.
+            collectionView.layoutIfNeeded()
+            switch target {
+            case .bottom:
+                edgeFollow = EdgeFollowLatch(isPinned: true)
+                scrollToBottom(animated: false)
+                holdController.begin(.bottom)
+            case .message(let id):
+                if let index = rows.firstIndex(where: { $0.id == id }) {
+                    edgeFollow = EdgeFollowLatch(isPinned: false)
+                    collectionView.scrollToItem(at: IndexPath(item: index, section: 0), at: .top, animated: false)
+                    holdController.begin(.restore(messageId: id))
+                } else {
+                    // The row named by the restore target isn't in this load after all — the
+                    // display filter can drop it even though `loadedMessageIds` at bootstrap said
+                    // it was there. The bottom is the same predictable fallback
+                    // `TranscriptRestore.target` itself uses when it cannot honour an anchor.
+                    edgeFollow = EdgeFollowLatch(isPinned: true)
+                    scrollToBottom(animated: false)
+                    holdController.begin(.bottom)
+                }
+            }
+            updateJumpToLatestVisibility()
             return
 
         case .compensateFromTopVisibleRow:
@@ -283,15 +372,17 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             if let anchorId, let anchorOffsetBefore {
                 layout.pendingAnchor = (id: anchorId, offsetTopBeforeUpdate: anchorOffsetBefore)
             }
-            applyDelta(delta, oldCount: oldIds.count, completion: nil)
+            applyDelta(delta, oldCount: oldIds.count) { [weak self] in self?.reassertHoldIfNeeded() }
 
         case .stickToBottomIfPinned:
             rows = newRows
             layout.rows = newRows.map { TranscriptLayout.Row(id: $0.id, height: $0.height) }
             let shouldStick = edgeFollow.isPinned
             applyDelta(delta, oldCount: oldIds.count) { [weak self] in
+                guard let self else { return }
+                if self.reassertHoldIfNeeded() { return }
                 guard shouldStick else { return }
-                self?.scrollToBottom(animated: true)
+                self.scrollToBottom(animated: true)
             }
         }
     }
@@ -299,12 +390,37 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     private func applyDelta(_ delta: RowDelta, oldCount: Int, completion: (() -> Void)?) {
         switch delta {
         case .unchanged:
-            // No items to insert or delete — an explicit `invalidateLayout()` is what makes the
-            // batch actually re-run `prepare()` against the already-mutated `layout.rows` and
-            // ask for a new target offset, rather than a `nil` update block being a no-op.
-            collectionView.performBatchUpdates({
-                collectionView.collectionViewLayout.invalidateLayout()
-            }) { _ in completion?() }
+            // Row ids are unchanged — an id-based diff cannot distinguish "same rows, new
+            // heights or content" (an expand/collapse toggle, a width or Dynamic Type change, a
+            // streamed edit to the last loaded message) from a true no-op, so this branch always
+            // runs for those. `reconfigureItems(at:)` re-runs `cellForItemAt` for the cells
+            // currently mounted, which is what actually redraws a card's content —
+            // `invalidateLayout()` alone only re-applies frames, since `UIHostingConfiguration`
+            // rebuilds on assignment, not on a size change.
+            //
+            // Done outside `performBatchUpdates`: its documented update-block contract is
+            // inserts/deletes/moves/reloads, and a call with none of those has no item-count
+            // change to animate, so nothing guarantees `targetContentOffset(forProposedContentOffset:)`
+            // runs — the mechanism the `.appended`/`.prepended` branches below rely on, and a call
+            // to `invalidateLayout()` with nothing to animate is a known source of layout-update
+            // exceptions. `layoutIfNeeded()` forces the new layout's `prepare()` to run
+            // synchronously, in the same run-loop turn, so the anchor's new offset can be read and
+            // the same delta correction applied directly.
+            let visible = collectionView.indexPathsForVisibleItems
+            if !visible.isEmpty {
+                collectionView.reconfigureItems(at: visible)
+            }
+            let anchor = layout.pendingAnchor
+            layout.pendingAnchor = nil
+            collectionView.collectionViewLayout.invalidateLayout()
+            collectionView.layoutIfNeeded()
+            if let anchor, let newTop = layout.offsetTop(forRowId: anchor.id) {
+                let correction = newTop - anchor.offsetTopBeforeUpdate
+                if correction != 0 {
+                    collectionView.contentOffset.y += correction
+                }
+            }
+            completion?()
 
         case .appended(let count):
             let indexPaths = (oldCount..<(oldCount + count)).map { IndexPath(item: $0, section: 0) }
@@ -340,18 +456,64 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
 
     /// The row currently at the top of the viewport, from the layout's last completed `prepare()`
     /// — read before any mutation, never after.
+    ///
+    /// Rows are laid out top-to-bottom with a monotonically increasing offset (`TranscriptLayout`
+    /// never reorders or overlaps them), so a binary search finds the last one whose top is at or
+    /// above the viewport's own top edge in O(log n) — this runs on every `scrollViewDidScroll`,
+    /// the one place on the transcript path that is on the main thread inside a scroll callback,
+    /// so an O(rows-above-the-fold) scan is the one place it could show up as stutter.
     private func topVisibleRowId() -> Int? {
+        guard !rows.isEmpty else { return nil }
         let top = collectionView.contentOffset.y + collectionView.adjustedContentInset.top
-        var candidate: Int?
-        for row in rows {
-            guard let offset = layout.offsetTop(forRowId: row.id) else { continue }
+        var low = 0
+        var high = rows.count - 1
+        var candidate = rows[0].id
+        while low <= high {
+            let mid = (low + high) / 2
+            guard let offset = layout.offsetTop(forRowId: rows[mid].id) else { break }
             if offset <= top {
-                candidate = row.id
+                candidate = rows[mid].id
+                low = mid + 1
             } else {
-                break
+                high = mid - 1
             }
         }
-        return candidate ?? rows.first?.id
+        return candidate
+    }
+
+    /// Re-drives the held scroll target if a hold is active — the hold's entire purpose, since
+    /// rows mounting or resizing while it is protecting a position otherwise move the reader off
+    /// it. Re-extends the hold's own window too, matching ``TranscriptHold``'s doc comment ("call
+    /// this every time the layout it is protecting settles again"). Returns whether it acted, so a
+    /// caller with its own scroll for the same event can skip it rather than compete.
+    @discardableResult
+    private func reassertHoldIfNeeded() -> Bool {
+        guard holdController.isActive, let hold = holdController.hold else { return false }
+        holdController.extend()
+        switch hold.kind {
+        case .bottom:
+            scrollToBottom(animated: false)
+            return true
+        case .restore(let messageId), .search(let messageId):
+            guard let index = rows.firstIndex(where: { $0.id == messageId }) else { return false }
+            collectionView.scrollToItem(at: IndexPath(item: index, section: 0), at: .top, animated: false)
+            return true
+        }
+    }
+
+    /// A stateless geometry check (`EdgeFollowLatch.isAtLiveEdge`'s own doc comment), deliberately
+    /// not driven by `edgeFollow.isPinned` — a reader who scrolled up and drifted back close to the
+    /// bottom without landing inside the latch's narrower re-pin threshold should still see the
+    /// control disappear, since visually they are back at the edge.
+    private func updateJumpToLatestVisibility() {
+        let distance = maxContentOffsetY() - collectionView.contentOffset.y
+        jumpToLatestHostingController.view.isHidden = EdgeFollowLatch.isAtLiveEdge(distanceFromBottom: Double(distance))
+    }
+
+    private func jumpToLatestTapped() {
+        edgeFollow = EdgeFollowLatch(isPinned: true)
+        holdController.release()
+        scrollToBottom(animated: true)
     }
 
     private func maxContentOffsetY() -> CGFloat {
@@ -365,9 +527,12 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         guard let id = topVisibleRowId(), let offsetTop = layout.offsetTop(forRowId: id) else { return }
         let viewportOffset = offsetTop - collectionView.contentOffset.y
         let distance = maxContentOffsetY() - collectionView.contentOffset.y
-        lastRecordedAnchor = TranscriptAnchor(
+        let anchor = TranscriptAnchor(
             messageId: id, offset: Double(viewportOffset),
             atLiveEdge: EdgeFollowLatch.isAtLiveEdge(distanceFromBottom: Double(distance)))
+        lastRecordedAnchor = anchor
+        // Kept beyond this instance's own lifetime — see `lastAnchors`'s doc comment.
+        Self.lastAnchors[sessionID] = anchor
     }
 
     // MARK: - UIScrollViewDelegate (via UICollectionViewDelegate)
@@ -376,6 +541,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         recordCurrentAnchor()
         let distance = maxContentOffsetY() - scrollView.contentOffset.y
         edgeFollow.recordDistanceFromBottom(Double(distance))
+        updateJumpToLatestVisibility()
         checkOlderPageTrigger()
         if holdController.isActive {
             holdController.extend()
