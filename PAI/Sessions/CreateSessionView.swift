@@ -198,8 +198,12 @@ struct CreateSessionView: View {
             switch await createSession.create(message: text) {
             case .created(let session):
                 sessionList.prependOptimisticSession(session)
-                dismiss()
+                // Push before dismissing. A push onto the stack behind a sheet that is in the
+                // middle of dismissing is dropped often enough to be a known iOS trap, and the
+                // failure is silent: the session is created and the user stays on the list,
+                // looking at a row they have to tap again.
                 environment.router.push(.session(id: session.id))
+                dismiss()
             case .failed(let message):
                 // The draft is kept — text stays exactly where it was, matching the web:
                 // a failure here should never cost what was already typed.
