@@ -12,9 +12,10 @@ import Foundation
 /// request, through the same `PaiRequestFactory`. Do not carry the cookie assumption over.
 ///
 /// `EventSource` has no Foundation equivalent, so this parses the `text/event-stream` framing
-/// (`event:` / `data:` lines, a blank line as the record terminator) by hand over
-/// `URLSession.bytes(for:)` — the accumulation itself lives in `SseEventAccumulator`, a pure
-/// value type, so the framing rules are testable without a live stream (mirrors
+/// (`event:` / `data:` lines, a blank line as the record terminator) by hand: `PaiHttpByteStream`
+/// delivers raw bytes via `URLSessionDataDelegate`, `LineSplitter` turns those into lines without
+/// dropping the blank ones the framing depends on, and `SseEventAccumulator` — a pure value type
+/// — turns lines into records. All three are testable without a live stream (mirrors
 /// `PaiTerminalStreamClient.parseFrame`, which the same reasoning already produced there).
 ///
 /// `@MainActor`-isolated rather than protected with locks: every caller is UI-driven (a chat
@@ -32,6 +33,11 @@ public final class PaiSseClient {
         public var onInit: @MainActor @Sendable (SseInitEvent) -> Void
         public var onBatch: @MainActor @Sendable (SseBatchEvent) -> Void
         public var onStatus: @MainActor @Sendable (SseStatusEvent) -> Void
+        /// Fired for every successfully-parsed SSE record, including a bare `ping`/`processing`
+        /// with no `onInit`/`onBatch`/`onStatus` counterpart — a caller's only way to tell "the
+        /// connection is open and flowing, just with nothing semantic to report right now" apart
+        /// from "nothing is getting through at all". See `StreamActivity`.
+        public var onActivity: @MainActor @Sendable () -> Void
         public var onConnected: @MainActor @Sendable () -> Void
         public var onDisconnected: @MainActor @Sendable () -> Void
 
@@ -39,12 +45,14 @@ public final class PaiSseClient {
             onInit: @escaping @MainActor @Sendable (SseInitEvent) -> Void,
             onBatch: @escaping @MainActor @Sendable (SseBatchEvent) -> Void,
             onStatus: @escaping @MainActor @Sendable (SseStatusEvent) -> Void,
+            onActivity: @escaping @MainActor @Sendable () -> Void,
             onConnected: @escaping @MainActor @Sendable () -> Void,
             onDisconnected: @escaping @MainActor @Sendable () -> Void
         ) {
             self.onInit = onInit
             self.onBatch = onBatch
             self.onStatus = onStatus
+            self.onActivity = onActivity
             self.onConnected = onConnected
             self.onDisconnected = onDisconnected
         }
@@ -58,7 +66,7 @@ public final class PaiSseClient {
 
     private let sessionId: String
     private let requestFactory: PaiRequestFactory
-    private let urlSession: URLSession
+    private let urlSessionConfiguration: URLSessionConfiguration
     private let callbacks: Callbacks
 
     private var cursor: Int?
@@ -69,25 +77,27 @@ public final class PaiSseClient {
     private var streamTask: Task<Void, Never>?
     private var watchdogTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
+    private var activeByteStream: PaiHttpByteStream?
 
     public init(
         sessionId: String,
         requestFactory: PaiRequestFactory,
         callbacks: Callbacks,
         initialCursor: Int? = nil,
-        urlSession: URLSession = .shared
+        urlSessionConfiguration: URLSessionConfiguration = .default
     ) {
         self.sessionId = sessionId
         self.requestFactory = requestFactory
         self.callbacks = callbacks
         self.cursor = initialCursor
-        self.urlSession = urlSession
+        self.urlSessionConfiguration = urlSessionConfiguration
     }
 
     public func connect() {
         guard !stopped, !terminal else { return }
         reconnectTask?.cancel()
         streamTask?.cancel()
+        activeByteStream?.cancel()
         streamTask = Task { await self.runConnection() }
     }
 
@@ -95,6 +105,7 @@ public final class PaiSseClient {
         stopped = true
         reconnectTask?.cancel()
         streamTask?.cancel()
+        activeByteStream?.cancel()
         watchdogTask?.cancel()
         callbacks.onDisconnected()
     }
@@ -109,24 +120,27 @@ public final class PaiSseClient {
             return
         }
 
+        let byteStream = PaiHttpByteStream()
+        activeByteStream = byteStream
+
+        var splitter = LineSplitter()
+        var accumulator = SseEventAccumulator()
+
         do {
-            let (bytes, response) = try await urlSession.bytes(for: request)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                handleDisconnect()
-                return
-            }
-
-            backoffNanos = Self.initialBackoffNanos
-            lastEventTime = Date()
-            callbacks.onConnected()
-            startWatchdog()
-
-            var accumulator = SseEventAccumulator()
-
-            for try await line in bytes.lines {
+            for try await event in byteStream.start(request: request, configuration: urlSessionConfiguration) {
                 if Task.isCancelled || terminal { break }
-                if let event = accumulator.ingest(line: line) {
-                    handleEvent(name: event.name, data: event.data)
+                switch event {
+                case .connected:
+                    backoffNanos = Self.initialBackoffNanos
+                    lastEventTime = Date()
+                    callbacks.onConnected()
+                    startWatchdog()
+                case .chunk(let data):
+                    for line in splitter.ingest(data) {
+                        if let sseEvent = accumulator.ingest(line: line) {
+                            handleEvent(name: sseEvent.name, data: sseEvent.data)
+                        }
+                    }
                 }
             }
 
@@ -164,6 +178,7 @@ public final class PaiSseClient {
 
     private func handleEvent(name: String, data: String) {
         lastEventTime = Date()
+        callbacks.onActivity()
         guard let jsonData = data.data(using: .utf8) else { return }
 
         switch name {
@@ -214,6 +229,7 @@ public final class PaiSseClient {
     private func scheduleReconnect() {
         reconnectTask?.cancel()
         streamTask?.cancel()
+        activeByteStream?.cancel()
         watchdogTask?.cancel()
         guard !stopped, !terminal else { return }
 

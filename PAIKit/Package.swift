@@ -1,25 +1,19 @@
 // swift-tools-version: 6.2
 import PackageDescription
 
-// The two streaming clients use `URLSession.bytes(for:)`, which swift-corelibs-foundation does
-// not implement — so they are the only thing standing between this package and a free Linux CI
-// runner. Excluding them there keeps every other model, parser and client testable for nothing.
+// TextKit measurement is Apple-only — the only thing left standing between this package and a
+// free Linux CI runner. Excluding it there keeps every other model, parser and client testable
+// for nothing. The two streaming clients used to be excluded too, for `URLSession.bytes(for:)`,
+// which swift-corelibs-foundation does not implement — `PaiHttpByteStream` moved them onto
+// `URLSessionDataDelegate` instead, which Linux does implement, so they build and test there now.
 //
 // A manifest is compiled and run on the build host, so this reflects where the build happens:
 // false under Xcode on macOS, true on the Linux runner.
-//
-// The right long-term fix is to lift the event-framing loop out of the transport, which is the
-// part actually worth testing; the URLSession glue around it barely is.
 #if os(Linux)
     let applePlatformOnly = [
-        "Networking/PaiSseClient.swift",
-        "Networking/PaiTerminalStreamClient.swift",
-        "Layout/TextKitBlockMeasurer.swift",
+        "Layout/TextKitBlockMeasurer.swift"
     ]
-    let applePlatformOnlyTests = [
-        "PaiSseClientTests.swift",
-        "PaiTerminalStreamClientTests.swift",
-    ]
+    let applePlatformOnlyTests: [String] = []
 #else
     let applePlatformOnly: [String] = []
     let applePlatformOnlyTests: [String] = []

@@ -9,7 +9,8 @@ import Foundation
 /// Swift port of `pai-cloud/web/src/api/terminalStream.ts`. Deliberately not `PaiSseClient`: no
 /// cursor, no replay — a terminal is a raw live view, not a resumable log — and a different
 /// backoff. See that type's doc comment for why this authenticates natively via
-/// `PaiRequestFactory` instead of the web's cookie.
+/// `PaiRequestFactory` instead of the web's cookie, and why bytes arrive through
+/// `PaiHttpByteStream`/`LineSplitter` rather than `URLSession.bytes(for:)`.
 @MainActor
 public final class PaiTerminalStreamClient {
 
@@ -42,30 +43,32 @@ public final class PaiTerminalStreamClient {
 
     private let sessionId: String
     private let requestFactory: PaiRequestFactory
-    private let urlSession: URLSession
+    private let urlSessionConfiguration: URLSessionConfiguration
     private let callbacks: Callbacks
 
     private var backoffNanos = PaiTerminalStreamClient.initialBackoffNanos
     private var stopped = false
     private var streamTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
+    private var activeByteStream: PaiHttpByteStream?
 
     public init(
         sessionId: String,
         requestFactory: PaiRequestFactory,
         callbacks: Callbacks,
-        urlSession: URLSession = .shared
+        urlSessionConfiguration: URLSessionConfiguration = .default
     ) {
         self.sessionId = sessionId
         self.requestFactory = requestFactory
         self.callbacks = callbacks
-        self.urlSession = urlSession
+        self.urlSessionConfiguration = urlSessionConfiguration
     }
 
     public func connect() {
         guard !stopped else { return }
         reconnectTask?.cancel()
         streamTask?.cancel()
+        activeByteStream?.cancel()
         streamTask = Task { await self.runConnection() }
     }
 
@@ -73,6 +76,7 @@ public final class PaiTerminalStreamClient {
         stopped = true
         reconnectTask?.cancel()
         streamTask?.cancel()
+        activeByteStream?.cancel()
         callbacks.onDisconnected()
     }
 
@@ -82,34 +86,39 @@ public final class PaiTerminalStreamClient {
             return
         }
 
+        let byteStream = PaiHttpByteStream()
+        activeByteStream = byteStream
+
+        var splitter = LineSplitter()
+        var dataLines: [String] = []
+
         do {
-            let (bytes, response) = try await urlSession.bytes(for: request)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                handleDisconnect()
-                return
-            }
-
-            backoffNanos = Self.initialBackoffNanos
-            callbacks.onConnected()
-
-            var dataLines: [String] = []
-
-            for try await line in bytes.lines {
+            for try await event in byteStream.start(request: request, configuration: urlSessionConfiguration) {
                 if Task.isCancelled { break }
-                if line.isEmpty {
-                    if !dataLines.isEmpty {
-                        // Named `frame` events and a backend falling back to unnamed `message`
-                        // events are handled identically — `terminalStream.ts` wires both to
-                        // the same handler, so the event name itself is never branched on.
-                        handleChunk(dataLines.joined(separator: "\n"))
+                switch event {
+                case .connected:
+                    backoffNanos = Self.initialBackoffNanos
+                    callbacks.onConnected()
+                case .chunk(let data):
+                    for line in splitter.ingest(data) {
+                        if line.isEmpty {
+                            if !dataLines.isEmpty {
+                                // Named `frame` events and a backend falling back to unnamed
+                                // `message` events are handled identically —
+                                // `terminalStream.ts` wires both to the same handler, so the
+                                // event name itself is never branched on.
+                                handleChunk(dataLines.joined(separator: "\n"))
+                            }
+                            dataLines = []
+                            continue
+                        }
+                        if line.hasPrefix("data:") {
+                            dataLines.append(Self.sseDataValue(from: line.dropFirst("data:".count)))
+                        }
+                        // `event:` is read but not branched on, per the comment above; other
+                        // fields are unused.
                     }
-                    dataLines = []
-                    continue
                 }
-                if line.hasPrefix("data:") {
-                    dataLines.append(Self.sseDataValue(from: line.dropFirst("data:".count)))
-                }
-                // `event:` is read but not branched on, per the comment above; other fields are unused.
             }
 
             if Self.shouldReconnectAfterStreamEnded(cancelled: Task.isCancelled, stopped: stopped) {
@@ -166,6 +175,7 @@ public final class PaiTerminalStreamClient {
     private func scheduleReconnect() {
         reconnectTask?.cancel()
         streamTask?.cancel()
+        activeByteStream?.cancel()
         guard !stopped else { return }
 
         let delay = backoffNanos
