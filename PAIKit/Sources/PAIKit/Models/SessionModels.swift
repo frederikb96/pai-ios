@@ -242,8 +242,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     public let phaseId: String?
     /// The project's own name, denormalized here so the session list's search can match on it.
     public let projectName: String?
-    /// Running subagents and background shells/monitors this session has started and not
-    /// stopped, folded out of the transcript at ingest. `nil` until reported.
+    /// What this session has running right now — subagents and background shells/monitors.
+    /// `nil` from an agent too old to report it, read the same as "nothing known", never as zero.
     public let activityCounts: ActivityCounts?
 
     enum CodingKeys: String, CodingKey {
@@ -352,17 +352,25 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.projectName = projectName
         self.activityCounts = activityCounts
     }
-}
 
-/// Running subagents and background shells/monitors a session has started and not stopped.
-/// Derived from the transcript, so only as fresh as the last ingested entry.
-public struct ActivityCounts: Codable, Sendable, Equatable {
-    public let agents: Int
-    public let tasks: Int
-
-    public init(agents: Int, tasks: Int) {
-        self.agents = agents
-        self.tasks = tasks
+    /// A copy with the session-level fields of a live SSE `status` event applied — the same
+    /// three-plus-one fields `TranscriptStore.LiveSessionStatus` carries, and nothing else,
+    /// because that event never reports any other column this type holds.
+    public func withLiveStatus(
+        state: SessionState?, blocker: Blocker?, working: Bool?, activityCounts: ActivityCounts?
+    ) -> Session {
+        Session(
+            id: id, sessionType: sessionType, status: status, state: state, blocker: blocker, working: working,
+            title: title, titleLocked: titleLocked, initialMessage: initialMessage, pendingMessage: pendingMessage,
+            sessionTokens: sessionTokens, claudeSessionId: claudeSessionId, idleTimeoutMinutes: idleTimeoutMinutes,
+            effectiveIdleTimeoutMinutes: effectiveIdleTimeoutMinutes, cseId: cseId, createdAt: createdAt,
+            updatedAt: updatedAt, lastActivityAt: lastActivityAt, workingDir: workingDir, agent: agent, kind: kind,
+            parentSessionId: parentSessionId, subagentName: subagentName, subagentType: subagentType,
+            subagentDescription: subagentDescription, subagentModel: subagentModel,
+            readPositionMessageId: readPositionMessageId, readPositionOffsetPx: readPositionOffsetPx,
+            readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
+            projectId: projectId, phaseId: phaseId, projectName: projectName, activityCounts: activityCounts
+        )
     }
 }
 

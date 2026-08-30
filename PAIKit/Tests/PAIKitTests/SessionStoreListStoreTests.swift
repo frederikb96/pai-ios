@@ -575,6 +575,159 @@ final class SessionStoreListStoreTests: XCTestCase {
 
         XCTAssertEqual(store.syncedSessions.map(\.id), ["brand-new", "existing"])
     }
+
+    // MARK: - ensureSessionLoaded
+
+    func testEnsureSessionLoadedIsANoOpWhenTheSessionIsAlreadyInTheSyncedList() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1")], nextCursor: nil))
+        }
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        await store.ensureSessionLoaded(id: "s1")
+
+        let calls = await api.getSessionsCalls
+        XCTAssertTrue(calls.allSatisfy { $0.q == nil }, "an already-loaded session must never trigger a q: fetch")
+    }
+
+    func testEnsureSessionLoadedFetchesByIdAndInsertsTheResult() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { call in
+            guard call.q == "outside-window" else { return .success(SessionsPage(sessions: [], nextCursor: nil)) }
+            return .success(SessionsPage(sessions: [SessionFixture.make(id: "outside-window")], nextCursor: nil))
+        }
+        let store = makeStore(api: api)
+
+        await store.ensureSessionLoaded(id: "outside-window")
+
+        XCTAssertEqual(store.session(withId: "outside-window")?.id, "outside-window")
+    }
+
+    /// Answered, and the answer was no: the id must be remembered so a later call does not
+    /// re-fire the same request — the exact behaviour `session.ts`'s `ensureSessionLoaded` ports.
+    func testEnsureSessionLoadedRemembersAnUnknownIdAndDoesNotAskAgain() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in .success(SessionsPage(sessions: [], nextCursor: nil)) }
+        let store = makeStore(api: api)
+
+        await store.ensureSessionLoaded(id: "never-existed")
+        XCTAssertTrue(store.unknownSessionIds.contains("never-existed"))
+
+        await store.ensureSessionLoaded(id: "never-existed")
+
+        let calls = (await api.getSessionsCalls).filter { $0.q == "never-existed" }
+        XCTAssertEqual(calls.count, 1, "a second call for a known-missing id must not re-fetch")
+    }
+
+    /// A failed request is not an answer — the id must stay resolvable later rather than being
+    /// remembered as missing.
+    func testEnsureSessionLoadedLeavesTheIdRetryableAfterAFailedRequest() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in .failure(.transport("offline")) }
+        let store = makeStore(api: api)
+
+        await store.ensureSessionLoaded(id: "flaky")
+
+        XCTAssertFalse(store.unknownSessionIds.contains("flaky"))
+    }
+
+    // MARK: - applyLiveStatus
+
+    func testApplyLiveStatusUpdatesTheMatchingRowInTheSyncedList() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1", state: .starting)], nextCursor: nil))
+        }
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        store.applyLiveStatus(
+            sessionId: "s1", state: .ready, blocker: nil, working: true,
+            activityCounts: ActivityCounts(agents: 2, tasks: 1)
+        )
+
+        XCTAssertEqual(store.syncedSessions.first?.state, .ready)
+        XCTAssertEqual(store.syncedSessions.first?.working, true)
+        XCTAssertEqual(store.syncedSessions.first?.activityCounts, ActivityCounts(agents: 2, tasks: 1))
+    }
+
+    func testApplyLiveStatusIsANoOpForASessionNotInAnyLoadedSource() async {
+        let api = FakeSessionListApi()
+        let store = makeStore(api: api)
+
+        store.applyLiveStatus(sessionId: "not-loaded", state: .ready, blocker: nil, working: true, activityCounts: nil)
+
+        XCTAssertTrue(store.syncedSessions.isEmpty)
+    }
+
+    // MARK: - deleteSessionWithHold / undoDelete
+
+    // 20ms, for the same reason `shortDebounceNanos` is short: fast enough for a suite, slow
+    // enough that "before the hold elapses" and "after it elapses" are reliably distinguishable.
+    private static let shortDeleteHoldNanos: UInt64 = 20_000_000
+
+    private func makeStoreWithShortDeleteHold(api: FakeSessionListApi) -> SessionListStore {
+        SessionListStore(api: api, deleteUndoNanos: Self.shortDeleteHoldNanos)
+    }
+
+    func testDeleteSessionWithHoldRemovesTheRowImmediatelyAndDoesNotCallDeleteBeforeTheHoldElapses() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1")], nextCursor: nil))
+        }
+        let store = makeStoreWithShortDeleteHold(api: api)
+        await store.loadInitialSessions()
+
+        store.deleteSessionWithHold(id: "s1")
+
+        XCTAssertTrue(store.syncedSessions.isEmpty)
+        XCTAssertEqual(store.pendingDelete?.session.id, "s1")
+        let callsRightAfter = await api.deleteSessionCalls
+        XCTAssertTrue(callsRightAfter.isEmpty, "the real DELETE must wait out the hold, not fire immediately")
+    }
+
+    /// The hold actually elapsing must fire the real DELETE — the counterpart to the "not before"
+    /// assertion above; without this, a hold that never fires at all would also pass that test.
+    func testDeleteSessionWithHoldFiresTheRealDeleteOnceTheHoldElapses() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1")], nextCursor: nil))
+        }
+        let store = makeStoreWithShortDeleteHold(api: api)
+        await store.loadInitialSessions()
+
+        store.deleteSessionWithHold(id: "s1")
+
+        let deadline = ContinuousClock().now + .seconds(5)
+        while await api.deleteSessionCalls.isEmpty, ContinuousClock().now < deadline {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        let calls = await api.deleteSessionCalls
+        XCTAssertEqual(calls, ["s1"])
+        XCTAssertNil(store.pendingDelete, "pendingDelete must clear once the real delete has actually gone out")
+    }
+
+    func testUndoDeleteRestoresTheRowAndCancelsTheRealDelete() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1")], nextCursor: nil))
+        }
+        let store = makeStoreWithShortDeleteHold(api: api)
+        await store.loadInitialSessions()
+        store.deleteSessionWithHold(id: "s1")
+
+        store.undoDelete()
+
+        XCTAssertEqual(store.syncedSessions.map(\.id), ["s1"])
+        XCTAssertNil(store.pendingDelete)
+        // Held well past the hold window the mutation could otherwise still fire within — proving
+        // this needs the cancellation to have actually taken, not merely a lucky sample.
+        try? await Task.sleep(nanoseconds: Self.shortDeleteHoldNanos * 10)
+        let calls = await api.deleteSessionCalls
+        XCTAssertTrue(calls.isEmpty, "undo must cancel the delayed DELETE, not merely restore the row")
+    }
 }
 
 extension FakeSessionListApi {

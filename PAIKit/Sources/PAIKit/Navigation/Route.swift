@@ -17,6 +17,12 @@ public enum Route: Hashable, Sendable {
     case session(id: String)
     case terminal(sessionID: String)
     case settings
+    /// Reached only from the fixture screenshot workflow — real usage never pushes this, it
+    /// presents `CreateSessionView` as a sheet from the session list. `RootView` answers this
+    /// route by reproducing that exact presentation (a sheet over a blank screen) rather than
+    /// pushing the view directly, so what gets photographed is what Freddy actually sees, not a
+    /// second `NavigationStack` nested inside the first with its own, different chrome.
+    case createSession
 }
 
 extension Route {
@@ -27,7 +33,7 @@ extension Route {
     /// first regardless. Extend this array and `named(_:sessionID:)` together whenever `Route`
     /// gains a case; the workflow itself asks the running app for this list rather than
     /// hardcoding it, so a new screen becomes photographable without a CI file edit.
-    public static let namedScreens: [String] = ["session", "terminal", "settings"]
+    public static let namedScreens: [String] = ["session", "terminal", "settings", "createSession"]
 
     /// Parses a launch-argument screen name into a route. `sessionID` fills in every
     /// session-scoped case — the fixture corpus answers identically for any id, so the caller
@@ -37,6 +43,7 @@ extension Route {
         case "session": return .session(id: sessionID)
         case "terminal": return .terminal(sessionID: sessionID)
         case "settings": return .settings
+        case "createSession": return .createSession
         default: return nil
         }
     }
@@ -117,7 +124,7 @@ public final class Router {
             switch route {
             case .session(let id): return id
             case .terminal(let sessionID): return sessionID
-            case .settings: continue
+            case .settings, .createSession: continue
             }
         }
         return nil

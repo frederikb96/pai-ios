@@ -122,4 +122,17 @@ final class SessionStoreFormatTests: XCTestCase {
         let almostSevenDaysAgo = now.addingTimeInterval(-7 * 86_400 + 60)
         XCTAssertEqual(SessionListFormat.timeBucket(for: almostSevenDaysAgo, now: now), .thisWeek)
     }
+
+    // MARK: - withProjectPrefix
+
+    func testWithProjectPrefixPrependsTheProjectAndASeparator() {
+        XCTAssertEqual(
+            SessionListFormat.withProjectPrefix("SOCCloud", "Fix the alerting rule"), "SOCCloud : Fix the alerting rule"
+        )
+    }
+
+    func testWithProjectPrefixLeavesTheNameAloneWhenThereIsNoProject() {
+        XCTAssertEqual(SessionListFormat.withProjectPrefix(nil, "Fix the alerting rule"), "Fix the alerting rule")
+        XCTAssertEqual(SessionListFormat.withProjectPrefix("", "Fix the alerting rule"), "Fix the alerting rule")
+    }
 }

@@ -48,6 +48,13 @@ final class AppEnvironment {
         /// another device, and the web syncs them on the same tick as sessions. Scoped to a screen
         /// it would only sync while that screen happened to be open.
         let drafts: DraftStore
+        /// Who is signed in — fetched once, not per screen, since every session-action route is
+        /// owner-only and asking again on every menu open would cost a round trip for an answer
+        /// that never changes within one sign-in.
+        let me: MeStore
+        /// App-wide home for a toast/snackbar — see `ToastCenter`'s doc comment for why one is
+        /// needed at all.
+        let toasts: ToastCenter
     }
 
     private static let backendURLKey = "backendURL"
@@ -119,7 +126,9 @@ final class AppEnvironment {
             machines: MachineStore(api: client),
             transcript: TranscriptStore(),
             settings: SettingsStore(apiClient: client, storage: defaults),
-            drafts: DraftStore(api: client)
+            drafts: DraftStore(api: client),
+            me: MeStore(api: client),
+            toasts: ToastCenter()
         )
         lastAuthFailure = nil
         router.gate = .ready
@@ -135,6 +144,7 @@ final class AppEnvironment {
         guard let connection else { return }
         await connection.settings.refreshSecretPresence()
         await connection.machines.refresh()
+        await connection.me.refresh()
         // Session polling belongs to the app, not to the list screen. Tied to a view it stops
         // the moment a session is opened — so states, titles and warning badges freeze exactly
         // while the user is reading one — and restarting it on return re-fetches the first page,

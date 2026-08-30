@@ -335,6 +335,17 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             newRows.append(TranscriptRow(id: message.id, message: message, height: height))
         }
 
+        #if DEBUG
+            // The one question a screenshot of this screen cannot answer: whether an empty
+            // transcript means no messages arrived, no rows survived measurement, or rows exist
+            // with no height. All three look identical, and every automated check passes for all
+            // three.
+            DebugLogBuffer.shared.append(
+                .info, "transcript",
+                "recomputeRows width=\(Int(width)) messages=\(displayMessages.count) "
+                    + "rows=\(newRows.count) totalHeight=\(Int(newRows.reduce(0) { $0 + $1.height }))")
+        #endif
+
         apply(newRows, intent: intent)
     }
 

@@ -23,11 +23,14 @@ struct RootView: View {
             SignInView(environment: environment, reason: .rejected(environment.lastAuthFailure))
         case .ready:
             if let connection = environment.connection {
-                NavigationStack(path: navigationPath) {
-                    SessionListView()
-                        .navigationDestination(for: Route.self) { route in
-                            destination(for: route)
-                        }
+                ZStack(alignment: .bottom) {
+                    NavigationStack(path: navigationPath) {
+                        SessionListView()
+                            .navigationDestination(for: Route.self) { route in
+                                destination(for: route)
+                            }
+                    }
+                    ToastOverlay(toasts: connection.toasts)
                 }
                 // The one page ground for every screen the stack pushes — none of them paint
                 // their own, so this is what stops each one falling through to pure black. See
@@ -39,6 +42,8 @@ struct RootView: View {
                 .environment(connection.transcript)
                 .environment(connection.settings)
                 .environment(connection.drafts)
+                .environment(connection.me)
+                .environment(connection.toasts)
                 .environment(\.terminalStreamClientFactory) { sessionID, callbacks in
                     PaiTerminalStreamClient(
                         sessionId: sessionID,
@@ -63,6 +68,8 @@ struct RootView: View {
             TerminalScreen(sessionID: sessionID)
         case .settings:
             SettingsScreen()
+        case .createSession:
+            CreateSessionRouteScreen()
         }
     }
 
@@ -80,5 +87,20 @@ struct RootView: View {
             get: { environment.router.path },
             set: { environment.router.replace(with: $0) }
         )
+    }
+}
+
+/// What `.createSession` pushes to — reproduces the real presentation (a sheet from the session
+/// list) rather than pushing `CreateSessionView` directly, so the fixture screenshot workflow
+/// photographs the exact thing Freddy sees rather than that view's own `NavigationStack` nested
+/// inside this one with different, misleading chrome. See `Route.createSession`'s doc comment.
+private struct CreateSessionRouteScreen: View {
+    @State private var isPresented = true
+
+    var body: some View {
+        Color.clear
+            .sheet(isPresented: $isPresented) {
+                CreateSessionView()
+            }
     }
 }

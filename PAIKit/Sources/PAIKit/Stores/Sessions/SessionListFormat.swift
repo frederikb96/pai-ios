@@ -33,13 +33,23 @@ public enum SessionListFormat {
         return String(trimmed[trimmed.index(after: lastSlash)...])
     }
 
-    /// The row's title: `title ?? truncate(initial_message ?? basename(working_dir) ?? "New
-    /// Session", 40)` (`Sidebar.tsx`'s `SessionItem`). The common case for an older, discovered
-    /// conversation — most have neither a title nor an initial message.
+    /// The row's own title, with no project prefix: `title ?? truncate(initial_message ??
+    /// basename(working_dir) ?? "New Session", 40)` (`Sidebar.tsx`'s `SessionItem`). The common
+    /// case for an older, discovered conversation — most have neither a title nor an initial
+    /// message.
     public static func displayTitle(for session: Session) -> String {
         if let title = session.title { return title }
         let fallback = session.initialMessage ?? session.workingDir.map(basename) ?? "New Session"
         return truncate(fallback, maxLength: 40)
+    }
+
+    /// Prefixes a session's own display name with its project — "project : name" — the one place
+    /// that composes this, so the session list and the open conversation's title read
+    /// identically. `nil`/empty leaves the name alone: an unplaced session gets no stray leading
+    /// separator. Swift port of `sessionState.ts`'s `withProjectPrefix`.
+    public static func withProjectPrefix(_ projectName: String?, _ name: String) -> String {
+        guard let projectName, !projectName.isEmpty else { return name }
+        return "\(projectName) : \(name)"
     }
 
     /// Which of the three date buckets `formatSessionTime` renders a timestamp into — "today"

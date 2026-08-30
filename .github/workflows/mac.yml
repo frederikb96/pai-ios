@@ -130,6 +130,12 @@ jobs:
                 # real screen, passes every check and satisfies the size floor — so without this
                 # a wrong screen is indistinguishable from the right one.
                 curl -sS --max-time 3 "http://127.0.0.1:8765/fixture" -o "artifacts/fixture-$name.json" || true
+                # What the app did on the way to this screen. A screen that renders its chrome
+                # but none of its content passes every check here and looks like a screenshot
+                # timing problem; the log is what distinguishes "nothing arrived" from "nothing
+                # measured" from "nothing drawn".
+                curl -sS --max-time 3 "http://127.0.0.1:8765/logs?level=info&limit=200" \
+                  -o "artifacts/logs-$name.json" || true
                 ok=1
                 break
               fi
@@ -142,8 +148,13 @@ jobs:
             xcrun simctl io "$udid" screenshot "artifacts/screen-$name.png"
             bytes=$(stat -f %z "artifacts/screen-$name.png")
             echo "$name: ${bytes} bytes"
-            # A blank screen still produces a valid PNG, just a small one — the one thing every
-            # other check here can pass while the screen itself renders nothing.
+            # A wholly blank screen still produces a valid PNG, just a small one — the one thing
+            # every other check here can pass while the screen renders nothing.
+            #
+            # 🚨 It catches only a screen that is blank ALL OVER. A screen that draws its
+            # navigation bar and composer but none of its content is several times this size and
+            # sails past — which has happened. The size floor is the cheap half; `logs-<name>.json`
+            # above is the half that actually distinguishes an empty screen from a full one.
             if [ "$bytes" -le 20000 ]; then
               echo "::warning::$name: screenshot suspiciously small — the screen may be blank"
               fail=1

@@ -86,4 +86,45 @@ public enum SessionListDomain {
     /// Grey is a normal, frequent state — a session Freddy runs himself in a terminal, or one PAI
     /// closed when it went idle — not a fault.
     public static func isGrey(_ session: Session) -> Bool { !isDrivable(session) }
+
+    /// The label next to a session's dot/spinner — grey-aware, and reading "Working…" ahead of
+    /// the plain state label for the same reason the row's own spinner does: `isWorking` is a
+    /// truer answer than the state name once a turn is actually running. Swift port of
+    /// `sessionState.ts`'s `sessionLabel`.
+    public static func sessionLabel(for session: Session) -> String {
+        if isGrey(session) { return session.kind == .subagent ? "Subagent" : "Not driven by PAI" }
+        if isWorking(session) { return "Working…" }
+        guard let state = session.state else { return "" }
+        switch state {
+        case .starting: return "Starting…"
+        case .ready: return "Ready"
+        case .blocked: return "Waiting on you"
+        case .attention: return "Needs attention"
+        case .closed: return "Closed"
+        case let .unrecognized(raw): return raw
+        }
+    }
+
+    /// What to head a session's chat view with. A subagent is outside the phase-naming rule and
+    /// its `title` is normally `nil`, so it falls back to `initial_message` or literally
+    /// "Session" exactly like an ordinary session unless it has a name or type of its own to show
+    /// first. Swift port of `sessionState.ts`'s `sessionHeaderTitle`.
+    public static func sessionHeaderTitle(for session: Session) -> String {
+        let own: String
+        if session.kind == .subagent {
+            own = session.subagentName ?? session.subagentType ?? session.title ?? session.initialMessage ?? "Session"
+        } else {
+            own = session.title ?? session.initialMessage ?? "Session"
+        }
+        return SessionListFormat.withProjectPrefix(session.projectName, own)
+    }
+
+    /// The claude.ai/code deep link for this session's Remote Control registration, or `nil`
+    /// before one exists. Swift port of `claudeSession.ts`'s `claudeCodeUrl`.
+    public static func claudeCodeUrl(cseId: String?) -> URL? {
+        guard let cseId, !cseId.isEmpty else { return nil }
+        let prefix = "cse_"
+        let ulid = cseId.hasPrefix(prefix) ? String(cseId.dropFirst(prefix.count)) : cseId
+        return URL(string: "https://claude.ai/code/session_\(ulid)")
+    }
 }
