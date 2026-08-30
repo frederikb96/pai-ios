@@ -9,21 +9,6 @@ import SwiftUI
 /// lost (`pai-ios/.claude/CLAUDE.md`, "Where the truth lives"). This view has no legitimate way
 /// to build a second `PaiRequestFactory` on its own, so the connection is injected through the
 /// environment instead of constructed here.
-///
-/// 🚨 **Not wired yet.** `AppEnvironment.Connection` does not currently expose a
-/// `PaiRequestFactory` — it is a local variable inside `AppEnvironment.connect()`, dropped as
-/// soon as the REST `PaiApiClient` is built from it. Nothing sets this key today, so
-/// `TerminalScreen` shows its "not connected" state until `Connection` grows a
-/// `requestFactory: PaiRequestFactory` field (or an equivalent) and whoever wires screens to
-/// `AppEnvironment` adds, wherever `TerminalScreen` is pushed:
-///
-/// ```swift
-/// TerminalScreen(sessionID: id)
-///     .environment(\.terminalStreamClientFactory) { sessionID, callbacks in
-///         PaiTerminalStreamClient(
-///             sessionId: sessionID, requestFactory: connection.requestFactory, callbacks: callbacks)
-///     }
-/// ```
 private struct TerminalStreamClientFactoryKey: EnvironmentKey {
     static let defaultValue: ((String, PaiTerminalStreamClient.Callbacks) -> PaiTerminalStreamClient)? =
         nil

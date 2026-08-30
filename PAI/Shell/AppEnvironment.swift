@@ -78,6 +78,7 @@ final class AppEnvironment {
     /// Keychain means the next launch tries it again and lands back here, which reads as the app
     /// being broken rather than as needing a new token.
     func handleAuthenticationFailure(detail: String?) {
+        connection?.sessions.stopPolling()
         tokens.write(nil)
         connection = nil
         lastAuthFailure = detail
@@ -85,6 +86,7 @@ final class AppEnvironment {
     }
 
     func signOut() {
+        connection?.sessions.stopPolling()
         tokens.write(nil)
         connection = nil
         lastAuthFailure = nil
@@ -133,6 +135,12 @@ final class AppEnvironment {
         guard let connection else { return }
         await connection.settings.refreshSecretPresence()
         await connection.machines.refresh()
+        // Session polling belongs to the app, not to the list screen. Tied to a view it stops
+        // the moment a session is opened — so states, titles and warning badges freeze exactly
+        // while the user is reading one — and restarting it on return re-fetches the first page,
+        // discarding whatever they had scrolled to. The web polls from its root for the same
+        // reason.
+        connection.sessions.startPolling()
     }
 
     /// Keep the machine directory current for as long as the app is in front of the user.

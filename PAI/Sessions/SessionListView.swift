@@ -51,11 +51,16 @@ struct SessionListView: View {
             }
         }
         .task {
+            // Guarded, because pushing a session and coming back may re-run this: a second
+            // `loadInitialSessions` replaces the list wholesale and resets the paging cursor, so
+            // returning from a session would silently discard everything scrolled to so far.
+            // Guarded, because pushing a session and coming back re-runs this: a second
+            // `loadInitialSessions` replaces the list wholesale and resets the paging cursor, so
+            // returning from a session would silently discard everything scrolled to so far.
+            guard !hasLoadedInitialSessions else { return }
             await sessions.loadInitialSessions()
             hasLoadedInitialSessions = true
-            sessions.startPolling()
         }
-        .onDisappear { sessions.stopPolling() }
         .sheet(isPresented: $isPresentingCreateSession) {
             CreateSessionView()
         }
