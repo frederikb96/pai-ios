@@ -390,7 +390,7 @@ struct MarkdownContentView: View {
     private func blockView(_ block: MarkdownBlock) -> some View {
         switch block {
         case .paragraph(let text):
-            styledText(text, style: .markdownBody)
+            styledText(text, style: PaiTypography.markdownBody)
                 .fixedSize(horizontal: false, vertical: true)
 
         case .heading(let level, let text):
@@ -450,10 +450,10 @@ struct MarkdownContentView: View {
 
     private func headingStyle(_ level: Int) -> PaiTypography.Style {
         switch level {
-        case 1: return .markdownHeading1
-        case 2: return .markdownHeading2
-        case 3: return .markdownHeading3
-        default: return .markdownHeading4
+        case 1: return PaiTypography.markdownHeading1
+        case 2: return PaiTypography.markdownHeading2
+        case 3: return PaiTypography.markdownHeading3
+        default: return PaiTypography.markdownHeading4
         }
     }
 

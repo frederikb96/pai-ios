@@ -51,7 +51,10 @@ final class VoiceRecorderController {
     private var levelSum: Double = 0
     private var levelCount: Int = 0
 
-    private var interruptionObserver: NSObjectProtocol?
+    /// `nonisolated(unsafe)` so `deinit` — which is nonisolated — can unregister it. Written
+    /// once on the main actor during setup and read once at deallocation, when nothing else holds
+    /// a reference, so there is no concurrent access for the isolation to protect.
+    private nonisolated(unsafe) var interruptionObserver: NSObjectProtocol?
 
     init(apiClient: PaiApiClient, settingsStore: SettingsStore) {
         self.apiClient = apiClient
@@ -62,7 +65,10 @@ final class VoiceRecorderController {
             dependencies: VoiceRecordingDependencies(
                 mintToken: { purpose in try await apiClient.mintVoiceToken(purpose: purpose) },
                 makeRealtimeTransport: { URLSessionVoiceRealtimeTransport() },
-                settings: { Self.voiceSettings(from: settingsStore) }
+                // The session is `@MainActor`, so it only ever calls this from the main actor —
+                // but the dependency's type cannot say so. Asserting the isolation we already have
+                // beats making the settings read `nonisolated`, which it genuinely is not.
+                settings: { MainActor.assumeIsolated { Self.voiceSettings(from: settingsStore) } }
             )
         )
 

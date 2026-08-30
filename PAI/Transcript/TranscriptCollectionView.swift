@@ -134,7 +134,10 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     deinit {
-        sseClient?.disconnect()
+        // `deinit` is nonisolated and `disconnect()` is not. Copy the reference out so the hop
+        // captures the client rather than `self`, which is already being deallocated.
+        let client = sseClient
+        Task { @MainActor in client?.disconnect() }
     }
 
     override func viewDidLoad() {
@@ -213,8 +216,14 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             onInit: { [weak self] event in self?.applySseInit(event) },
             onBatch: { [weak self] event in self?.applySseBatch(event) },
             onStatus: { [weak self] event in self?.applyStatus(event) },
-            onConnected: { [weak self] in self?.store.setSseConnected(true) },
-            onDisconnected: { [weak self] in self?.store.setSseConnected(false) }
+            onConnected: { [weak self] in
+                guard let self else { return }
+                self.store.setSseConnected(sessionId: self.sessionID, connected: true)
+            },
+            onDisconnected: { [weak self] in
+                guard let self else { return }
+                self.store.setSseConnected(sessionId: self.sessionID, connected: false)
+            }
         )
         let client = PaiSseClient(
             sessionId: sessionID, requestFactory: requestFactory, callbacks: callbacks, initialCursor: initialCursor)
