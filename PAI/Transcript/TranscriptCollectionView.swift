@@ -403,7 +403,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     }
 
     /// A bounded window triggers a full-history load before searching, so a hit outside the
-    /// currently loaded pages is not silently invisible to it — see this block's own spec row.
+    /// currently loaded pages is never silently invisible to it.
     private func beginSearchSession() {
         searchOpenedAtMessageId = topVisibleRowId()
         guard store.window(for: sessionID).hasOlder else { return }
@@ -455,10 +455,10 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         searchState.setResults(hits: hits, truncated: truncated, readerMessageId: searchOpenedAtMessageId)
     }
 
-    /// Opens the hit's card if it is collapsed, scrolls to it, and begins the matching hold — the
-    /// interesting interaction this block exists for: opening a collapsed card changes the row's
-    /// height, which has to go through the same delta compensation a prepend does before the
-    /// scroll target below is computed, or it lands against a height already stale.
+    /// Opens the hit's card if it is collapsed, scrolls to it, and begins the matching hold.
+    /// Opening a collapsed card changes the row's height, which has to go through the same delta
+    /// compensation a prepend does before the scroll target below is computed, or it lands
+    /// against a height already stale.
     private func navigateToCurrentHit() {
         guard searchState.isActive, let hit = searchState.currentHit else {
             clearSearchHighlighting()
