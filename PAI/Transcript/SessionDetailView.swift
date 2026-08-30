@@ -204,11 +204,10 @@ private struct PlanUsageBadge: View {
 
 /// Says why the transcript is empty, when it is empty for a reason.
 ///
-/// The store has always recorded `bootstrapping` and `bootstrapError` faithfully and **nothing
-/// ever read them**, so a transcript that failed to load rendered as a blank screen: no error, no
-/// spinner, no way to retry, and nothing anywhere to distinguish it from a session with no
-/// messages. That is the same failure as a stream reporting itself live while delivering nothing —
-/// a screen that is confidently wrong rather than honestly unsure.
+/// A failed load, a load still in flight and a conversation with nothing in it all draw the same
+/// blank list, so the window's own `bootstrapping`/`bootstrapError` are the only things that can
+/// tell them apart — and a screen that cannot tell them apart is confidently wrong rather than
+/// honestly unsure, which is the worse of the two.
 ///
 /// Renders nothing at all once messages exist, so it costs the common case nothing.
 private struct TranscriptLoadState: View {
