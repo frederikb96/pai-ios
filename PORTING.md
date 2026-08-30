@@ -20,4 +20,9 @@ still owed, and the next agent either redoes them or stops trusting the file.
 
 ## Backlog
 
-Empty.
+### Notes: semantic search mode — pai-cloud anchor: `web/src/apps/notes/NoteList.tsx`'s `mode === 'semantic'` branch
+Needs `PAI/` because: it needs a screen-level UI (a relative-threshold slider shared with the
+session sidebar) and a simulator run to check the ranking reads sensibly; `PaiApiClient` has no
+`searchMemory`/`/api/memory/search` route at all yet, so the networking layer is also unbuilt.
+Filter mode and full-text mode (`/api/notes/search`) are both ported and cover the same ground for
+a vault this size; semantic search is a genuine third mode, not a fallback for either.
