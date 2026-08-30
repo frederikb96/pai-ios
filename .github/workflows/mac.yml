@@ -172,6 +172,20 @@ jobs:
           screenshot root
           curl -sS --max-time 5 "http://127.0.0.1:8765/screens" -o artifacts/screens.json \
             || echo '{"screens":[]}' > artifacts/screens.json
+
+          # Does the measured row height agree with what the view actually draws? Nothing checked
+          # that until a nested list proved it false — the transcript lays out from analytic
+          # heights and never asks a cell its size, so a disagreement is invisible to every other
+          # check here and shows up as the reader being dragged around. Nested lists and a quote
+          # are the shapes that were wrong; keep an easy case first so a failure is legible.
+          printf 'Plain paragraph.\n' > /tmp/m1.md
+          printf -- '- one\n- two\n  - nested a\n  - nested b\n    - deeper\n' > /tmp/m2.md
+          printf -- '> quoted\n>\n> - a list inside a quote\n>   - and deeper\n' > /tmp/m3.md
+          for m in 1 2 3; do
+            curl -sS --max-time 5 --data-binary "@/tmp/m$m.md" \
+              "http://127.0.0.1:8765/markdown/measure?width=360" \
+              -o "artifacts/measure-$m.json" || true
+          done
           xcrun simctl terminate "$udid" "$bundle" || true
 
           names=$(python3 -c "import json; print('\n'.join(json.load(open('artifacts/screens.json'))['screens']))")
