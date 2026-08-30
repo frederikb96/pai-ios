@@ -119,7 +119,12 @@ public struct RecordingStartup: Codable, Sendable, Equatable {
 public struct RecordingMeta: Codable, Sendable, Equatable, Identifiable {
     /// The capture's own timestamp, which is also the web's IndexedDB key for the audio. Identity
     /// that does not depend on list position — that changes every time a newer recording lands.
-    public var id: String { String(Int(timestampMs)) }
+    public var id: String { Self.id(forTimestampMs: timestampMs) }
+
+    /// The same formula `id` uses, exposed so a caller that must name a take's files *before*
+    /// this `RecordingMeta` exists — streaming audio to disk as it is captured, rather than only
+    /// once the take is over — can compute the identical path without duplicating the formula.
+    public static func id(forTimestampMs timestampMs: Double) -> String { String(Int(timestampMs)) }
 
     public let timestampMs: Double
     public let durationMs: Double

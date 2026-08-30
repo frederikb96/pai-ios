@@ -66,6 +66,11 @@ public final class VoiceRecordingSession {
     private let dependencies: VoiceRecordingDependencies
     private var transport: VoiceRealtimeTransport?
     private var receiveTask: Task<Void, Never>?
+    /// The single in-flight reconnect episode, if any — `handleConnectionLost` and
+    /// `resumeAfterInterruption` both reach it, and both cancel any prior one before starting a
+    /// new one so a resume racing a still-sleeping retry can never produce two.
+    private var reconnectTask: Task<Void, Never>?
+    private var reconnectAttempt = 0
     private var preconnectBuffer = PreconnectAudioBuffer<RealtimeUplinkChunk>()
     private var silenceDetector: SilenceDetector?
     private var committedSegments: [String] = []
@@ -73,6 +78,7 @@ public final class VoiceRecordingSession {
     private var recordingStart: Date?
     private var transportRateHz = 24000
     private var narrowband = false
+    private var sttLanguage: VoiceSettings.Language = .auto
     private var mutedMs = 0
     private var lastMuteToggle: Date?
     private var awaitingFinalCommit = false
@@ -83,6 +89,11 @@ public final class VoiceRecordingSession {
     }
 
     public var canStart: Bool { state == .idle }
+
+    /// The rate negotiated for this take, fixed for its whole duration — what the app resumes
+    /// capture at after a pause, so `AVAudioConverter`'s target never changes mid-take even if
+    /// the hardware's own rate does (a Bluetooth headset dropping out mid-call, say).
+    public var transportSampleRateHz: Int { transportRateHz }
 
     public var result: VoiceRecordingResult {
         VoiceRecordingResult(
@@ -109,42 +120,16 @@ public final class VoiceRecordingSession {
         let settings = dependencies.settings()
         transportRateHz = VoiceAudioRatePolicy.transportRate(hardwareRate: hardwareSampleRate)
         narrowband = VoiceAudioRatePolicy.isNarrowband(rate: transportRateHz)
+        sttLanguage = settings.sttLanguage
         silenceDetector = SilenceDetector(config: .from(settings))
         recordingStart = dependencies.now()
 
-        let token: VoiceToken
         do {
-            // A fresh mint per recording — the token is single-use, so caching one across takes
-            // would make the second recording in a session fail for no reason visible to the
-            // user.
-            token = try await dependencies.mintToken(.realtime)
+            try await connectTransport()
         } catch {
-            lastStartFailure = VoiceStartFailure.classify(error)
+            lastStartFailure = Self.classifyConnectFailure(error)
             state = .idle
-            return
         }
-
-        guard
-            let url = VoiceRealtimeProtocol.connectionURL(
-                token: token.token, sampleRate: transportRateHz, language: settings.sttLanguage
-            )
-        else {
-            lastStartFailure = .other(.transport("Could not build the realtime connection URL"))
-            state = .idle
-            return
-        }
-
-        let transport = dependencies.makeRealtimeTransport()
-        do {
-            try await transport.connect(url: url)
-        } catch {
-            lastStartFailure = .other(.transport("\(error)"))
-            state = .idle
-            return
-        }
-        self.transport = transport
-
-        receiveTask = Task { [weak self] in await self?.runReceiveLoop() }
     }
 
     private func resetTakeState() {
@@ -158,6 +143,60 @@ public final class VoiceRecordingSession {
         isMuted = false
         lastMuteToggle = nil
         preconnectBuffer = PreconnectAudioBuffer()
+        reconnectAttempt = 0
+        reconnectTask?.cancel()
+        reconnectTask = nil
+    }
+
+    private enum ConnectFailure: Error {
+        case mint(Error)
+        case url
+        case transport(Error)
+    }
+
+    private static func classifyConnectFailure(_ error: Error) -> VoiceStartFailure {
+        switch error {
+        case let ConnectFailure.mint(underlying): VoiceStartFailure.classify(underlying)
+        case ConnectFailure.url: .other(.transport("Could not build the realtime connection URL"))
+        case let ConnectFailure.transport(underlying): .other(.transport("\(underlying)"))
+        default: VoiceStartFailure.classify(error)
+        }
+    }
+
+    /// Mints a fresh token and opens a new transport connection, starting the receive loop.
+    /// Shared by the first connect and a mid-take reconnect — neither may touch
+    /// `committedSegments`/`partial`/`transcribedText`: the first because there is nothing yet to
+    /// lose, a reconnect because losing it is exactly the bug reconnecting exists to avoid.
+    /// Throws rather than setting `state`/`lastStartFailure` itself, since the two callers need
+    /// different failure handling (give up entirely vs. try again).
+    private func connectTransport() async throws {
+        let token: VoiceToken
+        do {
+            // A fresh mint per attempt — the token is single-use, so caching one across a
+            // reconnect would make the retry fail for no reason visible to the user, the same
+            // logic that already ruled out caching one across separate takes.
+            token = try await dependencies.mintToken(.realtime)
+        } catch {
+            throw ConnectFailure.mint(error)
+        }
+
+        guard
+            let url = VoiceRealtimeProtocol.connectionURL(
+                token: token.token, sampleRate: transportRateHz, language: sttLanguage
+            )
+        else {
+            throw ConnectFailure.url
+        }
+
+        let transport = dependencies.makeRealtimeTransport()
+        do {
+            try await transport.connect(url: url)
+        } catch {
+            throw ConnectFailure.transport(error)
+        }
+        self.transport = transport
+        receiveTask?.cancel()
+        receiveTask = Task { [weak self] in await self?.runReceiveLoop() }
     }
 
     // MARK: Receive loop
@@ -169,7 +208,16 @@ public final class VoiceRecordingSession {
             do {
                 text = try await transport.receive()
             } catch {
-                await handleConnectionLost()
+                // `receive()` is not itself cancellation-aware — cancelling this task (as
+                // `finishStop`/a reconnect both do) does not interrupt an in-flight call, only
+                // the loop's own check below it. So closing the transport as part of that same
+                // teardown wakes this suspended call with an error that looks exactly like a
+                // real connection loss. Bailing out on `isCancelled` here is what keeps a
+                // teardown from reconnecting into whatever take starts next.
+                guard !Task.isCancelled else { return }
+                let reason: String? =
+                    if case let VoiceTransportError.connectionLost(reason) = error { reason } else { nil }
+                await handleConnectionLost(closeReason: reason)
                 return
             }
             guard let message = RealtimeDownlinkMessage.decode(text) else { continue }
@@ -182,9 +230,11 @@ public final class VoiceRecordingSession {
         case .sessionStarted:
             // Flushing here rather than on the transport's own "open" event is Android's
             // ordering, and stricter than the web's: audio sent before ElevenLabs has actually
-            // allocated the session has nowhere to go.
-            guard state == .connecting else { return }
+            // allocated the session has nowhere to go. Accepting `.reconnecting` too is what
+            // makes a mid-take reconnect land in exactly the same place a first connect does.
+            guard state == .connecting || state == .reconnecting else { return }
             state = .recording
+            reconnectAttempt = 0
             await flushPreconnectBuffer()
 
         case let .partialTranscript(text):
@@ -210,15 +260,58 @@ public final class VoiceRecordingSession {
         transcribedText = (committedSegments + [partial]).filter { !$0.isEmpty }.joined(separator: " ")
     }
 
-    private func handleConnectionLost() async {
-        guard state == .recording || state == .connecting else { return }
-        await finishStop(reason: .connectionLost)
+    /// A dropped socket no longer ends the take by itself — over the length of recording this
+    /// feature is built for, a cellular handoff or a moment of dead signal is likely, and it
+    /// carries no ElevenLabs close reason at all (`reason == nil`), unlike the one documented
+    /// server-initiated close (`resource_exhausted`) `ReconnectPolicy` was ported from Android to
+    /// recognise. Treating "no reason" as "assume transient, try again" is what actually covers
+    /// that likely case; `ReconnectPolicy.shouldReconnect` still gates the case where a reason
+    /// *is* known, so both call sites of that policy are exercised, not just the constructed one.
+    private func handleConnectionLost(closeReason: String?) async {
+        guard state == .recording || state == .connecting || state == .paused || state == .reconnecting else {
+            return
+        }
+        guard closeReason == nil || ReconnectPolicy.shouldReconnect(closeReason: closeReason),
+            let delay = ReconnectPolicy.delaySeconds(forAttempt: reconnectAttempt + 1)
+        else {
+            await finishStop(reason: .connectionLost)
+            return
+        }
+        reconnectAttempt += 1
+        state = .reconnecting
+        transport = nil
+        receiveTask?.cancel()
+        receiveTask = nil
+
+        reconnectTask?.cancel()
+        reconnectTask = Task { [weak self] in
+            await self?.dependencies.sleep(.seconds(delay))
+            await self?.performReconnectAttempt()
+        }
+    }
+
+    /// The retry itself, shared by the backoff wait above and `resumeAfterInterruption`'s
+    /// no-transport fallback — both leave `state == .reconnecting` and call straight into this,
+    /// so there is exactly one place that mints the retry's token and opens its socket.
+    private func performReconnectAttempt() async {
+        // Torn down (stopped, or a later event already handled) while this was scheduled.
+        guard state == .reconnecting else { return }
+        do {
+            try await connectTransport()
+        } catch {
+            await handleConnectionLost(closeReason: nil)
+        }
     }
 
     // MARK: Audio ingestion — everything the app supplies
 
     /// Feed one RMS reading, roughly every 100-200ms, on the same clock `start()` was called
     /// with. Drives silence detection only; never sent anywhere.
+    ///
+    /// Deliberately not fed during `.reconnecting`, unlike `ingestAudioChunk` — a network gap
+    /// reads as quiet on no evidence about the room at all, and firing an auto-stop from that
+    /// would end a take purely because the socket dropped, exactly what reconnecting exists to
+    /// prevent.
     public func ingestLevel(rms: Double) {
         guard state == .recording || state == .connecting,
             let recordingStart, var detector = silenceDetector
@@ -242,8 +335,13 @@ public final class VoiceRecordingSession {
     /// what was passed in — silence detection's `muted` guard only suppresses auto-stop, so this
     /// is the actual privacy guarantee, and it holds even if a bug elsewhere leaves the app's own
     /// track un-silenced.
+    ///
+    /// `.reconnecting` buffers here exactly as `.connecting` does before the first
+    /// `session_started` — speech spoken during a network gap is not lost, only delayed until the
+    /// retry succeeds. `.paused` is deliberately excluded: the app is not capturing during an
+    /// audio interruption, so nothing should be arriving to buffer in the first place.
     public func ingestAudioChunk(pcm16le samples: [Int16]) async {
-        guard state == .recording || state == .connecting else { return }
+        guard state == .recording || state == .connecting || state == .reconnecting else { return }
         let effectiveSamples = isMuted ? [Int16](repeating: 0, count: samples.count) : samples
         let chunk = RealtimeUplinkChunk(
             audioBase64: RealtimeUplinkChunk.audioBase64(fromPCM16LE: effectiveSamples),
@@ -285,12 +383,32 @@ public final class VoiceRecordingSession {
 
     // MARK: Interruption — the app's `AVAudioSession.interruptionNotification` handler calls this
 
-    /// Ends the take and keeps the words transcribed so far, the same policy the web applies to
-    /// its `audioContext` being suspended in the background — deliberately reacting to the
-    /// interruption itself, not to which platform caused it.
-    public func handleInterruption() async {
-        guard state == .recording || state == .connecting else { return }
-        await stop(reason: .interrupted)
+    /// The system has already taken the microphone, so capture must stop regardless of what
+    /// happens next — but the take itself only pauses. A call, Siri, or another app taking the
+    /// mic must resume into the same take once it ends, not start a fresh one: ending it here the
+    /// way a short dictation always did would be the opposite of what an hour in a pocket needs.
+    /// Cancels a pending reconnect rather than letting it fire with no mic to feed it — resuming
+    /// (below) re-derives whether one is still needed from `transport` being `nil`.
+    public func pauseForInterruption() {
+        guard state == .recording || state == .connecting || state == .reconnecting else { return }
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        state = .paused
+    }
+
+    /// Called once the app has audio capture running again. Two cases, distinguished by whether
+    /// `transport` survived the interruption: a live socket just needs `state` flipped back, but
+    /// one already lost — an interruption landing mid-reconnect-backoff, say — needs a fresh
+    /// attempt kicked off immediately rather than claiming `.recording` with nowhere to send to.
+    public func resumeAfterInterruption() {
+        guard state == .paused else { return }
+        guard transport != nil else {
+            state = .reconnecting
+            reconnectTask?.cancel()
+            reconnectTask = Task { [weak self] in await self?.performReconnectAttempt() }
+            return
+        }
+        state = .recording
     }
 
     // MARK: Stop
@@ -298,7 +416,11 @@ public final class VoiceRecordingSession {
     /// Idempotent: a second call while already stopping is a no-op rather than a second commit
     /// frame or a second `finishStop`.
     public func stop(reason: RecordingEndReason) async {
-        guard state == .recording || state == .connecting else { return }
+        guard state == .recording || state == .connecting || state == .paused || state == .reconnecting else {
+            return
+        }
+        reconnectTask?.cancel()
+        reconnectTask = nil
         guard !isStopping else { return }
         isStopping = true
         defer { isStopping = false }
@@ -323,6 +445,8 @@ public final class VoiceRecordingSession {
     private func finishStop(reason: RecordingEndReason) async {
         receiveTask?.cancel()
         receiveTask = nil
+        reconnectTask?.cancel()
+        reconnectTask = nil
         if let transport {
             await transport.close(code: 1000, reason: nil)
         }
