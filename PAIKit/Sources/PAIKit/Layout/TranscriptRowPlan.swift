@@ -38,6 +38,12 @@ public struct TranscriptCardPlan: Equatable, Sendable {
     /// which render unconditionally because a reader must never have to click to see their own
     /// words.
     public let expandKey: String?
+    /// Whether this card is currently shown expanded — `true` unconditionally for a card with no
+    /// `expandKey`, since those render unconditionally. Kept separate from `blocks.isEmpty`: a
+    /// collapsible card that is expanded but whose body happens to be empty still has this `true`,
+    /// which is what tells ``TranscriptRowLayout`` to reserve `CardChrome`'s content padding even
+    /// though there are zero blocks to measure inside it.
+    public let isExpanded: Bool
     /// What this card measures and renders, already resolved for the current expanded state: an
     /// empty array for a collapsed card, exactly what ``MessageContentLayoutComposer`` expects.
     /// Plain-text bodies (a tool call's spec text, a thinking block, system content) are wrapped
@@ -46,9 +52,10 @@ public struct TranscriptCardPlan: Equatable, Sendable {
     /// package already proves.
     public let blocks: [MarkdownBlock]
 
-    public init(kind: Kind, expandKey: String?, blocks: [MarkdownBlock]) {
+    public init(kind: Kind, expandKey: String?, isExpanded: Bool, blocks: [MarkdownBlock]) {
         self.kind = kind
         self.expandKey = expandKey
+        self.isExpanded = isExpanded
         self.blocks = blocks
     }
 }
@@ -78,11 +85,13 @@ public enum TranscriptRowPlan {
 
         case .legacyCommandOutput(let content):
             let key = MessageRouting.systemExpandKey(subtype: "command_output")
+            let expanded = isExpanded(key)
             return [
                 TranscriptCardPlan(
                     kind: .legacyCommandOutput(content: content),
                     expandKey: key,
-                    blocks: isExpanded(key) ? [codeBlock(content)] : []
+                    isExpanded: expanded,
+                    blocks: expanded ? [codeBlock(content)] : []
                 )
             ]
 
@@ -91,6 +100,7 @@ public enum TranscriptRowPlan {
                 TranscriptCardPlan(
                     kind: .userBubble(text: text, attachmentPaths: attachmentPaths),
                     expandKey: nil,
+                    isExpanded: true,
                     blocks: text.isEmpty ? [] : [paragraph(text)]
                 )
             ]
@@ -98,11 +108,13 @@ public enum TranscriptRowPlan {
         case .agentMessage:
             let (label, body) = MessageDisplay.splitLabeledContent(message.content ?? "")
             let key = MessageRouting.systemExpandKey(subtype: "agent_message")
+            let expanded = isExpanded(key)
             return [
                 TranscriptCardPlan(
                     kind: .agentMessage(sender: label, body: body),
                     expandKey: key,
-                    blocks: isExpanded(key) ? MarkdownParser.parse(body) : []
+                    isExpanded: expanded,
+                    blocks: expanded ? MarkdownParser.parse(body) : []
                 )
             ]
 
@@ -114,6 +126,7 @@ public enum TranscriptRowPlan {
                 TranscriptCardPlan(
                     kind: .command(name: name, args: hasArgs ? args : nil),
                     expandKey: nil,
+                    isExpanded: true,
                     blocks: hasArgs ? [paragraph(args)] : []
                 )
             ]
@@ -126,6 +139,7 @@ public enum TranscriptRowPlan {
                 TranscriptCardPlan(
                     kind: .relayedBubble(text: text, sender: sender, group: group),
                     expandKey: nil,
+                    isExpanded: true,
                     blocks: text.isEmpty ? [] : [paragraph(text)]
                 )
             ]
@@ -147,24 +161,28 @@ public enum TranscriptRowPlan {
 
         if let thinking = message.thinking, !thinking.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let key = MessageRouting.thinkingExpandKey
+            let expanded = isExpanded(key)
             cards.append(
                 TranscriptCardPlan(
-                    kind: .thinking(text: thinking), expandKey: key,
-                    blocks: isExpanded(key) ? [codeBlock(thinking)] : []))
+                    kind: .thinking(text: thinking), expandKey: key, isExpanded: expanded,
+                    blocks: expanded ? [codeBlock(thinking)] : []))
         }
 
         for call in message.toolCalls ?? [] {
             let key = MessageRouting.toolExpandKey(name: call.name, isResult: false)
             let text = MessageDisplay.displayText(of: MessageDisplay.spec(for: call))
+            let expanded = isExpanded(key)
             cards.append(
                 TranscriptCardPlan(
-                    kind: .toolCall(call), expandKey: key, blocks: isExpanded(key) ? [codeBlock(text)] : []))
+                    kind: .toolCall(call), expandKey: key, isExpanded: expanded,
+                    blocks: expanded ? [codeBlock(text)] : []))
         }
 
         if let content = message.content, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             cards.append(
                 TranscriptCardPlan(
-                    kind: .assistantBubble(text: content), expandKey: nil, blocks: MarkdownParser.parse(content)))
+                    kind: .assistantBubble(text: content), expandKey: nil, isExpanded: true,
+                    blocks: MarkdownParser.parse(content)))
         }
 
         return cards
@@ -179,18 +197,22 @@ public enum TranscriptRowPlan {
         // The `content` field is null on a hook row — the card draws from `hookSummary` instead,
         // never falling back to an empty body it would otherwise show.
         let body = (subtype == "hook") ? hookSummary.map(hookSummaryText) ?? "" : (content ?? "")
+        let expanded = isExpanded(key)
         return TranscriptCardPlan(
             kind: .system(subtype: subtype, content: content, hookSummary: hookSummary),
             expandKey: key,
-            blocks: isExpanded(key) && !body.isEmpty ? [codeBlock(body)] : []
+            isExpanded: expanded,
+            blocks: expanded && !body.isEmpty ? [codeBlock(body)] : []
         )
     }
 
     private static func toolResultCard(_ result: ToolResult, isExpanded: (String) -> Bool) -> TranscriptCardPlan {
         let key = MessageRouting.toolExpandKey(name: result.toolName, isResult: true)
         let text = MessageDisplay.toolResultDisplayText(result, toolName: result.toolName)
+        let expanded = isExpanded(key)
         return TranscriptCardPlan(
-            kind: .toolResult(result), expandKey: key, blocks: isExpanded(key) && !text.isEmpty ? [codeBlock(text)] : []
+            kind: .toolResult(result), expandKey: key, isExpanded: expanded,
+            blocks: expanded && !text.isEmpty ? [codeBlock(text)] : []
         )
     }
 

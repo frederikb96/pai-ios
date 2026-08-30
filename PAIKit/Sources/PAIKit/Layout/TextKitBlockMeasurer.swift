@@ -49,18 +49,12 @@
                 let textWidth = max(0, width - 2 * padding)
                 return Self.textHeight(of: attributed, width: textWidth) + 2 * padding
 
-            case .blockQuote:
-                let attributed = Self.attributedString(for: block, environment: environment)
-                guard attributed.length > 0 else { return 0 }
-                let inset = TranscriptRowMetrics.blockQuoteRuleWidth + TranscriptRowMetrics.blockQuoteSpacing
-                return Self.textHeight(of: attributed, width: max(0, width - inset))
+            case .blockQuote(let blocks):
+                return NestedBlockLayout.blockQuoteHeight(
+                    blocks, width: width, environment: environment, measurer: self)
 
             case .list(let list):
-                let attributed = Self.attributedString(for: block, environment: environment)
-                guard attributed.length > 0 else { return 0 }
-                let inset = TranscriptRowMetrics.listMarkerReservedWidth + TranscriptRowMetrics.listMarkerSpacing
-                let itemGaps = TranscriptRowMetrics.listItemSpacing * Double(max(0, list.items.count - 1))
-                return Self.textHeight(of: attributed, width: max(0, width - inset)) + itemGaps
+                return NestedBlockLayout.listHeight(list, width: width, environment: environment, measurer: self)
 
             default:
                 let attributed = Self.attributedString(for: block, environment: environment)
@@ -90,11 +84,10 @@
 
         // MARK: - Attributed string per block kind
 
-        /// `.blockQuote`/`.list` recurse rather than flattening to ``MarkdownBlock/plainText`` —
-        /// a nested code block inside a list keeps its own monospaced measurement instead of being
-        /// treated as body text, at the cost of joining nested blocks with a single `"\n"` rather
-        /// than real paragraph spacing (an approximation worth revisiting once this runs somewhere
-        /// it can be looked at).
+        /// One block's own text, as TextKit will lay it out. `.blockQuote` and `.list` are not
+        /// among the cases this actually builds a string for — their nested blocks are measured
+        /// through ``NestedBlockLayout`` instead, recursively, at the narrower width each level
+        /// draws at, so `height(of:width:environment:)` never reaches this for either kind.
         private static func attributedString(for block: MarkdownBlock, environment: MeasurementEnvironment)
             -> NSAttributedString
         {
@@ -107,27 +100,15 @@
             case .codeBlock(_, let code):
                 return NSAttributedString(
                     string: code, attributes: attributes(for: PaiTypography.markdownCodeBlock, category: category))
-            case .blockQuote(let blocks):
-                return joined(blocks, environment: environment)
-            case .list(let list):
-                return joined(list.items.flatMap(\.blocks), environment: environment)
             case .htmlBlock(let raw):
                 return NSAttributedString(
                     string: raw, attributes: attributes(for: PaiTypography.markdownCodeBlock, category: category))
-            case .table, .thematicBreak:
-                // Handled in `height(of:width:environment:)` before this is ever reached.
+            case .blockQuote, .list, .table, .thematicBreak:
+                // Each of these is handled before this is ever reached: `.blockQuote`/`.list` in
+                // `height(of:width:environment:)`'s own cases above, `.table`/`.thematicBreak` in
+                // its cases at the top of the same switch.
                 return NSAttributedString(string: "")
             }
-        }
-
-        private static func joined(_ blocks: [MarkdownBlock], environment: MeasurementEnvironment) -> NSAttributedString
-        {
-            let result = NSMutableAttributedString()
-            for (index, block) in blocks.enumerated() {
-                if index > 0 { result.append(NSAttributedString(string: "\n")) }
-                result.append(attributedString(for: block, environment: environment))
-            }
-            return result
         }
 
         private static func attributed(
