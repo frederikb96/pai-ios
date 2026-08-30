@@ -30,8 +30,11 @@ public final class TranscriptStore {
     /// session's number — a reader falls back to the session's own persisted token count
     /// instead, never to this map.
     public internal(set) var sessionTokens: [String: Int] = [:]
-    public internal(set) var sseConnected = false
-    public internal(set) var isProcessing = false
+    /// Keyed like `sessionTokens` and for the same reason: a scalar here showed the previous
+    /// session's connection/spinner state on screen until the newly-switched-to session's first
+    /// status event arrived and overwrote it.
+    public internal(set) var sseConnected: [String: Bool] = [:]
+    public internal(set) var isProcessing: [String: Bool] = [:]
 
     // Send-tracking state (``PendingMessage``, ``TranscriptDelivery``) is declared here — a
     // stored property cannot live in an extension — and its behaviour lives in
@@ -48,6 +51,14 @@ public final class TranscriptStore {
 
     public func window(for sessionId: String) -> TranscriptWindow {
         windows[sessionId] ?? .empty
+    }
+
+    public func sseConnected(for sessionId: String) -> Bool {
+        sseConnected[sessionId] ?? false
+    }
+
+    public func isProcessing(for sessionId: String) -> Bool {
+        isProcessing[sessionId] ?? false
     }
 
     public func maxMessageId(for sessionId: String) -> Int? {
@@ -148,6 +159,12 @@ public final class TranscriptStore {
     /// Drops the oldest session's messages, window and send-tracking state once more than
     /// ``maxCachedSessions`` are loaded at once.
     ///
+    /// "Send-tracking state" means every map keyed by session id that a revisit must not find
+    /// stale — `pendingMessages` and `delivery` included. Missing either used to leave a session's
+    /// last pending-send bubbles behind forever, so re-opening an evicted session before its next
+    /// status event replayed them as phantom "queued" bubbles under a transcript that had already
+    /// moved on.
+    ///
     /// Unlike the web, there is no per-message row height to evict alongside: ``BlockHeightCache``
     /// is keyed by block content, width and measurement environment, never by message or session
     /// id, so a stale entry for a message nobody can reach again is simply never looked up again
@@ -158,6 +175,10 @@ public final class TranscriptStore {
             messages.removeValue(forKey: oldest)
             windows.removeValue(forKey: oldest)
             sessionTokens.removeValue(forKey: oldest)
+            pendingMessages.removeValue(forKey: oldest)
+            delivery.removeValue(forKey: oldest)
+            sseConnected.removeValue(forKey: oldest)
+            isProcessing.removeValue(forKey: oldest)
         }
     }
 
