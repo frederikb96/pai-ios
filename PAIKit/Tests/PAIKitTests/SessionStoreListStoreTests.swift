@@ -31,6 +31,11 @@ final class SessionStoreListStoreTests: XCTestCase {
     /// debounce. Under a full suite it loses that race and reports a debounce failure that is not
     /// one. Waiting for the condition keeps the assertion honest and still fails when the search
     /// genuinely never fires.
+    /// Waits for the request to have been MADE — not for its result to have been applied.
+    ///
+    /// 🚨 Those are different moments, and asserting on `store.rows` straight after this is a race
+    /// the fast machine wins and CI loses. When the assertion is about what the response
+    /// produced, wait for that instead: `awaitRows`.
     private func awaitSearchCalls(
         _ api: FakeSessionListApi, count: Int, file: StaticString = #filePath, line: UInt = #line
     ) async -> [FakeSessionListApi.SearchCall] {
@@ -191,7 +196,7 @@ final class SessionStoreListStoreTests: XCTestCase {
 
         let callsAfterThresholdChanges = await api.searchCalls
         XCTAssertEqual(callsAfterThresholdChanges.count, 1, "dragging the slider must never re-query")
-        XCTAssertEqual(store.rows.map(\.id), ["hi"], "only the result at or above the threshold survives")
+        await awaitRows(store, ["hi"])
     }
 
     /// Filtering by threshold must never re-sort — the server already returns chronological
@@ -216,7 +221,7 @@ final class SessionStoreListStoreTests: XCTestCase {
         store.setThreshold(0.3)
 
         // Chronological (as the server sent it), not score-descending.
-        XCTAssertEqual(store.rows.map(\.id), ["newest", "middle", "oldest"])
+        await awaitRows(store, ["newest", "middle", "oldest"])
     }
 
     // MARK: - Races: generation + real cancellation
@@ -529,6 +534,12 @@ final class SessionStoreListStoreTests: XCTestCase {
         store.updateFilterText("old session")
         store.commitFilterTextNow()
         _ = await awaitSearchCalls(api, count: 1)
+        // The call having been made is not the result having landed — wait for the thing the
+        // assertions below are actually about.
+        let deadline = ContinuousClock().now + .seconds(5)
+        while ContinuousClock().now < deadline, store.session(withId: "search-only") == nil {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
 
         XCTAssertEqual(store.session(withId: "synced-1")?.id, "synced-1")
         XCTAssertEqual(
