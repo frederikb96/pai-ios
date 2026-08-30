@@ -51,15 +51,12 @@ struct RootView: View {
                 .environment(connection.drafts)
                 .environment(connection.me)
                 .environment(connection.toasts)
-                // Asked here rather than at launch: the system prompt appears at most once per
-                // install, and a cold first launch — before anything has been seen working, and
-                // before there is even a backend to register against — is the worst moment to
-                // spend it. By the time this gate is `.ready` the app has a connection and the
-                // person has seen a session list.
-                .task {
-                    await PushRegistrar.requestAuthorizationIfNeeded(store: connection.push)
-                    await connection.push.registerWithBackendIfNeeded()
-                }
+                // Only settles a token the backend has not seen yet — silent, and a no-op in the
+                // common case. Asking for permission is deliberately NOT here: the system prompt
+                // appears at most once per install and never again, so spending it the instant
+                // the app opens, over whatever screen happens to be in front of the person, is
+                // the worst possible moment. It lives behind an explicit control in Settings.
+                .task { await connection.push.registerWithBackendIfNeeded() }
                 .environment(\.terminalStreamClientFactory) { sessionID, callbacks in
                     PaiTerminalStreamClient(
                         sessionId: sessionID,

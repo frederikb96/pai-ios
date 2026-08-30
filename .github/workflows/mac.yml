@@ -91,6 +91,11 @@ jobs:
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
           xcrun simctl boot "$udid" || true
           xcrun simctl bootstatus "$udid" -b
+          # Freddy runs the app in dark mode, and every design judgement made from a light
+          # screenshot is a judgement about a screen nobody looks at. The palette carries a
+          # genuine light appearance too, so this is a choice about which one gets photographed,
+          # not about which one works.
+          xcrun simctl ui "$udid" appearance dark
 
       - name: Install the app
         if: inputs.run_app != false
@@ -130,12 +135,6 @@ jobs:
                 # real screen, passes every check and satisfies the size floor — so without this
                 # a wrong screen is indistinguishable from the right one.
                 curl -sS --max-time 3 "http://127.0.0.1:8765/fixture" -o "artifacts/fixture-$name.json" || true
-                # What the app did on the way to this screen. A screen that renders its chrome
-                # but none of its content passes every check here and looks like a screenshot
-                # timing problem; the log is what distinguishes "nothing arrived" from "nothing
-                # measured" from "nothing drawn".
-                curl -sS --max-time 3 "http://127.0.0.1:8765/logs?level=info&limit=200" \
-                  -o "artifacts/logs-$name.json" || true
                 ok=1
                 break
               fi
@@ -146,6 +145,12 @@ jobs:
               fail=1
             fi
             xcrun simctl io "$udid" screenshot "artifacts/screen-$name.png"
+            # Read AFTER the screenshot, not with the health probe: the bridge answers the moment
+            # it is listening, which is before the screen has fetched, measured or drawn anything
+            # worth logging. This is what distinguishes "nothing arrived" from "nothing measured"
+            # from "nothing drawn" — three causes a picture cannot tell apart.
+            curl -sS --max-time 3 "http://127.0.0.1:8765/logs?level=info&limit=200" \
+              -o "artifacts/logs-$name.json" || true
             bytes=$(stat -f %z "artifacts/screen-$name.png")
             echo "$name: ${bytes} bytes"
             # A wholly blank screen still produces a valid PNG, just a small one — the one thing
