@@ -138,7 +138,10 @@ struct ComposerBar: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(PaiPalette.Semantic.panelBackground)
+        // A translucent system material rather than an opaque fill — the composer reads as the
+        // edge of the screen scrolling under it, not as a floating panel of a different colour.
+        // Matches `CreateSessionView`'s own composer-equivalent bar, which already uses this.
+        .background(.bar)
         .sheet(isPresented: $showingPhotoPicker) {
             PhotoAttachmentPicker { staged in stageAttachments(staged) }
         }

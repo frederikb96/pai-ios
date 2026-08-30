@@ -68,7 +68,8 @@ struct NonDrivableComposerBar: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(PaiPalette.Semantic.panelBackground)
+        // Matches `ComposerBar`'s own material — the same bar, replaced, not a different chrome.
+        .background(.bar)
         .accessibilityIdentifier("non-drivable-composer")
     }
 

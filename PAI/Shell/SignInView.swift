@@ -84,6 +84,7 @@ struct SignInView: View {
                 }
             }
             .navigationTitle(title)
+            .paiListBackground()
         }
         .onAppear {
             // Prefilled rather than blank: the address is almost always already right, and on a

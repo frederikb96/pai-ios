@@ -33,9 +33,9 @@ final class SearchBlockOffsetTests: XCTestCase {
 
     private func expandAll(_: String) -> Bool { true }
 
-    /// The single-block case: an assistant bubble's block offset is always its card's own chrome,
-    /// since a bubble never holds more than one paragraph block. `bubbleVerticalPadding / 2` is
-    /// the top half of the padding `AssistantBubbleView` applies around its content.
+    /// The single-block case: an assistant bubble's block offset is always its card's own chrome —
+    /// zero, since `AssistantBubbleView` is uncontained and adds no padding of its own above its
+    /// content (see that view's own doc comment).
     func testBlockOffsetInsideASingleBlockCardIsExactlyItsChrome() {
         let msg = message(type: .assistant, content: "Reply.")
         let measurer = StubBlockMeasurer()
@@ -45,7 +45,7 @@ final class SearchBlockOffsetTests: XCTestCase {
             cardIndex: 0, blockIndex: 0, for: msg, width: width, environment: environment, isExpanded: expandAll,
             measurer: measurer, cache: cache, metrics: metrics)
 
-        XCTAssertEqual(offset, 5)  // TranscriptRowMetrics.bubbleVerticalPadding (10) / 2
+        XCTAssertEqual(offset, 0)
     }
 
     /// A collapsible card's block sits below its header, half the content padding further down —
@@ -83,7 +83,7 @@ final class SearchBlockOffsetTests: XCTestCase {
             metrics: metrics, measurer: measurer, cache: cache
         ).totalHeight
         let thinkingHeight = 32 + thinkingContent + 12
-        let expected = thinkingHeight + 8 + 5  // + inter-card spacing + the bubble's own top chrome
+        let expected = thinkingHeight + 8  // + inter-card spacing; the reply itself adds no top chrome
         XCTAssertEqual(offset, expected)
     }
 
