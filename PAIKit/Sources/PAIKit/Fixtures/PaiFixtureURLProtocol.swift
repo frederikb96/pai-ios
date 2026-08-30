@@ -108,6 +108,7 @@
             exact("GET", "/api/drafts") { PaiFixtures.drafts },
             exact("GET", "/api/usage") { PaiFixtures.usage },
             exact("GET", "/api/settings/secrets") { PaiFixtures.secretStatuses },
+            exact("GET", "/api/settings/smtp") { PaiFixtures.smtpSettings },
             exact("GET", "/api/auth/claude") { PaiFixtures.claudeAuthHealthy },
             exact("GET", "/api/browse") { PaiFixtures.browseResult },
             exact("GET", "/api/favorites") { PaiFixtures.folderFavorites },
@@ -117,6 +118,12 @@
             // over the stream and nowhere else — and the transcript's live half never runs at all,
             // so the one screen whose whole design is about streaming would be the one screen
             // fixture mode never exercised.
+            // ⚠️ The two stream routes are served but do not reach their clients: both use
+            // `URLSession.bytes(for:)`, which does not surface a custom `URLProtocol`'s data.
+            // So a fixture screenshot of the terminal shows its "connecting" chrome and no
+            // frames, and the transcript's content comes from its REST bootstrap rather than
+            // from the live stream. Neither is an app fault, and neither is reproducible against
+            // a real backend — but a screenshot of those two proves less than it appears to.
             sessionScoped("GET", suffix: "/stream") { PaiFixtures.sseStream },
             sessionScoped("GET", suffix: "/terminal") { PaiFixtures.terminalStream },
         ]

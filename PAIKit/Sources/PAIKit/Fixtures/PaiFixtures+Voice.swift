@@ -47,6 +47,17 @@ extension PaiFixtures {
 
     // MARK: - App secrets (presence only — never a value)
 
+    /// `GET /api/settings/smtp` — a configured Alert Mail section, so the settings screen
+    /// photographs the form rather than an error line.
+    public static let smtpSettings: String = #"""
+        {
+          "host": "smtp.posteo.de", "port": 587, "security": "starttls",
+          "username": "alerts@example.invalid", "from_address": "alerts@example.invalid",
+          "recipient": "freddy@example.invalid", "enabled": true,
+          "updated_at": "2026-07-02T09:00:00Z"
+        }
+        """#
+
     /// `GET /api/settings/secrets` — `elevenlabs` set, `smtp_password` absent entirely
     /// (`SecretStatusMap` is a `Partial<Record<...>>`, so a missing key means "never configured",
     /// distinct from `{"set": false, ...}`).
