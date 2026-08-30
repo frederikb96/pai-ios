@@ -101,19 +101,19 @@
             let category = UIContentSizeCategory(rawValue: environment.sizeCategoryToken)
             switch block {
             case .paragraph(let text):
-                return attributed(inline: text, style: .markdownBody, category: category)
+                return attributed(inline: text, style: PaiTypography.markdownBody, category: category)
             case .heading(let level, let text):
                 return attributed(inline: text, style: headingStyle(level), category: category)
             case .codeBlock(_, let code):
                 return NSAttributedString(
-                    string: code, attributes: attributes(for: .markdownCodeBlock, category: category))
+                    string: code, attributes: attributes(for: PaiTypography.markdownCodeBlock, category: category))
             case .blockQuote(let blocks):
                 return joined(blocks, environment: environment)
             case .list(let list):
                 return joined(list.items.flatMap(\.blocks), environment: environment)
             case .htmlBlock(let raw):
                 return NSAttributedString(
-                    string: raw, attributes: attributes(for: .markdownCodeBlock, category: category))
+                    string: raw, attributes: attributes(for: PaiTypography.markdownCodeBlock, category: category))
             case .table, .thematicBreak:
                 // Handled in `height(of:width:environment:)` before this is ever reached.
                 return NSAttributedString(string: "")
@@ -147,10 +147,10 @@
 
         private static func headingStyle(_ level: Int) -> PaiTypography.Style {
             switch level {
-            case 1: return .markdownHeading1
-            case 2: return .markdownHeading2
-            case 3: return .markdownHeading3
-            default: return .markdownHeading4
+            case 1: return PaiTypography.markdownHeading1
+            case 2: return PaiTypography.markdownHeading2
+            case 3: return PaiTypography.markdownHeading3
+            default: return PaiTypography.markdownHeading4
             }
         }
 
@@ -192,7 +192,7 @@
         private static func tableRowHeight(for environment: MeasurementEnvironment) -> Double {
             let category = UIContentSizeCategory(rawValue: environment.sizeCategoryToken)
             let pointSize = PaiTypography.markdownBody.pointSize(for: category)
-            let font = resolveFont(style: .markdownBody, pointSize: pointSize)
+            let font = resolveFont(style: PaiTypography.markdownBody, pointSize: pointSize)
             return Double(font.lineHeight.rounded(.up))
         }
     }
