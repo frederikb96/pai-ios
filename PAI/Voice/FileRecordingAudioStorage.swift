@@ -43,6 +43,17 @@ struct FileRecordingAudioStorage: RecordingAudioStorage {
         return (raw, sent)
     }
 
-    private func sentURL(id: String) -> URL { directory.appendingPathComponent("\(id)-sent.wav") }
-    private func rawURL(id: String) -> URL { directory.appendingPathComponent("\(id)-raw.wav") }
+    /// Where a take-in-progress should stream its bytes to, so a `StreamingRecordingFile` opened
+    /// here already lives at the exact path `save(id:...)` would otherwise have written in one
+    /// shot at the end — `VoiceRecorderController` reaches this directly, the same way `load`
+    /// does, since `RecordingAudioStorage` is deliberately only ever a save-or-delete contract.
+    func sentURL(id: String) -> URL { directory.appendingPathComponent("\(id)-sent.wav") }
+    func rawURL(id: String) -> URL { directory.appendingPathComponent("\(id)-raw.wav") }
+
+    /// The raw half alone, for when a take's raw budget was exceeded (or the raw stream never
+    /// produced anything) but the sent half is still worth keeping — mirrors what `save(raw: nil)`
+    /// already did for the non-streaming path.
+    func removeRaw(id: String) {
+        try? FileManager.default.removeItem(at: rawURL(id: id))
+    }
 }
