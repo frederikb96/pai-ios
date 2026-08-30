@@ -7,19 +7,22 @@ import UserNotifications
 /// This is a nicety layered on top of the durability work, never a substitute for it — it only
 /// fires if the process survives long enough to fire it, and the physical mute switch can silence
 /// it outright even then. The recording itself has to survive on its own; this can only report.
+///
+/// Owns no authorization request of its own — `PushRegistrar`/`PushRegistrationStore` is the
+/// single claimant of the one-shot system prompt, so asking here as well would either spend it on
+/// a moment the recording flow does not need answered, or silently re-ask and get back whatever
+/// that first prompt decided with no way to tell the difference.
 enum VoiceInterruptionNotifier {
-    /// Idempotent past the first answer — safe to call before every take rather than tracking
-    /// whether it was already asked. Called from `start()`, alongside the microphone permission
-    /// request it already makes there.
-    static func requestAuthorizationIfNeeded() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-    }
-
     /// `reason` is expected to be one the app was alive to *observe* going wrong — an
     /// interruption that could not resume, a reconnect that exhausted its attempts, or a protocol
     /// error. `VoiceRecorderController` is what decides which reasons qualify; this only renders
-    /// whichever one it is given.
-    static func notify(reason: RecordingEndReason) {
+    /// whichever one it is given, and only once notifications are actually authorised — silently
+    /// no-op otherwise rather than posting a request nothing will ever show.
+    static func notify(reason: RecordingEndReason) async {
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
+            return
+        }
         let content = UNMutableNotificationContent()
         content.title = "Voice recording stopped"
         content.body = body(for: reason)
