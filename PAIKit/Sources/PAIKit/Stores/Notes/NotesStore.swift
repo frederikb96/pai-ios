@@ -513,4 +513,23 @@ public final class NotesStore {
             loadError = (error as? PaiError)?.userMessage ?? "Could not update favourite"
         }
     }
+
+    /// Updates the summary shown under a note's name and matched by semantic search. An empty
+    /// string clears it — the server itself treats a falsy summary as "clear", so this never has
+    /// to send an explicit null.
+    @discardableResult
+    public func updateSummary(id: String, summary: String) async -> Bool {
+        do {
+            let result = try await api.patchNote(
+                id: id, body: nil, frontmatter: nil, name: nil, summary: summary, favourite: nil,
+                containerId: nil, expectedHash: nil)
+            guard case .saved(let detail) = result else { return false }
+            details[id] = detail
+            if let index = notes.firstIndex(where: { $0.id == id }) { notes[index] = detail.summaryRow }
+            return true
+        } catch {
+            loadError = (error as? PaiError)?.userMessage ?? "Could not save the summary"
+            return false
+        }
+    }
 }
