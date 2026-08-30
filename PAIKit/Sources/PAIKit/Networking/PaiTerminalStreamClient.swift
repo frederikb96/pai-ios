@@ -40,6 +40,13 @@ public final class PaiTerminalStreamClient {
 
     private static let initialBackoffNanos: UInt64 = 1_000_000_000
     private static let maxBackoffNanos: UInt64 = 15_000_000_000
+    /// Matches `PaiSseClient`'s own watchdog exactly — both streams share the same
+    /// `SSE_PING_INTERVAL` (15s, `pai_cloud/api.py`), so the same "three missed pings is stale"
+    /// shape applies unchanged. Without this, the only reconnect trigger was the read loop
+    /// itself ending, which a half-open connection (a phone crossing from WiFi to cellular, say)
+    /// never does on its own — the socket looks alive to the OS while nothing arrives.
+    private static let staleTimeout: TimeInterval = 45
+    private static let watchdogIntervalNanos: UInt64 = 10_000_000_000
 
     private let sessionId: String
     private let requestFactory: PaiRequestFactory
@@ -47,8 +54,10 @@ public final class PaiTerminalStreamClient {
     private let callbacks: Callbacks
 
     private var backoffNanos = PaiTerminalStreamClient.initialBackoffNanos
+    private var lastEventTime = Date()
     private var stopped = false
     private var streamTask: Task<Void, Never>?
+    private var watchdogTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var activeByteStream: PaiHttpByteStream?
 
@@ -77,6 +86,7 @@ public final class PaiTerminalStreamClient {
         reconnectTask?.cancel()
         streamTask?.cancel()
         activeByteStream?.cancel()
+        watchdogTask?.cancel()
         callbacks.onDisconnected()
     }
 
@@ -98,10 +108,17 @@ public final class PaiTerminalStreamClient {
                 switch event {
                 case .connected:
                     backoffNanos = Self.initialBackoffNanos
+                    lastEventTime = Date()
                     callbacks.onConnected()
+                    startWatchdog()
                 case .chunk(let data):
                     for line in splitter.ingest(data) {
                         if line.isEmpty {
+                            // Every record boundary counts as activity, including a bare
+                            // keepalive with no `data:` line — matching `PaiSseClient.handleEvent`,
+                            // which advances its own `lastEventTime` before checking whether the
+                            // record was one of its three semantic events.
+                            lastEventTime = Date()
                             if !dataLines.isEmpty {
                                 // Named `frame` events and a backend falling back to unnamed
                                 // `message` events are handled identically —
@@ -138,8 +155,9 @@ public final class PaiTerminalStreamClient {
     }
 
     /// See `PaiSseClient.shouldReconnectAfterStreamEnded(cancelled:terminal:stopped:)` — same
-    /// double-reconnect bug, this client's own copy since it has no watchdog to trigger it via,
-    /// but the same race exists whenever `connect()` cancels a still-running `streamTask`.
+    /// double-reconnect bug, this client's own copy since it has its own `stopped`/no `terminal`
+    /// state; the race is the same one `startWatchdog()` can trigger here too now, on top of
+    /// `connect()` cancelling a still-running `streamTask`.
     nonisolated static func shouldReconnectAfterStreamEnded(
         cancelled: Bool, stopped: Bool
     ) -> Bool {
@@ -167,6 +185,20 @@ public final class PaiTerminalStreamClient {
         return (event.data, event.live)
     }
 
+    /// See `PaiSseClient.startWatchdog()` — same mechanism, same interval, same reasoning.
+    private func startWatchdog() {
+        watchdogTask?.cancel()
+        watchdogTask = Task { [weak self] in
+            while true {
+                try? await Task.sleep(nanoseconds: Self.watchdogIntervalNanos)
+                guard let self, !Task.isCancelled else { return }
+                if Date().timeIntervalSince(self.lastEventTime) > Self.staleTimeout {
+                    self.scheduleReconnect()
+                }
+            }
+        }
+    }
+
     private func handleDisconnect() {
         callbacks.onDisconnected()
         scheduleReconnect()
@@ -176,6 +208,7 @@ public final class PaiTerminalStreamClient {
         reconnectTask?.cancel()
         streamTask?.cancel()
         activeByteStream?.cancel()
+        watchdogTask?.cancel()
         guard !stopped else { return }
 
         let delay = backoffNanos

@@ -94,6 +94,11 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// naturally: several skipped passes in a row leave only the first deferred call still
     /// finding the flag set, and every recompute reads live state regardless of which one runs.
     private var hasPendingRecompute = false
+    /// `bootstrap()` now retries indefinitely on failure (`TranscriptBootstrapBackoff`), so unlike
+    /// a one-shot fetch it can genuinely still be running when this controller is torn down —
+    /// stored so `deinit` can cancel it rather than leaving it retrying network calls against a
+    /// session nothing is looking at anymore.
+    private var bootstrapTask: Task<Void, Never>?
     private var sseClient: PaiSseClient?
     /// Where a session's own bootstrap-resolved restore target goes until it can actually be
     /// applied — `recomputeRows` is a no-op below a measured width of zero, and the bootstrap can
@@ -138,6 +143,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     deinit {
+        bootstrapTask?.cancel()
         // `deinit` is nonisolated and `disconnect()` is not. Copy the reference out so the hop
         // captures the client rather than `self`, which is already being deallocated.
         let client = sseClient
@@ -178,7 +184,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                 equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
         ])
 
-        Task { await bootstrap() }
+        bootstrapTask = Task { [weak self] in await self?.bootstrap() }
         observeSearchState()
     }
 
@@ -210,16 +216,31 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
 
     // MARK: - Bootstrap and streaming
 
+    /// One tunnel blip or one 502 during a deploy used to strand the screen permanently — a
+    /// failed fetch set the error and returned, and nothing ever called this again. Retries with
+    /// `TranscriptBootstrapBackoff`'s capped schedule instead, the same shape `PaiSseClient` uses
+    /// for its own reconnect, until it succeeds or `bootstrapTask` is cancelled. The error is
+    /// shown between attempts (`setBootstrapError`) and the spinner returns just before the next
+    /// one (`setBootstrapping`, which also clears it) — the two existing `TranscriptLoadState`
+    /// states already cover this, so retrying needs no UI of its own.
     private func bootstrap() async {
         store.setBootstrapping(sessionID)
-        do {
-            let entries = try await apiClient.getMessages(
-                sessionId: sessionID, page: .tail(limit: TranscriptStore.tailLimit))
-            store.applyBootstrap(sessionId: sessionID, entries: entries, requestedLimit: TranscriptStore.tailLimit)
-        } catch {
-            store.setBootstrapError(sessionID, error: (error as? PaiError)?.userMessage ?? "Couldn't load messages")
-            return
+        var backoff = TranscriptBootstrapBackoff()
+        let entries: [Message]
+        while true {
+            do {
+                entries = try await apiClient.getMessages(
+                    sessionId: sessionID, page: .tail(limit: TranscriptStore.tailLimit))
+                break
+            } catch {
+                guard !Task.isCancelled else { return }
+                store.setBootstrapError(sessionID, error: (error as? PaiError)?.userMessage ?? "Couldn't load messages")
+                try? await Task.sleep(for: backoff.next())
+                guard !Task.isCancelled else { return }
+                store.setBootstrapping(sessionID)
+            }
         }
+        store.applyBootstrap(sessionId: sessionID, entries: entries, requestedLimit: TranscriptStore.tailLimit)
         let loadedIds = TranscriptStore.displayMessages(store.messages[sessionID] ?? []).map(\.id)
         let target = TranscriptRestore.target(for: Self.lastAnchors[sessionID], loadedMessageIds: loadedIds)
         pendingInitialLoad = target
@@ -606,6 +627,10 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         // same as `.replaced`, rather than asserting an insert UIKit did not ask for.
         let actualCount = collectionView.numberOfItems(inSection: 0)
         guard actualCount == oldCount || delta == .unchanged || delta == .replaced else {
+            // A `reloadData()` here throws away the update `.pendingAnchor` was set for — leaving
+            // it set would apply a stale snapshot's correction to whatever update next reaches
+            // `.unchanged`, an arbitrary jump unrelated to anything that update actually moved.
+            layout.pendingAnchor = nil
             collectionView.reloadData()
             completion?()
             return
@@ -658,6 +683,9 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             }) { _ in completion?() }
 
         case .replaced:
+            // Same reasoning as the count-mismatch fallback above: this reload discards whatever
+            // update set `.pendingAnchor`, so the anchor must not survive it either.
+            layout.pendingAnchor = nil
             collectionView.reloadData()
             completion?()
         }
