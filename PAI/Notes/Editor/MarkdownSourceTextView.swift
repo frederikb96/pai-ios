@@ -65,7 +65,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
             view.showsHorizontalScrollIndicator = true
             view.textContainer.widthTracksTextView = false
             view.textContainer.size = CGSize(
-                width: .greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+                width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
             view.textContainer.lineBreakMode = .byClipping
             view.backgroundColor = NoteEditorTheme.codeBackground
             view.layer.cornerRadius = 6
@@ -111,7 +111,9 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         guard !wraps else {
             return CGSize(
                 width: width,
-                height: uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height)
+                height: uiView.sizeThatFits(
+                    CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+                ).height)
         }
 
         // A non-wrapping region has exactly one line per newline, so its height is arithmetic
