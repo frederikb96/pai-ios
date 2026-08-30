@@ -10,6 +10,9 @@ struct PAIApp: App {
     #endif
 
     init() {
+        // Unconditional — a TestFlight build is exactly where this matters, and the debug bridge
+        // it feeds `/crash` for is the DEBUG-only half of this facility, not the capture itself.
+        CrashReporter.install()
         #if DEBUG
             FixtureBootstrap.installIfRequested()
             Self.debugBridge.start()
@@ -94,6 +97,15 @@ struct PAIApp: App {
 
             router.register("POST", "/logs/clear") { _ in
                 DebugLogBuffer.shared.clear()
+                return .message("cleared")
+            }
+
+            // Reads the same file `CrashReporter.install()` writes on an uncaught exception — a
+            // reason string Apple's own crash report leaves out for this class of crash. `nil`
+            // encodes as `null`, not a missing key, so a client always gets a well-formed answer.
+            router.register("GET", "/crash") { _ in .encoding(CrashReporter.readLast()) }
+            router.register("POST", "/crash/clear") { _ in
+                CrashReporter.clearLast()
                 return .message("cleared")
             }
 

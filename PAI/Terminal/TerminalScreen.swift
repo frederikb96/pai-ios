@@ -1,3 +1,4 @@
+import Foundation
 import PAIKit
 import SwiftUI
 
@@ -22,7 +23,15 @@ struct TerminalScreen: View {
 
     @State private var paneState: TerminalPaneState = .initial
     @State private var isConnected = false
+    @State private var activity = StreamActivity()
     @State private var client: PaiTerminalStreamClient?
+
+    /// Below this, quiet reads as normal and the status bar says nothing about it. See
+    /// `StreamActivity`.
+    private static let idleThreshold: TimeInterval = 3
+    /// Past this, quiet is worth flagging rather than reading as a healthy pause — independent
+    /// of the client's own reconnect timeout, since the point is to warn well before that fires.
+    private static let stallThreshold: TimeInterval = 10
 
     var body: some View {
         Group {
@@ -62,53 +71,79 @@ struct TerminalScreen: View {
     /// Live" only while scrolled back, and paging controls in place of the web's wheel/swipe/
     /// pinch gestures — a phone has neither, and reproducing threshold-based gesture accumulation
     /// for a read-only view is more risk than the feature is worth.
+    ///
+    /// Wrapped in a `TimelineView` so "quiet for how long" keeps counting up while the screen sits
+    /// open — `activity`'s own state only changes on a callback, but the elapsed time it reports
+    /// does not, and a dot that only updates when a frame happens to arrive is the same
+    /// confidently-wrong "Live" this exists to replace.
     private var statusBar: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 8, height: 8)
-            Text(statusLabel)
-                .font(PaiTypography.caption.font)
-                .foregroundStyle(PaiPalette.Semantic.textMuted)
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let activityState = activity.state(
+                now: context.date, idleThreshold: Self.idleThreshold, stallThreshold: Self.stallThreshold)
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(statusColor(activityState))
+                    .frame(width: 8, height: 8)
+                Text(statusLabel(activityState))
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Semantic.textMuted)
 
-            Spacer()
+                Spacer()
 
-            if isConnected && !paneState.live {
-                Button("Jump to Live") { requestScroll(.live) }
-                    .font(PaiTypography.captionEmphasized.font)
-                    .accessibilityIdentifier("terminal-jump-to-live")
+                if isConnected && !paneState.live {
+                    Button("Jump to Live") { requestScroll(.live) }
+                        .font(PaiTypography.captionEmphasized.font)
+                        .accessibilityIdentifier("terminal-jump-to-live")
+                }
+
+                Button {
+                    requestScroll(.up)
+                } label: {
+                    Image(systemName: "chevron.up")
+                }
+                .accessibilityIdentifier("terminal-scroll-up")
+
+                Button {
+                    requestScroll(.down)
+                } label: {
+                    Image(systemName: "chevron.down")
+                }
+                .accessibilityIdentifier("terminal-scroll-down")
             }
-
-            Button {
-                requestScroll(.up)
-            } label: {
-                Image(systemName: "chevron.up")
-            }
-            .accessibilityIdentifier("terminal-scroll-up")
-
-            Button {
-                requestScroll(.down)
-            } label: {
-                Image(systemName: "chevron.down")
-            }
-            .accessibilityIdentifier("terminal-scroll-down")
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .accessibilityIdentifier("terminal-status-bar")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .accessibilityIdentifier("terminal-status-bar")
     }
 
     /// Connecting and disconnected share one grey, pulsing-in-spirit dot, same as the web's
     /// `!connected` case — there is no separate "gave up" state, since the client retries with
-    /// backoff until the view disconnects it.
-    private var statusColor: Color {
+    /// backoff until the view disconnects it. Idle stays green: quiet alone is not a problem, and
+    /// the label already says so. Stalled turns amber even at the live edge — a green dot with
+    /// nothing arriving for this long is the exact failure this status bar exists to rule out.
+    private func statusColor(_ activityState: StreamActivityState) -> Color {
         guard isConnected else { return PaiPalette.surface400 }
-        return paneState.live ? PaiPalette.green500 : PaiPalette.amber500
+        guard paneState.live else { return PaiPalette.amber500 }
+        if case .stalled = activityState { return PaiPalette.amber500 }
+        return PaiPalette.green500
     }
 
-    private var statusLabel: String {
+    /// "Live" alone once a frame has arrived recently; past `idleThreshold` the elapsed time
+    /// itself is what tells "flowing" and "quiet" apart, whether or not that quiet is a problem.
+    private func statusLabel(_ activityState: StreamActivityState) -> String {
         guard isConnected else { return "Connecting…" }
-        return paneState.live ? "Live" : "Scrolled back"
+        guard paneState.live else { return "Scrolled back" }
+        switch activityState {
+        case .receiving, .disconnected:
+            return "Live"
+        case .idle(let elapsed), .stalled(let elapsed):
+            return "Live · \(Self.formatted(elapsed)) ago"
+        }
+    }
+
+    private static func formatted(_ interval: TimeInterval) -> String {
+        let seconds = Int(interval.rounded())
+        return seconds < 60 ? "\(seconds)s" : "\(seconds / 60)m"
     }
 
     // MARK: - Pane
@@ -167,14 +202,22 @@ struct TerminalScreen: View {
         guard let makeStreamClient else { return }
         paneState = .initial
         isConnected = false
+        activity = StreamActivity()
         let newClient = makeStreamClient(
             sessionID,
             PaiTerminalStreamClient.Callbacks(
                 onFrame: { chunk, live in
                     paneState = paneState.applying(TerminalFrameChunk(data: chunk, live: live))
+                    activity.recordEvent(at: Date())
                 },
-                onConnected: { isConnected = true },
-                onDisconnected: { isConnected = false }
+                onConnected: {
+                    isConnected = true
+                    activity.recordConnected(at: Date())
+                },
+                onDisconnected: {
+                    isConnected = false
+                    activity.recordDisconnected()
+                }
             )
         )
         client = newClient

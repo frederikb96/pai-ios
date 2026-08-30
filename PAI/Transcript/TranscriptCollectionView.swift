@@ -32,34 +32,6 @@ private struct TranscriptRow {
     let height: Double
 }
 
-/// How the rows changed since the last measurement pass.
-///
-/// A transcript's loaded window is always a contiguous, ascending suffix (``TranscriptWindow``'s
-/// own doc comment) — ids are never reordered and never removed except by a whole-session LRU
-/// eviction this view controller never sees, since that only ever targets a *different* session.
-/// So the only shapes a change can take are these four, and telling them apart this way is what
-/// lets each get exactly the scroll treatment it needs, instead of one generic diff that cannot
-/// distinguish "grew at the top" from "grew at the bottom".
-private enum RowDelta {
-    case unchanged
-    case appended(count: Int)
-    case prepended(count: Int)
-    /// Anything else — should not happen given the invariant above, but a full reload is the
-    /// honest fallback rather than a crash if it ever does.
-    case replaced
-
-    static func compute(old: [Int], new: [Int]) -> RowDelta {
-        if old == new { return .unchanged }
-        if new.count > old.count, Array(new.suffix(old.count)) == old {
-            return .appended(count: new.count - old.count)
-        }
-        if new.count > old.count, Array(new.prefix(old.count)) == old {
-            return .prepended(count: new.count - old.count)
-        }
-        return .replaced
-    }
-}
-
 /// The transcript list: a `UICollectionView` on ``TranscriptLayout``, owning the bootstrap/SSE
 /// lifecycle, the measured-height pipeline, and the scroll mechanics the `scrolling` skill lays
 /// out — the edge-follow latch, the hold, identity-based anchoring, and older-page paging.
@@ -109,6 +81,19 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     private var lastRecordedAnchor: TranscriptAnchor?
     private var isLoadingOlder = false
     private var lastMeasuredWidth: Double = -1
+    /// Set for the duration of `apply(_:intent:)`'s synchronous work — `apply()` forces a layout
+    /// pass with `reloadData()`/`layoutIfNeeded()`, and UIKit can call back into
+    /// `viewDidLayoutSubviews()` from inside that call, most reliably seen mid
+    /// `_UINavigationParallaxTransition`, where the view's own bounds are still animating frame to
+    /// frame. Recursing into a second `apply()` before the first one returns is how two calls end
+    /// up disagreeing about `rows`/UIKit's own item count at once — see `recomputeRows(applying:)`.
+    private var isApplyingRows = false
+    /// Set when a layout pass arrives while `isApplyingRows` is already true. The recompute it
+    /// asked for is not dropped, only deferred to the next run-loop turn — by then
+    /// `isApplyingRows` has settled back to `false`, so it is safe to apply for real. Coalesces
+    /// naturally: several skipped passes in a row leave only the first deferred call still
+    /// finding the flag set, and every recompute reads live state regardless of which one runs.
+    private var hasPendingRecompute = false
     private var sseClient: PaiSseClient?
     /// Where a session's own bootstrap-resolved restore target goes until it can actually be
     /// applied — `recomputeRows` is a no-op below a measured width of zero, and the bootstrap can
@@ -167,6 +152,12 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         collectionView.dataSource = self
         collectionView.delegate = self
         collectionView.register(UICollectionViewCell.self, forCellWithReuseIdentifier: Self.cellReuseIdentifier)
+        // The composer's `UITextView` has no focus binding and Return is always a newline
+        // (`ComposerTextEditor`'s own doc comment), so without this the keyboard has no route
+        // down at all once it is up. `.interactive` — a drag on the transcript itself dismisses
+        // it, tracking the gesture the way Messages.app does — rather than `.onDrag`, which only
+        // commits at the end of the gesture and reads as unresponsive mid-drag.
+        collectionView.keyboardDismissMode = .interactive
         view.addSubview(collectionView)
 
         addChild(jumpToLatestHostingController)
@@ -236,13 +227,19 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             onInit: { [weak self] event in self?.applySseInit(event) },
             onBatch: { [weak self] event in self?.applySseBatch(event) },
             onStatus: { [weak self] event in self?.applyStatus(event) },
+            onActivity: { [weak self] in
+                guard let self else { return }
+                self.store.recordSseActivity(sessionId: self.sessionID, at: Date())
+            },
             onConnected: { [weak self] in
                 guard let self else { return }
                 self.store.setSseConnected(sessionId: self.sessionID, connected: true)
+                self.store.recordSseConnected(sessionId: self.sessionID, at: Date())
             },
             onDisconnected: { [weak self] in
                 guard let self else { return }
                 self.store.setSseConnected(sessionId: self.sessionID, connected: false)
+                self.store.recordSseDisconnected(sessionId: self.sessionID)
             }
         )
         let client = PaiSseClient(
@@ -316,6 +313,16 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     }
 
     private func recomputeRows(applying intent: UpdateIntent) {
+        guard !isApplyingRows else {
+            hasPendingRecompute = true
+            Task { @MainActor [weak self] in
+                guard let self, self.hasPendingRecompute else { return }
+                self.hasPendingRecompute = false
+                self.recomputeRows(applying: intent)
+            }
+            return
+        }
+
         let displayMessages = TranscriptStore.displayMessages(store.messages[sessionID] ?? [])
         let width = measurementWidth()
         guard width > 0 else { return }
@@ -346,6 +353,8 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                     + "rows=\(newRows.count) totalHeight=\(Int(newRows.reduce(0) { $0 + $1.height }))")
         #endif
 
+        isApplyingRows = true
+        defer { isApplyingRows = false }
         apply(newRows, intent: intent)
     }
 
@@ -583,6 +592,22 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     }
 
     private func applyDelta(_ delta: RowDelta, oldCount: Int, completion: (() -> Void)?) {
+        // `oldCount` is this controller's own bookkeeping (`rows.count` before the update it
+        // describes) — not UIKit's, which tracks its own item count from the data source at its
+        // last completed layout pass. The two normally agree, but the `isApplyingRows` guard
+        // above exists precisely because a re-entrant layout pass could otherwise call this a
+        // second time before the first has finished mutating `rows`/the collection view, and an
+        // `insertItems(at:)` built against a count that no longer matches what UIKit actually has
+        // on screen is exactly what `_Bug_Detected_In_Client_Of_UICollectionView_...` raises for.
+        // Trust nothing the guard cannot also verify: a mismatch here falls back to a full reload,
+        // same as `.replaced`, rather than asserting an insert UIKit did not ask for.
+        let actualCount = collectionView.numberOfItems(inSection: 0)
+        guard actualCount == oldCount || delta == .unchanged || delta == .replaced else {
+            collectionView.reloadData()
+            completion?()
+            return
+        }
+
         switch delta {
         case .unchanged:
             // Row ids are unchanged — an id-based diff cannot distinguish "same rows, new

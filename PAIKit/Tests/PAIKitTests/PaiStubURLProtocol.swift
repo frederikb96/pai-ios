@@ -15,6 +15,10 @@ final class PaiStubURLProtocol: URLProtocol {
         let statusCode: Int
         let headers: [String: String]
         let body: Data
+        /// When set, `startLoading()` delivers the body across these `didLoad` calls instead of
+        /// one — proving a streaming client reassembles content (and framing) the network
+        /// happened to split across chunk boundaries, rather than only ever seeing it whole.
+        var bodyChunks: [Data]? = nil
     }
 
     private static let lock = NSLock()
@@ -43,10 +47,17 @@ final class PaiStubURLProtocol: URLProtocol {
         capturedBody = nil
     }
 
-    static func makeSession() -> URLSession {
+    /// Shared by every stub-backed test, including the delegate-based streaming clients — those
+    /// build their own `URLSession` around this configuration rather than reusing `makeSession()`,
+    /// since they need to pass their own delegate.
+    static func makeConfiguration() -> URLSessionConfiguration {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [PaiStubURLProtocol.self]
-        return URLSession(configuration: configuration)
+        return configuration
+    }
+
+    static func makeSession() -> URLSession {
+        URLSession(configuration: makeConfiguration())
     }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -81,7 +92,11 @@ final class PaiStubURLProtocol: URLProtocol {
             headerFields: stub.headers
         )!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: stub.body)
+        if let chunks = stub.bodyChunks {
+            for chunk in chunks { client?.urlProtocol(self, didLoad: chunk) }
+        } else {
+            client?.urlProtocol(self, didLoad: stub.body)
+        }
         client?.urlProtocolDidFinishLoading(self)
     }
 
