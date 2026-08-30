@@ -125,6 +125,13 @@ struct SessionDetailView: View {
                         .monospacedDigit()
                         .foregroundStyle(PaiPalette.Semantic.textFaint)
 
+                    // Same trio the web's chat header carries, in the same order: tokens, what
+                    // the session has running, then the plan windows.
+                    if let counts = currentActivityCounts(session), counts.agents > 0 || counts.tasks > 0 {
+                        ActivityBadges(counts: counts)
+                            .foregroundStyle(PaiPalette.Semantic.textFaint)
+                    }
+
                     if let usage {
                         PlanUsageBadge(usage: usage)
                     }
@@ -148,6 +155,12 @@ struct SessionDetailView: View {
         transcript.sessionTokens[sessionID] ?? session.sessionTokens
     }
 
+    /// Same precedence as the token figure: the live stream once it has said anything, the
+    /// session's own last-known counts until then.
+    private func currentActivityCounts(_ session: Session) -> ActivityCounts? {
+        transcript.liveStatus[sessionID]?.activityCounts ?? session.activityCounts
+    }
+
     private var currentSession: Session? {
         sessions.session(withId: sessionID)
     }
@@ -160,9 +173,16 @@ struct SessionDetailView: View {
     }
 }
 
-/// The account's plan usage — five-hour window, seven-day window, and when the five-hour one
-/// resets. Swift port of `UsageBadge.tsx`; renders nothing until the agent has reported (the
-/// caller already guards on `usage` being non-nil, so this only ever formats real data).
+/// The account's plan usage: `⏳ 55%/26% 18:20` — the five-hour window, the seven-day window, and
+/// when the five-hour one resets. Swift port of `UsageBadge.tsx`, and the same three figures the
+/// statusline shows; renders nothing until the agent has reported (the caller already guards on
+/// `usage` being non-nil, so this only ever formats real data).
+///
+/// All three earn their place for different reasons. The five-hour figure is the one that moves
+/// while Freddy works. The reset time is what decides whether to start something now or wait —
+/// the web keeps it even on its narrowest layout for that reason. The seven-day figure moves
+/// slowly but is the one that ends a week early when it runs out, and a percentage with no window
+/// named beside it is ambiguous about which of the two it is.
 private struct PlanUsageBadge: View {
     let usage: Usage
 
@@ -173,25 +193,38 @@ private struct PlanUsageBadge: View {
         if usage.fiveHour != nil || usage.sevenDay != nil {
             HStack(spacing: 4) {
                 Image(systemName: "hourglass")
-                Text(fiveHourText)
+                Text("\(percent(usage.fiveHour))/\(percent(usage.sevenDay))")
                 if let resetsAt {
                     Text(resetsAt)
                 }
             }
             .monospacedDigit()
             .foregroundStyle(color)
+            .accessibilityLabel(accessibilityLabel)
             .accessibilityIdentifier("plan-usage-badge")
         }
     }
 
-    private var fiveHourText: String {
-        guard let five = usage.fiveHour else { return "–" }
-        return "\(Int(five.utilization.rounded()))%"
+    private func percent(_ window: UsageWindow?) -> String {
+        guard let window else { return "–" }
+        return "\(Int(window.utilization.rounded()))%"
     }
 
+    /// 🚨 Parsed through `SessionTimeFormat`, which tries the fractional-seconds shape first.
+    /// This field arrives from the agent as `new Date(...).toISOString()`, so it always carries
+    /// `.000Z` — and a bare `ISO8601DateFormatter` rejects that outright, which is silently
+    /// indistinguishable from the server never having sent a reset time at all.
     private var resetsAt: String? {
-        guard let iso = usage.fiveHour?.resetsAt, let date = Self.parser.date(from: iso) else { return nil }
+        guard let iso = usage.fiveHour?.resetsAt, let date = SessionTimeFormat.date(from: iso) else { return nil }
         return date.formatted(date: .omitted, time: .shortened)
+    }
+
+    private var accessibilityLabel: String {
+        var parts = [
+            "\(percent(usage.fiveHour)) of the 5-hour window", "\(percent(usage.sevenDay)) of the 7-day window",
+        ]
+        if let resetsAt { parts.append("5-hour window resets at \(resetsAt)") }
+        return parts.joined(separator: ", ")
     }
 
     private var color: Color {
@@ -200,8 +233,6 @@ private struct PlanUsageBadge: View {
         if highest >= Self.amberAt { return PaiPalette.amber500 }
         return PaiPalette.green500
     }
-
-    private static let parser = ISO8601DateFormatter()
 }
 
 /// Says why the transcript is empty, when it is empty for a reason.

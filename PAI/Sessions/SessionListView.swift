@@ -11,7 +11,6 @@ struct SessionListView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(SessionListStore.self) private var sessions
     @Environment(MachineStore.self) private var machines
-    @Environment(ToastCenter.self) private var toasts
 
     /// The synced list (source A) has no loading state of its own in the store — it starts life
     /// already loaded via `loadInitialSessions()`. This tracks the one gap that leaves: the
@@ -129,24 +128,21 @@ struct SessionListView: View {
                 SessionRowButton(row: row) {
                     environment.router.push(.session(id: row.id))
                 }
+                // Swipe and long press both land on the same sheet, and neither one destroys
+                // anything by itself. A swipe is a gesture a thumb makes by accident while
+                // scrolling a list, so wiring it straight to Delete puts the one irreversible
+                // action behind the most easily-triggered gesture — Delete still lives one tap
+                // further in, inside the sheet, alongside everything else a session can do.
                 .swipeActions(edge: .trailing) {
-                    Button(role: .destructive) {
-                        deleteWithUndoToast(id: row.id)
-                    } label: {
-                        Label("Delete", systemImage: "trash")
-                    }
-                }
-                .contextMenu {
                     Button {
                         actionsSheetTarget = SessionActionsTarget(id: row.id)
                     } label: {
-                        Label("Session actions…", systemImage: "ellipsis.circle")
+                        Label("Actions", systemImage: "ellipsis.circle")
                     }
-                    Button(role: .destructive) {
-                        deleteWithUndoToast(id: row.id)
-                    } label: {
-                        Label("Delete", systemImage: "trash")
-                    }
+                    .tint(PaiPalette.primary500)
+                }
+                .onLongPressGesture(minimumDuration: 0.45) {
+                    actionsSheetTarget = SessionActionsTarget(id: row.id)
                 }
                 .onAppear {
                     guard sessions.hasMoreRows, !sessions.isLoadingMoreRows,
@@ -160,15 +156,6 @@ struct SessionListView: View {
                 centeredRow { ProgressView() }
             }
         }
-    }
-
-    private func deleteWithUndoToast(id: String) {
-        sessions.deleteSessionWithHold(id: id)
-        toasts.show(
-            "Session deleted",
-            action: .init(label: "Undo") { [sessions] in sessions.undoDelete() },
-            lifetimeNanos: SessionListStore.deleteUndoNanos
-        )
     }
 
     @ViewBuilder
@@ -375,9 +362,11 @@ struct SessionRow: View {
     }
 }
 
-/// What a session has running right now — subagents and background shells/monitors — beside the
-/// timestamp. Each half disappears on its own at zero, matching `ActivityBadges.tsx`.
-private struct ActivityBadges: View {
+/// What a session has running right now — subagents and background shells/monitors. Each half
+/// disappears on its own at zero, matching `ActivityBadges.tsx`, so a number on screen always
+/// means something is actually running. Shown in the list beside a row's timestamp and in the
+/// session header beside its token figure, exactly as the web shows it in both places.
+struct ActivityBadges: View {
     let counts: ActivityCounts
 
     var body: some View {
@@ -424,7 +413,16 @@ enum SessionTimeFormat {
         }
     }
 
-    private static func parse(_ text: String) -> Date? {
+    /// 🚨 The two-parser fallback is load-bearing, not defensive. `ISO8601DateFormatter`'s
+    /// default options reject fractional seconds outright, and the backend emits both shapes: a
+    /// window's `resets_at` arrives from `new Date(...).toISOString()` with `.000Z` on it, while
+    /// other timestamps have none. A single default parser therefore returns `nil` for a
+    /// perfectly good timestamp — which reads downstream as "the server didn't send one".
+    static func date(from text: String) -> Date? {
         fractionalParser.date(from: text) ?? parser.date(from: text)
+    }
+
+    private static func parse(_ text: String) -> Date? {
+        date(from: text)
     }
 }

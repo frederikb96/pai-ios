@@ -42,7 +42,9 @@ private struct TranscriptRow {
 /// back synchronously (see its doc comment) — this controller does not exercise that yet, so a
 /// large loaded window measures on the main thread. Whether that is fast enough is unverified
 /// until it runs on a device.
-final class TranscriptCollectionViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegate {
+final class TranscriptCollectionViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegate,
+    UIGestureRecognizerDelegate
+{
 
     private static let cellReuseIdentifier = "TranscriptRow"
     /// Rows from the top edge within which an older page is requested — a rough stand-in for
@@ -169,6 +171,16 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         // it, tracking the gesture the way Messages.app does — rather than `.onDrag`, which only
         // commits at the end of the gesture and reads as unresponsive mid-drag.
         collectionView.keyboardDismissMode = .interactive
+        // A drag dismisses; so does a tap on the conversation. `.interactive` alone requires
+        // knowing to drag downward *through* the keyboard, while tapping an empty patch of
+        // transcript is the gesture every other messaging app on this phone answers — and a
+        // reader who tries it and gets nothing concludes the keyboard cannot be dismissed at all.
+        // `cancelsTouchesInView = false` keeps this purely additive: a tap that lands on a card
+        // still reaches the card, because this only ever ends editing and never consumes a touch.
+        let dismissTap = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboardOnTap))
+        dismissTap.cancelsTouchesInView = false
+        dismissTap.delegate = self
+        collectionView.addGestureRecognizer(dismissTap)
         view.addSubview(collectionView)
 
         addChild(jumpToLatestHostingController)
@@ -186,6 +198,39 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
 
         bootstrapTask = Task { [weak self] in await self?.bootstrap() }
         observeSearchState()
+        observePendingBubbles()
+    }
+
+    /// Rows arrive here through this controller's own SSE handling, so a send tracked by the
+    /// composer — a mutation of the same store from somewhere else entirely — would otherwise not
+    /// redraw anything until the next unrelated event happened to. Same recursive re-registration
+    /// as `observeSearchState`.
+    private func observePendingBubbles() {
+        withObservationTracking {
+            _ = store.pendingBubbleTexts(sessionId: sessionID)
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.recomputeRows(applying: .stickToBottomIfPinned)
+                self.observePendingBubbles()
+            }
+        }
+    }
+
+    /// The dismiss tap must never be the reason a card's own tap is missed. UIKit resolves two
+    /// recognizers competing for the same touch by letting only one win unless asked otherwise,
+    /// and which one wins is not something to leave to chance in a list whose rows are tappable.
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+    ) -> Bool {
+        true
+    }
+
+    @objc private func dismissKeyboardOnTap() {
+        // The window rather than this view: the first responder is the composer's text view,
+        // which is a sibling of this controller's view, not a descendant of it.
+        view.window?.endEditing(true)
     }
 
     override func viewDidLayoutSubviews() {
@@ -347,7 +392,14 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             return
         }
 
-        let displayMessages = TranscriptStore.displayMessages(store.messages[sessionID] ?? [])
+        // Sends with no entry of their own yet ride along at the tail as ordinary rows — see
+        // `Message.pendingBubble(sessionId:index:text:)` for why they are synthesised messages
+        // rather than a row kind of their own.
+        let displayMessages =
+            TranscriptStore.displayMessages(store.messages[sessionID] ?? [])
+            + store.pendingBubbleTexts(sessionId: sessionID).enumerated().map { index, text in
+                Message.pendingBubble(sessionId: sessionID, index: index, text: text)
+            }
         let width = measurementWidth()
         guard width > 0 else { return }
         let environment = MeasurementEnvironment(
@@ -835,6 +887,10 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                     highlights: self.searchHighlights(forMessageId: messageId),
                     currentHit: self.searchState.currentHit
                 )
+                // Faded, at the same 0.6 the web uses, so a message still on its way is
+                // legible but visibly not yet part of the conversation. Opacity only — it
+                // must not change the row's geometry, which was measured for a full bubble.
+                .opacity(row.message.isPendingBubble ? 0.6 : 1)
             } else {
                 EmptyView()
             }

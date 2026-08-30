@@ -26,7 +26,6 @@ struct CreateSessionView: View {
     @Environment(SettingsStore.self) private var settings
 
     @State private var createSession: CreateSessionStore?
-    @State private var voiceController: VoiceRecorderController?
     @State private var isPresentingDirectoryBrowser = false
     @State private var errorMessage: String?
 
@@ -61,8 +60,6 @@ struct CreateSessionView: View {
             guard createSession == nil, let connection = environment.connection else { return }
             let store = CreateSessionStore(machines: machines, api: connection.apiClient)
             createSession = store
-            voiceController = VoiceRecorderController(
-                apiClient: connection.apiClient, settingsStore: connection.settings)
             // Freshest possible online/offline picture at the moment stakes are highest: a
             // session about to launch on whichever machine turns out to be reachable.
             await machines.refresh()
@@ -72,7 +69,7 @@ struct CreateSessionView: View {
 
     @ViewBuilder
     private var content: some View {
-        if let createSession, let voiceController {
+        if let createSession, let voiceController = environment.connection?.voice {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(spacing: 28) {
@@ -232,14 +229,36 @@ struct CreateSessionView: View {
         -> some View
     {
         VStack(spacing: 6) {
-            VoiceRecordingIndicator(controller: voiceController)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if isRecordingHere(voiceController) {
+                VoiceRecordingIndicator(controller: voiceController)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             if !stagedAttachments.isEmpty {
                 AttachmentPreviewStrip(attachments: stagedAttachments, onRemove: removeAttachment)
             }
 
+            // Same left-to-right order as `ComposerBar`: field, plus, mic, send. Two composers
+            // that look alike and put their controls in different places is worse than either
+            // arrangement on its own.
             HStack(alignment: .bottom, spacing: 8) {
+                ComposerTextEditor(
+                    text: $text, height: $textHeight, placeholder: "What would you like to work on?",
+                    scrollToTailOnNextUpdate: $scrollToTailOnNextUpdate,
+                    onPasteImages: { images in
+                        stageAttachments(
+                            images.map {
+                                AttachmentCompression.stage(
+                                    data: $0.data, filename: $0.filename, mimeType: $0.mimeType)
+                            })
+                    }
+                )
+                .focused($isComposerFocused)
+                .frame(height: textHeight)
+                .background(PaiPalette.Semantic.raisedSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 18))
+                .accessibilityIdentifier("new-session-message")
+
                 ComposerActionMenu(
                     hasSession: false,
                     onPastRecordings: { showingRecordingsSheet = true },
@@ -249,24 +268,17 @@ struct CreateSessionView: View {
                     onCancel: {}
                 )
 
-                ComposerTextEditor(
-                    text: $text, height: $textHeight, placeholder: "What would you like to work on?",
-                    scrollToTailOnNextUpdate: $scrollToTailOnNextUpdate
-                )
-                .focused($isComposerFocused)
-                .frame(height: textHeight)
-                .background(PaiPalette.Semantic.raisedSurface)
-                .clipShape(RoundedRectangle(cornerRadius: 18))
-                .accessibilityIdentifier("new-session-message")
+                VoiceRecorderButton(
+                    controller: voiceController,
+                    isMine: voiceController.state == .idle || isRecordingHere(voiceController)
+                ) {
+                    Task { await toggleRecording(voiceController: voiceController) }
+                }
 
-                if voiceController.state == .recording || voiceController.state == .stopping {
+                if isRecordingHere(voiceController) {
                     MuteButton(controller: voiceController) { voiceController.toggleMute() }
                 } else {
                     sendButton(createSession)
-                }
-
-                VoiceRecorderButton(controller: voiceController) {
-                    Task { await toggleRecording(voiceController: voiceController) }
                 }
             }
         }
@@ -346,11 +358,24 @@ struct CreateSessionView: View {
 
     // MARK: - Voice
 
+    /// This sheet's take is the one the shared recorder is running with no draft key — see
+    /// `start(draftKey:preText:)`. Anything else belongs to a session's composer.
+    private func isRecordingHere(_ controller: VoiceRecorderController) -> Bool {
+        controller.activeDraftKey == nil && controller.state != .idle
+    }
+
     private func toggleRecording(voiceController: VoiceRecorderController) async {
+        guard voiceController.state == .idle || isRecordingHere(voiceController) else {
+            errorMessage = "A recording is already running somewhere else."
+            return
+        }
         switch voiceController.state {
         case .idle:
             preVoiceText = text
-            await voiceController.start()
+            // No draft key: this sheet keeps its composer text local on purpose (see the type's
+            // own note on the "new" draft), so the transcript is polled below rather than written
+            // into `DraftStore` the way the chat composer's is.
+            await voiceController.start(draftKey: nil, preText: text)
             observeLiveTranscript(voiceController: voiceController)
         case .recording, .connecting, .paused, .reconnecting:
             // A tap always means "end the take", regardless of which of these mid-take states it

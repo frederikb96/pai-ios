@@ -8,10 +8,21 @@ import PAIKit
 /// capture, `AVAudioSession` configuration and interruption/permission handling, and where a
 /// finished recording's bytes and metadata actually land.
 ///
-/// One instance per composer. Unlike `DraftStore`, a fresh instance per session view is fine —
-/// nothing about an in-flight recording needs to survive navigating away, and past recordings are
-/// reloaded from `SettingsStore.recordings` (the persisted list) on every construction, not held
-/// only in memory.
+/// 🚨 **One instance for the whole app, owned by `AppEnvironment.Connection`** — never one per
+/// composer. A recorder that belongs to a view dies when the view does, so switching to another
+/// screen, or opening the terminal, silently ends a take mid-sentence; and a take is exactly the
+/// thing a person starts and then stops looking at. The microphone is a single exclusive resource
+/// anyway, so one owner for it is also the honest model.
+///
+/// The take is therefore keyed by ``activeDraftKey`` rather than by whoever is on screen, and the
+/// transcript is written into ``DraftStore`` as it arrives rather than into a view's own state —
+/// that is what makes it survive both the view going away and the app being backgrounded, and what
+/// puts it on Freddy's other clients at the same time.
+///
+/// Recording continues while the app is in the background or the screen is locked. That needs
+/// three things agreeing: `UIBackgroundModes = audio`, an `AVAudioSession` that stays active, and
+/// nothing tearing the capture down on `scenePhase` — the third being the one this type is
+/// responsible for, by not being owned by anything with a lifecycle.
 @MainActor
 @Observable
 final class VoiceRecorderController {
@@ -39,7 +50,18 @@ final class VoiceRecorderController {
     var transcribedText: String { voiceSession.transcribedText }
     var lastStartFailure: VoiceStartFailure? { voiceSession.lastStartFailure }
 
+    /// The session this take belongs to, or `nil` when nothing is being recorded. Set before the
+    /// microphone opens and cleared only once the take's final text has been written, so a
+    /// composer for a different session can always tell that the recorder is not its own.
+    private(set) var activeDraftKey: String?
+    /// Whatever was already in that session's draft when the take started. The live transcript is
+    /// appended to it rather than replacing it, and it is what a take that transcribed nothing
+    /// restores.
+    private var preVoiceText = ""
+    private var liveTextTask: Task<Void, Never>?
+
     private let settingsStore: SettingsStore
+    private let drafts: DraftStore
     private let apiClient: PaiApiClient
     private let capture = MicrophoneCapture()
     private let audioStorage = FileRecordingAudioStorage()
@@ -82,9 +104,10 @@ final class VoiceRecorderController {
     /// a reference, so there is no concurrent access for the isolation to protect.
     private nonisolated(unsafe) var interruptionObserver: NSObjectProtocol?
 
-    init(apiClient: PaiApiClient, settingsStore: SettingsStore) {
+    init(apiClient: PaiApiClient, settingsStore: SettingsStore, drafts: DraftStore) {
         self.apiClient = apiClient
         self.settingsStore = settingsStore
+        self.drafts = drafts
         self.recordingAudio = RecordingAudioLibrary(storage: audioStorage)
 
         voiceSession = VoiceRecordingSession(
@@ -120,18 +143,33 @@ final class VoiceRecorderController {
 
     // MARK: - Start / stop
 
-    func start() async {
+    /// `draftKey` names where the live transcript is written as it arrives — a session id for the
+    /// chat composer. `nil` for a caller that keeps its own composer text outside `DraftStore`
+    /// (the new-session sheet, deliberately); that caller reads ``transcribedText`` itself and
+    /// nothing is written anywhere on its behalf.
+    ///
+    /// `preText` is what is already in the field; the transcript is appended to it rather than
+    /// replacing it. Passed in rather than read from `drafts` here so the caller's own idea of
+    /// what is in the field — which may include an edit still inside the flush debounce — wins.
+    func start(draftKey: String?, preText: String) async {
         guard voiceSession.canStart else { return }
         setupFailure = nil
+        activeDraftKey = draftKey
+        preVoiceText = preText
 
+        // Both failures below happen before a take exists, so the claim on `activeDraftKey` has
+        // to be released here — left set, the recorder would report a recording in progress
+        // forever and every composer would refuse to start one.
         guard await requestMicrophonePermission() else {
             setupFailure = .microphoneDenied
+            releaseTakeWithoutText()
             return
         }
         do {
             try configureAudioSession()
         } catch {
             setupFailure = .audioSessionFailed
+            releaseTakeWithoutText()
             return
         }
 
@@ -159,6 +197,8 @@ final class VoiceRecorderController {
             isCapturing = true
             sessionWatcherTask?.cancel()
             sessionWatcherTask = Task { [weak self] in await self?.watchForSessionEndingOnItsOwn() }
+            liveTextTask?.cancel()
+            liveTextTask = Task { [weak self] in await self?.streamLiveTextIntoDraft() }
         } catch {
             // `openStreamingFiles` above already opened this take's files — without persisting
             // (which cleans up on a zero-duration take, same as any other empty take), the open
@@ -169,6 +209,70 @@ final class VoiceRecorderController {
             await persistRecording()
         }
         await startTask.value
+    }
+
+    // MARK: - Live transcript
+
+    /// Streams the growing transcript into the session's draft while a take runs.
+    ///
+    /// 🚨 **Into the draft, not into a view's own text state.** The web writes the live partial
+    /// through its draft store (`MessageInput.tsx`'s `setText` → `setDraft`) and this app once did
+    /// not: it wrote a `@State` string the composer's own ten-second draft poll then overwrote
+    /// with the pre-recording text, so a pause in speaking made everything transcribed so far
+    /// vanish and the next word brought it all back. Writing here is also what keeps a take
+    /// meaningful after the composer is gone: the text is already somewhere that outlives it.
+    ///
+    /// Polling, matching the pattern used to watch this same `@Observable` session elsewhere.
+    private func streamLiveTextIntoDraft() async {
+        var lastPartial = ""
+        while !Task.isCancelled, voiceSession.state != .idle {
+            let partial = voiceSession.transcribedText
+            if partial != lastPartial, let draftKey = activeDraftKey {
+                lastPartial = partial
+                drafts.setDraftText(key: draftKey, text: Self.composeLiveText(pre: preVoiceText, partial: partial))
+            }
+            try? await Task.sleep(for: .milliseconds(150))
+        }
+    }
+
+    /// `pre` and the running partial, joined the way the composer used to join them — the
+    /// `stt-rec: ` prefix is written once and only the text after it keeps growing, matching
+    /// `VoiceRecordingSession`'s own contract for `transcribedText` against `result.prefixedText`.
+    static func composeLiveText(pre: String, partial: String) -> String {
+        guard !partial.isEmpty else { return pre }
+        let prefixed = "\(VoiceRecordingResult.sttPrefix)\(partial)"
+        return pre.isEmpty ? prefixed : "\(pre) \(prefixed)"
+    }
+
+    /// The one place a finished take's text reaches the draft, called from `persistRecording()`
+    /// because that is the single funnel every ending goes through — the user's tap, silence
+    /// detection, a lost connection, an interruption nothing could resume. Wiring this to the tap
+    /// alone is what left the other three endings writing nothing at all.
+    private func finishLiveText() {
+        liveTextTask?.cancel()
+        liveTextTask = nil
+        defer {
+            activeDraftKey = nil
+            preVoiceText = ""
+        }
+        // A caller driving its own composer text passes no key; there is nothing to write, but
+        // the claim on the recorder still has to be released, which is what the `defer` is for.
+        guard let draftKey = activeDraftKey else { return }
+        let prefixed = voiceSession.result.prefixedText
+        let combined =
+            prefixed.isEmpty
+            ? preVoiceText
+            : (preVoiceText.isEmpty ? prefixed : "\(preVoiceText) \(prefixed)")
+        drafts.setDraftText(key: draftKey, text: combined)
+    }
+
+    /// Gives up the take without touching the draft — for the failures that happen before any
+    /// audio was captured, where the field should read exactly as it did before the tap.
+    private func releaseTakeWithoutText() {
+        liveTextTask?.cancel()
+        liveTextTask = nil
+        activeDraftKey = nil
+        preVoiceText = ""
     }
 
     /// Notices a take the session ended by itself — `isCapturing` is the signal that neither
@@ -362,6 +466,11 @@ final class VoiceRecorderController {
     // MARK: - Persisting a finished take
 
     private func persistRecording() async {
+        // Before any of the early returns below: a take that produced no audio worth keeping
+        // still has to hand its text back (or put the field back the way it was), and every way
+        // a take can end arrives here.
+        finishLiveText()
+
         let result = voiceSession.result
         let sent = streamingSent
         let raw = streamingRaw

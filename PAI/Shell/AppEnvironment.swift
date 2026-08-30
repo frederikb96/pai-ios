@@ -59,6 +59,10 @@ final class AppEnvironment {
         /// device to send it to. Lives on the connection because a device token is worthless
         /// without a backend to register it against.
         let push: PushRegistrationStore
+        /// The microphone, and whatever take is running on it. App-wide because a recording has
+        /// to outlive the screen that started it — see `VoiceRecorderController`'s doc comment.
+        /// There is one microphone, so there is one of these.
+        let voice: VoiceRecorderController
     }
 
     private static let backendURLKey = "backendURL"
@@ -123,19 +127,26 @@ final class AppEnvironment {
                 self?.handleAuthenticationFailure(detail: error.userMessage)
             }
         }
+        // Built ahead of the literal rather than inside it: the recorder needs both of these, and
+        // a struct literal cannot refer to fields it is still building.
+        let settingsStore = SettingsStore(apiClient: client, storage: defaults)
+        let draftStore = DraftStore(api: client)
+
         connection = Connection(
             requestFactory: factory,
             apiClient: client,
             sessions: SessionListStore(api: client),
             machines: MachineStore(api: client),
             transcript: TranscriptStore(),
-            settings: SettingsStore(apiClient: client, storage: defaults),
-            drafts: DraftStore(api: client),
+            settings: settingsStore,
+            drafts: draftStore,
             me: MeStore(api: client),
             toasts: ToastCenter(),
             push: PushRegistrationStore(storage: defaults) { token in
                 try await client.registerDevice(token: token).token
-            }
+            },
+            voice: VoiceRecorderController(
+                apiClient: client, settingsStore: settingsStore, drafts: draftStore)
         )
         lastAuthFailure = nil
         router.gate = .ready

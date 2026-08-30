@@ -150,3 +150,29 @@ extension TranscriptStore {
         return serverPending + localPending.map(\.text)
     }
 }
+
+extension Message {
+    /// A transcript row for a send that has left this device but has no entry of its own yet —
+    /// the bubble the web has always drawn at the tail of the conversation while a message is in
+    /// the queue (`ChatView.tsx`, `data-pending-bubble`).
+    ///
+    /// A synthesised `Message` rather than a row kind of its own, so it flows through the single
+    /// measured layout every other row uses: `TranscriptRowPlan` routes it to a `.userBubble`
+    /// exactly like something Freddy typed, and it gets a real measured height rather than an
+    /// estimate. The `scrolling` skill's central rule is what makes that the only acceptable
+    /// shape here — a bubble whose height nobody measured moves every row above it when the send
+    /// lands and it is replaced by the real entry.
+    ///
+    /// Ids are negative because the server's never are, so a bubble can never collide with a real
+    /// row in the anchoring arithmetic that keys on row id.
+    public static func pendingBubble(sessionId: String, index: Int, text: String) -> Message {
+        Message(
+            id: -(index + 1), sessionId: sessionId, type: .user, subtype: nil, outboxId: nil, timestamp: nil,
+            content: text, thinking: nil, toolCalls: nil, toolResult: nil, hookSummary: nil, tokens: nil,
+            origin: nil, originMeta: nil, createdAt: nil)
+    }
+
+    /// Whether this row is one of the synthesised bubbles above, rather than something the server
+    /// has actually recorded.
+    public var isPendingBubble: Bool { id < 0 }
+}
