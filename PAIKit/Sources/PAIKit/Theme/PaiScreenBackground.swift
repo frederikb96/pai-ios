@@ -21,7 +21,7 @@
         /// bouncing past its content, and the space behind a translucent navigation or tab bar,
         /// both stay on the page colour.
         public func paiScreenBackground() -> some View {
-            background(PaiPalette.Semantic.screenBackground.ignoresSafeArea())
+            background(PaiPalette.Semantic.screenBackground, ignoresSafeAreaEdges: .all)
         }
 
         /// The page ground for a `List` or `Form`.
@@ -32,7 +32,7 @@
         /// a different app. Hiding the system ground and painting the app's own keeps one family.
         public func paiListBackground() -> some View {
             scrollContentBackground(.hidden)
-                .background(PaiPalette.Semantic.screenBackground.ignoresSafeArea())
+                .background(PaiPalette.Semantic.screenBackground, ignoresSafeAreaEdges: .all)
         }
     }
 
