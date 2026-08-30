@@ -67,8 +67,11 @@ jobs:
       # costs the entire run's information. The job still fails if this fails; it just fails
       # having already answered the expensive question.
       #
-      # It exists because the two streaming clients are excluded from the Linux build —
-      # swift-corelibs-foundation has no `URLSession.bytes(for:)` — so this is where their tests run.
+      # 🚨 The streaming tests run on the free Linux runner too, and this is NOT redundant with
+      # that. Linux and Darwin ship different `URLSession` implementations, and a divergence
+      # between them is exactly what shipped a client that connected, reported itself live and
+      # delivered nothing forever — green on one says nothing about the other. This is the only
+      # place the streaming clients meet Apple's own URL loading system. Keep it.
       - name: Test what Linux cannot
         run: swift test --package-path PAIKit --filter 'Sse|Terminal'
 
