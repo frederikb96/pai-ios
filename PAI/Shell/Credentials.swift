@@ -12,6 +12,25 @@ import Security
 /// whole test suite onto a metered runner.
 struct KeychainTokenStore {
 
+    #if DEBUG
+        /// Fixture mode's token, held in memory because the Keychain is not always available.
+        ///
+        /// A simulator build made with `CODE_SIGNING_ALLOWED=NO` has no keychain-access-group
+        /// entitlement, and `SecItemAdd` refuses with `errSecMissingEntitlement`. A signed build
+        /// — every build that reaches a device — is unaffected, so this exists only so the
+        /// screenshot workflow can get past the sign-in gate.
+        ///
+        /// Deliberately not a general fallback: it is consulted only when fixture mode asked for
+        /// it, so a real build can never silently keep a credential outside the Keychain.
+        nonisolated(unsafe) private static var fixtureToken: String?
+        private static let fixtureLock = NSLock()
+
+        /// The status the last fixture-mode write returned, reported by the debug bridge so a
+        /// screenshot run says *why* it is sitting on the sign-in screen rather than leaving it
+        /// to be guessed at.
+        nonisolated(unsafe) private(set) static var lastWriteStatus: OSStatus = errSecSuccess
+    #endif
+
     private let service: String
     private let account = "backend-jwt"
 
@@ -31,6 +50,13 @@ struct KeychainTokenStore {
     }
 
     func read() -> String? {
+        #if DEBUG
+            if PaiFixtureLaunch.isEnabled() {
+                Self.fixtureLock.lock()
+                defer { Self.fixtureLock.unlock() }
+                if let token = Self.fixtureToken { return token }
+            }
+        #endif
         var query = baseQuery
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -62,7 +88,17 @@ struct KeychainTokenStore {
         // which is what a background refresh needs.
         query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
 
-        return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
+        let status = SecItemAdd(query as CFDictionary, nil)
+        #if DEBUG
+            Self.lastWriteStatus = status
+            if status != errSecSuccess, PaiFixtureLaunch.isEnabled() {
+                Self.fixtureLock.lock()
+                Self.fixtureToken = token
+                Self.fixtureLock.unlock()
+                return true
+            }
+        #endif
+        return status == errSecSuccess
     }
 }
 

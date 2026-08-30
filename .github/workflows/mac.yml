@@ -126,6 +126,10 @@ jobs:
             ok=0
             for attempt in $(seq 1 10); do
               if curl -sS --max-time 3 "http://127.0.0.1:8765/health" -o "artifacts/health-$name.json"; then
+                # Why the app is on whatever screen it is on. A gate that never opens renders a
+                # real screen, passes every check and satisfies the size floor — so without this
+                # a wrong screen is indistinguishable from the right one.
+                curl -sS --max-time 3 "http://127.0.0.1:8765/fixture" -o "artifacts/fixture-$name.json" || true
                 ok=1
                 break
               fi

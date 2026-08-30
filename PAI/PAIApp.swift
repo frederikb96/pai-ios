@@ -59,6 +59,18 @@ struct PAIApp: App {
                 .encoding(["screens": Route.namedScreens])
             }
 
+            // Why a screenshot run is looking at the sign-in screen instead of the app. Every
+            // screen renders, every check passes and the size floor is satisfied when the gate
+            // never opens — the failure is indistinguishable from success without this.
+            router.register("GET", "/fixture") { _ in
+                .encoding([
+                    "fixtureMode": String(PaiFixtureLaunch.isEnabled()),
+                    "requestedRoute": PaiFixtureLaunch.requestedRouteName() ?? "none",
+                    "hasToken": String(KeychainTokenStore().read() != nil),
+                    "keychainWriteStatus": String(KeychainTokenStore.lastWriteStatus),
+                ])
+            }
+
             // Parses through the real parser, so this reports what the renderer would actually be
             // handed — not a description of it.
             router.register("POST", "/markdown") { request in
