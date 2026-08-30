@@ -34,6 +34,11 @@ public final class TranscriptStore {
     /// session's connection/spinner state on screen until the newly-switched-to session's first
     /// status event arrived and overwrote it.
     public internal(set) var sseConnected: [String: Bool] = [:]
+    /// Keyed like `sseConnected` and for the same reason. Separate from it rather than folded in,
+    /// since "a socket is open" and "content is actually flowing through it" are different
+    /// questions — a connection can sit open with nothing arriving, which is exactly the state a
+    /// bare `sseConnected` reads identically to a healthy one.
+    public internal(set) var sseActivity: [String: StreamActivity] = [:]
     public internal(set) var isProcessing: [String: Bool] = [:]
 
     // Send-tracking state (``PendingMessage``, ``TranscriptDelivery``) is declared here — a
@@ -55,6 +60,10 @@ public final class TranscriptStore {
 
     public func sseConnected(for sessionId: String) -> Bool {
         sseConnected[sessionId] ?? false
+    }
+
+    public func sseActivity(for sessionId: String) -> StreamActivity {
+        sseActivity[sessionId] ?? StreamActivity()
     }
 
     public func isProcessing(for sessionId: String) -> Bool {

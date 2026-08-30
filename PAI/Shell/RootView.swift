@@ -4,6 +4,9 @@ import SwiftUI
 /// The app's outermost screen: the gate, and the navigation stack behind it.
 struct RootView: View {
     @State private var environment = AppEnvironment()
+    /// Whatever `CrashReporter` captured before this launch, if any — read once on appear rather
+    /// than continuously, since nothing after launch can change what already happened before it.
+    @State private var pendingCrash: CrashRecord?
 
     var body: some View {
         content
@@ -11,6 +14,10 @@ struct RootView: View {
             .task(id: environment.connection == nil) {
                 await environment.loadStartupState()
                 await environment.pollMachines()
+            }
+            .onAppear { pendingCrash = CrashReporter.readLast() }
+            .sheet(item: $pendingCrash, onDismiss: { CrashReporter.clearLast() }) { crash in
+                CrashReportSheet(record: crash)
             }
     }
 
