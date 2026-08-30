@@ -40,10 +40,14 @@ struct NoteLinkHealthScreen: View {
                     }
                 }
                 if !health.ambiguousNames.isEmpty {
-                    Section("Ambiguous names") {
+                    // A string title and a footer cannot be combined — `Section` has no such
+                    // overload, so the header goes in its own closure.
+                    Section {
                         ForEach(health.ambiguousNames, id: \.self) { name in
                             Text(name).foregroundStyle(PaiPalette.Semantic.textPrimary)
                         }
+                    } header: {
+                        Text("Ambiguous names")
                     } footer: {
                         Text(
                             "Shared by more than one note in this container — a wikilink resolving to one of them may not reach the one you meant."

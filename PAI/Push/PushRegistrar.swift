@@ -66,7 +66,7 @@ final class PushRegistrar: NSObject, UIApplicationDelegate, UNUserNotificationCe
     /// tests that run on Linux for nothing. Non-string values are dropped rather than described,
     /// since a link key is always a string and `String(describing:)` on the `aps` dictionary
     /// would only manufacture a value that looks like one.
-    private static func stringPayload(_ userInfo: [AnyHashable: Any]) -> [String: String] {
+    private nonisolated static func stringPayload(_ userInfo: [AnyHashable: Any]) -> [String: String] {
         var payload: [String: String] = [:]
         for (key, value) in userInfo {
             guard let key = key as? String, let value = value as? String else { continue }
