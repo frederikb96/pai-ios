@@ -96,3 +96,37 @@ final class PushRegistrationTests: XCTestCase {
         }
     }
 }
+
+/// What an install upgraded from a build with fewer fields reads back.
+///
+/// `UserDefaults` is the one place in this app where a value written by an older build is
+/// guaranteed to turn up, and a decode that throws there is not a crash — it is a `nil` that reads
+/// as a fresh install, so the app forgets a token the backend still holds and offers to enable
+/// notifications that are already on.
+final class PushRegistrationDecodingTests: XCTestCase {
+
+    private func decode(_ json: String) throws -> PushRegistration {
+        try JSONDecoder().decode(PushRegistration.self, from: Data(json.utf8))
+    }
+
+    func testAStoredRegistrationWithNoChannelFieldsStillLoads() throws {
+        let state = try decode(
+            #"{"status":"authorized","deviceToken":"abc","registeredToken":"abc"}"#)
+        XCTAssertEqual(state.status, .authorized)
+        XCTAssertEqual(state.registeredToken, "abc")
+        XCTAssertEqual(state.mutedChannels, [])
+        XCTAssertNil(state.registeredMutedChannels, "never told is not the same as told nothing is muted")
+    }
+
+    func testAnEmptyObjectLoadsAsAFreshInstall() throws {
+        XCTAssertEqual(try decode("{}").status, .notRequested)
+    }
+
+    func testWhatIsWrittenIsWhatComesBack() throws {
+        let written = PushRegistration(
+            status: .authorized, deviceToken: "abc", registeredToken: "abc",
+            mutedChannels: [.alerts], registeredMutedChannels: [.alerts], lastError: nil)
+        let data = try JSONEncoder().encode(written)
+        XCTAssertEqual(try JSONDecoder().decode(PushRegistration.self, from: data), written)
+    }
+}
