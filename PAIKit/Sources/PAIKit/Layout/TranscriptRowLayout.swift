@@ -3,6 +3,12 @@ import Foundation
 /// The fixed chrome around a card's measured content — header, padding, inter-card and inter-row
 /// spacing — kept as named constants in one place so a height computed here and a view laying
 /// itself out in `PAI/` can never quietly disagree about what a pixel of "chrome" is for.
+///
+/// Every constant is named for the exact SwiftUI modifier it stands in for (`cardHorizontalPadding`
+/// is `CardChrome`'s own `.padding(.horizontal, cardHorizontalPadding)`, not a derived total), so a
+/// reader can grep one number in `TranscriptCards.swift` and land on the one place its meaning is
+/// spelled out. A horizontal one is a single edge's padding, to be doubled by whichever side needs
+/// the total; a vertical one is already whatever it names.
 public enum TranscriptRowMetrics {
     /// A collapsible card's header row: chevron, icon, label, optional status dot.
     public static let cardHeaderHeight: Double = 32
@@ -19,6 +25,49 @@ public enum TranscriptRowMetrics {
     public static let attachmentChipHeight: Double = 22
     /// The row's trailing timestamp line.
     public static let timestampHeight: Double = 16
+
+    // MARK: - Horizontal insets
+
+    /// `CardChrome`'s own `.padding(.horizontal, cardHorizontalPadding)`, applied to a
+    /// collapsible card's header and content alike.
+    public static let cardHorizontalPadding: Double = 10
+    /// Every bubble-shaped card's own `.padding(.horizontal, bubbleHorizontalPadding)` — a user,
+    /// assistant, relayed or command-with-args bubble.
+    public static let bubbleHorizontalPadding: Double = 14
+    /// `ToolBodyText`'s and `MarkdownContentView`'s shared `.padding(codeBlockPadding)` around a
+    /// rendered code block's text, applied on every edge — it both narrows the text TextKit wraps
+    /// at and adds to the block's own height, since the padding is inside the box the block draws.
+    public static let codeBlockPadding: Double = 8
+    /// A blockquote's rule bar, in `MarkdownContentView`'s `Rectangle().frame(width:
+    /// blockQuoteRuleWidth)`.
+    public static let blockQuoteRuleWidth: Double = 3
+    /// The gap between a blockquote's rule and its text, in `MarkdownContentView`'s
+    /// `HStack(spacing: blockQuoteSpacing)`.
+    public static let blockQuoteSpacing: Double = 8
+    /// The gap between a list item's marker and its content, in `MarkdownContentView`'s
+    /// `HStack(alignment: .top, spacing: listMarkerSpacing)`.
+    public static let listMarkerSpacing: Double = 6
+    /// The gap between stacked list items, in `MarkdownContentView`'s `VStack(alignment: .leading,
+    /// spacing: listItemSpacing)`.
+    public static let listItemSpacing: Double = 4
+    /// A generous stand-in for a list marker's own intrinsic width — a bullet is narrower than
+    /// this, an ordered marker past two digits is wider. Deliberately erring wide: reserving more
+    /// than a marker needs wraps the measured text a line earlier than the view does (a blank gap,
+    /// the safe direction per the `scrolling` skill), where reserving too little would clip.
+    public static let listMarkerReservedWidth: Double = 24
+    /// A relayed bubble's "sender · group" line and a command bubble's own-name line — both drawn
+    /// above the body text and pinned to this height via an explicit `.frame(height:)` in the
+    /// view, so the two can never drift the way an unconstrained font's intrinsic size could.
+    public static let bubbleLabelLineHeight: Double = 16
+    /// The gap below a bubble's label line, in the enclosing `VStack(spacing: bubbleLabelSpacing)`.
+    public static let bubbleLabelSpacing: Double = 4
+    /// A `Divider()`'s rendered thickness — a hairline, not a measured line of text.
+    public static let thematicBreakHeight: Double = 1
+    /// `GfmTableView`'s own `Grid(verticalSpacing: tableRowSpacing)`, between every pair of
+    /// adjacent rows including the divider row.
+    public static let tableRowSpacing: Double = 6
+    /// The `Divider()` `GfmTableView` draws between its header and its first data row.
+    public static let tableDividerHeight: Double = 1
 }
 
 /// The exact height one transcript row (one `Message`) occupies — nothing here is ever an
@@ -53,9 +102,23 @@ public enum TranscriptRowLayout {
                 of: card, width: width, environment: environment, measurer: measurer, cache: cache, metrics: metrics)
         }
         if message.timestamp != nil {
-            total += TranscriptRowMetrics.timestampHeight
+            // `TranscriptRowContent`'s own `VStack` puts this same spacing before every child,
+            // the timestamp `Text` included — never omitted, since `cards` is never empty here.
+            total += TranscriptRowMetrics.interCardSpacing + TranscriptRowMetrics.timestampHeight
         }
         return total
+    }
+
+    /// The width `card`'s own text wraps at — the cell width minus whichever horizontal padding
+    /// `TranscriptCardKindView` draws that kind inside, so a wrap this measures and a wrap the
+    /// view lays out can never be computed from two different widths.
+    private static func contentWidth(for kind: TranscriptCardPlan.Kind, cellWidth: Double) -> Double {
+        switch kind {
+        case .userBubble, .relayedBubble, .assistantBubble, .command:
+            return max(0, cellWidth - 2 * TranscriptRowMetrics.bubbleHorizontalPadding)
+        case .thinking, .toolCall, .toolResult, .agentMessage, .system, .legacyCommandOutput:
+            return max(0, cellWidth - 2 * TranscriptRowMetrics.cardHorizontalPadding)
+        }
     }
 
     private static func height(
@@ -67,8 +130,13 @@ public enum TranscriptRowLayout {
         metrics: MessageLayoutMetrics
     ) -> Double {
         let content = MessageContentLayoutComposer.layout(
-            of: card.blocks, width: width, environment: environment, metrics: metrics, measurer: measurer, cache: cache
+            of: card.blocks, width: contentWidth(for: card.kind, cellWidth: width), environment: environment,
+            metrics: metrics, measurer: measurer, cache: cache
         ).totalHeight
+        // The line a relayed bubble's sender or a command's own name draws above its body text —
+        // pinned to the same `.frame(height:)` the view gives that line, see
+        // ``TranscriptRowMetrics/bubbleLabelLineHeight``'s doc comment.
+        let labelChrome = TranscriptRowMetrics.bubbleLabelLineHeight + TranscriptRowMetrics.bubbleLabelSpacing
 
         switch card.kind {
         case .userBubble(let text, let attachmentPaths):
@@ -77,7 +145,7 @@ public enum TranscriptRowLayout {
             return textHeight + chips + TranscriptRowMetrics.bubbleVerticalPadding
 
         case .relayedBubble(let text, _, _):
-            return (text.isEmpty ? 0 : content) + TranscriptRowMetrics.bubbleVerticalPadding
+            return (text.isEmpty ? 0 : content) + labelChrome + TranscriptRowMetrics.bubbleVerticalPadding
 
         case .assistantBubble:
             return content + TranscriptRowMetrics.bubbleVerticalPadding
@@ -86,7 +154,7 @@ public enum TranscriptRowLayout {
             // No arguments degrades to a compact, non-interactive line with no header chrome at
             // all — matching the web's "an action with nothing to show".
             guard args != nil else { return TranscriptRowMetrics.cardHeaderHeight }
-            return content + TranscriptRowMetrics.bubbleVerticalPadding
+            return content + labelChrome + TranscriptRowMetrics.bubbleVerticalPadding
 
         case .thinking, .toolCall, .toolResult, .agentMessage, .system, .legacyCommandOutput:
             let hasContent = !card.blocks.isEmpty

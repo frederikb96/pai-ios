@@ -10,12 +10,23 @@ import Foundation
 /// conformance never has to hand to TextKit — and the one case this package can prove completely
 /// rather than only compose around a stub.
 public enum MarkdownTableLayout {
-    /// One uniform height per row, header included — `table.rows.count + 1`.
+    /// One uniform text height per row, header included — `table.rows.count + 1` — plus the
+    /// spacing `GfmTableView`'s `Grid` puts between every adjacent row (the divider row counted
+    /// among them) and the divider's own thickness.
     ///
-    /// `rowHeight` is already resolved (line height plus cell padding, scaled for the current
-    /// Dynamic Type category) by whoever calls this; nothing here knows about typography, so the
-    /// same formula serves the real measurer and, later, the view that actually draws the grid.
-    public static func height(for table: MarkdownTable, rowHeight: Double) -> Double {
-        Double(table.rows.count + 1) * rowHeight
+    /// `rowHeight`, `rowSpacing` and `dividerHeight` are already resolved by whoever calls this;
+    /// nothing here knows about typography, so the same formula serves the real measurer and,
+    /// later, the view that actually draws the grid. `rowSpacing`/`dividerHeight` default to zero
+    /// rather than being required, so a caller measuring only the text-row boundary (as the
+    /// existing tests do) needn't resolve chrome it isn't asking about.
+    public static func height(
+        for table: MarkdownTable, rowHeight: Double, rowSpacing: Double = 0, dividerHeight: Double = 0
+    ) -> Double {
+        let rowCount = table.rows.count + 1
+        // Gaps: one before every text row and one before the divider row between header and
+        // data — `rowCount` of them, not `rowCount - 1`, because the divider is itself a row the
+        // grid puts a gap before.
+        let gaps = Double(rowCount) * rowSpacing
+        return Double(rowCount) * rowHeight + gaps + dividerHeight
     }
 }

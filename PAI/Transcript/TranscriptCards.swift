@@ -212,7 +212,7 @@ struct CardChrome<Content: View>: View {
                     .padding(.bottom, TranscriptRowMetrics.cardContentVerticalPadding / 2)
             }
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, TranscriptRowMetrics.cardHorizontalPadding)
         .background(PaiPalette.Semantic.raisedSurface, in: RoundedRectangle(cornerRadius: 10))
     }
 }
@@ -231,7 +231,7 @@ struct ToolBodyText: View {
                 coloredText(for: code)
                     .font(PaiTypography.markdownCodeBlock.font)
                     .textSelection(.enabled)
-                    .padding(8)
+                    .padding(TranscriptRowMetrics.codeBlockPadding)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(PaiPalette.surface900, in: RoundedRectangle(cornerRadius: 6))
             } else {
@@ -281,7 +281,7 @@ struct UserBubbleView: View {
                 Text(text)
                     .font(PaiTypography.body.font)
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding)
                     .padding(.vertical, TranscriptRowMetrics.bubbleVerticalPadding / 2)
                     .background(PaiPalette.primary500, in: RoundedRectangle(cornerRadius: 16))
             }
@@ -307,17 +307,18 @@ struct RelayedBubbleView: View {
     let group: String?
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 4) {
+        VStack(alignment: .trailing, spacing: TranscriptRowMetrics.bubbleLabelSpacing) {
             Text(group.map { "\(sender) · \($0)" } ?? sender)
                 .font(PaiTypography.captionEmphasized.font)
                 .foregroundStyle(.white.opacity(0.85))
+                .frame(height: TranscriptRowMetrics.bubbleLabelLineHeight, alignment: .leading)
             if !text.isEmpty {
                 Text(text)
                     .font(PaiTypography.body.font)
                     .foregroundStyle(.white)
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding)
         .padding(.vertical, TranscriptRowMetrics.bubbleVerticalPadding / 2)
         .background(PaiPalette.green600, in: RoundedRectangle(cornerRadius: 16))
         .frame(maxWidth: .infinity, alignment: .trailing)
@@ -331,7 +332,7 @@ struct AssistantBubbleView: View {
 
     var body: some View {
         MarkdownContentView(blocks: blocks)
-            .padding(.horizontal, 14)
+            .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding)
             .padding(.vertical, TranscriptRowMetrics.bubbleVerticalPadding / 2)
             .background(PaiPalette.Semantic.raisedSurface, in: RoundedRectangle(cornerRadius: 16))
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -346,15 +347,16 @@ struct CommandCardView: View {
 
     var body: some View {
         if let args {
-            VStack(alignment: .trailing, spacing: 4) {
+            VStack(alignment: .trailing, spacing: TranscriptRowMetrics.bubbleLabelSpacing) {
                 Text(name)
                     .font(PaiTypography.captionEmphasized.font)
                     .foregroundStyle(.white.opacity(0.85))
+                    .frame(height: TranscriptRowMetrics.bubbleLabelLineHeight, alignment: .leading)
                 Text(args)
                     .font(PaiTypography.body.font)
                     .foregroundStyle(.white)
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding)
             .padding(.vertical, TranscriptRowMetrics.bubbleVerticalPadding / 2)
             .background(PaiPalette.primary500, in: RoundedRectangle(cornerRadius: 16))
             .frame(maxWidth: .infinity, alignment: .trailing)
@@ -405,15 +407,16 @@ struct MarkdownContentView: View {
                 .background(PaiPalette.surface900, in: RoundedRectangle(cornerRadius: 6))
 
         case .blockQuote(let nested):
-            HStack(spacing: 8) {
-                Rectangle().fill(PaiPalette.Semantic.borderStrong).frame(width: 3)
+            HStack(spacing: TranscriptRowMetrics.blockQuoteSpacing) {
+                Rectangle().fill(PaiPalette.Semantic.borderStrong).frame(
+                    width: TranscriptRowMetrics.blockQuoteRuleWidth)
                 MarkdownContentView(blocks: nested)
             }
 
         case .list(let list):
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: TranscriptRowMetrics.listItemSpacing) {
                 ForEach(Array(list.items.enumerated()), id: \.offset) { index, item in
-                    HStack(alignment: .top, spacing: 6) {
+                    HStack(alignment: .top, spacing: TranscriptRowMetrics.listMarkerSpacing) {
                         Text(marker(for: list.marker, index: index, checkbox: item.checkbox))
                             .font(PaiTypography.markdownBody.font)
                             .foregroundStyle(PaiPalette.Semantic.textMuted)
@@ -480,7 +483,7 @@ struct GfmTableView: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: true) {
-            Grid(alignment: .topLeading, horizontalSpacing: 12, verticalSpacing: 6) {
+            Grid(alignment: .topLeading, horizontalSpacing: 12, verticalSpacing: TranscriptRowMetrics.tableRowSpacing) {
                 GridRow {
                     ForEach(Array(table.header.enumerated()), id: \.offset) { _, cell in
                         Text(cell.plainText)
