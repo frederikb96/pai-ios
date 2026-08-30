@@ -157,6 +157,51 @@ public struct NoteEditorDocument: Equatable, Sendable {
         return lines.joined()
     }
 
+    /// Where a Character offset into the whole note lands among the regions on screen.
+    ///
+    /// Characters in, UTF-16 out, and the asymmetry is deliberate rather than sloppy: the outline
+    /// and the in-note search both count Characters, because that is what the strings they scan
+    /// are indexed by, while a text view's selection is an `NSRange` and speaks UTF-16. Converting
+    /// here is the one place the two meet, so nothing else has to know which it holds.
+    ///
+    /// An offset landing in the blank lines between two regions belongs to the region after them
+    /// — those lines are the separator the editor does not draw, and there is nowhere else to put
+    /// a caret aimed at them.
+    public func locate(characterOffset: Int) -> CaretTarget? {
+        guard let first = items.first, let last = items.last else { return nil }
+        guard characterOffset > 0 else { return CaretTarget(itemID: first.id, offset: 0) }
+
+        var consumed = 0
+        for item in items {
+            let length = item.segment.text.count
+            guard characterOffset < consumed + length || item.id == last.id else {
+                consumed += length
+                continue
+            }
+            let display = item.displayText
+            let within = characterOffset - consumed - item.segment.leadingSeparator.count
+            let clamped = min(max(within, 0), display.count)
+            return CaretTarget(itemID: item.id, offset: String(display.prefix(clamped)).utf16.count)
+        }
+        return CaretTarget(itemID: last.id, offset: 0)
+    }
+
+    /// Give a note that ends in a code block or a table somewhere to type.
+    ///
+    /// Without this, a note whose last line is a closing fence has no wrapping region at the
+    /// bottom at all, and the only way to add a paragraph after the block is to type inside it and
+    /// then break out — which for a fenced block means editing the fence. Returns where the caret
+    /// goes, or `nil` when the last region already wraps and nothing is needed.
+    public mutating func appendTrailingProse() -> CaretTarget? {
+        guard let last = items.last, last.segment.isNoWrap else { return nil }
+        let current = source
+        let appended = current + (current.hasSuffix("\n") ? "\n" : "\n\n")
+        let rekeyed = reidentify(NoteSegmentation.split(appended))
+        guard let landing = rekeyed.last else { return nil }
+        items = rekeyed
+        return CaretTarget(itemID: landing.id, offset: 0)
+    }
+
     // MARK: Identity
 
     /// Give re-split segments ids, reusing an existing one wherever a segment's exact text

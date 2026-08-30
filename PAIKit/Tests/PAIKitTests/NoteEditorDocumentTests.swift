@@ -166,3 +166,79 @@ final class NoteEditorDocumentTests: XCTestCase {
         XCTAssertEqual(document.source, before)
     }
 }
+
+/// Turning an offset into the whole note into a place in one region. The outline and the in-note
+/// search both hand over a Character offset into the body, and a text view wants a UTF-16 offset
+/// into its own region — get either half wrong and every jump lands somewhere plausible and wrong.
+final class NoteEditorDocumentLocateTests: XCTestCase {
+
+    private let note = "# One\n\n```sh\necho hi\n```\n\nafter the block\n"
+
+    func testAnOffsetInTheFirstRegionStaysThere() {
+        let document = NoteEditorDocument(source: note)
+        let target = document.locate(characterOffset: 2)
+        XCTAssertEqual(target?.itemID, document.items[0].id)
+        XCTAssertEqual(target?.offset, 2)
+    }
+
+    /// The blank lines between two regions belong to neither on screen — the editor carries them
+    /// invisibly. An offset aimed at one has to land at the start of what follows rather than at a
+    /// negative position inside it.
+    func testAnOffsetInTheSeparatorLandsAtTheStartOfTheNextRegion() {
+        let document = NoteEditorDocument(source: note)
+        // The blank line immediately after the closing fence: separator, not content.
+        let afterFence = note.range(of: "```\n\n")!.upperBound
+        let target = document.locate(characterOffset: note.distance(from: note.startIndex, to: afterFence) - 1)
+        XCTAssertEqual(target?.itemID, document.items[2].id)
+        XCTAssertEqual(target?.offset, 0)
+    }
+
+    func testAnOffsetPastTheEndClampsToTheLastRegion() {
+        let document = NoteEditorDocument(source: note)
+        let target = document.locate(characterOffset: 9_999)
+        XCTAssertEqual(target?.itemID, document.items.last?.id)
+        XCTAssertEqual(target?.offset, document.items.last?.displayText.utf16.count)
+    }
+
+    /// Characters in, UTF-16 out. The two agree on ASCII and diverge on the first emoji, so a test
+    /// written in English proves nothing about the conversion at all.
+    func testAnOffsetPastAnEmojiIsConvertedToUtf16() {
+        let document = NoteEditorDocument(source: "🎯🎯abc\n")
+        // Three Characters in: past both emoji, before "a".
+        let target = document.locate(characterOffset: 2)
+        XCTAssertEqual(target?.offset, 4, "two emoji are two Characters and four UTF-16 units")
+    }
+}
+
+/// A note that ends in a block has no wrapping region under it, so there is nowhere to type at all.
+final class NoteEditorDocumentTrailingProseTests: XCTestCase {
+
+    func testANoteEndingInACodeBlockGainsAPlaceToType() {
+        var document = NoteEditorDocument(source: "intro\n\n```sh\necho\n```\n")
+        XCTAssertEqual(document.items.last?.kind, .codeBlock)
+
+        let target = document.appendTrailingProse()
+
+        XCTAssertEqual(document.items.last?.kind, .prose)
+        XCTAssertEqual(target?.itemID, document.items.last?.id)
+        XCTAssertEqual(document.items.last?.displayText, "", "an empty paragraph, not a visible blank line")
+        XCTAssertEqual(document.source, "intro\n\n```sh\necho\n```\n\n")
+    }
+
+    /// A table at the very end of a file has no trailing newline of its own, so the separator has
+    /// to supply the line break as well as the blank line.
+    func testATableAtTheVeryEndGainsAPlaceToType() {
+        var document = NoteEditorDocument(source: "| a |\n|---|\n| 1 |")
+        let target = document.appendTrailingProse()
+        XCTAssertEqual(document.items.map(\.kind), [.table, .prose])
+        XCTAssertEqual(target?.offset, 0)
+        XCTAssertEqual(document.source, "| a |\n|---|\n| 1 |\n\n")
+    }
+
+    func testANoteThatAlreadyEndsInProseIsLeftAlone() {
+        var document = NoteEditorDocument(source: "```\na\n```\n\ntail\n")
+        let before = document.source
+        XCTAssertNil(document.appendTrailingProse())
+        XCTAssertEqual(document.source, before)
+    }
+}

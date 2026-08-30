@@ -20,17 +20,18 @@ public final class PushRegistrationStore {
     /// Injected rather than taking `PaiApiClient` directly, so this type stays free of the
     /// networking layer and a test can assert what was sent without a stub URL protocol.
     ///
-    /// Returns the token the backend actually stored, which is its own normalised form rather
-    /// than necessarily the string sent. Remembering what came back, instead of what went out,
-    /// is what stops a normalisation this client does not perform from looking like a token that
-    /// was never registered — which would re-post on every launch, forever, with nothing wrong.
-    private let registerToken: @Sendable (String) async throws -> String
+    /// Answers with what the backend actually stored, which for the token is its own normalised
+    /// form rather than necessarily the string sent. Remembering what came back, instead of what
+    /// went out, is what stops a normalisation this client does not perform from looking like a
+    /// token that was never registered — which would re-post on every launch, forever, with
+    /// nothing wrong.
+    private let registerToken: @Sendable (String, [PushChannel]) async throws -> DeviceRegistration
 
     public private(set) var registration: PushRegistration
 
     public init(
         storage: SettingsKeyValueStore,
-        registerToken: @escaping @Sendable (String) async throws -> String
+        registerToken: @escaping @Sendable (String, [PushChannel]) async throws -> DeviceRegistration
     ) {
         self.storage = storage
         self.registerToken = registerToken
@@ -73,13 +74,36 @@ public final class PushRegistrationStore {
     /// is worse than waiting.
     public func registerWithBackendIfNeeded() async {
         guard registration.needsBackendRegistration, let token = registration.deviceToken else { return }
+        let sent = registration.mutedChannels
         do {
-            registration.registeredToken = try await registerToken(token)
+            let result = try await registerToken(token, sent.sorted { $0.rawValue < $1.rawValue })
+            registration.registeredToken = result.token
+            // What the backend reports it holds, and what was sent when it reports nothing. A
+            // backend that does not answer about channels has still stored what it was given, so
+            // treating silence as "nothing is muted" is the one reading that is certainly wrong.
+            registration.registeredMutedChannels =
+                result.mutedChannels.map { Set($0.compactMap(PushChannel.init(rawValue:))) } ?? sent
             registration.lastError = nil
         } catch {
             registration.lastError = String(describing: error)
         }
         persist()
+    }
+
+    /// Switch one channel on or off for this device, and tell the backend.
+    ///
+    /// The local choice is recorded and persisted whether or not the call succeeds — the toggle
+    /// has to stay where it was put, and `needsBackendRegistration` is what carries an unsent
+    /// change to the next launch.
+    public func setMuted(_ muted: Bool, for channel: PushChannel) async {
+        guard registration.isMuted(channel) != muted else { return }
+        if muted {
+            registration.mutedChannels.insert(channel)
+        } else {
+            registration.mutedChannels.remove(channel)
+        }
+        persist()
+        await registerWithBackendIfNeeded()
     }
 
     private func persist() {

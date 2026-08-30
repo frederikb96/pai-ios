@@ -11,15 +11,23 @@ final class PushRegistrationStoreTests: XCTestCase {
 
     private final class Recorder: @unchecked Sendable {
         var tokens: [String] = []
+        var mutedChannels: [[PushChannel]] = []
         var shouldThrow = false
         /// Stands in for the backend normalising what it stores. Returning something other than
         /// what was sent is the case that matters: the store must remember the answer, not the
         /// question.
         var normalise: (String) -> String = { $0 }
-        func register(_ token: String) async throws -> String {
+        /// What the backend says it holds. `nil` stands in for one that does not answer about
+        /// channels at all, which is not the same as one answering "nothing is muted".
+        var answersMutedChannels: ([PushChannel]) -> [String]? = { $0.map(\.rawValue) }
+
+        func register(_ token: String, _ muted: [PushChannel]) async throws -> DeviceRegistration {
             if shouldThrow { throw URLError(.notConnectedToInternet) }
             tokens.append(token)
-            return normalise(token)
+            mutedChannels.append(muted)
+            return DeviceRegistration(
+                token: normalise(token), registered: true, lastSeenAt: nil,
+                mutedChannels: answersMutedChannels(muted))
         }
     }
 
@@ -27,7 +35,7 @@ final class PushRegistrationStoreTests: XCTestCase {
         storage: SettingsKeyValueStore = SettingsInMemoryKeyValueStore(),
         recorder: Recorder
     ) -> PushRegistrationStore {
-        PushRegistrationStore(storage: storage) { try await recorder.register($0) }
+        PushRegistrationStore(storage: storage) { try await recorder.register($0, $1) }
     }
 
     func testAFreshInstallHasAskedForNothing() async {
@@ -127,6 +135,83 @@ final class PushRegistrationStoreTests: XCTestCase {
 
         await store.registerWithBackendIfNeeded()
         XCTAssertEqual(store.registration.registeredToken, "ABC")
+    }
+
+    /// A toggle flipped is a change the backend has to hear about, and the token has not moved —
+    /// so a store that decides purely on the token would record the choice locally, show it as
+    /// set, and never send it.
+    func testFlippingAChannelPostsAgainEvenThoughTheTokenIsUnchanged() async {
+        let recorder = Recorder()
+        let store = makeStore(recorder: recorder)
+        store.recordDeviceToken("abc")
+        await store.registerWithBackendIfNeeded()
+
+        await store.setMuted(true, for: .alerts)
+
+        XCTAssertEqual(recorder.tokens, ["abc", "abc"])
+        XCTAssertEqual(recorder.mutedChannels, [[], [.alerts]])
+    }
+
+    /// Flipping a channel back to where it already was is not a change, and posting for it would
+    /// put the register call back on every redraw of a settings screen.
+    func testSettingAChannelToWhatItAlreadyIsPostsNothing() async {
+        let recorder = Recorder()
+        let store = makeStore(recorder: recorder)
+        store.recordDeviceToken("abc")
+        await store.registerWithBackendIfNeeded()
+
+        await store.setMuted(false, for: .alerts)
+
+        XCTAssertEqual(recorder.tokens, ["abc"])
+    }
+
+    /// A toggle flipped with no network must stay flipped AND stay owed. Losing either half is a
+    /// setting that silently does not apply.
+    func testAChannelFlippedOfflineIsKeptAndStillOwed() async {
+        let recorder = Recorder()
+        let store = makeStore(recorder: recorder)
+        store.recordDeviceToken("abc")
+        await store.registerWithBackendIfNeeded()
+
+        recorder.shouldThrow = true
+        await store.setMuted(true, for: .default)
+        XCTAssertTrue(store.registration.isMuted(.default), "the toggle has to stay where it was put")
+        XCTAssertTrue(store.registration.needsBackendRegistration)
+
+        recorder.shouldThrow = false
+        await store.registerWithBackendIfNeeded()
+        XCTAssertEqual(recorder.mutedChannels, [[], [.default]])
+        XCTAssertFalse(store.registration.needsBackendRegistration)
+    }
+
+    /// A backend too old to know about channels stores what it was given and says nothing about
+    /// it. Reading that silence as "nothing is muted" would leave the client believing the two
+    /// disagree, and re-posting on every launch forever.
+    func testABackendThatSaysNothingAboutChannelsIsNotReadAsSayingNoneAreMuted() async {
+        let recorder = Recorder()
+        recorder.answersMutedChannels = { _ in nil }
+        let store = makeStore(recorder: recorder)
+        store.recordDeviceToken("abc")
+        await store.setMuted(true, for: .alerts)
+        XCTAssertFalse(store.registration.needsBackendRegistration)
+
+        await store.registerWithBackendIfNeeded()
+        XCTAssertEqual(recorder.tokens, ["abc"], "one post, not one per call")
+    }
+
+    /// Channel choices have to outlive the process for the same reason the token does.
+    func testChannelChoicesSurviveARelaunch() async {
+        let storage = SettingsInMemoryKeyValueStore()
+        let first = Recorder()
+        let store = makeStore(storage: storage, recorder: first)
+        store.recordDeviceToken("abc")
+        await store.setMuted(true, for: .alerts)
+
+        let second = Recorder()
+        let relaunched = makeStore(storage: storage, recorder: second)
+        XCTAssertTrue(relaunched.registration.isMuted(.alerts))
+        await relaunched.registerWithBackendIfNeeded()
+        XCTAssertEqual(second.tokens, [], "already acknowledged before the relaunch")
     }
 
 }

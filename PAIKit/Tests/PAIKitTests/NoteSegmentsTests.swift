@@ -93,6 +93,23 @@ final class NoteSegmentationSplittingTests: XCTestCase {
         XCTAssertEqual(segments.map(\.kind), [.prose])
     }
 
+    /// A setext heading is written as text followed by `---`, and `---` alone satisfies every
+    /// structural rule a single-column delimiter row has. If the line above it happens to mention
+    /// a pipe — `use a | b`, and prose does — the pair reads as a table and that paragraph stops
+    /// wrapping.
+    func testAProseLineWithAPipeAboveARuleIsNotATable() {
+        let segments = NoteSegmentation.split("choose a | b here\n---\n\nafter\n")
+        XCTAssertEqual(segments.map(\.kind), [.prose])
+    }
+
+    /// A table absorbs the lines under it, and a paragraph that happens to contain a pipe is not
+    /// one of them — swallowed, it would be laid out unwrapped and scroll sideways.
+    func testProseAfterATableIsNotSwallowedByIt() {
+        let segments = NoteSegmentation.split("| a | b |\n|---|---|\n| 1 | 2 |\nthen a | pipe in prose\n")
+        XCTAssertEqual(segments.map(\.kind), [.table, .prose])
+        XCTAssertEqual(segments[0].text, "| a | b |\n|---|---|\n| 1 | 2 |\n")
+    }
+
     /// Inline code is not a fence. Three backticks on one line with content around them opens
     /// nothing, and treating it as a fence would swallow the rest of the note.
     func testInlineCodeDoesNotOpenAFence() {

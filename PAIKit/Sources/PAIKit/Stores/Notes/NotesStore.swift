@@ -90,6 +90,15 @@ public final class NotesStore {
     /// The body as it currently stands on screen, for a note edited since it was loaded.
     public private(set) var drafts: [String: String] = [:]
     public private(set) var saveStates: [String: NoteSaveState] = [:]
+    /// Bumped when a note's body changed for a reason other than local typing: a fresh read, a
+    /// conflict answered in the vault's favour, a restored revision.
+    ///
+    /// The editor rebuilds itself from this rather than from the body, and the difference is the
+    /// caret. A save's own response also replaces ``details``, and a backend that normalises
+    /// anything at all — a trailing newline, a line ending — then hands back a body that differs
+    /// from what is on screen. Watching the body would read that as an external change and
+    /// rebuild the editor under the reader a second after they stopped typing.
+    public private(set) var externalBodyRevision: [String: Int] = [:]
 
     // MARK: The link index, per note — a snapshot rather than something kept live, matching the
     // web's own choice (`RightPanel.tsx`): cutting and pasting a link around should not disturb
@@ -300,7 +309,12 @@ public final class NotesStore {
         do {
             let restored = try await api.restoreNoteRevision(noteId: noteId, revisionId: revisionId)
             details[noteId] = restored
-            if drafts[noteId] == nil { saveStates[noteId] = .clean }
+            // The restored text is the whole point of the action, so it replaces whatever is on
+            // screen — the one place a draft is deliberately dropped without asking, because
+            // asking was the button that got us here.
+            drafts[noteId] = nil
+            bumpExternalRevision(noteId)
+            saveStates[noteId] = .clean
             if let index = notes.firstIndex(where: { $0.id == noteId }) { notes[index] = restored.summaryRow }
             await loadLinkGraph(id: noteId)
             await loadRevisions(id: noteId)
@@ -358,6 +372,7 @@ public final class NotesStore {
         do {
             let detail = try await api.getNote(id: id)
             details[id] = detail
+            bumpExternalRevision(id)
             if drafts[id] == nil {
                 saveStates[id] = .clean
             }
@@ -372,6 +387,12 @@ public final class NotesStore {
     /// What the editor should show: the local edit if there is one, otherwise what was fetched.
     public func body(for id: String) -> String? {
         drafts[id] ?? details[id]?.body
+    }
+
+    public func externalRevision(for id: String) -> Int { externalBodyRevision[id] ?? 0 }
+
+    private func bumpExternalRevision(_ id: String) {
+        externalBodyRevision[id] = externalRevision(for: id) + 1
     }
 
     public func detail(for id: String) -> NoteDetail? { details[id] }

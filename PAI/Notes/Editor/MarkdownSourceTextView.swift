@@ -2,6 +2,18 @@ import PAIKit
 import SwiftUI
 import UIKit
 
+/// A caret move the editor is asking for, as opposed to one the reader made.
+///
+/// Carries a token because a request has to be applied exactly once. Applied whenever it is
+/// present, it would be reapplied on every unrelated redraw — a save finishing, a badge changing —
+/// and yank the caret back to where the last restructure left it, minutes after the reader moved
+/// it somewhere else.
+struct CaretRequest: Equatable {
+    let token: Int
+    /// A UTF-16 offset into the region's display text.
+    let offset: Int
+}
+
 /// One editable region of a note.
 ///
 /// Two behaviours in one type, chosen by `wraps`, and the difference between them is the whole
@@ -18,9 +30,10 @@ struct MarkdownSourceTextView: UIViewRepresentable {
     let text: String
     let kind: NoteSegmentKind
     let isFocused: Bool
-    /// A UTF-16 offset to move the caret to, when the document has restructured under it. Nil
-    /// means leave the caret alone, which is every ordinary keystroke.
-    let caretOffset: Int?
+    /// Where the editor wants the caret, when the document has restructured under it or something
+    /// outside the text view asked to jump. Nil means leave the caret alone, which is every
+    /// ordinary keystroke.
+    let caret: CaretRequest?
 
     let onChange: (String) -> Void
     /// Backspace with the caret at the very start. Returning true means the editor handled it by
@@ -90,13 +103,15 @@ struct MarkdownSourceTextView: UIViewRepresentable {
                 location: min(selected.location, view.text.utf16.count), length: 0)
         }
 
-        if let caretOffset, view.isFirstResponder || isFocused {
-            let clamped = min(max(caretOffset, 0), view.text.utf16.count)
-            view.selectedRange = NSRange(location: clamped, length: 0)
-        }
-
         if isFocused, !view.isFirstResponder {
             view.becomeFirstResponder()
+        }
+
+        if let caret, caret.token != context.coordinator.appliedCaretToken {
+            context.coordinator.appliedCaretToken = caret.token
+            let clamped = min(max(caret.offset, 0), view.text.utf16.count)
+            view.selectedRange = NSRange(location: clamped, length: 0)
+            context.coordinator.scrollCaretIntoView(view)
         }
     }
 
@@ -120,10 +135,17 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         // rather than a layout question — and asking a scrolling text view for a fitting size
         // gets the proposal back rather than the content's own extent, which would collapse every
         // code block to nothing.
-        let lines = max(1, uiView.text.split(separator: "\n", omittingEmptySubsequences: false).count)
-        let lineHeight = NoteEditorTheme.codeFont.lineHeight
+        //
+        // Counted from `text` rather than from what the view currently holds: the two differ for
+        // the one pass between a change arriving and the view being updated with it, and the
+        // symptom of using the stale one is a block whose height lags a frame behind its content.
+        // `MarkdownCodeBlockLayout` owns the count so the transcript's code blocks and these
+        // cannot disagree about what a line is.
+        let lines = MarkdownCodeBlockLayout.lineCount(of: text)
         let insets = uiView.textContainerInset.top + uiView.textContainerInset.bottom
-        return CGSize(width: width, height: ceil(CGFloat(lines) * lineHeight + insets))
+        return CGSize(
+            width: width,
+            height: ceil(CGFloat(lines) * NoteEditorTheme.codeFont.lineHeight + insets))
     }
 
     func makeCoordinator() -> Coordinator {
@@ -132,6 +154,8 @@ struct MarkdownSourceTextView: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: MarkdownSourceTextView
+        /// The last caret request actually applied — see ``CaretRequest``.
+        var appliedCaretToken = Int.min
 
         init(parent: MarkdownSourceTextView) {
             self.parent = parent
@@ -145,6 +169,42 @@ struct MarkdownSourceTextView: UIViewRepresentable {
 
         func textViewDidBeginEditing(_ textView: UITextView) {
             parent.onFocus()
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            guard textView.isFirstResponder else { return }
+            scrollCaretIntoView(textView)
+        }
+
+        /// Keep the caret on screen inside whatever scroll view the page is built from.
+        ///
+        /// A wrapping region does not scroll — it reports its full height and the page scrolls
+        /// around it — so UIKit's own "keep the insertion point visible" does nothing here: it
+        /// belongs to a scrolling text view, and this one deliberately is not. Without this,
+        /// typing near the bottom of a long note puts the caret under the keyboard and leaves it
+        /// there.
+        ///
+        /// The enclosing scroll view is found by walking superviews rather than being passed in,
+        /// because SwiftUI does not hand one over. Public API throughout, and a page that turns
+        /// out not to be built from a `UIScrollView` simply gets nothing rather than misbehaving.
+        func scrollCaretIntoView(_ textView: UITextView) {
+            guard let selection = textView.selectedTextRange else { return }
+            var ancestor = textView.superview
+            while let candidate = ancestor, !(candidate is UIScrollView) { ancestor = candidate.superview }
+            guard let scrollView = ancestor as? UIScrollView else { return }
+
+            let caret = textView.caretRect(for: selection.end)
+            guard !caret.isNull, !caret.isInfinite else { return }
+            let inScrollView = scrollView.convert(caret, from: textView)
+            // Padded so the caret does not sit flush against the keyboard or the navigation bar,
+            // which reads as clipped even when every pixel of it is on screen.
+            let padded = inScrollView.insetBy(dx: 0, dy: -24)
+            // Deferred: this is reached from `updateUIView`, which runs inside a layout pass, and
+            // scrolling from inside one re-enters layout.
+            DispatchQueue.main.async {
+                guard textView.isFirstResponder else { return }
+                scrollView.scrollRectToVisible(padded, animated: false)
+            }
         }
     }
 }

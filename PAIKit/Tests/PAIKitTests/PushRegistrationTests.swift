@@ -62,8 +62,27 @@ final class PushRegistrationTests: XCTestCase {
     /// every day.
     func testAnAcknowledgedTokenNeedsNothing() {
         let state = PushRegistration(
-            status: .authorized, deviceToken: "same", registeredToken: "same")
+            status: .authorized, deviceToken: "same", registeredToken: "same",
+            registeredMutedChannels: [])
         XCTAssertFalse(state.needsBackendRegistration)
+    }
+
+    /// A registration carried over from a build that had no channels knows a token the backend
+    /// acknowledged and nothing about what it holds for the channels. That is not the same as
+    /// knowing it holds none, and posting once to find out is the only way the two ever agree.
+    func testARegistrationThatPredatesChannelsPostsOnce() {
+        let state = PushRegistration(
+            status: .authorized, deviceToken: "same", registeredToken: "same")
+        XCTAssertTrue(state.needsBackendRegistration)
+    }
+
+    /// A muted channel the backend has not been told about is a setting that silently does
+    /// nothing — the phone shows it off and every notification still arrives.
+    func testAMuteTheBackendHasNotAcknowledgedIsStillOwed() {
+        let state = PushRegistration(
+            status: .authorized, deviceToken: "same", registeredToken: "same",
+            mutedChannels: [.alerts], registeredMutedChannels: [])
+        XCTAssertTrue(state.needsBackendRegistration)
     }
 
     // MARK: - When asking is still possible

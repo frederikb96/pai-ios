@@ -806,12 +806,25 @@ public struct PaiApiClient: Sendable {
     /// device never creates a second row, and the server normalises case and whitespace before
     /// storing — this client sends the token exactly as APNs issued it and lets the server
     /// decide what equality means.
-    public func registerDevice(token: String) async throws -> DeviceRegistration {
-        struct Body: Encodable { let token: String }
+    /// Registers this device's APNs token and the channels it has switched off.
+    ///
+    /// The muted list is always sent, empty included: the backend reads an absent field as "leave
+    /// whatever this device already chose alone", which is right for a client that does not know
+    /// about channels and wrong for one clearing its last mute.
+    public func registerDevice(token: String, mutedChannels: [PushChannel]) async throws -> DeviceRegistration {
+        struct Body: Encodable {
+            let token: String
+            let mutedChannels: [String]
+
+            enum CodingKeys: String, CodingKey {
+                case token
+                case mutedChannels = "muted_channels"
+            }
+        }
         return try await send(
             path: "/api/devices/register",
             method: "POST",
-            body: try Self.jsonBody(Body(token: token))
+            body: try Self.jsonBody(Body(token: token, mutedChannels: mutedChannels.map(\.rawValue)))
         )
     }
 }

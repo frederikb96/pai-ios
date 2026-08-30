@@ -78,7 +78,11 @@ struct NoteListScreen: View {
             }
             .sheet(item: Binding(get: { actionsTargetId.map(NoteId.init) }, set: { actionsTargetId = $0?.value })) {
                 target in
-                NoteActionsSheet(noteId: target.value, onOpenNote: { environment.router.push(.note(id: $0)) })
+                NoteActionsSheet(
+                    noteId: target.value, onOpenNote: { environment.router.push(.note(id: $0)) },
+                    // Nothing is open to put a caret in, so a heading tapped from here opens the
+                    // note — at the top, which is where opening a note lands anyway.
+                    onJumpTo: { _ in environment.router.push(.note(id: target.value)) })
             }
             .sheet(item: Binding(get: { previewTargetId.map(NoteId.init) }, set: { previewTargetId = $0?.value })) {
                 target in

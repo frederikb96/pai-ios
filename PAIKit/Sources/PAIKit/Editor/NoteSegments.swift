@@ -203,16 +203,31 @@ public enum NoteSegmentation {
         return body.dropFirst(run.count).allSatisfy { $0 == " " || $0 == "\n" || $0 == "\r" || $0 == "\t" }
     }
 
+    /// Whether a line opens with a `|`, allowing the same three spaces of indentation every other
+    /// block construct here allows.
+    ///
+    /// Every part of table detection goes through this, and the strictness is the point. GFM does
+    /// permit a table whose rows carry no outer pipes, but reading one costs far more than it
+    /// buys: a paragraph mentioning `a | b` sitting above a `---` matches a pipeless header and a
+    /// pipeless delimiter exactly, and the paragraph then stops wrapping and becomes a sideways
+    /// scroll box. Missing an outer-pipe-less table costs a table that wraps like prose — in a
+    /// *source* editor, the same characters either way.
+    static func beginsWithTablePipe(_ line: String) -> Bool {
+        let body = line.drop { $0 == " " }
+        guard line.count - body.count <= 3 else { return false }
+        return body.first == "|"
+    }
+
     static func isTableHeader(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.contains("|") && !trimmed.isEmpty
+        beginsWithTablePipe(line)
     }
 
     /// The `| --- | :-: |` row. GFM requires it immediately under the header, which is what makes
     /// a table detectable from two lines rather than from the whole paragraph.
     static func isTableDelimiter(_ line: String) -> Bool {
+        guard beginsWithTablePipe(line) else { return false }
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.contains("-"), !trimmed.isEmpty else { return false }
+        guard trimmed.contains("-") else { return false }
         guard trimmed.allSatisfy({ $0 == "|" || $0 == "-" || $0 == ":" || $0 == " " }) else { return false }
         let cells = trimmed.split(separator: "|", omittingEmptySubsequences: true)
         guard !cells.isEmpty else { return false }
@@ -225,7 +240,6 @@ public enum NoteSegmentation {
     }
 
     static func isTableRow(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !trimmed.isEmpty && trimmed.contains("|")
+        beginsWithTablePipe(line)
     }
 }

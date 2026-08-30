@@ -10,6 +10,11 @@ struct NoteActionsSheet: View {
     /// the app's own navigation stack, which needs this sheet dismissed first or the note would
     /// open underneath it.
     let onOpenNote: (String) -> Void
+    /// Where a heading or a search hit inside the tools panel should put the caret — a Character
+    /// offset into this note's body. Reached from the note list as well as from the editor, and
+    /// there the only sensible landing is the note itself, so a caller with no editor open passes
+    /// something that opens it.
+    let onJumpTo: (Int) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @Environment(NotesStore.self) private var notes
@@ -84,6 +89,10 @@ struct NoteActionsSheet: View {
                 onOpenNote: { id in
                     dismiss()
                     onOpenNote(id)
+                },
+                onJumpTo: { offset in
+                    dismiss()
+                    onJumpTo(offset)
                 })
         }
     }

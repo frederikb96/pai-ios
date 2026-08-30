@@ -10,6 +10,8 @@ import SwiftUI
 struct NoteToolsPanel: View {
     let noteId: String
     let onOpenNote: (String) -> Void
+    /// A Character offset into the note body the editor should put the caret at.
+    let onJumpTo: (Int) -> Void
 
     @Environment(NotesStore.self) private var notes
     @Environment(ToastCenter.self) private var toasts
@@ -93,9 +95,12 @@ struct NoteToolsPanel: View {
     private var content: some View {
         switch tab {
         case .outline:
-            NoteOutlineTab(body: notes.detail(for: noteId)?.body ?? "", onOpenNote: { onOpenNote(noteId) })
+            // The body as it stands on screen, not the last one saved. They differ for as long as
+            // the autosave debounce runs, and an outline that is one paragraph behind sends every
+            // jump below it to the wrong place.
+            NoteOutlineTab(body: notes.body(for: noteId) ?? "", onJumpTo: onJumpTo)
         case .search:
-            NoteInNoteSearchTab(body: notes.detail(for: noteId)?.body ?? "", onOpenNote: { onOpenNote(noteId) })
+            NoteInNoteSearchTab(body: notes.body(for: noteId) ?? "", onJumpTo: onJumpTo)
         case .backlinks:
             NoteBacklinksTab(
                 noteId: noteId, error: notes.linkGraphErrors[noteId], graph: notes.linkGraphs[noteId],
@@ -125,11 +130,11 @@ struct NoteToolsPanel: View {
 
 private struct NoteOutlineTab: View {
     let noteBody: String
-    let onOpenNote: () -> Void
+    let onJumpTo: (Int) -> Void
 
-    init(body: String, onOpenNote: @escaping () -> Void) {
+    init(body: String, onJumpTo: @escaping (Int) -> Void) {
         self.noteBody = body
-        self.onOpenNote = onOpenNote
+        self.onJumpTo = onJumpTo
     }
 
     var body: some View {
@@ -139,7 +144,9 @@ private struct NoteOutlineTab: View {
                 Text("No headings in this note.").foregroundStyle(PaiPalette.Semantic.textMuted)
             } else {
                 ForEach(entries) { entry in
-                    Button(action: onOpenNote) {
+                    Button {
+                        onJumpTo(entry.offset)
+                    } label: {
                         Text(entry.text)
                             .padding(.leading, CGFloat(entry.level - 1) * 12)
                             .foregroundStyle(PaiPalette.Semantic.textPrimary)
@@ -155,12 +162,12 @@ private struct NoteOutlineTab: View {
 
 private struct NoteInNoteSearchTab: View {
     let noteBody: String
-    let onOpenNote: () -> Void
+    let onJumpTo: (Int) -> Void
     @State private var query = ""
 
-    init(body: String, onOpenNote: @escaping () -> Void) {
+    init(body: String, onJumpTo: @escaping (Int) -> Void) {
         self.noteBody = body
-        self.onOpenNote = onOpenNote
+        self.onJumpTo = onJumpTo
     }
 
     var body: some View {
@@ -177,7 +184,9 @@ private struct NoteInNoteSearchTab: View {
                     .padding(.horizontal, 8)
             }
             List(occurrences) { occ in
-                Button(action: onOpenNote) {
+                Button {
+                    onJumpTo(occ.offset)
+                } label: {
                     Text(occ.context)
                         .lineLimit(2)
                         .foregroundStyle(PaiPalette.Semantic.textPrimary)
@@ -344,7 +353,16 @@ private struct NoteInfoTab: View {
                         axis: .vertical
                     )
                     .lineLimit(2...5)
-                    .onChange(of: summary) { scheduleSave() }
+                    // Compared against what the note already holds rather than fired on any
+                    // change: this field is filled in from the note when the tab appears, and
+                    // that assignment is a change like any other. Left unguarded, merely opening
+                    // this tab writes the summary back — stamping the note as edited from this
+                    // app, moving it to the top of a list sorted by modification time, for a
+                    // value nobody touched.
+                    .onChange(of: summary) { _, edited in
+                        guard edited != (notes.detail(for: noteId)?.summary ?? "") else { return }
+                        scheduleSave()
+                    }
                 }
                 Section {
                     LabeledContent("Created", value: formatted(note.createdAtMs))

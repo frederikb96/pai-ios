@@ -14,6 +14,10 @@ struct NoteEditorScreen: View {
     @State private var isPreviewing = false
     @State private var isShowingTools = false
     @State private var isShowingActions = false
+    /// Where the tools panel last asked the editor to go. Tokenised so tapping the same heading
+    /// twice is two requests rather than one that appears unchanged.
+    @State private var jump: NoteJumpRequest?
+    @State private var jumpToken = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,11 +42,15 @@ struct NoteEditorScreen: View {
         }
         .sheet(isPresented: $isShowingTools) {
             NavigationStack {
-                NoteToolsPanel(noteId: noteID, onOpenNote: { openNote($0) })
+                NoteToolsPanel(
+                    noteId: noteID, onOpenNote: { openNote($0) },
+                    onJumpTo: { characterOffset in jumpToEditor(characterOffset) })
             }
         }
         .sheet(isPresented: $isShowingActions) {
-            NoteActionsSheet(noteId: noteID, onOpenNote: { openNote($0) })
+            NoteActionsSheet(
+                noteId: noteID, onOpenNote: { openNote($0) },
+                onJumpTo: { jumpToEditor($0) })
         }
     }
 
@@ -54,7 +62,9 @@ struct NoteEditorScreen: View {
                     body: body, nameToId: buildNameToId(notes.notes),
                     containerId: notes.detail(for: noteID)?.containerId)
             } else {
-                NoteEditorSurface(text: body, onChange: { notes.edit(id: noteID, body: $0) })
+                NoteEditorSurface(
+                    text: body, revision: notes.externalRevision(for: noteID), jump: jump,
+                    onChange: { notes.edit(id: noteID, body: $0) })
             }
         } else {
             ProgressView()
@@ -102,6 +112,18 @@ struct NoteEditorScreen: View {
     private var title: String {
         let name = notes.detail(for: noteID)?.name ?? notes.summary(for: noteID)?.name ?? ""
         return name.isEmpty ? "Untitled" : name
+    }
+
+    /// Put the caret at an offset the tools panel named — an outline heading, a search hit.
+    ///
+    /// Leaves preview mode first, because the panel's whole purpose is to get somewhere in the
+    /// text and a jump landing behind a rendered page is a jump nobody can see.
+    private func jumpToEditor(_ characterOffset: Int) {
+        isShowingTools = false
+        isShowingActions = false
+        isPreviewing = false
+        jumpToken += 1
+        jump = NoteJumpRequest(token: jumpToken, characterOffset: characterOffset)
     }
 
     /// Pushed rather than replaced: following a link from inside a note is navigation within the

@@ -146,8 +146,8 @@ final class AppEnvironment {
             drafts: draftStore,
             me: MeStore(api: client),
             toasts: ToastCenter(),
-            push: PushRegistrationStore(storage: defaults) { token in
-                try await client.registerDevice(token: token).token
+            push: PushRegistrationStore(storage: defaults) { token, mutedChannels in
+                try await client.registerDevice(token: token, mutedChannels: mutedChannels)
             },
             notes: NotesStore(api: client),
             voice: VoiceRecorderController(

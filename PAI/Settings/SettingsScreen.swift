@@ -76,6 +76,17 @@ private struct NotificationsSection: View {
                 case .authorized:
                     LabeledContent(
                         "Notifications", value: push.registration.registeredToken == nil ? "Not yet registered" : "On")
+                    ForEach(PushChannel.allCases, id: \.self) { channel in
+                        Toggle(isOn: channelBinding(push, channel)) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(channel.title)
+                                Text(channel.explanation)
+                                    .font(PaiTypography.caption.font)
+                                    .foregroundStyle(PaiPalette.Semantic.textMuted)
+                            }
+                        }
+                        .accessibilityIdentifier("push-channel-\(channel.rawValue)")
+                    }
                 case .denied:
                     LabeledContent("Notifications", value: "Off")
                 case .failed:
@@ -87,6 +98,15 @@ private struct NotificationsSection: View {
         } footer: {
             Text(footer)
         }
+    }
+
+    /// The toggle reads "receive this", the store holds "muted" — the two are opposites, and this
+    /// is the only place they meet. See ``PushChannel`` for why what is stored is the mute.
+    private func channelBinding(_ push: PushRegistrationStore, _ channel: PushChannel) -> Binding<Bool> {
+        Binding(
+            get: { !push.registration.isMuted(channel) },
+            set: { wanted in Task { await push.setMuted(!wanted, for: channel) } }
+        )
     }
 
     private var footer: String {
