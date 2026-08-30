@@ -116,6 +116,67 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         XCTAssertEqual(actual, 32)
     }
 
+    /// The companion to the collapsed case above: an *expanded* card whose body happens to be
+    /// empty (a system row with nothing to report) still has `CardChrome` padding its content —
+    /// the padding wraps whatever `content()` it was handed whenever `isExpanded` is true, even
+    /// when that content draws nothing. `card.blocks.isEmpty` is true in both the collapsed and
+    /// this expanded-but-empty case, so a formula that branched on it instead of on whether the
+    /// card is actually expanded would return 32 here too, not 44.
+    func testAnExpandedSystemCardWithAnEmptyBodyStillReservesTheContentPadding() {
+        let msg = message(type: .system, timestamp: nil)
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        let actual = TranscriptRowLayout.height(
+            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
+            metrics: metrics)
+
+        XCTAssertEqual(actual, 32 + 12)
+    }
+
+    // MARK: - User bubble attachments
+
+    /// `UserBubbleView`'s `VStack` puts a gap between every pair of its children — here, two
+    /// attachment chips and nothing else, since the text is empty and draws no bubble at all. The
+    /// old formula added the text bubble's own padding unconditionally and no inter-chip gap;
+    /// this is exact only if both halves of that mistake are fixed together.
+    func testAttachmentsWithNoTextAddOnlyChipHeightsAndTheGapsBetweenThem() {
+        let msg = message(
+            type: .user, content: ".claude/attachments/a/one.png .claude/attachments/a/two.png", timestamp: nil)
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        let actual = TranscriptRowLayout.height(
+            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
+            metrics: metrics)
+
+        // Two 22pt chips, one 6pt gap between them — no text bubble, so no bubble padding either.
+        XCTAssertEqual(actual, 2 * 22 + 6)
+    }
+
+    /// With both text and attachments present, the gap applies between the text bubble and the
+    /// first chip too, not only between chips — three children, two gaps.
+    func testTextAndAttachmentsTogetherGapBetweenTheBubbleAndEveryChipToo() {
+        let msg = message(
+            type: .user,
+            content: "\(bubbleSensitiveText)\n\n.claude/attachments/a/one.png .claude/attachments/a/two.png",
+            timestamp: nil)
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        let actual = TranscriptRowLayout.height(
+            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
+            metrics: metrics)
+
+        let content = measuredContentHeight(
+            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 48 - 28,
+            measurer: measurer, cache: cache)
+        // 10: the text bubble's own vertical padding. 44: two 22pt chips. 12: two 6pt gaps (bubble
+        // → first chip, first chip → second).
+        let expected = content + 10 + 44 + 12
+        XCTAssertEqual(actual, expected)
+    }
+
     /// 20 is `CardChrome`'s own horizontal padding (`.padding(.horizontal, 10)`) doubled.
     func testAnExpandedToolCallAddsHeaderContentAndContentPadding() {
         let calls = [ToolCall(id: "1", name: "Bash", input: ["command": .string(cardSensitiveText)])]

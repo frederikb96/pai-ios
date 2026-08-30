@@ -93,6 +93,21 @@ struct PAIApp: App {
                 return .encoding(payload)
             }
 
+            // Answers "does the measured height agree with what the view actually draws" without
+            // a screenshot — the property nothing checked before a nested list proved it false.
+            // `measuredHeight` goes through the exact composer and cache
+            // `TranscriptCollectionViewController` calls; `renderedHeight` hosts the exact view a
+            // real cell draws, at the same width, and reads back what it actually laid out to.
+            router.register("POST", "/markdown/measure") { request in
+                let source = String(decoding: request.body, as: UTF8.self)
+                let width = request.query["width"].flatMap(Double.init) ?? 360
+                return DispatchQueue.main.sync {
+                    MainActor.assumeIsolated {
+                        DebugMarkdownMeasurement.compare(source: source, width: width)
+                    }
+                }
+            }
+
             router.register("GET", "/logs") { request in
                 let level = request.query["level"].flatMap(DebugLogBuffer.Level.init(rawValue:)) ?? .debug
                 let limit = request.query["limit"].flatMap(Int.init) ?? 100
@@ -119,7 +134,7 @@ struct PAIApp: App {
 
         private nonisolated(unsafe) static var routeNames: [String] = []
 
-        private static func kind(of block: MarkdownBlock) -> String {
+        fileprivate static func kind(of block: MarkdownBlock) -> String {
             switch block {
             case .paragraph: "paragraph"
             case .heading: "heading"
@@ -130,6 +145,49 @@ struct PAIApp: App {
             case .thematicBreak: "thematicBreak"
             case .htmlBlock: "htmlBlock"
             }
+        }
+    }
+
+    /// Backs `POST /markdown/measure`. Kept as its own type rather than inline in the route
+    /// closure so the two numbers it compares are computed the same way every other caller of
+    /// each path computes them — nothing here is a shortcut invented for this endpoint.
+    enum DebugMarkdownMeasurement {
+        struct Report: Encodable {
+            let width: Double
+            let blockCount: Int
+            let kinds: [String]
+            let measuredHeight: Double
+            let renderedHeight: Double
+            /// `measuredHeight - renderedHeight`. Zero is the only value that means the row this
+            /// content sits in is neither too short (content clips or overdraws) nor wastefully
+            /// tall — see the `scrolling` skill's central rule.
+            let delta: Double
+        }
+
+        /// SwiftUI layout and `UIHostingController` are main-thread-only; the debug bridge calls
+        /// this from its own listener queue via `DispatchQueue.main.sync`, so by the time this
+        /// runs the calling thread already *is* the main thread — `assumeIsolated` documents that
+        /// rather than hopping again.
+        @MainActor
+        static func compare(source: String, width: Double) -> DebugRouter.Response {
+            let blocks = MarkdownParser.parse(source)
+            let environment = MeasurementEnvironment(
+                sizeCategoryToken: UITraitCollection.current.preferredContentSizeCategory.rawValue)
+            let metrics = MessageLayoutMetrics(blockSpacing: TranscriptContentMetrics.blockSpacing)
+
+            let measuredHeight = MessageContentLayoutComposer.layout(
+                of: blocks, width: width, environment: environment, metrics: metrics,
+                measurer: TextKitBlockMeasurer(), cache: BlockHeightCache()
+            ).totalHeight
+
+            let hosting = UIHostingController(rootView: MarkdownContentView(blocks: blocks).frame(width: width))
+            let renderedHeight = hosting.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude)).height
+
+            return .encoding(
+                Report(
+                    width: width, blockCount: blocks.count, kinds: blocks.map(DebugRoutes.kind(of:)),
+                    measuredHeight: measuredHeight, renderedHeight: Double(renderedHeight),
+                    delta: measuredHeight - Double(renderedHeight)))
         }
     }
 

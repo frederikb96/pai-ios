@@ -2,12 +2,14 @@ import Foundation
 import PAIKit
 import SwiftUI
 
-/// Design-token decisions this file owns: spacing between cards belongs with the card chrome
-/// here, not with the measurement machinery in `PAIKit`.
-/// Referenced from both here (the rendered spacing) and `TranscriptCollectionViewController` (the
-/// measured spacing) so the two can never silently disagree about what a block of space is.
+/// Re-exports ``TranscriptRowMetrics/markdownBlockSpacing`` under the name both this file (the
+/// rendered spacing) and `TranscriptCollectionViewController` (the measured spacing, threaded
+/// through `MessageLayoutMetrics`) already call it. The value itself lives in `PAIKit` rather
+/// than here now, because ``NestedBlockLayout`` needs it too, for the identical gap between a
+/// list item's or block quote's own nested blocks — a design-token decision this file used to own
+/// alone, until measuring it correctly required reading it from the same place twice.
 enum TranscriptContentMetrics {
-    static let blockSpacing: Double = 8
+    static let blockSpacing = TranscriptRowMetrics.markdownBlockSpacing
 }
 
 /// One occurrence to paint inside a block's own text, in that block's UTF-16 coordinates — the
@@ -358,7 +360,7 @@ struct UserBubbleView: View {
     var highlights: [TranscriptHighlightSpan] = []
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 6) {
+        VStack(alignment: .trailing, spacing: TranscriptRowMetrics.attachmentChipSpacing) {
             if !text.isEmpty {
                 TranscriptTextHighlighting.plainText(text, font: PaiTypography.body.font, highlights: highlights)
                     .foregroundStyle(.white)
@@ -468,9 +470,10 @@ struct CommandCardView: View {
     }
 }
 
-/// Renders parsed markdown blocks. Recurses for `.blockQuote`/`.list`, whose nested blocks are
-/// exactly the ones `TextKitBlockMeasurer` measures by joining with a single `"\n"` rather than
-/// real paragraph spacing — see that type's doc comment for the approximation this inherits.
+/// Renders parsed markdown blocks. Recurses for `.blockQuote`/`.list`: each nested
+/// `MarkdownContentView` narrows by exactly the inset its own `HStack` (a block quote's rule, a
+/// list item's marker) reserves, and `TextKitBlockMeasurer` mirrors that same narrowing through
+/// `NestedBlockLayout` rather than measuring the nested content flattened at the outer width.
 ///
 /// `highlights` is keyed by index into `blocks` — meaningful only at the top level a card's own
 /// plan indexes against (see `TranscriptSearchIndex`'s doc comment). A recursive call for a

@@ -23,6 +23,16 @@ public enum TranscriptRowMetrics {
     public static let bubbleVerticalPadding: Double = 10
     /// One attachment chip under a user bubble.
     public static let attachmentChipHeight: Double = 22
+    /// The gap between a user bubble's own text and its first attachment chip, and between
+    /// chips themselves — `UserBubbleView`'s own `VStack(spacing: attachmentChipSpacing)`.
+    public static let attachmentChipSpacing: Double = 6
+    /// The gap between sibling blocks in one markdown content stack — `MarkdownContentView`'s
+    /// own `VStack(spacing: markdownBlockSpacing)`, which draws a card's own top-level blocks and
+    /// a list item's or block quote's nested ones identically. `TranscriptCards.swift`'s
+    /// `TranscriptContentMetrics.blockSpacing` re-exports this exact value rather than declaring
+    /// its own, since a package in `PAIKit/Layout/` cannot see the app target that actually draws
+    /// it, and ``NestedBlockLayout`` needs this same number.
+    public static let markdownBlockSpacing: Double = 8
     /// The row's trailing timestamp line.
     public static let timestampHeight: Double = 16
 
@@ -223,9 +233,17 @@ public enum TranscriptRowLayout {
 
         switch card.kind {
         case .userBubble(let text, let attachmentPaths):
-            let textHeight = text.isEmpty ? 0 : content
+            // `UserBubbleView`'s `VStack` puts its own text bubble first, one chip per
+            // attachment after it — the text bubble's padding only exists when the text bubble
+            // itself is drawn, and the inter-child spacing applies `childCount - 1` times
+            // regardless of which children are text or chips.
+            let hasText = !text.isEmpty
+            let textHeight = hasText ? content + TranscriptRowMetrics.bubbleVerticalPadding : 0
             let chips = Double(attachmentPaths.count) * TranscriptRowMetrics.attachmentChipHeight
-            return textHeight + chips + TranscriptRowMetrics.bubbleVerticalPadding
+            let childCount = (hasText ? 1 : 0) + attachmentPaths.count
+            let gaps =
+                childCount > 1 ? Double(childCount - 1) * TranscriptRowMetrics.attachmentChipSpacing : 0
+            return textHeight + chips + gaps
 
         case .relayedBubble(let text, _, _):
             return (text.isEmpty ? 0 : content) + labelChrome + TranscriptRowMetrics.bubbleVerticalPadding
@@ -241,9 +259,13 @@ public enum TranscriptRowLayout {
             return content + labelChrome + TranscriptRowMetrics.bubbleVerticalPadding
 
         case .thinking, .toolCall, .toolResult, .agentMessage, .system, .legacyCommandOutput:
-            let hasContent = !card.blocks.isEmpty
+            // `CardChrome` pads whatever `content()` it was handed whenever it is expanded —
+            // even when that content is an empty `ToolBodyText` and draws nothing, the padding
+            // around it is still there. `card.blocks.isEmpty` cannot stand in for "collapsed":
+            // it is also true for an *expanded* card whose body happens to be empty (a hook with
+            // nothing to report, a tool result with no text), which still gets the padding.
             return TranscriptRowMetrics.cardHeaderHeight
-                + (hasContent ? content + TranscriptRowMetrics.cardContentVerticalPadding : 0)
+                + (card.isExpanded ? content + TranscriptRowMetrics.cardContentVerticalPadding : 0)
         }
     }
 }
