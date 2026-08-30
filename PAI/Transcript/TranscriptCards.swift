@@ -14,6 +14,27 @@ enum TranscriptContentMetrics {
 /// shape every rendering function below takes its highlights in.
 typealias TranscriptHighlightSpan = (range: NSRange, isCurrent: Bool)
 
+extension Shape where Self == UnevenRoundedRectangle {
+    /// Freddy's own bubble shape — a native uneven rectangle rather than a hand-drawn tail, one
+    /// corner tucked in on the edge the bubble is addressed from, matching the web's `rounded-2xl
+    /// rounded-br-md`. Shared by every right-aligned bubble in this file (his own prompt, a
+    /// relayed one, a command with arguments): one definition, so the three can never pick
+    /// slightly different radii.
+    static var ownBubbleTail: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: 16, bottomLeadingRadius: 16, bottomTrailingRadius: 6, topTrailingRadius: 16)
+    }
+}
+
+/// The web pairs a raw-scale colour with a specific step per appearance at every call site
+/// (`bg-primary-500 dark:bg-primary-600`) rather than baking the pairing into one asset — every
+/// step in ``PaiPalette``'s raw scale is a fixed swatch that never varies by appearance on its
+/// own (see that file's own doc comment). This mirrors the web's pairing for a bubble's own fill,
+/// the one place in this file that needs it.
+private func bubbleFill(light: Color, dark: Color, colorScheme: ColorScheme) -> Color {
+    colorScheme == .dark ? dark : light
+}
+
 /// One message's whole row: every card `TranscriptRowPlan` produced for it, in order, then a
 /// trailing timestamp — the exact same decomposition `TranscriptRowLayout` measured, so a row
 /// never renders taller or shorter than the height its cell was given.
@@ -190,9 +211,22 @@ struct TranscriptCardKindView: View {
     }
 }
 
+/// A shared icon scale for a card's own chrome glyphs — the chevron and the tool/system icon read
+/// at the same size, matching the web's uniform 16px (`w-4 h-4`) rather than the mix of an
+/// unmodified system default and a smaller caption size.
+private let cardChromeIconFont = Font.system(size: 13, weight: .medium)
+
 /// The collapsible-card chrome shared by tool calls/results, thinking, system lines, agent
 /// messages and legacy command output — chevron, icon, label, an optional status dot, and the
 /// content only while expanded.
+///
+/// Outlined rather than filled — a border on the page ground, matching the web's own
+/// `border border-surface-200 dark:border-surface-700` (no background class at all). Six
+/// different kinds of card filling the same solid slab is what made the transcript unreadable as
+/// "which of these is the answer"; an outline on a near-black page reads as air between rows
+/// instead of another wall, and it is what the reply in ``AssistantBubbleView`` is deliberately
+/// contrasted against. The border is an `.overlay`, not a second background, so it changes
+/// nothing about the box's own size.
 ///
 /// Every constant here is ``TranscriptRowMetrics``, not a local number: this view's own height
 /// and the height ``TranscriptRowLayout`` computed for the row it sits in must never drift apart,
@@ -212,13 +246,14 @@ struct CardChrome<Content: View>: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.caption2)
+                        .font(cardChromeIconFont)
                         .foregroundStyle(PaiPalette.Semantic.textFaint)
                     Image(systemName: icon)
+                        .font(cardChromeIconFont)
                         .foregroundStyle(PaiPalette.Semantic.textMuted)
                     Text(label)
-                        .font(PaiTypography.bodyEmphasized.font)
-                        .foregroundStyle(PaiPalette.Semantic.textPrimary)
+                        .font(PaiTypography.captionEmphasized.font)
+                        .foregroundStyle(PaiPalette.Semantic.textMuted)
                         .lineLimit(1)
                     Spacer()
                     if let statusColor {
@@ -237,14 +272,16 @@ struct CardChrome<Content: View>: View {
             }
         }
         .padding(.horizontal, TranscriptRowMetrics.cardHorizontalPadding)
-        .background(PaiPalette.Semantic.raisedSurface, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(PaiPalette.Semantic.borderStrong, lineWidth: 1))
     }
 }
 
 /// A card body wrapped as a single `.codeBlock` (see `TranscriptRowPlan`'s doc comment on why) —
-/// rendered monospaced on a dark ground, matching the web's `<pre>`. `colorHint` recolours whole
-/// lines by their literal prefix (`$ `, `- `, `+ `) without touching the text itself, so a
-/// measured height built from the same string is never invalidated by how it is painted.
+/// rendered monospaced on a raised ground, matching the web's `<pre>` (`bg-surface-100
+/// dark:bg-surface-800`, the same pairing ``PaiPalette/Semantic/raisedSurface`` already carries —
+/// a fixed `surface900` read as a black box in light mode). `colorHint` recolours whole lines by
+/// their literal prefix (`$ `, `- `, `+ `) without touching the text itself, so a measured height
+/// built from the same string is never invalidated by how it is painted.
 struct ToolBodyText: View {
     let blocks: [MarkdownBlock]
     var colorHint: ToolBodyColorHint?
@@ -257,7 +294,7 @@ struct ToolBodyText: View {
                     .textSelection(.enabled)
                     .padding(TranscriptRowMetrics.codeBlockPadding)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(PaiPalette.surface900, in: RoundedRectangle(cornerRadius: 6))
+                    .background(PaiPalette.Semantic.raisedSurface, in: RoundedRectangle(cornerRadius: 6))
             } else {
                 MarkdownContentView(blocks: [block], highlights: [0: highlightsByBlockIndex[index] ?? []])
             }
@@ -310,8 +347,12 @@ enum ToolBodyColorHint {
     }
 }
 
-/// A plain prompt Freddy (or a device on his behalf) typed — right-aligned, filled, plain text.
+/// A plain prompt Freddy (or a device on his behalf) typed — right-aligned, filled, plain text,
+/// tucked into ``ownBubbleTail`` with a fixed leading gutter (``TranscriptRowMetrics/bubbleLeadingGutter``)
+/// so a long message stops short of the row's own left edge instead of going flush across it —
+/// the gutter is what tells the eye whose message it is.
 struct UserBubbleView: View {
+    @Environment(\.colorScheme) private var colorScheme
     let text: String
     let attachmentPaths: [String]
     var highlights: [TranscriptHighlightSpan] = []
@@ -323,7 +364,9 @@ struct UserBubbleView: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding)
                     .padding(.vertical, TranscriptRowMetrics.bubbleVerticalPadding / 2)
-                    .background(PaiPalette.primary500, in: RoundedRectangle(cornerRadius: 16))
+                    .background(
+                        bubbleFill(light: PaiPalette.primary500, dark: PaiPalette.primary600, colorScheme: colorScheme),
+                        in: .ownBubbleTail)
             }
             ForEach(attachmentPaths, id: \.self) { path in
                 Label((path as NSString).lastPathComponent, systemImage: "paperclip")
@@ -333,14 +376,15 @@ struct UserBubbleView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.leading, TranscriptRowMetrics.bubbleLeadingGutter)
     }
 }
 
 /// A genuine prompt relayed from another session — drawn like Freddy's own bubble but a different
-/// colour, so a reader can tell it was not him. `PaiPalette` has no dedicated "relay" swatch (the
-/// web's is a literal, untokenised hex outside the 21 tracked custom properties), so this uses the
-/// closest named green rather than adding an asset-catalog colour set for a single use.
+/// colour (``PaiPalette/relay500``/``relay600``, mirroring `pai-cloud`'s `--color-relay-500/600`
+/// exactly, not the closest named green), so a reader can tell it was not him.
 struct RelayedBubbleView: View {
+    @Environment(\.colorScheme) private var colorScheme
     let text: String
     let sender: String
     let group: String?
@@ -359,22 +403,29 @@ struct RelayedBubbleView: View {
         }
         .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding)
         .padding(.vertical, TranscriptRowMetrics.bubbleVerticalPadding / 2)
-        .background(PaiPalette.green600, in: RoundedRectangle(cornerRadius: 16))
+        .background(
+            bubbleFill(light: PaiPalette.relay500, dark: PaiPalette.relay600, colorScheme: colorScheme),
+            in: .ownBubbleTail
+        )
         .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.leading, TranscriptRowMetrics.bubbleLeadingGutter)
     }
 }
 
 /// An assistant's own reply — left-aligned, rendered as real markdown (unlike every other card,
-/// which shows plain or lightly-coloured monospace).
+/// which shows plain or lightly-coloured monospace), and deliberately uncontained: no fill, no
+/// corner radius, sitting directly on the page at reading width. Every other card in this file is
+/// chrome around measured content; this is the one thing a reader came to read, so it is the one
+/// card that must not look like the rest of them. `TranscriptRowLayout`'s own `assistantBubble`
+/// case mirrors this exactly — no vertical padding, `cardHorizontalPadding` for the horizontal
+/// inset, since there is no bubble padding left to measure.
 struct AssistantBubbleView: View {
     let blocks: [MarkdownBlock]
     var highlights: [Int: [TranscriptHighlightSpan]] = [:]
 
     var body: some View {
         MarkdownContentView(blocks: blocks, highlights: highlights)
-            .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding)
-            .padding(.vertical, TranscriptRowMetrics.bubbleVerticalPadding / 2)
-            .background(PaiPalette.Semantic.raisedSurface, in: RoundedRectangle(cornerRadius: 16))
+            .padding(.horizontal, TranscriptRowMetrics.cardHorizontalPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -382,6 +433,7 @@ struct AssistantBubbleView: View {
 /// A slash command Freddy typed. With arguments, they render unconditionally in his own bubble —
 /// a reader must never click to see their own words. With none, a compact, non-interactive line.
 struct CommandCardView: View {
+    @Environment(\.colorScheme) private var colorScheme
     let name: String
     let args: String?
     var highlights: [TranscriptHighlightSpan] = []
@@ -398,8 +450,12 @@ struct CommandCardView: View {
             }
             .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding)
             .padding(.vertical, TranscriptRowMetrics.bubbleVerticalPadding / 2)
-            .background(PaiPalette.primary500, in: RoundedRectangle(cornerRadius: 16))
+            .background(
+                bubbleFill(light: PaiPalette.primary500, dark: PaiPalette.primary600, colorScheme: colorScheme),
+                in: .ownBubbleTail
+            )
             .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.leading, TranscriptRowMetrics.bubbleLeadingGutter)
         } else {
             HStack(spacing: 6) {
                 Image(systemName: "chevron.left.forwardslash.chevron.right")
@@ -453,7 +509,7 @@ struct MarkdownContentView: View {
             .textSelection(.enabled)
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(PaiPalette.surface900, in: RoundedRectangle(cornerRadius: 6))
+            .background(PaiPalette.Semantic.raisedSurface, in: RoundedRectangle(cornerRadius: 6))
 
         case .blockQuote(let nested):
             HStack(spacing: TranscriptRowMetrics.blockQuoteSpacing) {
