@@ -129,6 +129,7 @@ extension PaiFixtures {
           "initial_message": "Build the canned fixture corpus for the screenshot run.",
           "pending_message": null,
           "session_tokens": 84213,
+          "activity_counts": { "agents": 2, "tasks": 1 },
           "claude_session_id": "20da6f97-8766-4c18-816f-75b5690aca4a",
           "idle_timeout_minutes": null,
           "effective_idle_timeout_minutes": 480,

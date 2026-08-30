@@ -16,6 +16,10 @@ struct SessionDetailView: View {
     @State private var searchState = TranscriptSearchState()
     @State private var isPresentingActionsSheet = false
     @State private var usage: Usage?
+    /// Whether this screen has ever seen its session exist. Until it has, a `nil` lookup means
+    /// "not fetched yet" — a deep link or a restored route can name a session outside every page
+    /// the list has loaded — and leaving on that would close the screen before it opened.
+    @State private var hasResolvedSession = false
 
     let sessionID: String
 
@@ -82,6 +86,20 @@ struct SessionDetailView: View {
             // A route restored after relaunch, or a deep link, can name a session outside every
             // page the list has loaded — this is what makes it resolvable regardless.
             await sessions.ensureSessionLoaded(id: sessionID)
+        }
+        // The session this screen is *about* stopped existing — deleted from the actions sheet
+        // right here, or from another client. Without this the transcript and composer stay live
+        // and typeable over a session that is gone: the header quietly empties, the title falls
+        // back to "Session", and nothing says why or offers a way out.
+        .onChange(of: currentSession == nil) { _, isGone in
+            guard hasResolvedSession, isGone else { return }
+            environment.router.dismissSession(id: sessionID)
+        }
+        .onChange(of: currentSession != nil) { _, exists in
+            if exists { hasResolvedSession = true }
+        }
+        .onAppear {
+            if currentSession != nil { hasResolvedSession = true }
         }
         // Routes the transcript's own live SSE `status` event into the session list the moment
         // it changes, so the list (and this header, which reads through the same store) reflect

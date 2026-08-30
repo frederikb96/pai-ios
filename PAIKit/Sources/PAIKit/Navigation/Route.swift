@@ -110,6 +110,21 @@ public final class Router {
         path.removeAll()
     }
 
+    /// Leave a session's screens entirely — its transcript and anything pushed on top of it,
+    /// such as its own terminal.
+    ///
+    /// Exists because a plain `pop()` is wrong for the case that needs this: a screen reacting to
+    /// its own session ceasing to exist, which can happen while the reader has navigated deeper.
+    /// Popping one route would close the terminal and leave the dead transcript underneath — a
+    /// screen about a session that is gone, still accepting input.
+    ///
+    /// Drops from the *first* matching route so a session opened twice in one path is left
+    /// nowhere, and does nothing at all when the path does not contain it.
+    public func dismissSession(id: String) {
+        guard let index = path.firstIndex(of: .session(id: id)) else { return }
+        path.removeSubrange(index...)
+    }
+
     /// Replace the whole path, for a deep link or a restored session.
     public func replace(with routes: [Route]) {
         path = routes

@@ -108,6 +108,28 @@ final class VoiceRecorderController {
     /// `@Observable` session from outside a SwiftUI view body.
     private var sessionWatcherTask: Task<Void, Never>?
 
+    /// When a buffer last arrived from the microphone, and the watch that acts on its absence.
+    ///
+    /// 🚨 An `AVAudioEngine` tap can stop delivering buffers while `engine.isRunning` still
+    /// reports `true`, so there is no state to inspect that would reveal it — the only symptom is
+    /// silence, and silence is also what a quiet room produces. That is the shape of a take that
+    /// dies the moment the app leaves the screen: nothing throws, nothing is notified, and the
+    /// recording simply ends mid-sentence with a plausible file on disk.
+    ///
+    /// `AVAudioEngineConfigurationChange` covers the documented cause and is handled directly.
+    /// This covers the rest, including whatever is not on that list, because the failure is
+    /// detectable without knowing its cause: audio was flowing, and now it is not.
+    private var lastChunkAt: Date?
+    private var captureWatchdogTask: Task<Void, Never>?
+    private var captureRestartAttempts = 0
+    /// Comfortably longer than the ~100ms cadence chunks actually arrive at, so a scheduling
+    /// hiccup or a busy main actor cannot be mistaken for a dead microphone.
+    private static let captureStallSeconds: TimeInterval = 4
+    /// One restart is a route change settling; a second failing the same way is not something
+    /// retrying will fix, and continuing to look live while recording nothing is the worst
+    /// outcome available.
+    private static let maxCaptureRestarts = 2
+
     /// `nonisolated(unsafe)` so `deinit` — which is nonisolated — can unregister it. Written
     /// once on the main actor during setup and read once at deallocation, when nothing else holds
     /// a reference, so there is no concurrent access for the isolation to protect.
@@ -206,6 +228,7 @@ final class VoiceRecorderController {
         do {
             try capture.start(targetSampleRate: transportRate)
             isCapturing = true
+            beginCaptureWatchdog()
             sessionWatcherTask?.cancel()
             sessionWatcherTask = Task { [weak self] in await self?.watchForSessionEndingOnItsOwn() }
             liveTextTask?.cancel()
@@ -302,6 +325,7 @@ final class VoiceRecorderController {
     private func handleSessionEndedOnItsOwn() async {
         capture.stop()
         isCapturing = false
+        endCaptureWatchdog()
         try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
         await persistRecording()
     }
@@ -324,6 +348,7 @@ final class VoiceRecorderController {
         guard isCapturing || voiceSession.state != .idle else { return "" }
         capture.stop()
         isCapturing = false
+        endCaptureWatchdog()
         await voiceSession.stop(reason: .user)
         try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
 
@@ -349,8 +374,19 @@ final class VoiceRecorderController {
 
     // MARK: - Audio session
 
+    /// `.playAndRecord` rather than `.record`, and active for the whole take — that pairing plus
+    /// the `audio` background mode is what keeps the microphone running once the app leaves the
+    /// screen. `.measurement` turns off the system's own gain and noise processing, which is
+    /// right when the audio is going to a transcriber rather than to a listener.
+    ///
+    /// `.overrideMutedMicrophoneInterruption` is the one that is not obvious: without it, the
+    /// system *interrupts the session* whenever the built-in microphone is muted by hardware,
+    /// which ends a take rather than producing silence in it. For a recorder that is expected to
+    /// run unattended in the user's pocket, silence is the far better failure.
     private func configureAudioSession() throws {
-        try audioSession.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .allowBluetooth])
+        try audioSession.setCategory(
+            .playAndRecord, mode: .measurement,
+            options: [.duckOthers, .allowBluetooth, .overrideMutedMicrophoneInterruption])
         try audioSession.setActive(true)
     }
 
@@ -383,6 +419,7 @@ final class VoiceRecorderController {
         guard isCapturing else { return }
         capture.stop()
         isCapturing = false
+        endCaptureWatchdog()
         voiceSession.pauseForInterruption()
     }
 
@@ -402,6 +439,7 @@ final class VoiceRecorderController {
             // the socket already agreed to receive.
             try capture.start(targetSampleRate: voiceSession.transportSampleRateHz)
             isCapturing = true
+            beginCaptureWatchdog()
             checkRawStreamStillMatchesHardwareRate()
             voiceSession.resumeAfterInterruption()
         } catch {
@@ -439,6 +477,9 @@ final class VoiceRecorderController {
     }
 
     private func wireCaptureCallbacks() {
+        capture.onConfigurationChange = { [weak self] in
+            Task { @MainActor [weak self] in await self?.restartCapture() }
+        }
         capture.onLevel = { [weak self] rms in
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -451,6 +492,7 @@ final class VoiceRecorderController {
         capture.onChunk = { [weak self] samples in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                self.lastChunkAt = Date()
                 // Mirrors what `VoiceRecordingSession.ingestAudioChunk` actually transmits when
                 // muted — the socket receives zeroes, so the saved "sent" recording should too,
                 // rather than silently disagreeing with what ElevenLabs was given.
@@ -471,6 +513,83 @@ final class VoiceRecorderController {
                 }
                 streamingRaw.append(pcm16le: samples)
             }
+        }
+    }
+
+    // MARK: - Capture watchdog
+
+    private func beginCaptureWatchdog() {
+        captureWatchdogTask?.cancel()
+        lastChunkAt = Date()
+        captureRestartAttempts = 0
+        captureWatchdogTask = Task { [weak self] in await self?.watchForSilentMicrophone() }
+    }
+
+    private func endCaptureWatchdog() {
+        captureWatchdogTask?.cancel()
+        captureWatchdogTask = nil
+        lastChunkAt = nil
+    }
+
+    /// Only ever acts while `isCapturing` — a take paused by an interruption is *meant* to be
+    /// delivering nothing, and treating that as a stall would fight the resume path for the
+    /// microphone.
+    private func watchForSilentMicrophone() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled, isCapturing, let last = lastChunkAt else { continue }
+            guard Date().timeIntervalSince(last) > Self.captureStallSeconds else { continue }
+            await recoverSilentMicrophone()
+        }
+    }
+
+    private func recoverSilentMicrophone() async {
+        guard captureRestartAttempts < Self.maxCaptureRestarts else {
+            // Out of attempts. Ending the take is what makes this recoverable: the audio captured
+            // so far is already on disk, and Freddy is told rather than discovering an hour later
+            // that a recording he believed was running captured nothing.
+            capture.stop()
+            isCapturing = false
+            endCaptureWatchdog()
+            await voiceSession.stop(reason: .error)
+            try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+            await persistRecording()
+            await VoiceInterruptionNotifier.notify(reason: .error)
+            return
+        }
+        captureRestartAttempts += 1
+        lastChunkAt = Date()
+        await restartCapture()
+    }
+
+    /// The engine stopped itself and invalidated its own graph — see
+    /// `MicrophoneCapture.onConfigurationChange`. Restarting is the only way back; the take, the
+    /// socket and everything transcribed so far are untouched by this and continue.
+    ///
+    /// Deliberately at the rate the take negotiated at the start rather than the hardware's rate
+    /// now: whatever changed the configuration may well have changed the input rate, and the
+    /// socket on the other end already agreed what it is receiving. Same rule as resuming after
+    /// an interruption.
+    ///
+    /// A restart that fails ends the take rather than leaving it looking live with a dead
+    /// microphone — the one outcome worse than stopping is appearing not to have.
+    private func restartCapture() async {
+        guard isCapturing else { return }
+        capture.stop()
+        do {
+            // `capture.start` re-reads the input node's own format, so the tap is reinstalled
+            // against whatever the hardware is now — which is the half of this that matters, and
+            // the half a restart at a remembered format would get wrong.
+            try capture.start(targetSampleRate: voiceSession.transportSampleRateHz)
+            lastChunkAt = Date()
+            checkRawStreamStillMatchesHardwareRate()
+        } catch {
+            isCapturing = false
+            endCaptureWatchdog()
+            await voiceSession.stop(reason: .error)
+            try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+            await persistRecording()
+            await VoiceInterruptionNotifier.notify(reason: .error)
         }
     }
 

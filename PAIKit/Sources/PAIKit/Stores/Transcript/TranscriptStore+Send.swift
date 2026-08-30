@@ -164,7 +164,11 @@ extension Message {
     /// lands and it is replaced by the real entry.
     ///
     /// Ids are negative because the server's never are, so a bubble can never collide with a real
-    /// row in the anchoring arithmetic that keys on row id.
+    /// row in the anchoring arithmetic that keys on row id. They are **row keys for one
+    /// measurement pass, not identities** — `index` is a position in the current bubble list, so
+    /// an earlier send confirming renumbers the ones behind it. That is why `RowDelta` has to
+    /// recognise a tail replacement rather than only a clean append: nothing here promises a
+    /// bubble keeps the same id from one pass to the next.
     public static func pendingBubble(sessionId: String, index: Int, text: String) -> Message {
         Message(
             id: -(index + 1), sessionId: sessionId, type: .user, subtype: nil, outboxId: nil, timestamp: nil,

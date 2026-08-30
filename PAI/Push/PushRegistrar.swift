@@ -22,6 +22,19 @@ final class PushRegistrar: NSObject, UIApplicationDelegate {
     /// same token on the next `registerForRemoteNotifications()`.
     static weak var store: PushRegistrationStore?
 
+    /// Re-asks APNs for this install's token when permission has already been granted, and does
+    /// nothing at all otherwise — it never shows a prompt, so it is safe on every launch.
+    ///
+    /// Separate from `requestAuthorizationIfNeeded` because that one is a *choice put to the
+    /// user* and belongs behind a deliberate tap, while this is bookkeeping that has to happen
+    /// whether or not anyone visits Settings. Also what sets `store`, so the delegate callbacks
+    /// below have somewhere to deliver to on a launch where nobody opens that screen.
+    static func registerForRemoteNotificationsIfAuthorized(store: PushRegistrationStore) async {
+        Self.store = store
+        guard store.registration.status == .authorized else { return }
+        UIApplication.shared.registerForRemoteNotifications()
+    }
+
     /// Asks for permission and, if granted, for a token.
     ///
     /// Safe to call more than once: the system prompt appears at most once per install, and the
