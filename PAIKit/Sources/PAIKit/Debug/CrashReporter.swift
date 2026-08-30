@@ -53,16 +53,23 @@ public struct CrashRecord: Codable, Sendable, Equatable, Identifiable {
         /// Call once, as early as possible in app startup — before anything that could itself
         /// crash during launch.
         public static func install() {
+            // `NSSetUncaughtExceptionHandler` takes a C function pointer, which cannot carry
+            // captured context — so the closure body must reference the type by name rather than
+            // reach for `Self` or an unqualified static, both of which capture.
             NSSetUncaughtExceptionHandler { exception in
-                let record = CrashRecord(
-                    name: exception.name.rawValue,
-                    reason: exception.reason,
-                    callStack: exception.callStackSymbols,
-                    capturedAt: Date()
-                )
-                guard let url = fileURL, let data = try? JSONEncoder().encode(record) else { return }
-                try? data.write(to: url, options: .atomic)
+                CrashReporter.write(exception)
             }
+        }
+
+        private static func write(_ exception: NSException) {
+            let record = CrashRecord(
+                name: exception.name.rawValue,
+                reason: exception.reason,
+                callStack: exception.callStackSymbols,
+                capturedAt: Date()
+            )
+            guard let url = fileURL, let data = try? JSONEncoder().encode(record) else { return }
+            try? data.write(to: url, options: .atomic)
         }
 
         /// Whatever crash was captured before this launch, if any — read-only, so both the
