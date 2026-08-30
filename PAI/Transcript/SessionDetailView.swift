@@ -30,7 +30,7 @@ struct SessionDetailView: View {
                     )
                     .overlay { TranscriptLoadState(sessionID: sessionID) }
                     .overlay(alignment: .top) { TranscriptOlderPageState(sessionID: sessionID) }
-                    TranscriptStreamStallBanner(sessionID: sessionID)
+                    .overlay(alignment: .bottom) { TranscriptStreamStallBanner(sessionID: sessionID) }
                     Divider()
                     if searchState.isActive {
                         TranscriptSearchBar(state: searchState)
@@ -290,14 +290,27 @@ private struct TranscriptOlderPageState: View {
 /// flowing, or genuinely idle between turns) needs no comment. `isProcessing` is what makes this
 /// safe to call a stall rather than a guess: without it, a quiet session with nothing to say would
 /// read identically to a stream that has gone silent mid-turn.
+///
+/// An overlay on the transcript, not a sibling row in its `VStack` — a sibling resizes the
+/// collection view every time the banner appears or disappears, which is exactly the kind of
+/// content jump the `scrolling` skill prohibits outright. An overlay never changes the collection
+/// view's own frame, so toggling this costs nothing there regardless of how the threshold below
+/// is tuned. `.background(.bar)` is load-bearing now that this floats over scrollable content
+/// rather than sitting in its own row with the page ground already behind it.
 private struct TranscriptStreamStallBanner: View {
     @Environment(TranscriptStore.self) private var transcript
     let sessionID: String
 
-    /// Independent of `TerminalScreen`'s own thresholds — the two streams are separate
+    /// The backend pings every `SSE_PING_INTERVAL` (15s, `pai_cloud/api.py`, shared by the
+    /// transcript and terminal generators) purely to keep the connection alive — a healthy
+    /// stream is normally silent between pings, so `idleThreshold` sits just under one interval
+    /// and `stallThreshold` clears a full interval plus slack for network jitter. Tuning either
+    /// number down has to survive missing at most one ping on an otherwise healthy connection,
+    /// or the banner flaps on a schedule instead of only when something is actually wrong —
+    /// independent of `TerminalScreen`'s own thresholds, since the two streams are separate
     /// connections and there is no reason their timing has to match.
-    private static let idleThreshold: TimeInterval = 3
-    private static let stallThreshold: TimeInterval = 10
+    private static let idleThreshold: TimeInterval = 12
+    private static let stallThreshold: TimeInterval = 30
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -311,6 +324,7 @@ private struct TranscriptStreamStallBanner: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.bar)
                 .accessibilityIdentifier("transcript-stream-stall-banner")
             }
         }

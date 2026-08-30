@@ -26,12 +26,14 @@ struct TerminalScreen: View {
     @State private var activity = StreamActivity()
     @State private var client: PaiTerminalStreamClient?
 
-    /// Below this, quiet reads as normal and the status bar says nothing about it. See
-    /// `StreamActivity`.
-    private static let idleThreshold: TimeInterval = 3
-    /// Past this, quiet is worth flagging rather than reading as a healthy pause — independent
-    /// of the client's own reconnect timeout, since the point is to warn well before that fires.
-    private static let stallThreshold: TimeInterval = 10
+    /// The backend pings every `SSE_PING_INTERVAL` (15s, `pai_cloud/api.py`, shared by the
+    /// transcript and terminal generators) purely to keep the connection alive, so a healthy
+    /// stream is normally silent between pings. Below `idleThreshold`, quiet reads as normal and
+    /// the status bar says nothing about it; `stallThreshold` clears a full ping interval plus
+    /// slack for jitter before flagging anything, and stays under the client's own reconnect
+    /// timeout so this warns well before that fires. See `StreamActivity`.
+    private static let idleThreshold: TimeInterval = 12
+    private static let stallThreshold: TimeInterval = 30
 
     var body: some View {
         Group {
