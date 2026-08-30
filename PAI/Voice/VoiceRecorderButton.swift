@@ -26,11 +26,17 @@ struct VoiceRecorderButton: View {
     @ViewBuilder
     private var icon: some View {
         switch controller.state {
-        case .connecting, .stopping:
+        case .connecting, .stopping, .reconnecting:
             ProgressView()
         case .recording:
             Image(systemName: "stop.fill")
                 .foregroundStyle(PaiPalette.Semantic.errorText)
+        case .paused:
+            // Still shows a stop shape, not a pause glyph — tapping it must still end the take
+            // (`VoiceRecordingSession.stop` already accepts `.paused`), and the pulsing indicator
+            // above the composer is what actually communicates the paused state.
+            Image(systemName: "stop.fill")
+                .foregroundStyle(PaiPalette.Semantic.warningText)
         case .idle:
             Image(systemName: "mic.fill")
                 .foregroundStyle(
@@ -42,7 +48,9 @@ struct VoiceRecorderButton: View {
         switch controller.state {
         case .connecting: "Connecting…"
         case .stopping: "Stopping…"
+        case .reconnecting: "Reconnecting…"
         case .recording: "Stop recording"
+        case .paused: "Paused — stop recording"
         case .idle: "Start voice recording"
         }
     }
@@ -50,21 +58,42 @@ struct VoiceRecorderButton: View {
 
 /// The red pulsing "Rec" / amber "Muted" indicator shown above the composer while a take is in
 /// progress — the same live feedback `MessageInput.tsx` renders beside the offline-agent notice.
+///
+/// `.paused`/`.reconnecting` render their own label rather than folding into "Rec" — the entire
+/// point of a durable recording is that Freddy is not meant to be staring at this, but on the one
+/// occasion he does glance at it, "Rec" while the mic is actually off (paused) would be exactly
+/// the false liveness claim the design this replaces was built to avoid.
 struct VoiceRecordingIndicator: View {
     let controller: VoiceRecorderController
 
     var body: some View {
-        if controller.state == .recording || controller.state == .connecting || controller.state == .stopping {
+        if let label {
             HStack(spacing: 6) {
                 Circle()
-                    .fill(controller.isMuted ? PaiPalette.Semantic.warningText : PaiPalette.Semantic.errorText)
+                    .fill(color)
                     .frame(width: 8, height: 8)
-                Text(controller.isMuted ? "Muted" : "Rec")
+                Text(label)
                     .font(PaiTypography.captionEmphasized.font)
-                    .foregroundStyle(
-                        controller.isMuted ? PaiPalette.Semantic.warningText : PaiPalette.Semantic.errorText)
+                    .foregroundStyle(color)
             }
             .accessibilityIdentifier("voice-recording-indicator")
+        }
+    }
+
+    private var label: String? {
+        switch controller.state {
+        case .recording, .stopping: controller.isMuted ? "Muted" : "Rec"
+        case .connecting: "Connecting…"
+        case .paused: "Paused"
+        case .reconnecting: "Reconnecting…"
+        case .idle: nil
+        }
+    }
+
+    private var color: Color {
+        switch controller.state {
+        case .paused, .reconnecting: PaiPalette.Semantic.warningText
+        default: controller.isMuted ? PaiPalette.Semantic.warningText : PaiPalette.Semantic.errorText
         }
     }
 }
