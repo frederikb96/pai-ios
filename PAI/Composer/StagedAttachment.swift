@@ -1,4 +1,5 @@
 import Foundation
+import PAIKit
 import UIKit
 import UniformTypeIdentifiers
 
@@ -27,50 +28,46 @@ struct StagedAttachment: Identifiable, Equatable {
     }
 }
 
-/// Ports the web's `compressImage` contract exactly (`utils/image.ts`): touch only images, leave
-/// anything already within 1920px on both axes alone, otherwise fit the long edge to 1920 and
-/// re-encode as JPEG at quality 0.85 — keeping the original if the result is not actually
-/// smaller. The one deliberate divergence, flagged in the composer's own source report as the
-/// right call: a re-encoded file is renamed to `.jpg` rather than keeping a stale extension,
-/// since the extension is what decides inline serving on read-back and the web's own filename
-/// mismatch (a `.png` name holding JPEG bytes) was never a decision, just an artifact of the
-/// canvas API keeping whatever name it was given.
+/// Applies ``AttachmentStaging``'s plan: fit an oversized image's long edge to the bound, and
+/// re-encode anything a consumer downstream could not open, keeping the original bytes whenever
+/// a resize turned out not to save anything.
+///
+/// A re-encoded file is renamed to `.jpg` rather than keeping a stale extension, since the
+/// extension is what decides inline serving on read-back — the web's own filename mismatch (a
+/// `.png` name holding JPEG bytes) is an artifact of the canvas API keeping whatever name it was
+/// given, not a decision worth copying.
 enum AttachmentCompression {
-    static let maxDimension: CGFloat = 1920
-    static let jpegQuality: CGFloat = 0.85
 
     static func stage(data: Data, filename: String, mimeType: String) -> StagedAttachment {
         let originalSize = data.count
 
-        guard mimeType.hasPrefix("image/"), mimeType != "image/svg+xml", let image = UIImage(data: data) else {
+        guard let image = UIImage(data: data) else {
             return StagedAttachment(
                 filename: filename, mimeType: mimeType, data: data, previewImage: nil, originalSize: originalSize)
         }
 
-        let longestEdge = max(image.size.width, image.size.height)
-        guard longestEdge > maxDimension else {
-            return StagedAttachment(
-                filename: filename, mimeType: mimeType, data: data, previewImage: image, originalSize: originalSize
-            )
+        let longestEdge = Double(max(image.size.width, image.size.height))
+        let unchanged = StagedAttachment(
+            filename: filename, mimeType: mimeType, data: data, previewImage: image, originalSize: originalSize)
+        guard let plan = AttachmentStaging.plan(mimeType: mimeType, longestEdge: longestEdge) else {
+            return unchanged
         }
 
-        let scale = maxDimension / longestEdge
-        let targetSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let targetSize = CGSize(
+            width: image.size.width * plan.scale, height: image.size.height * plan.scale)
         let renderer = UIGraphicsImageRenderer(size: targetSize)
         let resized = renderer.image { _ in
             image.draw(in: CGRect(origin: .zero, size: targetSize))
         }
 
-        guard let jpegData = resized.jpegData(compressionQuality: jpegQuality), jpegData.count < originalSize else {
-            return StagedAttachment(
-                filename: filename, mimeType: mimeType, data: data, previewImage: image, originalSize: originalSize
-            )
+        guard let jpegData = resized.jpegData(compressionQuality: AttachmentStaging.jpegQuality) else {
+            return unchanged
         }
+        if plan.abandonIfNotSmaller, jpegData.count >= originalSize { return unchanged }
 
-        let jpegFilename = Self.replacingExtension(of: filename, with: "jpg")
         return StagedAttachment(
-            filename: jpegFilename, mimeType: "image/jpeg", data: jpegData, previewImage: resized,
-            originalSize: originalSize
+            filename: Self.replacingExtension(of: filename, with: "jpg"), mimeType: "image/jpeg",
+            data: jpegData, previewImage: resized, originalSize: originalSize
         )
     }
 

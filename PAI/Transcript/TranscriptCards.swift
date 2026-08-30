@@ -26,6 +26,13 @@ extension Shape where Self == UnevenRoundedRectangle {
         UnevenRoundedRectangle(
             topLeadingRadius: 16, bottomLeadingRadius: 16, bottomTrailingRadius: 6, topTrailingRadius: 16)
     }
+
+    /// The mirror of ``ownBubbleTail`` for a bubble addressed from the left, matching the web's
+    /// `rounded-2xl rounded-bl-md`.
+    static var replyBubbleTail: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: 16, bottomLeadingRadius: 6, bottomTrailingRadius: 16, topTrailingRadius: 16)
+    }
 }
 
 /// The web pairs a raw-scale colour with a specific step per appearance at every call site
@@ -355,7 +362,7 @@ enum ToolBodyColorHint {
 }
 
 /// A plain prompt Freddy (or a device on his behalf) typed — right-aligned, filled, plain text,
-/// tucked into ``ownBubbleTail`` with a fixed leading gutter (``TranscriptRowMetrics/bubbleLeadingGutter``)
+/// tucked into ``ownBubbleTail`` with a fixed gutter (``TranscriptRowMetrics/bubbleGutter``)
 /// so a long message stops short of the row's own left edge instead of going flush across it —
 /// the gutter is what tells the eye whose message it is.
 struct UserBubbleView: View {
@@ -383,7 +390,7 @@ struct UserBubbleView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
-        .padding(.leading, TranscriptRowMetrics.bubbleLeadingGutter)
+        .padding(.leading, TranscriptRowMetrics.bubbleGutter)
     }
 }
 
@@ -415,25 +422,30 @@ struct RelayedBubbleView: View {
             in: .ownBubbleTail
         )
         .frame(maxWidth: .infinity, alignment: .trailing)
-        .padding(.leading, TranscriptRowMetrics.bubbleLeadingGutter)
+        .padding(.leading, TranscriptRowMetrics.bubbleGutter)
     }
 }
 
 /// An assistant's own reply — left-aligned, rendered as real markdown (unlike every other card,
-/// which shows plain or lightly-coloured monospace), and deliberately uncontained: no fill, no
-/// corner radius, sitting directly on the page at reading width. Every other card in this file is
-/// chrome around measured content; this is the one thing a reader came to read, so it is the one
-/// card that must not look like the rest of them. `TranscriptRowLayout`'s own `assistantBubble`
-/// case mirrors this exactly — no vertical padding, `cardHorizontalPadding` for the horizontal
-/// inset, since there is no bubble padding left to measure.
+/// which shows plain or lightly-coloured monospace), in the mirror of Freddy's own bubble: the
+/// web's `bg-surface-100 dark:bg-surface-800` on `rounded-2xl rounded-bl-md`, which is the pairing
+/// ``PaiPalette/Semantic/raisedSurface`` carries. The two sides of the conversation read as a
+/// conversation, and the tool cards around them stay visibly a different kind of thing —
+/// bordered rather than filled.
+///
+/// `TranscriptRowLayout`'s own `assistantBubble` case mirrors the padding and the gutter exactly;
+/// a number that moves here and not there is a row drawn taller than the cell it was given.
 struct AssistantBubbleView: View {
     let blocks: [MarkdownBlock]
     var highlights: [Int: [TranscriptHighlightSpan]] = [:]
 
     var body: some View {
         MarkdownContentView(blocks: blocks, highlights: highlights)
-            .padding(.horizontal, TranscriptRowMetrics.cardHorizontalPadding)
+            .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding)
+            .padding(.vertical, TranscriptRowMetrics.bubbleVerticalPadding / 2)
+            .background(PaiPalette.Semantic.raisedSurface, in: .replyBubbleTail)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.trailing, TranscriptRowMetrics.bubbleGutter)
     }
 }
 
@@ -462,7 +474,7 @@ struct CommandCardView: View {
                 in: .ownBubbleTail
             )
             .frame(maxWidth: .infinity, alignment: .trailing)
-            .padding(.leading, TranscriptRowMetrics.bubbleLeadingGutter)
+            .padding(.leading, TranscriptRowMetrics.bubbleGutter)
         } else {
             HStack(spacing: 6) {
                 Image(systemName: "chevron.left.forwardslash.chevron.right")
