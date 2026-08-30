@@ -128,7 +128,6 @@ final class VoiceRecorderController {
             setupFailure = .microphoneDenied
             return
         }
-        VoiceInterruptionNotifier.requestAuthorizationIfNeeded()
         do {
             try configureAudioSession()
         } catch {
@@ -299,7 +298,7 @@ final class VoiceRecorderController {
         await voiceSession.stop(reason: .interrupted)
         try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
         await persistRecording()
-        VoiceInterruptionNotifier.notify(reason: .interrupted)
+        await VoiceInterruptionNotifier.notify(reason: .interrupted)
     }
 
     /// The raw stream is fixed at the hardware rate it was opened with; if the route changed
@@ -421,7 +420,7 @@ final class VoiceRecorderController {
         settingsStore.saveRecording(meta)
 
         if result.endedBy == .connectionLost || result.endedBy == .error {
-            VoiceInterruptionNotifier.notify(reason: result.endedBy)
+            await VoiceInterruptionNotifier.notify(reason: result.endedBy)
         }
     }
 

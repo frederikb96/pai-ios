@@ -728,6 +728,39 @@ final class SessionStoreListStoreTests: XCTestCase {
         let calls = await api.deleteSessionCalls
         XCTAssertTrue(calls.isEmpty, "undo must cancel the delayed DELETE, not merely restore the row")
     }
+
+    /// The hold elapsing and the real `DELETE` actually reaching the server are two different
+    /// moments — a tap landing in between them must not restore a row the request already left
+    /// no way to cancel. The gate holds the fake's `deleteSession` open past the point it has
+    /// started, which is the only way to observe "in flight" as distinct from "not yet begun" or
+    /// "already returned".
+    func testUndoDeleteIsANoOpOnceTheRealDeleteIsAlreadyInFlight() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1")], nextCursor: nil))
+        }
+        await api.gate.arm("delete:s1")
+        let store = makeStoreWithShortDeleteHold(api: api)
+        await store.loadInitialSessions()
+
+        store.deleteSessionWithHold(id: "s1")
+
+        let deadline = ContinuousClock().now + .seconds(5)
+        while await api.deleteSessionCalls.isEmpty, ContinuousClock().now < deadline {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        let callsInFlight = await api.deleteSessionCalls
+        XCTAssertEqual(callsInFlight, ["s1"], "the real DELETE must have already started")
+
+        store.undoDelete()
+
+        XCTAssertTrue(
+            store.syncedSessions.isEmpty,
+            "the row must not come back once the server request is already in flight")
+        XCTAssertNil(store.pendingDelete)
+
+        await api.gate.release("delete:s1")
+    }
 }
 
 extension FakeSessionListApi {

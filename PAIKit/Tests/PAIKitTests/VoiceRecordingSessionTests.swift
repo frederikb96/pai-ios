@@ -389,6 +389,36 @@ final class VoiceRecordingSessionTests: XCTestCase {
         await gate.open()
     }
 
+    /// The critical case a paused take used to go permanently deaf on: the socket is
+    /// deliberately left open while paused, so it can still drop out from under a paused take —
+    /// an idle realtime connection closed by the far end mid-call, say. That must never leave
+    /// `.paused` on its own; only `resumeAfterInterruption()` may, or capture is never restarted
+    /// and the app ends up claiming `.recording` with no microphone attached.
+    func testConnectionLostWhilePausedStaysPausedRatherThanReconnectingOnItsOwn() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        session.pauseForInterruption()
+        XCTAssertEqual(session.state, .paused)
+
+        await transport.fail()
+        // Nothing here drives a state change on its own initiative — a bounded number of yields
+        // is how "this never happens" is provable, rather than "has not happened yet".
+        for _ in 0..<200 { await Task.yield() }
+        XCTAssertEqual(session.state, .paused, "a network event alone must never leave .paused")
+
+        session.resumeAfterInterruption()
+        await waitUntil { session.state == .reconnecting }
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        let connectCalls = await transport.connectCallCount
+        XCTAssertEqual(connectCalls, 2, "the original connect plus exactly one reconnect kicked off by resuming")
+    }
+
     func testStoppingWhilePausedEndsTheTakeAsUserRatherThanBeingIgnored() async {
         let transport = FakeVoiceRealtimeTransport()
         let session = makeSession(transport: transport)

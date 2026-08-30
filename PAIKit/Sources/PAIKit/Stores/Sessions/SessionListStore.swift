@@ -449,9 +449,13 @@ public final class SessionListStore {
         pendingDeleteTask = Task { [weak self, api, deleteUndoNanos] in
             try? await Task.sleep(nanoseconds: deleteUndoNanos)
             guard !Task.isCancelled else { return }
-            _ = try? await api.deleteSession(sessionId: id)
+            // Clearing `pendingDelete` before the request goes out, not after it returns, is what
+            // makes the hold actually irreversible the moment it elapses: `undoDelete()` guards on
+            // `pendingDelete`, so a tap landing while this `DELETE` is in flight must find it
+            // already gone rather than restoring a row the server is mid-way through deleting.
             guard let self, self.pendingDelete?.session.id == id else { return }
             self.pendingDelete = nil
+            _ = try? await api.deleteSession(sessionId: id)
         }
     }
 
