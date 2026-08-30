@@ -7,7 +7,20 @@ import SwiftUI
 /// "tap to end" always renders as a stop shape instead.
 struct VoiceRecorderButton: View {
     let controller: VoiceRecorderController
+    /// Whether a running take belongs to the composer this button sits in. The recorder is
+    /// app-wide and the microphone is exclusive, so a button in some other composer must not
+    /// offer to stop a take it does not own — it renders an unavailable microphone instead, which
+    /// is what the situation actually is.
+    var isMine: Bool = true
     var onTap: () -> Void
+
+    private var displayState: VoiceRecordingState {
+        isMine ? controller.state : .idle
+    }
+
+    private var canStart: Bool {
+        isMine && controller.canStart
+    }
 
     var body: some View {
         Button(action: onTap) {
@@ -16,8 +29,8 @@ struct VoiceRecorderButton: View {
                 .frame(width: 32, height: 32)
         }
         .disabled(
-            controller.state == .connecting || controller.state == .stopping
-                || !controller.canStart && controller.state == .idle
+            displayState == .connecting || displayState == .stopping
+                || !canStart && displayState == .idle
         )
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier("voice-recorder-button")
@@ -25,7 +38,7 @@ struct VoiceRecorderButton: View {
 
     @ViewBuilder
     private var icon: some View {
-        switch controller.state {
+        switch displayState {
         case .connecting, .stopping, .reconnecting:
             ProgressView()
         case .recording:
@@ -39,13 +52,12 @@ struct VoiceRecorderButton: View {
                 .foregroundStyle(PaiPalette.Semantic.warningText)
         case .idle:
             Image(systemName: "mic.fill")
-                .foregroundStyle(
-                    controller.canStart ? PaiPalette.Semantic.textSecondary : PaiPalette.Semantic.textFaint)
+                .foregroundStyle(canStart ? PaiPalette.Semantic.textSecondary : PaiPalette.Semantic.textFaint)
         }
     }
 
     private var accessibilityLabel: String {
-        switch controller.state {
+        switch displayState {
         case .connecting: "Connecting…"
         case .stopping: "Stopping…"
         case .reconnecting: "Reconnecting…"

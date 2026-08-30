@@ -16,3 +16,7 @@ PRODUCT_NAME = PAI
 IPHONEOS_DEPLOYMENT_TARGET = 26.0
 SWIFT_VERSION = 6.0
 TARGETED_DEVICE_FAMILY = 1
+
+// Merged with the keys `GENERATE_INFOPLIST_FILE` produces, so this file holds only what that
+// mechanism cannot express — see the comment inside it.
+INFOPLIST_FILE = Config/Info.plist

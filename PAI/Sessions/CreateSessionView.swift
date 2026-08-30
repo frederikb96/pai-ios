@@ -26,7 +26,6 @@ struct CreateSessionView: View {
     @Environment(SettingsStore.self) private var settings
 
     @State private var createSession: CreateSessionStore?
-    @State private var voiceController: VoiceRecorderController?
     @State private var isPresentingDirectoryBrowser = false
     @State private var errorMessage: String?
 
@@ -57,12 +56,21 @@ struct CreateSessionView: View {
                     }
                 }
         }
+        .onDisappear {
+            // 🚨 The recorder is app-wide now, so it survives this sheet — and nothing else can
+            // reach a take started here, because this is the only screen that recognises a take
+            // with no draft key as its own. Left running it would hold the one microphone
+            // indefinitely, disabling the record button in every session's composer with no
+            // visible cause. The audio itself is still saved, so it is recoverable from Past
+            // Recordings; only the live transcript, which had nowhere durable to go from this
+            // screen, is lost.
+            guard let voiceController = environment.connection?.voice, isRecordingHere(voiceController) else { return }
+            Task { await voiceController.stop() }
+        }
         .task {
             guard createSession == nil, let connection = environment.connection else { return }
             let store = CreateSessionStore(machines: machines, api: connection.apiClient)
             createSession = store
-            voiceController = VoiceRecorderController(
-                apiClient: connection.apiClient, settingsStore: connection.settings)
             // Freshest possible online/offline picture at the moment stakes are highest: a
             // session about to launch on whichever machine turns out to be reachable.
             await machines.refresh()
@@ -72,7 +80,7 @@ struct CreateSessionView: View {
 
     @ViewBuilder
     private var content: some View {
-        if let createSession, let voiceController {
+        if let createSession, let voiceController = environment.connection?.voice {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(spacing: 28) {
@@ -232,14 +240,36 @@ struct CreateSessionView: View {
         -> some View
     {
         VStack(spacing: 6) {
-            VoiceRecordingIndicator(controller: voiceController)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if isRecordingHere(voiceController) {
+                VoiceRecordingIndicator(controller: voiceController)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             if !stagedAttachments.isEmpty {
                 AttachmentPreviewStrip(attachments: stagedAttachments, onRemove: removeAttachment)
             }
 
+            // Same left-to-right order as `ComposerBar`: field, plus, mic, send. Two composers
+            // that look alike and put their controls in different places is worse than either
+            // arrangement on its own.
             HStack(alignment: .bottom, spacing: 8) {
+                ComposerTextEditor(
+                    text: $text, height: $textHeight, placeholder: "What would you like to work on?",
+                    scrollToTailOnNextUpdate: $scrollToTailOnNextUpdate,
+                    onPasteImages: { images in
+                        stageAttachments(
+                            images.map {
+                                AttachmentCompression.stage(
+                                    data: $0.data, filename: $0.filename, mimeType: $0.mimeType)
+                            })
+                    }
+                )
+                .focused($isComposerFocused)
+                .frame(height: textHeight)
+                .background(PaiPalette.Semantic.raisedSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 18))
+                .accessibilityIdentifier("new-session-message")
+
                 ComposerActionMenu(
                     hasSession: false,
                     onPastRecordings: { showingRecordingsSheet = true },
@@ -249,25 +279,35 @@ struct CreateSessionView: View {
                     onCancel: {}
                 )
 
-                ComposerTextEditor(
-                    text: $text, height: $textHeight, placeholder: "What would you like to work on?",
-                    scrollToTailOnNextUpdate: $scrollToTailOnNextUpdate
-                )
-                .focused($isComposerFocused)
-                .frame(height: textHeight)
-                .background(PaiPalette.Semantic.raisedSurface)
-                .clipShape(RoundedRectangle(cornerRadius: 18))
-                .accessibilityIdentifier("new-session-message")
+                VoiceRecorderButton(
+                    controller: voiceController,
+                    isMine: voiceController.state == .idle || isRecordingHere(voiceController)
+                ) {
+                    Task { await toggleRecording(voiceController: voiceController) }
+                }
 
-                if voiceController.state == .recording || voiceController.state == .stopping {
+                if isRecordingHere(voiceController) {
                     MuteButton(controller: voiceController) { voiceController.toggleMute() }
                 } else {
                     sendButton(createSession)
                 }
-
-                VoiceRecorderButton(controller: voiceController) {
-                    Task { await toggleRecording(voiceController: voiceController) }
+            }
+        }
+        // This screen's composer text is local rather than a draft (see this type's own note), so
+        // unlike `ComposerBar` the live transcript has to be polled into it here. `.task(id:)`
+        // rather than a free-standing `Task` so it keeps running across `.paused`/`.reconnecting`
+        // but stops with the view, instead of outliving it once per visit.
+        .task(id: isRecordingHere(voiceController)) {
+            guard isRecordingHere(voiceController) else { return }
+            var lastPartial = ""
+            while !Task.isCancelled, voiceController.state != .idle {
+                let partial = voiceController.transcribedText
+                if partial != lastPartial {
+                    lastPartial = partial
+                    text = VoiceRecorderController.composeLiveText(pre: preVoiceText, partial: partial)
+                    scrollToTailOnNextUpdate = true
                 }
+                try? await Task.sleep(for: .milliseconds(150))
             }
         }
         .padding(.horizontal, 12)
@@ -346,12 +386,24 @@ struct CreateSessionView: View {
 
     // MARK: - Voice
 
+    /// This sheet's take is the one the shared recorder is running with no draft key — see
+    /// `start(draftKey:preText:)`. Anything else belongs to a session's composer.
+    private func isRecordingHere(_ controller: VoiceRecorderController) -> Bool {
+        controller.activeDraftKey == nil && controller.state != .idle
+    }
+
     private func toggleRecording(voiceController: VoiceRecorderController) async {
+        guard voiceController.state == .idle || isRecordingHere(voiceController) else {
+            errorMessage = "A recording is already running somewhere else."
+            return
+        }
         switch voiceController.state {
         case .idle:
             preVoiceText = text
-            await voiceController.start()
-            observeLiveTranscript(voiceController: voiceController)
+            // No draft key: this sheet keeps its composer text local on purpose (see the type's
+            // own note on the "new" draft), so the transcript is polled below rather than written
+            // into `DraftStore` the way the chat composer's is.
+            await voiceController.start(draftKey: nil, preText: text)
         case .recording, .connecting, .paused, .reconnecting:
             // A tap always means "end the take", regardless of which of these mid-take states it
             // caught — `VoiceRecordingSession.stop` accepts all of them. Same rule as
@@ -361,30 +413,6 @@ struct CreateSessionView: View {
         case .stopping:
             break
         }
-    }
-
-    /// Keeps polling through `.paused`/`.reconnecting` rather than exiting — a take resumed after
-    /// an interruption or a dropped connection needs this same loop still running to pick its live
-    /// text back up, and nothing else restarts it. Same rule as `ComposerBar`'s own loop.
-    private func observeLiveTranscript(voiceController: VoiceRecorderController) {
-        Task {
-            var lastPartial = ""
-            while voiceController.state != .idle {
-                let partial = voiceController.transcribedText
-                if partial != lastPartial {
-                    lastPartial = partial
-                    text = Self.composeLiveText(pre: preVoiceText, partial: partial)
-                    scrollToTailOnNextUpdate = true
-                }
-                try? await Task.sleep(for: .milliseconds(150))
-            }
-        }
-    }
-
-    private static func composeLiveText(pre: String, partial: String) -> String {
-        guard !partial.isEmpty else { return pre }
-        let prefixed = "\(VoiceRecordingResult.sttPrefix)\(partial)"
-        return pre.isEmpty ? prefixed : "\(pre) \(prefixed)"
     }
 
     private func applyVoiceResult(_ prefixedText: String) {

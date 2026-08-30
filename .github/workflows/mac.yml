@@ -61,6 +61,29 @@ jobs:
         run: |
           grep -E "error:" /tmp/build.log | head -40 || echo "no compiler errors in the log"
 
+      # 🚨 The one property of this app that cannot be seen in a screenshot, cannot be tested in a
+      # simulator, and fails as "iOS suspended us" rather than as an error: whether the built
+      # bundle actually declares the audio background mode. Without it a voice recording ends the
+      # moment the app leaves the screen, which is the single thing recording on the phone is for.
+      #
+      # It checks a key from `Config/Info.plist` AND one that only `GENERATE_INFOPLIST_FILE`
+      # produces, because the risk runs both ways: naming an `INFOPLIST_FILE` could stop the
+      # generated keys being merged in, and losing the microphone usage description that way is a
+      # crash on first record plus a rejected submission.
+      - name: The built bundle declares what it needs
+        run: |
+          set -o pipefail
+          app=$(find build/dd/Build/Products -name '*.app' -maxdepth 3 | head -1)
+          [ -n "$app" ] || { echo 'build produced no .app'; exit 1; }
+          plutil -p "$app/Info.plist" > /tmp/built-info.txt
+          grep -q '"audio"' /tmp/built-info.txt \
+            || { echo '::error::UIBackgroundModes is missing "audio" — recording will not survive backgrounding'; \
+                 cat /tmp/built-info.txt; exit 1; }
+          grep -q 'NSMicrophoneUsageDescription' /tmp/built-info.txt \
+            || { echo '::error::the generated Info.plist keys were not merged in'; \
+                 cat /tmp/built-info.txt; exit 1; }
+          echo 'background mode and generated keys both present'
+
       # Runs after the app build on purpose. This step compiles the whole package on a macOS host,
       # which is the only place the UIKit-guarded files compile at all — so it fails for reasons
       # that have nothing to do with the app target, and running it first means one bad constant

@@ -28,8 +28,17 @@ final class MicrophoneCapture: @unchecked Sendable {
     /// One RMS reading per buffer, normalised to `0...1` — what `VoiceRecordingSession.ingestLevel`
     /// and the recording's own level metering both want, computed once here rather than twice.
     var onLevel: (@Sendable (Double) -> Void)?
+    /// 🚨 The engine has stopped itself and every tap and connection on it is now invalid —
+    /// `AVAudioEngine`'s documented behaviour on a configuration change, which a route change
+    /// causes: a Bluetooth headset connecting, headphones going in, a call ending. Nothing
+    /// restarts it, and nothing reports it: the tap simply never fires again, so a long recording
+    /// dies mid-sentence and looks exactly like the app having been suspended. Whoever owns the
+    /// take has to `stop()` and `start(targetSampleRate:)` again in response. Delivered on the
+    /// main actor.
+    var onConfigurationChange: (@Sendable () -> Void)?
 
     private let engine = AVAudioEngine()
+    private var configurationObserver: NSObjectProtocol?
     private var sendConverter: AVAudioConverter?
     private var rawConverter: AVAudioConverter?
     private var sendFormat: AVAudioFormat?
@@ -43,6 +52,20 @@ final class MicrophoneCapture: @unchecked Sendable {
 
     /// `targetSampleRate` should already be `VoiceAudioRatePolicy.transportRate(hardwareRate:)` —
     /// this type does no rate policy of its own, only the conversion the policy decided on.
+    init() {
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in
+            self?.onConfigurationChange?()
+        }
+    }
+
+    deinit {
+        if let configurationObserver {
+            NotificationCenter.default.removeObserver(configurationObserver)
+        }
+    }
+
     func start(targetSampleRate: Int) throws {
         let input = engine.inputNode
         let inputFormat = input.inputFormat(forBus: 0)

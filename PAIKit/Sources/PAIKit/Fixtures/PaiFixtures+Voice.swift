@@ -29,15 +29,22 @@ extension PaiFixtures {
 
     /// `GET /api/usage` — both rolling windows plus a per-model weekly cap, matching Claude
     /// Code's own statusline.
+    ///
+    /// 🚨 The timestamps carry six fractional digits and a numeric offset because that is what
+    /// the pod actually serialises. A fixture written with the tidier `...:00Z` form parses under
+    /// a default `ISO8601DateFormatter` while the real payload does not, so the corpus agreed
+    /// with the client and both disagreed with the wire — and the reset time was simply absent on
+    /// a real device with every check green. A fixture is only worth having if it is the shape
+    /// that actually arrives.
     public static let usage: String = #"""
         {
-          "five_hour": { "utilization": 42.5, "resets_at": "2026-08-29T14:00:00Z" },
-          "seven_day": { "utilization": 78.1, "resets_at": "2026-09-01T00:00:00Z" },
+          "five_hour": { "utilization": 42.5, "resets_at": "2026-08-29T14:00:00.506812+00:00" },
+          "seven_day": { "utilization": 78.1, "resets_at": "2026-09-01T00:00:00.117403+00:00" },
           "seven_day_models": [
-            { "model": "claude-opus-5", "utilization": 91.4, "resets_at": "2026-09-01T00:00:00Z" },
+            { "model": "claude-opus-5", "utilization": 91.4, "resets_at": "2026-09-01T00:00:00.117403+00:00" },
             { "model": "claude-sonnet-5", "utilization": 33.0, "resets_at": null }
           ],
-          "reported_at": "2026-08-29T09:41:00Z"
+          "reported_at": "2026-08-29T09:41:00.884120+00:00"
         }
         """#
 

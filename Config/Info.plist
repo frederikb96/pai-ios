@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Keeps the microphone running after the app leaves the screen, so a take started here
+	     survives the Home button, another app, and the lock screen. iOS suspends an ordinary app
+	     within seconds of backgrounding regardless of what it has open, so without this a
+	     recording ends the moment Freddy looks at something else — which is the entire reason
+	     recording on the phone beats recording in the browser.
+
+	     Declared in a real Info.plist rather than as an INFOPLIST_KEY_ build setting: that
+	     mechanism is what Xcode's own Background Modes capability writes, and whether the build
+	     setting form reaches an array-valued key is exactly the kind of thing that fails silently
+	     and looks like an OS restriction. The Mac workflow asserts this survives into the built
+	     app, alongside a generated key, so a merge that dropped either one fails the build. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
+</dict>
+</plist>

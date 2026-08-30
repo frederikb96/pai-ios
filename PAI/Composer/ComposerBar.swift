@@ -21,12 +21,9 @@ struct ComposerBar: View {
     let sessionID: String
 
     @State private var draftStore: DraftStore?
-    @State private var voiceController: VoiceRecorderController?
 
-    @State private var text = ""
     @State private var textHeight: CGFloat = ComposerTextEditor.minHeight
     @State private var scrollToTailOnNextUpdate = false
-    @State private var preVoiceText = ""
 
     @State private var stagedAttachments: [StagedAttachment] = []
     @State private var isSending = false
@@ -45,34 +42,31 @@ struct ComposerBar: View {
         Group {
             if let session = currentSession, !SessionListDomain.isDrivable(session) {
                 NonDrivableComposerBar(session: session, machines: machines)
-            } else if let draftStore, let voiceController {
+            } else if let draftStore, let voiceController = environment.connection?.voice {
                 drivableComposer(draftStore: draftStore, voiceController: voiceController)
             } else {
                 Color.clear.frame(height: ComposerTextEditor.minHeight)
             }
         }
         .task {
-            guard draftStore == nil, let connection = environment.connection else { return }
-            let newDraftStore = drafts
-            let newVoiceController = VoiceRecorderController(
-                apiClient: connection.apiClient, settingsStore: connection.settings)
-            draftStore = newDraftStore
-            voiceController = newVoiceController
-            await newDraftStore.syncFromServer()
-            text = newDraftStore.draft(for: sessionID).text
+            guard draftStore == nil, environment.connection != nil else { return }
+            draftStore = drafts
+            await drafts.syncFromServer()
         }
         .task(id: sessionID) {
             // Polls this session's draft while the composer is on screen, so a message half-typed
             // on another device shows up here live — the same 10s cadence the web's `App.tsx`
             // polls drafts on, scoped to just the composer's own lifetime rather than the whole
             // app.
+            //
+            // Nothing is copied out of the store afterwards: the field reads straight through
+            // `textBinding`, so `syncFromServer`'s own reconciliation rules (an unflushed local
+            // edit beats anything the server can report) are the only thing deciding what wins.
+            // A second copy here is what once let this poll overwrite a live voice transcript.
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(10))
                 guard !Task.isCancelled else { return }
                 await draftStore?.syncFromServer()
-                if let draftStore, draftStore.draft(for: sessionID).text != text, !isSending {
-                    text = draftStore.draft(for: sessionID).text
-                }
             }
         }
         .onDisappear {
@@ -93,8 +87,12 @@ struct ComposerBar: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            VoiceRecordingIndicator(controller: voiceController)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // Only for this session's own take — the recorder is shared, and a level meter
+            // running above a composer that is not recording is a claim about the wrong screen.
+            if isRecordingHere(voiceController) {
+                VoiceRecordingIndicator(controller: voiceController)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             if let voiceFailureMessage = voiceFailureMessage(controller: voiceController) {
                 Text(voiceFailureMessage)
@@ -115,7 +113,19 @@ struct ComposerBar: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            // Text field, then plus, then mic, then send — the controls run left to right in
+            // the order a message is built, and the two that end a message sit under the thumb
+            // at the right edge.
             HStack(alignment: .bottom, spacing: 8) {
+                ComposerTextEditor(
+                    text: textBinding(draftStore: draftStore), height: $textHeight, placeholder: "Message PAI...",
+                    scrollToTailOnNextUpdate: $scrollToTailOnNextUpdate,
+                    onPasteImages: { images in stagePastedImages(images) }
+                )
+                .frame(height: textHeight)
+                .background(PaiPalette.Semantic.raisedSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 18))
+
                 ComposerActionMenu(
                     hasSession: true,
                     onPastRecordings: { showingRecordingsSheet = true },
@@ -125,25 +135,36 @@ struct ComposerBar: View {
                     onCancel: { Task { await cancelSession() } }
                 )
 
-                ComposerTextEditor(
-                    text: textBinding(draftStore: draftStore), height: $textHeight, placeholder: "Message PAI...",
-                    scrollToTailOnNextUpdate: $scrollToTailOnNextUpdate
-                )
-                .frame(height: textHeight)
-                .background(PaiPalette.Semantic.raisedSurface)
-                .clipShape(RoundedRectangle(cornerRadius: 18))
+                VoiceRecorderButton(
+                    controller: voiceController,
+                    isMine: voiceController.state == .idle || isRecordingHere(voiceController)
+                ) {
+                    Task { await toggleRecording(draftStore: draftStore, voiceController: voiceController) }
+                }
 
-                if voiceController.state == .recording || voiceController.state == .stopping
-                    || voiceController.state == .paused || voiceController.state == .reconnecting
-                {
+                if isRecordingHere(voiceController) {
                     MuteButton(controller: voiceController) { voiceController.toggleMute() }
                 } else {
                     sendButton(draftStore: draftStore)
                 }
-
-                VoiceRecorderButton(controller: voiceController) {
-                    Task { await toggleRecording(draftStore: draftStore, voiceController: voiceController) }
+            }
+        }
+        // Keeps the field scrolled to the tail while a transcript grows into it. Presentation
+        // only — the text itself is written by the recorder straight into the draft store, so it
+        // keeps arriving whether or not this view is on screen. Scrolling is the one part of that
+        // a view can do and a store cannot, so it is also the one part that should end with the
+        // view: `.task(id:)` cancels on disappear, where a free-standing `Task` would leave one
+        // more 150ms loop running for every time the screen was visited during a long take.
+        .task(id: isRecordingHere(voiceController)) {
+            guard isRecordingHere(voiceController) else { return }
+            var lastPartial = ""
+            while !Task.isCancelled, voiceController.state != .idle {
+                let partial = voiceController.transcribedText
+                if partial != lastPartial {
+                    lastPartial = partial
+                    scrollToTailOnNextUpdate = true
                 }
+                try? await Task.sleep(for: .milliseconds(150))
             }
         }
         .padding(.horizontal, 12)
@@ -191,20 +212,34 @@ struct ComposerBar: View {
 
     // MARK: - Text / drafts
 
+    /// 🚨 **The draft store is the field's only storage — there is deliberately no second copy
+    /// in this view.** A mirrored `@State` string has to be reconciled with the store on every
+    /// path that can write either one (typing, the ten-second sync, a voice transcript arriving,
+    /// a failed send restoring what was typed), and the one that got missed was the voice
+    /// transcript: it wrote the mirror, the sync overwrote the mirror from the store, and
+    /// everything transcribed since the last pause vanished until the next word rewrote it.
     private func textBinding(draftStore: DraftStore) -> Binding<String> {
         Binding(
-            get: { text },
-            set: { newValue in
-                text = newValue
-                draftStore.setDraftText(key: sessionID, text: newValue)
-            }
+            get: { draftStore.draft(for: sessionID).text },
+            set: { newValue in draftStore.setDraftText(key: sessionID, text: newValue) }
         )
     }
 
+    private var text: String {
+        draftStore?.draft(for: sessionID).text ?? ""
+    }
+
     private func appendTranscript(_ prefixedText: String, draftStore: DraftStore) {
-        let combined = text.isEmpty ? prefixedText : "\(text) \(prefixedText)"
-        text = combined
-        draftStore.setDraftText(key: sessionID, text: combined)
+        let current = draftStore.draft(for: sessionID).text
+        draftStore.setDraftText(
+            key: sessionID, text: current.isEmpty ? prefixedText : "\(current) \(prefixedText)")
+    }
+
+    /// Whether the running take is *this* composer's. The recorder is app-wide, so a take started
+    /// on another session — or in the new-session sheet — must not turn this bar into a recording
+    /// bar for a recording that is not its own.
+    private func isRecordingHere(_ controller: VoiceRecorderController) -> Bool {
+        controller.activeDraftKey == sessionID && controller.state != .idle
     }
 
     // MARK: - Voice
@@ -220,58 +255,27 @@ struct ComposerBar: View {
     }
 
     private func toggleRecording(draftStore: DraftStore, voiceController: VoiceRecorderController) async {
+        // A take belonging to another session (or to the new-session sheet) is not this bar's to
+        // end, and there is only one microphone. Said out loud rather than silently ignored — a
+        // record button that does nothing reads as a broken app.
+        guard voiceController.state == .idle || isRecordingHere(voiceController) else {
+            sendErrorMessage = "A recording is already running somewhere else."
+            return
+        }
+
+        sendErrorMessage = nil
         switch voiceController.state {
         case .idle:
-            preVoiceText = text
-            await voiceController.start()
-            observeLiveTranscript(voiceController: voiceController, draftStore: draftStore)
+            await voiceController.start(draftKey: sessionID, preText: draftStore.draft(for: sessionID).text)
         case .recording, .connecting, .paused, .reconnecting:
             // A tap always means "end the take", regardless of which of these mid-take states it
-            // caught — `VoiceRecordingSession.stop` accepts all of them.
-            let finalText = await voiceController.stop()
-            applyVoiceResult(finalText, draftStore: draftStore)
+            // caught — `VoiceRecordingSession.stop` accepts all of them. The text itself is the
+            // recorder's business now, on every one of the ways a take can end; nothing is
+            // applied here.
+            await voiceController.stop()
         case .stopping:
             break
         }
-    }
-
-    /// Streams the live partial into the composer as it grows — the `stt-rec: ` prefix is written
-    /// once, at the moment recording starts, and only the text after it keeps changing, matching
-    /// `VoiceRecordingSession`'s own documented contract for `transcribedText` vs. `result.prefixedText`.
-    ///
-    /// Keeps polling through `.paused`/`.reconnecting` rather than exiting — a resumed take needs
-    /// this same loop still running to pick its live text back up, and nothing else restarts it.
-    private func observeLiveTranscript(voiceController: VoiceRecorderController, draftStore: DraftStore) {
-        Task {
-            var lastPartial = ""
-            while voiceController.state != .idle {
-                let partial = voiceController.transcribedText
-                if partial != lastPartial {
-                    lastPartial = partial
-                    let live = Self.composeLiveText(pre: preVoiceText, partial: partial)
-                    text = live
-                    scrollToTailOnNextUpdate = true
-                }
-                try? await Task.sleep(for: .milliseconds(150))
-            }
-        }
-    }
-
-    private static func composeLiveText(pre: String, partial: String) -> String {
-        guard !partial.isEmpty else { return pre }
-        let prefixed = "\(VoiceRecordingResult.sttPrefix)\(partial)"
-        return pre.isEmpty ? prefixed : "\(pre) \(prefixed)"
-    }
-
-    private func applyVoiceResult(_ prefixedText: String, draftStore: DraftStore) {
-        guard !prefixedText.isEmpty else {
-            text = preVoiceText
-            draftStore.setDraftText(key: sessionID, text: preVoiceText)
-            return
-        }
-        let combined = preVoiceText.isEmpty ? prefixedText : "\(preVoiceText) \(prefixedText)"
-        text = combined
-        draftStore.setDraftText(key: sessionID, text: combined)
     }
 
     // MARK: - Send
@@ -291,7 +295,7 @@ struct ComposerBar: View {
 
         if !messageText.isEmpty { settings.saveSentMessage(messageText) }
 
-        text = ""
+        draftStore.setDraftText(key: sessionID, text: "")
         stagedAttachments = []
         isSending = true
         sendErrorMessage = nil
@@ -310,7 +314,7 @@ struct ComposerBar: View {
             } catch {
                 // The web keeps the text and files on a failed send so nothing typed is lost —
                 // the draft itself is never cleared until the request actually resolves.
-                text = messageText
+                draftStore.setDraftText(key: sessionID, text: messageText)
                 stagedAttachments = attachmentsSnapshot
                 sendErrorMessage = (error as? PaiError)?.userMessage ?? "Failed to send message"
             }
@@ -326,6 +330,14 @@ struct ComposerBar: View {
     /// recordings sheet) funnels through — a 50MB file discovered here fails immediately with a
     /// named reason, rather than staging, previewing, and only failing at send with a 413 the web
     /// has no earlier warning for.
+    /// Pasted images go through the same door as the photo picker's — the same compression, the
+    /// same size limit, the same preview strip. Nothing about a paste makes it a different kind
+    /// of attachment.
+    private func stagePastedImages(_ images: [PastedImage]) {
+        stageAttachments(
+            images.map { AttachmentCompression.stage(data: $0.data, filename: $0.filename, mimeType: $0.mimeType) })
+    }
+
     private func stageAttachments(_ staged: [StagedAttachment]) {
         let oversize = staged.filter { $0.currentSize > maxAttachmentBytes }
         let accepted = staged.filter { $0.currentSize <= maxAttachmentBytes }

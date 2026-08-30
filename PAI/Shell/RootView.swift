@@ -56,7 +56,18 @@ struct RootView: View {
                 // appears at most once per install and never again, so spending it the instant
                 // the app opens, over whatever screen happens to be in front of the person, is
                 // the worst possible moment. It lives behind an explicit control in Settings.
-                .task { await connection.push.registerWithBackendIfNeeded() }
+                .task {
+                    // 🚨 Both halves, every launch, and the order matters less than the fact that
+                    // the first one happens at all. Apple's contract is that an app asks for a
+                    // token on every launch, because a token is not permanent — a restore from
+                    // backup or an OS-level rotation issues a new one and silently invalidates
+                    // the old. Asking only from the Settings button would mean never asking
+                    // again after the first grant, since that button is shown only while the
+                    // permission is still unanswered. Push would then go quiet with the app
+                    // still reporting notifications as on, which is the worst way to fail.
+                    await PushRegistrar.registerForRemoteNotificationsIfAuthorized(store: connection.push)
+                    await connection.push.registerWithBackendIfNeeded()
+                }
                 .environment(\.terminalStreamClientFactory) { sessionID, callbacks in
                     PaiTerminalStreamClient(
                         sessionId: sessionID,

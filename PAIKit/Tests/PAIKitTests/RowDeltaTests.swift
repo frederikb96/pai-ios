@@ -27,11 +27,28 @@ final class RowDeltaTests: XCTestCase {
         XCTAssertEqual(RowDelta.compute(old: [1, 2, 3], new: [1, 2, 3]), .unchanged)
     }
 
-    /// Neither a clean prefix nor a clean suffix match — an LRU eviction landing mid-window, or
-    /// any shape the "contiguous ascending suffix" invariant does not predict. A full reload is
-    /// the honest fallback rather than guessing at index paths that might not exist.
-    func testAnArbitraryChangeFallsBackToReplaced() {
-        let delta = RowDelta.compute(old: [1, 2, 3], new: [1, 2, 4, 5])
+    /// The shape sending a message makes: a bubble stands in for the unconfirmed send at the
+    /// tail, then the server's own row replaces it. Everything above is untouched, so this must
+    /// not degrade to `.replaced` — that means a full reload, and a reload throws away the
+    /// anchor holding the reader's place. Sending is the most frequent thing anyone does here,
+    /// so this is the classification that decides whether the list is calm in normal use.
+    func testAPendingBubbleGivingWayToItsServerRowIsATailReplacement() {
+        let delta = RowDelta.compute(old: [1, 2, 3, -1], new: [1, 2, 3, 7])
+        XCTAssertEqual(delta, .tailReplaced(commonPrefix: 3, removed: 1, inserted: 1))
+    }
+
+    /// Two queued sends collapsing into one confirmed row and one still-pending bubble — the
+    /// counts have to come from the lists rather than being assumed equal, or the index paths
+    /// handed to `performBatchUpdates` name rows that do not exist.
+    func testATailReplacementCountsBothSidesIndependently() {
+        let delta = RowDelta.compute(old: [1, -1, -2], new: [1, 7, 8, -1])
+        XCTAssertEqual(delta, .tailReplaced(commonPrefix: 1, removed: 2, inserted: 3))
+    }
+
+    /// No shared leading run at all — a different session's window, or an eviction that took the
+    /// first row with it. There is no anchor to preserve, so a full reload is the honest answer.
+    func testAWindowSharingNoLeadingRunFallsBackToReplaced() {
+        let delta = RowDelta.compute(old: [1, 2, 3], new: [4, 5, 6, 7])
         XCTAssertEqual(delta, .replaced)
     }
 }
