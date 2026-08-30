@@ -21,7 +21,7 @@ struct NoteContainersScreen: View {
                 .listRowBackground(PaiPalette.Semantic.panelBackground)
             }
             if notes.containers.isEmpty {
-                Text("No containers yet — add the folder Freddy's notes sync from.")
+                Text("No containers yet — add the folder your notes sync from.")
                     .foregroundStyle(PaiPalette.Semantic.textMuted)
             }
         }
