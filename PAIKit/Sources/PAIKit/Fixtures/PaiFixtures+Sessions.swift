@@ -33,8 +33,8 @@ extension PaiFixtures {
             },
             "capabilities": { "fast_sessions": true, "reboot": true, "shell": true },
             "session_types": [
-              { "id": "default", "name": "Default", "icon": "terminal" },
-              { "id": "fast", "name": "Fast", "icon": "bolt", "working_dir": "/home/frederik/Programming" }
+              { "id": "default", "name": "Default", "icon": "💬" },
+              { "id": "fast", "name": "Fast", "icon": "⚡", "working_dir": "/home/frederik/Programming" }
             ]
           },
           {
@@ -45,7 +45,7 @@ extension PaiFixtures {
             "ingest_enabled": true,
             "capabilities": { "fast_sessions": false, "reboot": false, "shell": false },
             "session_types": [
-              { "id": "default", "name": "Default", "icon": "terminal" }
+              { "id": "default", "name": "Default", "icon": "💬" }
             ]
           }
         ]
@@ -55,9 +55,9 @@ extension PaiFixtures {
 
     public static let sessionTypes: String = #"""
         [
-          { "id": "default", "name": "Default", "icon": "terminal" },
-          { "id": "fast", "name": "Fast (sandboxed)", "icon": "bolt" },
-          { "id": "research", "name": "Research", "icon": "magnifying-glass", "working_dir": "/home/frederik/Programming" }
+          { "id": "default", "name": "Default", "icon": "💬" },
+          { "id": "fast", "name": "Fast (sandboxed)", "icon": "⚡" },
+          { "id": "research", "name": "Research", "icon": "🔎", "working_dir": "/home/frederik/Programming" }
         ]
         """#
 

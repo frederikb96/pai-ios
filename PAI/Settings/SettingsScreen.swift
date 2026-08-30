@@ -22,6 +22,8 @@ struct SettingsScreen: View {
 
             VoiceSection(settings: settings)
 
+            NotificationsSection()
+
             Section {
                 NavigationLink("Message Display") {
                     ExpandPreferencesScreen(settings: settings)
@@ -47,5 +49,56 @@ struct SettingsScreen: View {
 
     private var themeBinding: Binding<AppTheme> {
         Binding(get: { settings.theme }, set: { settings.setTheme($0) })
+    }
+}
+
+/// Notifications, and the one control that asks for them.
+///
+/// Deliberately an explicit opt-in rather than a prompt at launch. iOS shows the system
+/// permission alert at most once per install and never again — so asking at a moment the person
+/// did not choose spends the only chance there is, over whatever screen they were actually
+/// looking at, for a feature they have not asked about yet. Here, the tap is the consent.
+private struct NotificationsSection: View {
+    @Environment(AppEnvironment.self) private var environment
+
+    var body: some View {
+        Section {
+            if let push = environment.connection?.push {
+                switch push.registration.status {
+                case .notRequested:
+                    Button("Enable notifications") {
+                        Task {
+                            await PushRegistrar.requestAuthorizationIfNeeded(store: push)
+                            await push.registerWithBackendIfNeeded()
+                        }
+                    }
+                    .accessibilityIdentifier("enable-notifications")
+                case .authorized:
+                    LabeledContent(
+                        "Notifications", value: push.registration.registeredToken == nil ? "Not yet registered" : "On")
+                case .denied:
+                    LabeledContent("Notifications", value: "Off")
+                case .failed:
+                    LabeledContent("Notifications", value: "Unavailable")
+                }
+            }
+        } header: {
+            Text("Notifications")
+        } footer: {
+            Text(footer)
+        }
+    }
+
+    private var footer: String {
+        switch environment.connection?.push.registration.status {
+        case .denied:
+            "Turned off in iOS Settings. Only the Settings app can turn it back on."
+        case .failed:
+            "This device could not be registered with Apple. It will try again next launch."
+        case .authorized:
+            "Alerts about this account reach this device."
+        default:
+            "Get alerted on this device when something needs you."
+        }
     }
 }
