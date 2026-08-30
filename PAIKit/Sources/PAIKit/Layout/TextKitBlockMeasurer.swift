@@ -199,8 +199,7 @@
 
     extension Font.Weight {
         /// A second, file-scoped mapping rather than reaching for `PaiTypography.swift`'s own —
-        /// that one is declared `fileprivate` there, and `Theme/` is outside this block's
-        /// directory scope to edit into something shared.
+        /// that one is declared `fileprivate` there.
         fileprivate var textKitWeight: UIFont.Weight {
             switch self {
             case .ultraLight: return .ultraLight

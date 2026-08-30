@@ -69,7 +69,7 @@ private enum RowDelta {
 /// controller. `BlockHeightCache` explicitly supports measuring off the main thread and reading
 /// back synchronously (see its doc comment) — this controller does not exercise that yet, so a
 /// large loaded window measures on the main thread. Whether that is fast enough is unverified
-/// until it runs on a device; see this block's report.
+/// until it runs on a device.
 final class TranscriptCollectionViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegate {
 
     private static let cellReuseIdentifier = "TranscriptRow"
@@ -101,7 +101,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     private var rows: [TranscriptRow] = []
     /// `"\(messageId)#\(expandKey)"` → override. Applies to every card in that message sharing
     /// the key, not to one specific tool-call instance — a simplification from the web's true
-    /// per-card `useState`, made under this block's time budget and flagged in its report.
+    /// per-card `useState`.
     private var expandOverrides: [String: Bool] = [:]
 
     private var edgeFollow = EdgeFollowLatch()
@@ -118,7 +118,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// Every session's last recorded read position, kept only for the life of the process — the
     /// view controller itself is recreated on every navigation into a session, so an instance
     /// property alone would forget it on every return. An app relaunch always opens at the live
-    /// edge; see this block's report for why that scope was chosen over persisting to disk.
+    /// edge, which is why this is held in memory rather than persisted.
     private static var lastAnchors: [String: TranscriptAnchor] = [:]
 
     private lazy var jumpToLatestHostingController = UIHostingController(

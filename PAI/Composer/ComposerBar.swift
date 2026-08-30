@@ -3,8 +3,8 @@ import PhotosUI
 import SwiftUI
 
 /// The message composer, mounted under a session's transcript. Exported for the transcript screen
-/// to place directly under its scroll view — see this block's report for exactly what it needs
-/// from its caller.
+/// to place directly under its scroll view; it needs only a session id and reads everything
+/// else from the environment.
 ///
 /// Serves one session's chat. Replaced entirely by ``NonDrivableComposerBar`` when the session is
 /// not drivable — a subagent, a session on an offline machine's own grey state, or one PAI simply
@@ -65,7 +65,7 @@ struct ComposerBar: View {
             // Polls this session's draft while the composer is on screen, so a message half-typed
             // on another device shows up here live — the same 10s cadence the web's `App.tsx`
             // polls drafts on, scoped to just the composer's own lifetime rather than the whole
-            // app, since nothing else in this block's scope owns an app-wide poll loop.
+            // app.
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(10))
                 guard !Task.isCancelled else { return }

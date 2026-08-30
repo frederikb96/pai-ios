@@ -67,8 +67,8 @@ public actor URLSessionVoiceRealtimeTransport: VoiceRealtimeTransport {
 /// Android's ported, hard-won behaviour: ElevenLabs closes the realtime socket with reason
 /// `resource_exhausted` under load, and the web has no reconnect at all for it — a lost
 /// connection there just ends the take. This is the pure decision of whether and how long to
-/// wait before trying again; `VoiceRecordingSession` does not currently call it — see this
-/// block's report for why wiring an actual reconnect (re-mint a token, reconnect, resend
+/// wait before trying again; `VoiceRecordingSession` does not currently call it, because
+/// wiring an actual reconnect (re-mint a token, reconnect, resend
 /// buffered audio, concatenate transcripts across the two connections) was left for a follow-up
 /// rather than folded into an already-large state machine half-tested.
 public enum ReconnectPolicy {

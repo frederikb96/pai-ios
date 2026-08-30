@@ -2,8 +2,8 @@ import Foundation
 import PAIKit
 import SwiftUI
 
-/// Design-token decisions this file owns, per row 25's own note that `MessageLayoutMetrics`'s
-/// spacing value "belongs with the card chrome", not with the measurement machinery in `PAIKit`.
+/// Design-token decisions this file owns: spacing between cards belongs with the card chrome
+/// here, not with the measurement machinery in `PAIKit`.
 /// Referenced from both here (the rendered spacing) and `TranscriptCollectionViewController` (the
 /// measured spacing) so the two can never silently disagree about what a block of space is.
 enum TranscriptContentMetrics {
@@ -339,8 +339,7 @@ struct UserBubbleView: View {
 /// A genuine prompt relayed from another session — drawn like Freddy's own bubble but a different
 /// colour, so a reader can tell it was not him. `PaiPalette` has no dedicated "relay" swatch (the
 /// web's is a literal, untokenised hex outside the 21 tracked custom properties), so this uses the
-/// closest named green rather than inventing a new asset-catalog colour set outside this block's
-/// directory scope.
+/// closest named green rather than adding an asset-catalog colour set for a single use.
 struct RelayedBubbleView: View {
     let text: String
     let sender: String
@@ -508,8 +507,7 @@ struct MarkdownContentView: View {
         }
     }
 
-    /// Links are coloured but not yet tappable — see this block's report for why that is a
-    /// deliberate scope cut rather than an oversight.
+    /// Links are coloured but not yet tappable — a deliberate cut, not an oversight.
     ///
     /// Built as one `AttributedString` covering the whole paragraph rather than concatenated
     /// `Text` runs — a search highlight needs a background colour over an arbitrary sub-range,

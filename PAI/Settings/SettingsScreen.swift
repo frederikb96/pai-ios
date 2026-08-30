@@ -2,8 +2,7 @@ import PAIKit
 import SwiftUI
 
 /// Everything the web's settings panel offers, minus what is out of scope: the VM shell and the
-/// apps/memory section. Built from the settings inventory report attached to this block's spec
-/// row rather than re-reading the web from scratch.
+/// apps/memory section.
 struct SettingsScreen: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(SettingsStore.self) private var settings

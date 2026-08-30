@@ -6,7 +6,7 @@ import UIKit
 ///
 /// The list is a `UICollectionView` wrapped for SwiftUI (``TranscriptCollectionView``) — not a
 /// plain SwiftUI `List` — with row heights precomputed and cached, never self-sized. See the
-/// `scrolling` skill and this block's report for why.
+/// `scrolling` skill for why.
 struct SessionDetailView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(TranscriptStore.self) private var transcript

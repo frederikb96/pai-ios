@@ -3,8 +3,8 @@ import Foundation
 /// The height of a rendered GFM table — and, deliberately, nothing about its width.
 ///
 /// A table cell never wraps, mirroring the web client: `MarkdownContent.tsx` gives a `<table>` its
-/// own horizontal scroll container rather than letting a wide table reflow (see row 25's markdown
-/// notes — "a wide table is otherwise cut off at the bubble edge with nothing to scroll"). That
+/// own horizontal scroll container rather than letting a wide table reflow — otherwise a wide
+/// table is cut off at the bubble edge with nothing to scroll. That
 /// choice is what makes this pure arithmetic instead of a text layout: a row's height is the same
 /// regardless of the width it is measured at, so a table is the one block a real ``BlockMeasuring``
 /// conformance never has to hand to TextKit — and the one case this package can prove completely

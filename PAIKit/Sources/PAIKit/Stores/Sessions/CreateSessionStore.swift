@@ -27,8 +27,8 @@ public enum CreateSessionResult: Sendable, Equatable {
 /// 700ms-debounced `PUT`. Syncing only this store's half of that object independently of whoever
 /// owns the text half would race the same server row rather than share it — that needs one
 /// shared drafts store, not two independently-debounced writers, so server-side draft sync of the
-/// launch choices was left out of this store rather than half-built. See this block's report for
-/// the reasoning; `selectedMachine`/`selectedSessionTypeId`/`workingDir` below are in-memory only.
+/// launch choices is left out of this store rather than half-built;
+/// `selectedMachine`/`selectedSessionTypeId`/`workingDir` below are in-memory only.
 @MainActor
 @Observable
 public final class CreateSessionStore {
