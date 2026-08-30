@@ -28,10 +28,10 @@ struct TerminalScreen: View {
 
     /// Below this, quiet reads as normal and the status bar says nothing about it. See
     /// `StreamActivity`.
-    private static let idleThreshold: TimeInterval = 5
+    private static let idleThreshold: TimeInterval = 3
     /// Past this, quiet is worth flagging rather than reading as a healthy pause — independent
     /// of the client's own reconnect timeout, since the point is to warn well before that fires.
-    private static let stallThreshold: TimeInterval = 20
+    private static let stallThreshold: TimeInterval = 10
 
     var body: some View {
         Group {

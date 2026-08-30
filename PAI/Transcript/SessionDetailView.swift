@@ -83,8 +83,8 @@ private struct TranscriptStreamStallBanner: View {
 
     /// Independent of `TerminalScreen`'s own thresholds — the two streams are separate
     /// connections and there is no reason their timing has to match.
-    private static let idleThreshold: TimeInterval = 5
-    private static let stallThreshold: TimeInterval = 20
+    private static let idleThreshold: TimeInterval = 3
+    private static let stallThreshold: TimeInterval = 10
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
