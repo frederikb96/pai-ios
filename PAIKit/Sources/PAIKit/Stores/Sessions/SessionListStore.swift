@@ -11,6 +11,8 @@ public protocol SessionListApiClient: Sendable {
     func searchSessions(
         q: String, mode: SessionSearchMode?, agent: String?, limit: Int?
     ) async throws -> [SessionSearchResult]
+    /// Only reached through the delete-hold in `deleteSessionWithHold(id:)` — see its doc comment.
+    func deleteSession(sessionId: String) async throws -> DeleteResponse
 }
 
 extension PaiApiClient: SessionListApiClient {}
@@ -23,8 +25,13 @@ public struct SessionListRow: Sendable, Equatable, Identifiable {
     public let id: String
     public let session: Session
     public let dotState: SessionDotState
+    /// Whether Claude is actively mid-turn — the row shows a spinner in place of the dot rather
+    /// than the dot itself. See `SessionListDomain.isWorking`.
+    public let isWorking: Bool
     public let showsBlockedWarning: Bool
     public let showsAttentionWarning: Bool
+    /// Already project-prefixed (`SessionListFormat.withProjectPrefix`) — the row never composes
+    /// this itself.
     public let displayTitle: String
     /// `last_activity_at ?? created_at` — a raw ISO string, left for the view to parse and run
     /// through `SessionListFormat.timeBucket(for:)` with whatever `Date`/`DateFormatter` it has
@@ -33,6 +40,9 @@ public struct SessionListRow: Sendable, Equatable, Identifiable {
     public let lastActivityAt: String?
     public let sessionTokens: Int
     public let showsTokenCount: Bool
+    /// What this session has running right now — `nil` when there is nothing to show, same as
+    /// the source field. See `ActivityCounts`.
+    public let activityCounts: ActivityCounts?
 }
 
 /// Why nothing is showing where a row list would be. `.loadingFirstResults` only applies to a
@@ -40,6 +50,12 @@ public struct SessionListRow: Sendable, Equatable, Identifiable {
 /// loading state, because it starts life already loaded via `loadInitialSessions()`.
 public enum SessionListEmptyState: Sendable, Equatable {
     case none, loadingFirstResults, noMatchingSessions, noSessionsYet
+}
+
+/// A session `deleteSessionWithHold` has removed from the list but not yet asked the server to
+/// delete — `session` is kept so `undoDelete()` can restore the exact row rather than re-fetching.
+public struct PendingDelete: Sendable, Equatable {
+    public let session: Session
 }
 
 /// Swift port of the session list's data flow: `pai-cloud/web/src/stores/session.ts` (the synced
@@ -67,6 +83,9 @@ public final class SessionListStore {
     static let sessionsPageSize = 100
     static let searchResultLimit = 100
     static let defaultSemanticThreshold = 0.0
+    /// How long a deleted row waits before the DELETE actually reaches the server — the same
+    /// window the web's undo toast holds open (`stores/session.ts`'s `deleteSession`).
+    public static let deleteUndoNanos: UInt64 = 5_000_000_000
     /// Long enough that ordinary typing produces one request, short enough that results still
     /// feel responsive. Applied only to raw typed text — a chip click, a mode toggle and the
     /// Enter key all bypass this, because each is a discrete choice, not a keystroke stream.
@@ -82,6 +101,13 @@ public final class SessionListStore {
     /// The client's own clock at the last successful sync — what the next incremental poll asks
     /// "what changed since". `nil` means the very first load has not happened yet.
     private(set) var lastSessionSync: String?
+    /// Ids `ensureSessionLoaded` has already answered "no such session" for — a deleted one, or
+    /// another account's. Kept so a view that keeps asking about the same missing id (a stale
+    /// deep link, say) does not re-fire the same request on every read.
+    public private(set) var unknownSessionIds: Set<String> = []
+    /// A session removed from the list by `deleteSessionWithHold`, waiting out its undo window
+    /// before the DELETE actually fires. See that method's doc comment.
+    public private(set) var pendingDelete: PendingDelete?
 
     // MARK: Filter / search UI state
 
@@ -109,13 +135,22 @@ public final class SessionListStore {
     private var debounceTask: Task<Void, Never>?
     private var serverFilteredTask: Task<Void, Never>?
     private var pollTask: Task<Void, Never>?
+    /// The delayed real DELETE armed by `deleteSessionWithHold`. Cancelled by `undoDelete()`, and
+    /// replaced (with the previous one fired immediately) if a second delete lands while one is
+    /// already waiting out its hold — matching the web, where only one row is ever mid-undo.
+    private var pendingDeleteTask: Task<Void, Never>?
 
     private let api: SessionListApiClient
     private let debounceNanos: UInt64
+    private let deleteUndoNanos: UInt64
 
-    public init(api: SessionListApiClient, debounceNanos: UInt64 = SessionListStore.defaultTextDebounceNanos) {
+    public init(
+        api: SessionListApiClient, debounceNanos: UInt64 = SessionListStore.defaultTextDebounceNanos,
+        deleteUndoNanos: UInt64 = SessionListStore.deleteUndoNanos
+    ) {
         self.api = api
         self.debounceNanos = debounceNanos
+        self.deleteUndoNanos = deleteUndoNanos
     }
 
     // MARK: - The view's surface
@@ -182,11 +217,84 @@ public final class SessionListStore {
     /// This is the cheap correct fix, not the thorough one: it only ever answers from what is
     /// already in memory, so a session found by search and then never touched by browse or the
     /// synced poll stays unresolved after `serverFilteredResults` is next overwritten (a fresh
-    /// search, a cleared filter). The web's `ensureSessionLoaded` (`session.ts`) covers that case
-    /// with a dedicated fetch-if-missing request; nothing here has a port of it.
+    /// search, a cleared filter). `ensureSessionLoaded(id:)` below covers that case with a
+    /// dedicated fetch-if-missing request.
     public func session(withId id: String) -> Session? {
         syncedSessions.first(where: { $0.id == id })
             ?? serverFilteredResults.first(where: { $0.session.id == id })?.session
+    }
+
+    /// Fetches a session by id when it is outside every page already loaded — opening a session
+    /// by id from outside the loaded window (a deep link, a route restored after relaunch) would
+    /// otherwise find nothing. Swift port of `session.ts`'s `ensureSessionLoaded`.
+    ///
+    /// `q: id, limit: 1` rather than a dedicated by-id endpoint: none exists (`GET /api/sessions`
+    /// is the only session-list route), and its `q` matches a substring of `id` too — not only
+    /// `title`/`initial_message` — so a full id finds exactly one row (`repository.py`'s
+    /// `list_sessions_page` docstring). A no-op once the id is already loaded or already known
+    /// missing; a failed request answers neither way, so a later call can still resolve it.
+    public func ensureSessionLoaded(id: String) async {
+        guard session(withId: id) == nil, !unknownSessionIds.contains(id) else { return }
+        guard
+            let page = try? await api.getSessions(
+                since: nil, limit: 1, cursor: nil, agent: nil, kind: nil, parent: nil, q: id
+            )
+        else { return }
+        if let found = page.sessions.first(where: { $0.id == id }) {
+            upsertSession(found)
+        } else {
+            unknownSessionIds.insert(id)
+        }
+    }
+
+    /// Insert-or-replace by id, re-sorting by activity — the same shape `fetchIncremental`'s merge
+    /// uses, factored out because `ensureSessionLoaded` and `applyLiveStatus` both need exactly
+    /// this on a single row rather than a whole page.
+    private func upsertSession(_ session: Session) {
+        if let index = syncedSessions.firstIndex(where: { $0.id == session.id }) {
+            syncedSessions[index] = session
+        } else {
+            syncedSessions.append(session)
+        }
+        syncedSessions.sort(by: Self.byActivityDescending)
+    }
+
+    /// Routes a live SSE `status` event's session-level fields into this session's row, so the
+    /// list reflects them while its transcript is open rather than waiting for the next poll —
+    /// the event already carries them and nothing was reading them here. A no-op for a session
+    /// this store has not loaded (a subagent, or one outside every loaded page): there is no row
+    /// to update, and `ensureSessionLoaded` is the caller's tool for that case, not this one.
+    public func applyLiveStatus(
+        sessionId: String, state: SessionState?, blocker: Blocker?, working: Bool?,
+        activityCounts: ActivityCounts?
+    ) {
+        if let index = syncedSessions.firstIndex(where: { $0.id == sessionId }) {
+            syncedSessions[index] = syncedSessions[index].withLiveStatus(
+                state: state, blocker: blocker, working: working, activityCounts: activityCounts
+            )
+        }
+        if let index = serverFilteredResults.firstIndex(where: { $0.session.id == sessionId }) {
+            let updated = serverFilteredResults[index].session.withLiveStatus(
+                state: state, blocker: blocker, working: working, activityCounts: activityCounts
+            )
+            serverFilteredResults[index] = SessionSearchResult(
+                session: updated, score: serverFilteredResults[index].score
+            )
+        }
+    }
+
+    /// Replaces a row wholesale with the server's own answer — every mutation the actions menu
+    /// performs (rename, close, idle timeout, move) returns the updated `Session`, and this is
+    /// where that lands back in the list rather than waiting for the next poll to catch up.
+    public func replaceSession(_ session: Session) {
+        if let index = syncedSessions.firstIndex(where: { $0.id == session.id }) {
+            syncedSessions[index] = session
+        }
+        if let index = serverFilteredResults.firstIndex(where: { $0.session.id == session.id }) {
+            serverFilteredResults[index] = SessionSearchResult(
+                session: session, score: serverFilteredResults[index].score
+            )
+        }
     }
 
     // MARK: - Filter bar actions
@@ -315,6 +423,47 @@ public final class SessionListStore {
     /// once the create request answers.
     public func prependOptimisticSession(_ session: Session) {
         syncedSessions.insert(session, at: 0)
+    }
+
+    // MARK: - Delete, with a client-side undo hold
+
+    /// Removes a row from the list immediately and fires the real `DELETE` only after
+    /// ``deleteUndoNanos`` — the server delete is irreversible (it purges messages, outbox and
+    /// drafts, and cascades turns to phases to projects), so the hold is what makes "delete" safe
+    /// to tap by accident. Swift port of `session.ts`'s `deleteSession`.
+    ///
+    /// Deleting a second row while one is already mid-hold fires the first one's DELETE right
+    /// away rather than silently dropping it — only one row is ever mid-undo, matching the web.
+    public func deleteSessionWithHold(id: String) {
+        guard let session = session(withId: id) else { return }
+        if let pendingDelete {
+            pendingDeleteTask?.cancel()
+            let staleId = pendingDelete.session.id
+            Task { [api] in _ = try? await api.deleteSession(sessionId: staleId) }
+        }
+
+        syncedSessions.removeAll { $0.id == id }
+        serverFilteredResults.removeAll { $0.session.id == id }
+        pendingDelete = PendingDelete(session: session)
+
+        pendingDeleteTask = Task { [weak self, api, deleteUndoNanos] in
+            try? await Task.sleep(nanoseconds: deleteUndoNanos)
+            guard !Task.isCancelled else { return }
+            _ = try? await api.deleteSession(sessionId: id)
+            guard let self, self.pendingDelete?.session.id == id else { return }
+            self.pendingDelete = nil
+        }
+    }
+
+    /// Restores the row the last `deleteSessionWithHold` removed, and cancels the delayed DELETE
+    /// so it never fires. A no-op once the hold has already elapsed — the delete is irreversible
+    /// past that point, matching the server.
+    public func undoDelete() {
+        guard let pendingDelete else { return }
+        pendingDeleteTask?.cancel()
+        pendingDeleteTask = nil
+        upsertSession(pendingDelete.session)
+        self.pendingDelete = nil
     }
 
     // MARK: - Sources B/C: routing, debounce, generation + cancellation
@@ -482,12 +631,16 @@ public final class SessionListStore {
             id: session.id,
             session: session,
             dotState: SessionListDomain.dotState(for: session),
+            isWorking: SessionListDomain.isWorking(session),
             showsBlockedWarning: session.state == .blocked,
             showsAttentionWarning: session.state == .attention,
-            displayTitle: SessionListFormat.displayTitle(for: session),
+            displayTitle: SessionListFormat.withProjectPrefix(
+                session.projectName, SessionListFormat.displayTitle(for: session)
+            ),
             lastActivityAt: session.lastActivityAt ?? session.createdAt,
             sessionTokens: session.sessionTokens,
-            showsTokenCount: session.sessionTokens > 0
+            showsTokenCount: session.sessionTokens > 0,
+            activityCounts: session.activityCounts
         )
     }
 

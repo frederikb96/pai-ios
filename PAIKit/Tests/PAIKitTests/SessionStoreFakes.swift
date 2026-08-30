@@ -26,6 +26,8 @@ actor FakeSessionListApi: SessionListApiClient {
 
     private(set) var getSessionsCalls: [GetSessionsCall] = []
     private(set) var searchCalls: [SearchCall] = []
+    private(set) var deleteSessionCalls: [String] = []
+    var deleteSessionResult: Result<DeleteResponse, PaiError> = .success(DeleteResponse(status: .deleted))
 
     /// FIFO per matcher: `getSessions` pulls the next queued page whose predicate matches `since`
     /// being non-nil or nil, letting incremental-poll pages and cold-load/browse pages be scripted
@@ -60,6 +62,14 @@ actor FakeSessionListApi: SessionListApiClient {
         guard let searchResult else { return [] }
         switch await searchResult(call) {
         case let .success(results): return results
+        case let .failure(error): throw error
+        }
+    }
+
+    func deleteSession(sessionId: String) async throws -> DeleteResponse {
+        deleteSessionCalls.append(sessionId)
+        switch deleteSessionResult {
+        case let .success(response): return response
         case let .failure(error): throw error
         }
     }
@@ -189,6 +199,81 @@ actor FakeDirectoryBrowseApi: DirectoryBrowseApiClient {
     }
 }
 
+// MARK: - SessionActionsApiClient
+
+actor FakeSessionActionsApi: SessionActionsApiClient {
+    private(set) var renameCalls: [(sessionId: String, title: String)] = []
+    private(set) var setTitleLockedCalls: [(sessionId: String, locked: Bool)] = []
+    private(set) var closeCalls: [String] = []
+    private(set) var setIdleTimeoutCalls: [(sessionId: String, minutes: Int?)] = []
+    private(set) var switchProjectCalls: [(sessionId: String, projectId: String)] = []
+    private(set) var switchPhaseCalls: [(sessionId: String, phaseId: String)] = []
+    private(set) var exportCalls: [(sessionId: String, since: String?)] = []
+    private(set) var listProjectsCalls: [(query: String?, limit: Int?, offset: Int?)] = []
+    private(set) var listPhasesCalls: [(projectId: String?, query: String?, limit: Int?, offset: Int?)] = []
+
+    var sessionResult: Result<Session, PaiError> = .success(SessionFixture.make())
+    var closeResult: Result<CloseResponse, PaiError> = .success(CloseResponse(status: .closed, detail: nil))
+    var exportResult: Result<PaiExportResult, PaiError> = .success(
+        PaiExportResult(data: Data(), filename: "export.json"))
+    var projectsResult: Result<MemoryProjectsPage, PaiError> = .success(MemoryProjectsPage(total: 0, projects: []))
+    var phasesResult: Result<MemoryPhasesPage, PaiError> = .success(MemoryPhasesPage(phases: []))
+
+    func renameSession(sessionId: String, title: String) async throws -> Session {
+        renameCalls.append((sessionId, title))
+        return try unwrap(sessionResult)
+    }
+
+    func setTitleLocked(sessionId: String, locked: Bool) async throws -> Session {
+        setTitleLockedCalls.append((sessionId, locked))
+        return try unwrap(sessionResult)
+    }
+
+    func closeSession(sessionId: String) async throws -> CloseResponse {
+        closeCalls.append(sessionId)
+        return try unwrap(closeResult)
+    }
+
+    func setIdleTimeout(sessionId: String, minutes: Int?) async throws -> Session {
+        setIdleTimeoutCalls.append((sessionId, minutes))
+        return try unwrap(sessionResult)
+    }
+
+    func switchSessionProject(sessionId: String, projectId: String) async throws -> Session {
+        switchProjectCalls.append((sessionId, projectId))
+        return try unwrap(sessionResult)
+    }
+
+    func switchSessionPhase(sessionId: String, phaseId: String) async throws -> Session {
+        switchPhaseCalls.append((sessionId, phaseId))
+        return try unwrap(sessionResult)
+    }
+
+    func exportSession(sessionId: String, since: String?) async throws -> PaiExportResult {
+        exportCalls.append((sessionId, since))
+        return try unwrap(exportResult)
+    }
+
+    func listMemoryProjects(query: String?, limit: Int?, offset: Int?) async throws -> MemoryProjectsPage {
+        listProjectsCalls.append((query, limit, offset))
+        return try unwrap(projectsResult)
+    }
+
+    func listMemoryPhases(projectId: String?, query: String?, limit: Int?, offset: Int?) async throws
+        -> MemoryPhasesPage
+    {
+        listPhasesCalls.append((projectId, query, limit, offset))
+        return try unwrap(phasesResult)
+    }
+
+    private func unwrap<T>(_ result: Result<T, PaiError>) throws -> T {
+        switch result {
+        case let .success(value): return value
+        case let .failure(error): throw error
+        }
+    }
+}
+
 // MARK: - Fixtures
 
 enum SessionFixture {
@@ -207,7 +292,11 @@ enum SessionFixture {
         workingDir: String? = nil,
         agent: String? = nil,
         kind: SessionKind? = .conversation,
-        claudeSessionId: String? = nil
+        claudeSessionId: String? = nil,
+        projectName: String? = nil,
+        subagentName: String? = nil,
+        subagentType: String? = nil,
+        activityCounts: ActivityCounts? = nil
     ) -> Session {
         Session(
             id: id,
@@ -232,14 +321,15 @@ enum SessionFixture {
             agent: agent,
             kind: kind,
             parentSessionId: nil,
-            subagentName: nil,
-            subagentType: nil,
+            subagentName: subagentName,
+            subagentType: subagentType,
             subagentDescription: nil,
             remoteControl: nil,
             discovered: nil,
             projectId: nil,
             phaseId: nil,
-            projectName: nil
+            projectName: projectName,
+            activityCounts: activityCounts
         )
     }
 }

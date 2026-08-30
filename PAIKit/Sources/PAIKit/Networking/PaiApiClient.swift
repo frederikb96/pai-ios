@@ -567,6 +567,29 @@ public struct PaiApiClient: Sendable {
         )
     }
 
+    // MARK: Memory: projects & phases — only what the move-session pickers need
+
+    public func listMemoryProjects(query: String? = nil, limit: Int? = nil, offset: Int? = nil) async throws
+        -> MemoryProjectsPage
+    {
+        var items: [URLQueryItem] = []
+        if let query { items.append(URLQueryItem(name: "query", value: query)) }
+        if let limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
+        if let offset { items.append(URLQueryItem(name: "offset", value: String(offset))) }
+        return try await send(path: "/api/memory/projects", query: items)
+    }
+
+    public func listMemoryPhases(
+        projectId: String? = nil, query: String? = nil, limit: Int? = nil, offset: Int? = nil
+    ) async throws -> MemoryPhasesPage {
+        var items: [URLQueryItem] = []
+        if let projectId { items.append(URLQueryItem(name: "project_id", value: projectId)) }
+        if let query { items.append(URLQueryItem(name: "query", value: query)) }
+        if let limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
+        if let offset { items.append(URLQueryItem(name: "offset", value: String(offset))) }
+        return try await send(path: "/api/memory/phases", query: items)
+    }
+
     // MARK: Blocker
 
     public func answerBlocker(sessionId: String, key: String) async throws -> AnswerBlockerResponse {

@@ -242,6 +242,9 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     public let phaseId: String?
     /// The project's own name, denormalized here so the session list's search can match on it.
     public let projectName: String?
+    /// What this session has running right now — subagents and background shells/monitors.
+    /// `nil` from an agent too old to report it, read the same as "nothing known", never as zero.
+    public let activityCounts: ActivityCounts?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -273,6 +276,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         case projectId = "project_id"
         case phaseId = "phase_id"
         case projectName = "project_name"
+        case activityCounts = "activity_counts"
     }
 
     public init(
@@ -309,7 +313,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         discovered: Bool?,
         projectId: String?,
         phaseId: String?,
-        projectName: String?
+        projectName: String?,
+        activityCounts: ActivityCounts? = nil
     ) {
         self.id = id
         self.sessionType = sessionType
@@ -345,6 +350,27 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.projectId = projectId
         self.phaseId = phaseId
         self.projectName = projectName
+        self.activityCounts = activityCounts
+    }
+
+    /// A copy with the session-level fields of a live SSE `status` event applied — the same
+    /// three-plus-one fields `TranscriptStore.LiveSessionStatus` carries, and nothing else,
+    /// because that event never reports any other column this type holds.
+    public func withLiveStatus(
+        state: SessionState?, blocker: Blocker?, working: Bool?, activityCounts: ActivityCounts?
+    ) -> Session {
+        Session(
+            id: id, sessionType: sessionType, status: status, state: state, blocker: blocker, working: working,
+            title: title, titleLocked: titleLocked, initialMessage: initialMessage, pendingMessage: pendingMessage,
+            sessionTokens: sessionTokens, claudeSessionId: claudeSessionId, idleTimeoutMinutes: idleTimeoutMinutes,
+            effectiveIdleTimeoutMinutes: effectiveIdleTimeoutMinutes, cseId: cseId, createdAt: createdAt,
+            updatedAt: updatedAt, lastActivityAt: lastActivityAt, workingDir: workingDir, agent: agent, kind: kind,
+            parentSessionId: parentSessionId, subagentName: subagentName, subagentType: subagentType,
+            subagentDescription: subagentDescription, subagentModel: subagentModel,
+            readPositionMessageId: readPositionMessageId, readPositionOffsetPx: readPositionOffsetPx,
+            readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
+            projectId: projectId, phaseId: phaseId, projectName: projectName, activityCounts: activityCounts
+        )
     }
 }
 

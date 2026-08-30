@@ -56,6 +56,21 @@ public struct FolderFavorite: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+// MARK: - Activity counts
+
+/// What a session has running right now: subagents working for it, and background shells plus
+/// monitors it started and has not stopped. Derived from the transcript at ingest, so it is only
+/// ever as fresh as the last entry — see `pai-cloud/backend/src/pai_cloud/activity.py`.
+public struct ActivityCounts: Codable, Sendable, Equatable {
+    public let agents: Int
+    public let tasks: Int
+
+    public init(agents: Int, tasks: Int) {
+        self.agents = agents
+        self.tasks = tasks
+    }
+}
+
 // MARK: - Plan usage
 
 public struct UsageWindow: Codable, Sendable, Equatable {

@@ -35,6 +35,10 @@ public final class TranscriptStore {
     /// status event arrived and overwrote it.
     public internal(set) var sseConnected: [String: Bool] = [:]
     public internal(set) var isProcessing: [String: Bool] = [:]
+    /// The session-level half of the latest `status` event, keyed like `sessionTokens` — the
+    /// live picture while this session's transcript is open, for whichever store owns the
+    /// session list to route into its own rows. See `applySseStatus`.
+    public internal(set) var liveStatus: [String: LiveSessionStatus] = [:]
 
     // Send-tracking state (``PendingMessage``, ``TranscriptDelivery``) is declared here — a
     // stored property cannot live in an extension — and its behaviour lives in
@@ -48,6 +52,15 @@ public final class TranscriptStore {
     private var sessionAccessOrder: [String] = []
 
     public init() {}
+
+    /// The session-level fields of an SSE `status` event, carried as one value so a reader of
+    /// `liveStatus` gets a single change notification per event rather than three.
+    public struct LiveSessionStatus: Sendable, Equatable {
+        public let state: SessionState?
+        public let blocker: Blocker?
+        public let working: Bool?
+        public let activityCounts: ActivityCounts?
+    }
 
     public func window(for sessionId: String) -> TranscriptWindow {
         windows[sessionId] ?? .empty
@@ -179,6 +192,7 @@ public final class TranscriptStore {
             delivery.removeValue(forKey: oldest)
             sseConnected.removeValue(forKey: oldest)
             isProcessing.removeValue(forKey: oldest)
+            liveStatus.removeValue(forKey: oldest)
         }
     }
 
