@@ -26,8 +26,9 @@ struct SessionDetailView: View {
                     headerStrip
                     TranscriptCollectionView(
                         sessionID: sessionID, store: transcript, apiClient: connection.apiClient, settings: settings,
-                        requestFactory: connection.requestFactory, searchState: searchState)
-                        .overlay { TranscriptLoadState(sessionID: sessionID) }
+                        requestFactory: connection.requestFactory, searchState: searchState
+                    )
+                    .overlay { TranscriptLoadState(sessionID: sessionID) }
                     TranscriptStreamStallBanner(sessionID: sessionID)
                     Divider()
                     if searchState.isActive {
