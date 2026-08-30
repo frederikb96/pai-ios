@@ -109,6 +109,71 @@ public enum TranscriptRowLayout {
         return total
     }
 
+    /// The vertical distance from the top of `message`'s row to the top of one block inside one
+    /// of its cards — the same origin and units ``height(for:width:environment:isExpanded:measurer:cache:metrics:)``'s
+    /// own total is in.
+    ///
+    /// Exists because landing a search hit on screen cannot stop at "scroll to this row": a real
+    /// row can run to thousands of points (one agent report in a real transcript measures
+    /// 12382px), and scrolling only to its top would not bring a hit deep inside it into view.
+    /// This gives the exact point within the row without needing character-level access to the
+    /// text a cell draws — the block it is in is already known and already measured.
+    ///
+    /// `nil` when `cardIndex` is out of range for `message`'s current plan; `blockIndex` out of
+    /// range (the card is not expanded yet, so its `blocks` is empty) degrades to the top of the
+    /// card's own content rather than failing — a caller expands the card before asking this, but
+    /// a stale index should land somewhere reasonable rather than crash.
+    public static func blockOffset(
+        cardIndex: Int,
+        blockIndex: Int,
+        for message: Message,
+        width: Double,
+        environment: MeasurementEnvironment,
+        isExpanded: (String) -> Bool,
+        measurer: some BlockMeasuring,
+        cache: BlockHeightCache,
+        metrics: MessageLayoutMetrics
+    ) -> Double? {
+        let cards = TranscriptRowPlan.cards(for: message, isExpanded: isExpanded)
+        guard cards.indices.contains(cardIndex) else { return nil }
+
+        var total: Double = 0
+        for index in 0..<cardIndex {
+            if index > 0 { total += TranscriptRowMetrics.interCardSpacing }
+            total += height(
+                of: cards[index], width: width, environment: environment, measurer: measurer, cache: cache,
+                metrics: metrics)
+        }
+        if cardIndex > 0 { total += TranscriptRowMetrics.interCardSpacing }
+
+        let card = cards[cardIndex]
+        total += chromeBeforeContent(of: card.kind)
+        guard card.blocks.indices.contains(blockIndex) else { return total }
+
+        let content = MessageContentLayoutComposer.layout(
+            of: card.blocks, width: contentWidth(for: card.kind, cellWidth: width), environment: environment,
+            metrics: metrics, measurer: measurer, cache: cache)
+        total += content.blocks[blockIndex].offset
+        return total
+    }
+
+    /// Distance from a card's own top edge to the top of its measured content — the counterpart
+    /// to what ``height(of:width:environment:measurer:cache:metrics:)`` adds *after* the content
+    /// for that same kind, kept as its own function so the two can never quietly drift onto
+    /// different numbers for the same chrome. Derived from the same view structure that function's
+    /// own doc comment reasons about, not measured independently.
+    private static func chromeBeforeContent(of kind: TranscriptCardPlan.Kind) -> Double {
+        switch kind {
+        case .userBubble, .assistantBubble:
+            return TranscriptRowMetrics.bubbleVerticalPadding / 2
+        case .relayedBubble, .command:
+            let labelChrome = TranscriptRowMetrics.bubbleLabelLineHeight + TranscriptRowMetrics.bubbleLabelSpacing
+            return labelChrome + TranscriptRowMetrics.bubbleVerticalPadding / 2
+        case .thinking, .toolCall, .toolResult, .agentMessage, .system, .legacyCommandOutput:
+            return TranscriptRowMetrics.cardHeaderHeight + TranscriptRowMetrics.cardContentVerticalPadding / 2
+        }
+    }
+
     /// The width `card`'s own text wraps at — the cell width minus whichever horizontal padding
     /// `TranscriptCardKindView` draws that kind inside, so a wrap this measures and a wrap the
     /// view lays out can never be computed from two different widths.

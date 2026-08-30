@@ -1,3 +1,4 @@
+import Foundation
 import PAIKit
 import SwiftUI
 
@@ -9,6 +10,10 @@ enum TranscriptContentMetrics {
     static let blockSpacing: Double = 8
 }
 
+/// One occurrence to paint inside a block's own text, in that block's UTF-16 coordinates — the
+/// shape every rendering function below takes its highlights in.
+typealias TranscriptHighlightSpan = (range: NSRange, isCurrent: Bool)
+
 /// One message's whole row: every card `TranscriptRowPlan` produced for it, in order, then a
 /// trailing timestamp — the exact same decomposition `TranscriptRowLayout` measured, so a row
 /// never renders taller or shorter than the height its cell was given.
@@ -16,6 +21,10 @@ struct TranscriptRowContent: View {
     let message: Message
     let isExpanded: (String) -> Bool
     let onToggleExpand: (String) -> Void
+    /// Every search hit that belongs to this message — already filtered by the caller, which
+    /// knows the message id and this view does not need to. Empty outside a search.
+    var highlights: [TranscriptSearchHit] = []
+    var currentHit: TranscriptSearchHit?
 
     private var cards: [TranscriptCardPlan] {
         TranscriptRowPlan.cards(for: message, isExpanded: isExpanded)
@@ -23,11 +32,12 @@ struct TranscriptRowContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: TranscriptRowMetrics.interCardSpacing) {
-            ForEach(Array(cards.enumerated()), id: \.offset) { _, card in
+            ForEach(Array(cards.enumerated()), id: \.offset) { cardIndex, card in
                 TranscriptCardKindView(
                     card: card,
                     isExpanded: card.expandKey.map(isExpanded) ?? true,
-                    onToggle: card.expandKey.map { key in { onToggleExpand(key) } }
+                    onToggle: card.expandKey.map { key in { onToggleExpand(key) } },
+                    highlightsByBlockIndex: highlightsByBlockIndex(forCardIndex: cardIndex)
                 )
             }
             if message.timestamp != nil {
@@ -38,6 +48,17 @@ struct TranscriptRowContent: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Groups this card's own hits by which block they fall in — the shape every rendering
+    /// function downstream wants, since a card's content is measured and drawn block by block.
+    private func highlightsByBlockIndex(forCardIndex cardIndex: Int) -> [Int: [TranscriptHighlightSpan]] {
+        guard !highlights.isEmpty else { return [:] }
+        var result: [Int: [TranscriptHighlightSpan]] = [:]
+        for hit in highlights where hit.cardIndex == cardIndex {
+            result[hit.blockIndex, default: []].append((hit.range, hit == currentHit))
+        }
+        return result
     }
 
     private var formattedTimestamp: String {
@@ -60,12 +81,13 @@ struct TranscriptCardKindView: View {
     let card: TranscriptCardPlan
     let isExpanded: Bool
     let onToggle: (() -> Void)?
+    var highlightsByBlockIndex: [Int: [TranscriptHighlightSpan]] = [:]
 
     var body: some View {
         switch card.kind {
         case .thinking:
             CardChrome(icon: "brain", label: "Thinking", isExpanded: isExpanded, onToggle: onToggle) {
-                ToolBodyText(blocks: card.blocks)
+                ToolBodyText(blocks: card.blocks, highlightsByBlockIndex: highlightsByBlockIndex)
             }
 
         case .toolCall(let call):
@@ -74,7 +96,9 @@ struct TranscriptCardKindView: View {
                 label: MessageDisplay.toolCardLabel(call: call, result: nil),
                 isExpanded: isExpanded, onToggle: onToggle
             ) {
-                ToolBodyText(blocks: card.blocks, colorHint: TranscriptCardKindView.colorHint(forToolName: call.name))
+                ToolBodyText(
+                    blocks: card.blocks, colorHint: TranscriptCardKindView.colorHint(forToolName: call.name),
+                    highlightsByBlockIndex: highlightsByBlockIndex)
             }
 
         case .toolResult(let result):
@@ -85,26 +109,26 @@ struct TranscriptCardKindView: View {
             ) {
                 // A result is plain, unlike its call — only a bash *command* line or an edit's
                 // diff prefixes are recoloured; a result's own output has neither.
-                ToolBodyText(blocks: card.blocks)
+                ToolBodyText(blocks: card.blocks, highlightsByBlockIndex: highlightsByBlockIndex)
             }
 
         case .userBubble(let text, let attachmentPaths):
-            UserBubbleView(text: text, attachmentPaths: attachmentPaths)
+            UserBubbleView(text: text, attachmentPaths: attachmentPaths, highlights: highlightsByBlockIndex[0] ?? [])
 
         case .relayedBubble(let text, let sender, let group):
-            RelayedBubbleView(text: text, sender: sender, group: group)
+            RelayedBubbleView(text: text, sender: sender, group: group, highlights: highlightsByBlockIndex[0] ?? [])
 
         case .assistantBubble:
-            AssistantBubbleView(blocks: card.blocks)
+            AssistantBubbleView(blocks: card.blocks, highlights: highlightsByBlockIndex)
 
         case .agentMessage(let sender, _):
             CardChrome(icon: "bubble.left.and.bubble.right", label: sender, isExpanded: isExpanded, onToggle: onToggle)
             {
-                MarkdownContentView(blocks: card.blocks)
+                MarkdownContentView(blocks: card.blocks, highlights: highlightsByBlockIndex)
             }
 
         case .command(let name, let args):
-            CommandCardView(name: name, args: args)
+            CommandCardView(name: name, args: args, highlights: highlightsByBlockIndex[0] ?? [])
 
         case .system(let subtype, let content, _):
             CardChrome(
@@ -112,12 +136,12 @@ struct TranscriptCardKindView: View {
                 label: MessageDisplay.systemLabel(subtype: subtype, content: content), isExpanded: isExpanded,
                 onToggle: onToggle
             ) {
-                ToolBodyText(blocks: card.blocks)
+                ToolBodyText(blocks: card.blocks, highlightsByBlockIndex: highlightsByBlockIndex)
             }
 
         case .legacyCommandOutput:
             CardChrome(icon: "terminal", label: "Command Output", isExpanded: isExpanded, onToggle: onToggle) {
-                ToolBodyText(blocks: card.blocks)
+                ToolBodyText(blocks: card.blocks, highlightsByBlockIndex: highlightsByBlockIndex)
             }
         }
     }
@@ -224,33 +248,49 @@ struct CardChrome<Content: View>: View {
 struct ToolBodyText: View {
     let blocks: [MarkdownBlock]
     var colorHint: ToolBodyColorHint?
+    var highlightsByBlockIndex: [Int: [TranscriptHighlightSpan]] = [:]
 
     var body: some View {
-        ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+        ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
             if case .codeBlock(_, let code) = block {
-                coloredText(for: code)
-                    .font(PaiTypography.markdownCodeBlock.font)
+                coloredText(for: code, highlights: highlightsByBlockIndex[index] ?? [])
                     .textSelection(.enabled)
                     .padding(TranscriptRowMetrics.codeBlockPadding)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(PaiPalette.surface900, in: RoundedRectangle(cornerRadius: 6))
             } else {
-                MarkdownContentView(blocks: [block])
+                MarkdownContentView(blocks: [block], highlights: [0: highlightsByBlockIndex[index] ?? []])
             }
         }
     }
 
-    private func coloredText(for code: String) -> Text {
-        guard let colorHint else {
-            return Text(code).foregroundStyle(PaiPalette.Semantic.textPrimary)
+    /// Builds the body as one `AttributedString` rather than concatenated `Text` pieces — a
+    /// search highlight needs a background colour on an arbitrary sub-range, and only
+    /// `Text(AttributedString)` can carry one without inserting anything into the text (see
+    /// ``TranscriptSearchPainting``'s own doc comment for why that property matters). Per-line
+    /// recolouring from `colorHint` sets only *foreground*, so a highlight's background paints
+    /// over it without erasing which line is a command versus a diff addition or removal.
+    private func coloredText(for code: String, highlights: [TranscriptHighlightSpan]) -> Text {
+        var attributed = AttributedString(code)
+        attributed.font = PaiTypography.markdownCodeBlock.font
+        attributed.foregroundColor = PaiPalette.Semantic.textPrimary
+
+        if let colorHint {
+            var cursor = 0
+            for substring in code.split(separator: "\n", omittingEmptySubsequences: false) {
+                let line = String(substring)
+                let length = line.utf16.count
+                defer { cursor += length + 1 }  // +1 for the "\n" this split consumed between lines
+                guard length > 0,
+                    let range = TranscriptTextHighlighting.attributedRange(
+                        NSRange(location: cursor, length: length), source: code, in: attributed)
+                else { continue }
+                attributed[range].foregroundColor = colorHint.color(forLine: line)
+            }
         }
-        let lines = code.split(separator: "\n", omittingEmptySubsequences: false)
-        var result = Text("")
-        for (index, line) in lines.enumerated() {
-            let piece = Text(String(line)).foregroundStyle(colorHint.color(forLine: String(line)))
-            result = index == 0 ? piece : result + Text("\n") + piece
-        }
-        return result
+
+        TranscriptTextHighlighting.apply(highlights, to: &attributed, source: code)
+        return Text(attributed)
     }
 }
 
@@ -274,12 +314,12 @@ enum ToolBodyColorHint {
 struct UserBubbleView: View {
     let text: String
     let attachmentPaths: [String]
+    var highlights: [TranscriptHighlightSpan] = []
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
             if !text.isEmpty {
-                Text(text)
-                    .font(PaiTypography.body.font)
+                TranscriptTextHighlighting.plainText(text, font: PaiTypography.body.font, highlights: highlights)
                     .foregroundStyle(.white)
                     .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding)
                     .padding(.vertical, TranscriptRowMetrics.bubbleVerticalPadding / 2)
@@ -305,6 +345,7 @@ struct RelayedBubbleView: View {
     let text: String
     let sender: String
     let group: String?
+    var highlights: [TranscriptHighlightSpan] = []
 
     var body: some View {
         VStack(alignment: .trailing, spacing: TranscriptRowMetrics.bubbleLabelSpacing) {
@@ -313,8 +354,7 @@ struct RelayedBubbleView: View {
                 .foregroundStyle(.white.opacity(0.85))
                 .frame(height: TranscriptRowMetrics.bubbleLabelLineHeight, alignment: .leading)
             if !text.isEmpty {
-                Text(text)
-                    .font(PaiTypography.body.font)
+                TranscriptTextHighlighting.plainText(text, font: PaiTypography.body.font, highlights: highlights)
                     .foregroundStyle(.white)
             }
         }
@@ -329,9 +369,10 @@ struct RelayedBubbleView: View {
 /// which shows plain or lightly-coloured monospace).
 struct AssistantBubbleView: View {
     let blocks: [MarkdownBlock]
+    var highlights: [Int: [TranscriptHighlightSpan]] = [:]
 
     var body: some View {
-        MarkdownContentView(blocks: blocks)
+        MarkdownContentView(blocks: blocks, highlights: highlights)
             .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding)
             .padding(.vertical, TranscriptRowMetrics.bubbleVerticalPadding / 2)
             .background(PaiPalette.Semantic.raisedSurface, in: RoundedRectangle(cornerRadius: 16))
@@ -344,6 +385,7 @@ struct AssistantBubbleView: View {
 struct CommandCardView: View {
     let name: String
     let args: String?
+    var highlights: [TranscriptHighlightSpan] = []
 
     var body: some View {
         if let args {
@@ -352,8 +394,7 @@ struct CommandCardView: View {
                     .font(PaiTypography.captionEmphasized.font)
                     .foregroundStyle(.white.opacity(0.85))
                     .frame(height: TranscriptRowMetrics.bubbleLabelLineHeight, alignment: .leading)
-                Text(args)
-                    .font(PaiTypography.body.font)
+                TranscriptTextHighlighting.plainText(args, font: PaiTypography.body.font, highlights: highlights)
                     .foregroundStyle(.white)
             }
             .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding)
@@ -375,36 +416,45 @@ struct CommandCardView: View {
 /// Renders parsed markdown blocks. Recurses for `.blockQuote`/`.list`, whose nested blocks are
 /// exactly the ones `TextKitBlockMeasurer` measures by joining with a single `"\n"` rather than
 /// real paragraph spacing — see that type's doc comment for the approximation this inherits.
+///
+/// `highlights` is keyed by index into `blocks` — meaningful only at the top level a card's own
+/// plan indexes against (see `TranscriptSearchIndex`'s doc comment). A recursive call for a
+/// nested list item or blockquote passes none: a hit's `blockIndex` names a position in the
+/// *card's* flat block list, which does not correspond to a position inside a block nested
+/// several levels down, so a hit inside a list or a blockquote still opens and scrolls to the
+/// right row but is not painted character-for-character inside it.
 struct MarkdownContentView: View {
     let blocks: [MarkdownBlock]
+    var highlights: [Int: [TranscriptHighlightSpan]] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: TranscriptContentMetrics.blockSpacing) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                blockView(block)
+            ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
+                blockView(block, highlights: highlights[index] ?? [])
             }
         }
     }
 
     @ViewBuilder
-    private func blockView(_ block: MarkdownBlock) -> some View {
+    private func blockView(_ block: MarkdownBlock, highlights: [TranscriptHighlightSpan]) -> some View {
         switch block {
         case .paragraph(let text):
-            styledText(text, style: PaiTypography.markdownBody)
+            styledText(text, style: PaiTypography.markdownBody, highlights: highlights)
                 .fixedSize(horizontal: false, vertical: true)
 
         case .heading(let level, let text):
-            styledText(text, style: headingStyle(level))
+            styledText(text, style: headingStyle(level), highlights: highlights)
                 .fixedSize(horizontal: false, vertical: true)
 
         case .codeBlock(_, let code):
-            Text(code)
-                .font(PaiTypography.markdownCodeBlock.font)
-                .foregroundStyle(PaiPalette.Semantic.textPrimary)
-                .textSelection(.enabled)
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(PaiPalette.surface900, in: RoundedRectangle(cornerRadius: 6))
+            TranscriptTextHighlighting.plainText(
+                code, font: PaiTypography.markdownCodeBlock.font, highlights: highlights
+            )
+            .foregroundStyle(PaiPalette.Semantic.textPrimary)
+            .textSelection(.enabled)
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(PaiPalette.surface900, in: RoundedRectangle(cornerRadius: 6))
 
         case .blockQuote(let nested):
             HStack(spacing: TranscriptRowMetrics.blockQuoteSpacing) {
@@ -432,9 +482,10 @@ struct MarkdownContentView: View {
             Divider()
 
         case .htmlBlock(let raw):
-            Text(raw)
-                .font(PaiTypography.markdownCodeBlock.font)
-                .foregroundStyle(PaiPalette.Semantic.textMuted)
+            TranscriptTextHighlighting.plainText(
+                raw, font: PaiTypography.markdownCodeBlock.font, highlights: highlights
+            )
+            .foregroundStyle(PaiPalette.Semantic.textMuted)
         }
     }
 
@@ -459,25 +510,55 @@ struct MarkdownContentView: View {
 
     /// Links are coloured but not yet tappable — see this block's report for why that is a
     /// deliberate scope cut rather than an oversight.
-    private func styledText(_ inline: InlineText, style: PaiTypography.Style) -> Text {
-        var result = Text("")
+    ///
+    /// Built as one `AttributedString` covering the whole paragraph rather than concatenated
+    /// `Text` runs — a search highlight needs a background colour over an arbitrary sub-range,
+    /// which only `Text(AttributedString)` can carry without inserting anything into the text.
+    /// `InlinePresentationIntent` stands in for `.bold()`/`.italic()`: it is the same mechanism
+    /// `Text(AttributedString(markdown:))` itself uses to render emphasis, so it needs no font
+    /// substitution and cannot disagree with what `TextKitBlockMeasurer` already measured this
+    /// same run at.
+    private func styledText(_ inline: InlineText, style: PaiTypography.Style, highlights: [TranscriptHighlightSpan])
+        -> Text
+    {
+        let source = inline.plainText
+        var attributed = AttributedString(source)
+        attributed.font = style.font
+
+        var cursor = 0
         for run in inline.runs {
-            var piece = Text(run.text)
-                .font(run.style.contains(.code) ? PaiTypography.markdownInlineCode.font : style.font)
-            if run.style.contains(.bold) { piece = piece.bold() }
-            if run.style.contains(.italic) { piece = piece.italic() }
-            if run.style.contains(.strikethrough) { piece = piece.strikethrough() }
-            if run.destination != nil {
-                piece = piece.foregroundStyle(PaiPalette.Semantic.accentText).underline()
+            let length = run.text.utf16.count
+            defer { cursor += length }
+            guard length > 0,
+                let range = TranscriptTextHighlighting.attributedRange(
+                    NSRange(location: cursor, length: length), source: source, in: attributed)
+            else { continue }
+
+            if run.style.contains(.code) {
+                attributed[range].font = PaiTypography.markdownInlineCode.font
             }
-            result = result + piece
+            var intent: InlinePresentationIntent = []
+            if run.style.contains(.bold) { intent.insert(.stronglyEmphasized) }
+            if run.style.contains(.italic) { intent.insert(.emphasized) }
+            if !intent.isEmpty { attributed[range].inlinePresentationIntent = intent }
+            if run.style.contains(.strikethrough) { attributed[range].strikethroughStyle = .single }
+            if run.destination != nil {
+                attributed[range].foregroundColor = PaiPalette.Semantic.accentText
+                attributed[range].underlineStyle = .single
+            }
         }
-        return result
+
+        TranscriptTextHighlighting.apply(highlights, to: &attributed, source: source)
+        return Text(attributed)
     }
 }
 
 /// A GFM table, its own horizontally-scrolling grid — matching the web, a cell never wraps, so a
 /// wide table scrolls instead of being cut off with nothing to reach the rest of it.
+///
+/// A hit inside a cell still opens and scrolls to the row (the store-side index covers it) — it
+/// is just not painted inside the cell, the one scope cut `MarkdownContentView`'s own doc comment
+/// names, since a cell here is a single flat `Text` with no run-splitting machinery at all.
 struct GfmTableView: View {
     let table: MarkdownTable
 
@@ -501,6 +582,59 @@ struct GfmTableView: View {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Shared plumbing for painting a search highlight over an `AttributedString` without changing
+/// what it measures as — see ``TranscriptSearchPainting``'s own doc comment for the constraint
+/// this exists to serve. Every rendering function above that can carry a highlight goes through
+/// this, so there is exactly one place that converts a UTF-16 ``NSRange`` into an
+/// `AttributedString` sub-range and exactly one place that decides what a hit looks like painted.
+enum TranscriptTextHighlighting {
+    /// A plain, unstyled run of text with no per-character formatting of its own — a bubble's
+    /// body, a code block, raw HTML source. `font` is the one attribute this always sets; a
+    /// caller applying its own colour via an outer `.foregroundStyle()` still wins wherever a
+    /// highlight has not overridden it, since this leaves no foreground attribute of its own in
+    /// the unhighlighted stretches.
+    static func plainText(_ text: String, font: Font, highlights: [TranscriptHighlightSpan]) -> Text {
+        var attributed = AttributedString(text)
+        attributed.font = font
+        apply(highlights, to: &attributed, source: text)
+        return Text(attributed)
+    }
+
+    /// Converts a UTF-16 `NSRange` measured against `source` into the equivalent sub-range of
+    /// `attributed` — valid whenever `attributed`'s characters are `source`'s characters in the
+    /// same order, which every caller here guarantees by building `attributed` directly from
+    /// `source` before calling this.
+    static func attributedRange(_ nsRange: NSRange, source: String, in attributed: AttributedString)
+        -> Range<AttributedString.Index>?
+    {
+        guard let range = Range(nsRange, in: source) else { return nil }
+        guard let lower = AttributedString.Index(range.lowerBound, within: attributed),
+            let upper = AttributedString.Index(range.upperBound, within: attributed)
+        else { return nil }
+        return lower..<upper
+    }
+
+    /// Paints every highlight onto `attributed` as a background colour (and, for the current hit,
+    /// a foreground colour too, for contrast against its brighter background) — never anything
+    /// that could change what a width this text was already measured at wraps to.
+    static func apply(_ highlights: [TranscriptHighlightSpan], to attributed: inout AttributedString, source: String) {
+        guard !highlights.isEmpty else { return }
+        let segments = TranscriptSearchPainting.segments(length: source.utf16.count, highlights: highlights)
+        for segment in segments where segment.emphasis != .none {
+            guard let range = attributedRange(segment.range, source: source, in: attributed) else { continue }
+            switch segment.emphasis {
+            case .none:
+                break
+            case .hit:
+                attributed[range].backgroundColor = PaiPalette.SearchHighlight.allHits
+            case .currentHit:
+                attributed[range].backgroundColor = PaiPalette.SearchHighlight.currentBackground
+                attributed[range].foregroundColor = PaiPalette.SearchHighlight.currentForeground
             }
         }
     }

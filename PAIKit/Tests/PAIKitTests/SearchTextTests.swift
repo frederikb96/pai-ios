@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 
 @testable import PAIKit
@@ -101,5 +102,49 @@ final class SearchTextTests: XCTestCase {
         XCTAssertTrue(SearchText.containsMatch(blocks.plainText, query: "bold text"))
         XCTAssertFalse(SearchText.containsMatch(blocks.plainText, query: "##"))
         XCTAssertFalse(SearchText.containsMatch(blocks.plainText, query: "**"))
+    }
+
+    // MARK: - findMatches (locating a hit, not just detecting one)
+
+    func testFindMatchesLocatesEveryOccurrenceInSourceCoordinates() {
+        let matches = SearchText.findMatches(in: "one two one", query: "one")
+        XCTAssertEqual(matches, [NSRange(location: 0, length: 3), NSRange(location: 8, length: 3)])
+    }
+
+    /// Search is case-insensitive, but a highlight has to land on the real string a view draws —
+    /// so the located range must point at the original casing, not a lowercased copy.
+    func testFindMatchesIsCaseInsensitiveButRangesPointAtTheOriginalCasing() {
+        let text = "Hello WORLD"
+        let matches = SearchText.findMatches(in: text, query: "world")
+        XCTAssertEqual(matches, [NSRange(location: 6, length: 5)])
+        XCTAssertEqual((text as NSString).substring(with: matches[0]), "WORLD")
+    }
+
+    /// A query spanning a collapsed whitespace run must locate the entire original run, not just
+    /// the single space the normalized text matched against — otherwise the highlighted range
+    /// would end short of what a reader actually searched for.
+    func testFindMatchesSpansTheWholeOriginalWhitespaceRunNotJustOneSpace() {
+        let matches = SearchText.findMatches(in: "a   b", query: "a b")
+        XCTAssertEqual(matches, [NSRange(location: 0, length: 5)])
+    }
+
+    func testFindMatchesReturnsNothingForAnEmptyOrBlankQuery() {
+        XCTAssertEqual(SearchText.findMatches(in: "anything", query: ""), [])
+        XCTAssertEqual(SearchText.findMatches(in: "anything", query: "   "), [])
+    }
+
+    func testFindMatchesDoesNotOverlap() {
+        let matches = SearchText.findMatches(in: "aaaa", query: "aa")
+        XCTAssertEqual(matches, [NSRange(location: 0, length: 2), NSRange(location: 2, length: 2)])
+    }
+
+    /// The character `normalize(_:)` itself declines to lowercase (`testCharacterThatWouldGrowIsLeftAlone`)
+    /// must still be located correctly by an exact-case query — the offset table has to stay
+    /// correct even where normalization leaves a character untouched.
+    func testFindMatchesLocatesTheGuardedUppercaseCharacter() {
+        let text = "İstanbul is old"
+        let matches = SearchText.findMatches(in: text, query: "İstanbul")
+        let expectedLength = (text as NSString).range(of: "İstanbul").length
+        XCTAssertEqual(matches, [NSRange(location: 0, length: expectedLength)])
     }
 }

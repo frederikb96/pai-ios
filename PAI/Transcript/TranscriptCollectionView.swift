@@ -1,3 +1,4 @@
+import Observation
 import PAIKit
 import SwiftUI
 import UIKit
@@ -86,6 +87,11 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// `PaiRequestFactory`'s own doc comment. `PaiApiClient` keeps its own copy private, so the
     /// stream needs one passed in rather than reached for through the client.
     private let requestFactory: PaiRequestFactory
+    /// Shared with ``TranscriptSearchBar`` — a sibling view under the same `SessionDetailView`,
+    /// not a parent or child of this one, so the shared `@Observable` instance is the only channel
+    /// between them. Nothing here mutates it except ``searchState/isLoadingFullHistory``; every
+    /// other field is the search bar's own, and this controller only ever reacts to it.
+    private let searchState: TranscriptSearchState
 
     private let measurer = TextKitBlockMeasurer()
     private let cache = BlockHeightCache()
@@ -118,15 +124,28 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     private lazy var jumpToLatestHostingController = UIHostingController(
         rootView: JumpToLatestButton(onTap: { [weak self] in self?.jumpToLatestTapped() }))
 
+    /// Debounced 90ms after the last keystroke, matching the web's own constant — see
+    /// `recomputeSearchHitsNow()`'s call site.
+    private static let searchDebounce: Duration = .milliseconds(90)
+    private var searchDebounceTask: Task<Void, Never>?
+    /// The reader's own position, captured once when a search opens — every result set this
+    /// session computes starts from it, so typing a longer query does not silently re-anchor the
+    /// start position to wherever the previous query happened to land.
+    private var searchOpenedAtMessageId: Int?
+    private var hasBegunCurrentSearchSession = false
+    private var lastSearchedQuery: String?
+    private var lastNavigatedHit: TranscriptSearchHit?
+
     init(
         sessionID: String, store: TranscriptStore, apiClient: PaiApiClient, settings: SettingsStore,
-        requestFactory: PaiRequestFactory
+        requestFactory: PaiRequestFactory, searchState: TranscriptSearchState
     ) {
         self.sessionID = sessionID
         self.store = store
         self.apiClient = apiClient
         self.settings = settings
         self.requestFactory = requestFactory
+        self.searchState = searchState
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -164,6 +183,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         ])
 
         Task { await bootstrap() }
+        observeSearchState()
     }
 
     override func viewDidLayoutSubviews() {
@@ -331,6 +351,161 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         let current = expandOverrides[overrideKey] ?? settings.isExpandEnabled(key)
         expandOverrides[overrideKey] = !current
         recomputeRows(applying: .compensateFromTopVisibleRow)
+    }
+
+    // MARK: - Search
+
+    /// Every hit that belongs to `messageId`, for ``TranscriptRowContent``'s own highlight
+    /// grouping — `nil` currentHit is fine, `TranscriptSearchHit` equality alone decides which one
+    /// (if any) is current.
+    private func searchHighlights(forMessageId messageId: Int) -> [TranscriptSearchHit] {
+        guard searchState.isActive, !searchState.hits.isEmpty else { return [] }
+        return searchState.hits.filter { $0.messageId == messageId }
+    }
+
+    /// Recursive `withObservationTracking` registration — the standard way to react to an
+    /// `@Observable` outside a SwiftUI view body. Every access inside the tracking closure is
+    /// what is watched; `onChange` fires once per mutation and has to re-register itself to keep
+    /// watching, or the second keystroke would go unnoticed.
+    private func observeSearchState() {
+        withObservationTracking {
+            _ = searchState.isActive
+            _ = searchState.query
+            _ = searchState.activeHitIndex
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                self?.handleSearchStateChange()
+                self?.observeSearchState()
+            }
+        }
+    }
+
+    private func handleSearchStateChange() {
+        if searchState.isActive, !hasBegunCurrentSearchSession {
+            hasBegunCurrentSearchSession = true
+            beginSearchSession()
+        } else if !searchState.isActive, hasBegunCurrentSearchSession {
+            hasBegunCurrentSearchSession = false
+            lastSearchedQuery = nil
+            lastNavigatedHit = nil
+            searchDebounceTask?.cancel()
+            clearSearchHighlighting()
+        }
+
+        if searchState.query != lastSearchedQuery {
+            scheduleSearchRecompute()
+        }
+
+        if searchState.currentHit != lastNavigatedHit {
+            lastNavigatedHit = searchState.currentHit
+            navigateToCurrentHit()
+        }
+    }
+
+    /// A bounded window triggers a full-history load before searching, so a hit outside the
+    /// currently loaded pages is not silently invisible to it — see this block's own spec row.
+    private func beginSearchSession() {
+        searchOpenedAtMessageId = topVisibleRowId()
+        guard store.window(for: sessionID).hasOlder else { return }
+        searchState.isLoadingFullHistory = true
+        Task { [weak self] in
+            await self?.loadFullHistory()
+            guard let self else { return }
+            self.searchState.isLoadingFullHistory = false
+            self.recomputeSearchHitsNow()
+        }
+    }
+
+    private func loadFullHistory() async {
+        while store.window(for: sessionID).hasOlder {
+            guard let oldestId = store.window(for: sessionID).oldestLoadedId else { break }
+            do {
+                let entries = try await apiClient.getMessages(
+                    sessionId: sessionID, page: .before(id: oldestId, limit: TranscriptStore.olderPageLimit))
+                store.prependOlder(
+                    sessionId: sessionID, entries: entries, requestedLimit: TranscriptStore.olderPageLimit)
+            } catch {
+                // Whatever a full-history load already fetched before failing is still worth
+                // searching — better a search over a partial history than one that never runs.
+                break
+            }
+        }
+        recomputeRows(applying: .compensateFromTopVisibleRow)
+    }
+
+    private func scheduleSearchRecompute() {
+        lastSearchedQuery = searchState.query
+        searchDebounceTask?.cancel()
+        searchDebounceTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.searchDebounce)
+            guard !Task.isCancelled else { return }
+            self?.recomputeSearchHitsNow()
+        }
+    }
+
+    private func recomputeSearchHitsNow() {
+        guard !searchState.isLoadingFullHistory else { return }
+        let query = searchState.query
+        guard !query.isEmpty else {
+            searchState.setResults(hits: [], truncated: false, readerMessageId: nil)
+            return
+        }
+        let messages = TranscriptStore.displayMessages(store.messages[sessionID] ?? [])
+        let (hits, truncated) = TranscriptSearchIndex.hits(in: messages, query: query)
+        searchState.setResults(hits: hits, truncated: truncated, readerMessageId: searchOpenedAtMessageId)
+    }
+
+    /// Opens the hit's card if it is collapsed, scrolls to it, and begins the matching hold — the
+    /// interesting interaction this block exists for: opening a collapsed card changes the row's
+    /// height, which has to go through the same delta compensation a prepend does before the
+    /// scroll target below is computed, or it lands against a height already stale.
+    private func navigateToCurrentHit() {
+        guard searchState.isActive, let hit = searchState.currentHit else {
+            clearSearchHighlighting()
+            return
+        }
+        if let key = hit.expandKey, !expandResolver(forMessageId: hit.messageId)(key) {
+            expandOverrides["\(hit.messageId)#\(key)"] = true
+            recomputeRows(applying: .compensateFromTopVisibleRow)
+        }
+        scrollToSearchHit(hit)
+        let visible = collectionView.indexPathsForVisibleItems
+        if !visible.isEmpty { collectionView.reconfigureItems(at: visible) }
+    }
+
+    private func clearSearchHighlighting() {
+        let visible = collectionView.indexPathsForVisibleItems
+        if !visible.isEmpty { collectionView.reconfigureItems(at: visible) }
+    }
+
+    /// A row can run to thousands of points, so scrolling only to its top would not bring a hit
+    /// deep inside it on screen. `TranscriptRowLayout.blockOffset` gives the exact point within
+    /// the row without needing character-level access to the text a cell draws — see that
+    /// function's own doc comment. Lands the hit a third of the way down the viewport rather than
+    /// flush at the top, leaving room to read what comes before it (the web's own `SEARCH_ROW_LEAD`).
+    private func scrollToSearchHit(_ hit: TranscriptSearchHit) {
+        guard let index = rows.firstIndex(where: { $0.id == hit.messageId }),
+            let rowTop = layout.offsetTop(forRowId: hit.messageId)
+        else { return }
+
+        let width = measurementWidth()
+        guard width > 0 else { return }
+        let environment = MeasurementEnvironment(
+            sizeCategoryToken: traitCollection.preferredContentSizeCategory.rawValue)
+        let metrics = MessageLayoutMetrics(blockSpacing: TranscriptContentMetrics.blockSpacing)
+        let blockOffset =
+            TranscriptRowLayout.blockOffset(
+                cardIndex: hit.cardIndex, blockIndex: hit.blockIndex, for: rows[index].message, width: width,
+                environment: environment, isExpanded: expandResolver(forMessageId: hit.messageId), measurer: measurer,
+                cache: cache, metrics: metrics) ?? 0
+
+        let lead = collectionView.bounds.height * 0.3
+        let target = max(0, min(maxContentOffsetY(), CGFloat(rowTop + blockOffset) - lead))
+        collectionView.setContentOffset(CGPoint(x: 0, y: target), animated: true)
+
+        edgeFollow = EdgeFollowLatch(isPinned: false)
+        holdController.begin(.search(messageId: hit.messageId))
+        updateJumpToLatestVisibility()
     }
 
     // MARK: - Applying a new row list
@@ -589,7 +764,9 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                 TranscriptRowContent(
                     message: row.message,
                     isExpanded: self.expandResolver(forMessageId: messageId),
-                    onToggleExpand: { [weak self] key in self?.toggleExpand(messageId: messageId, key: key) }
+                    onToggleExpand: { [weak self] key in self?.toggleExpand(messageId: messageId, key: key) },
+                    highlights: self.searchHighlights(forMessageId: messageId),
+                    currentHit: self.searchState.currentHit
                 )
             } else {
                 EmptyView()
@@ -609,10 +786,12 @@ struct TranscriptCollectionView: UIViewControllerRepresentable {
     let apiClient: PaiApiClient
     let settings: SettingsStore
     let requestFactory: PaiRequestFactory
+    let searchState: TranscriptSearchState
 
     func makeUIViewController(context: Context) -> TranscriptCollectionViewController {
         TranscriptCollectionViewController(
-            sessionID: sessionID, store: store, apiClient: apiClient, settings: settings, requestFactory: requestFactory
+            sessionID: sessionID, store: store, apiClient: apiClient, settings: settings,
+            requestFactory: requestFactory, searchState: searchState
         )
     }
 
