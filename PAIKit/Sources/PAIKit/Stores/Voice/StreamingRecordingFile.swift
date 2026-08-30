@@ -13,10 +13,27 @@ public final class StreamingRecordingFile: @unchecked Sendable {
     private var handle: FileHandle?
     public private(set) var sampleCount = 0
 
+    /// How much audio a sudden power loss may cost, expressed as a sample count.
+    ///
+    /// The header repatch above already survives the *process* dying, because bytes handed to
+    /// the OS outlive the program that wrote them. It does not survive the *machine* going
+    /// down, and a phone running flat during an hour of recording in a pocket is the same
+    /// scenario this type exists for. Flushing on every buffer would spend disk and battery
+    /// continuously to close a rare gap; flushing on a cadence bounds the loss instead.
+    private let syncEverySamples: Int
+    private var samplesSinceSync = 0
+
+    /// A seam, because `synchronize()` has no observable effect: without it the cadence rule
+    /// could be written wrong and no test could tell.
+    var syncHandler: (FileHandle) -> Void = { try? $0.synchronize() }
+
     /// `nil` when the file could not even be created — a caller treats that the same as any
     /// other disk failure: the take keeps running, this half of it is simply not being saved.
-    public init?(url: URL, sampleRate: Int, fileManager: FileManager = .default) {
+    public init?(
+        url: URL, sampleRate: Int, syncIntervalSeconds: Int = 30, fileManager: FileManager = .default
+    ) {
         writer = IncrementalWavWriter(sampleRate: sampleRate)
+        syncEverySamples = max(1, sampleRate * syncIntervalSeconds)
         guard fileManager.createFile(atPath: url.path, contents: writer.placeholderHeader()),
             let handle = try? FileHandle(forWritingTo: url)
         else { return nil }
@@ -37,6 +54,12 @@ public final class StreamingRecordingFile: @unchecked Sendable {
         }
         sampleCount += samples.count
         repatchHeader(handle)
+
+        samplesSinceSync += samples.count
+        if samplesSinceSync >= syncEverySamples {
+            samplesSinceSync = 0
+            syncHandler(handle)
+        }
     }
 
     private func repatchHeader(_ handle: FileHandle) {
@@ -52,6 +75,7 @@ public final class StreamingRecordingFile: @unchecked Sendable {
     /// correct. This only closes the handle so nothing keeps the file open past the take.
     public func finalize() {
         guard let handle else { return }
+        syncHandler(handle)
         try? handle.close()
         self.handle = nil
     }

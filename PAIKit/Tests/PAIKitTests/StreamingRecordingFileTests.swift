@@ -86,4 +86,49 @@ final class StreamingRecordingFileTests: XCTestCase {
         let url = URL(fileURLWithPath: "/nonexistent-directory-\(UUID())/take.wav")
         XCTAssertNil(StreamingRecordingFile(url: url, sampleRate: 24000))
     }
+
+    // MARK: - Flush cadence
+
+    /// `synchronize()` bounds what a device losing power costs. The cadence is the part that can
+    /// be wrong — too eager spends disk and battery for an hour, too lazy loses the tail — and it
+    /// has no observable effect, so it is asserted through the injected handler.
+    func testFlushesOnceTheIntervalOfAudioHasAccumulated() throws {
+        let url = tempURL()
+        let file = try XCTUnwrap(StreamingRecordingFile(url: url, sampleRate: 100, syncIntervalSeconds: 2))
+        var flushes = 0
+        file.syncHandler = { _ in flushes += 1 }
+
+        // 199 samples at 100 Hz is one sample short of the two-second interval.
+        file.append(pcm16le: [Int16](repeating: 1, count: 199))
+        XCTAssertEqual(flushes, 0, "a flush before the interval elapsed would defeat the point of having one")
+
+        file.append(pcm16le: [Int16](repeating: 1, count: 1))
+        XCTAssertEqual(flushes, 1)
+
+        // The discriminating case for the counter reset. A buffer far shorter than the interval,
+        // arriving straight after a flush, must NOT flush: without the reset the accumulator
+        // stays above the threshold forever and every subsequent buffer flushes, however small —
+        // which is the cost this cadence exists to avoid, and it is invisible in any test whose
+        // next buffer happens to be a full interval long.
+        file.append(pcm16le: [Int16](repeating: 1, count: 1))
+        XCTAssertEqual(flushes, 1, "a one-sample buffer after a flush must not trigger another")
+
+        file.append(pcm16le: [Int16](repeating: 1, count: 199))
+        XCTAssertEqual(flushes, 2, "and the next full interval must")
+
+        file.finalize()
+        XCTAssertEqual(flushes, 3, "the last partial interval is exactly the audio a crash would otherwise cost")
+    }
+
+    /// A buffer far larger than the interval is one flush, not one per interval it spans.
+    func testAnOversizedBufferFlushesOnce() throws {
+        let url = tempURL()
+        let file = try XCTUnwrap(StreamingRecordingFile(url: url, sampleRate: 100, syncIntervalSeconds: 1))
+        var flushes = 0
+        file.syncHandler = { _ in flushes += 1 }
+
+        file.append(pcm16le: [Int16](repeating: 1, count: 1000))
+        XCTAssertEqual(flushes, 1)
+    }
+
 }
