@@ -65,6 +65,11 @@ jobs:
       - name: Syntax-check what Linux cannot compile
         run: ./Tooling/parse-swift.sh
 
+      # Everything past syntax that the app target would otherwise only fail on a macOS runner
+      # billed at ten times this one. Each pattern it knows has cost a real build.
+      - name: Scan for Swift 6 shapes only a Mac would reject
+        run: ./Tooling/swift6-lint.py
+
       - name: Format
         run: swift format lint --recursive --strict PAIKit PAI
 

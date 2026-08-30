@@ -62,7 +62,16 @@ def main_actor_line_numbers(lines: list[str]) -> set[int]:
         if declaration is None:
             continue
         indent = len(lines[declaration]) - len(lines[declaration].lstrip())
-        for cursor in range(declaration + 1, len(lines)):
+        # A long inheritance list wraps, and the opening brace then sits on its own line at the
+        # declaration's own indent — which the scope walk below would read as the end of the type
+        # before it has seen any of it. Find the brace first and scope from there.
+        opening = declaration
+        while opening < len(lines) and "{" not in lines[opening]:
+            opening += 1
+            if opening - declaration > 8:
+                opening = declaration
+                break
+        for cursor in range(opening + 1, len(lines)):
             body = lines[cursor]
             if body.strip() and (len(body) - len(body.lstrip())) <= indent:
                 break
