@@ -126,3 +126,31 @@ jobs:
         with:
           generate_release_notes: true
           files: build/*.dSYM.zip
+
+  # Uploading is not distributing, and the difference is invisible: a build can be VALID in App
+  # Store Connect, listed by every query, and installable by nobody. This job closes that gap.
+  #
+  # Its own runner, and a plain Ubuntu one: attaching a build is authenticated HTTPS and needs no
+  # Apple hardware, so doing it here bills at 1x instead of 10x — and the waiting this job does
+  # (Apple's processing, minutes) is precisely the wait the upload lane refuses to do on macOS.
+  #
+  # A red job here means the build shipped but reached nobody, which is worth seeing rather than
+  # swallowing.
+  distribute:
+    needs: build
+    if: github.ref_type == 'tag' || github.event.inputs.upload == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - run: pip install --quiet 'pyjwt[crypto]'
+
+      # The build number is the run number, set by the build job from the same source.
+      - name: Attach the build to the beta group
+        run: python3 Tooling/distribute-build.py "${{ github.run_number }}"
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
