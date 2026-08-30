@@ -31,9 +31,37 @@
         public func height(of block: MarkdownBlock, width: Double, environment: MeasurementEnvironment) -> Double {
             switch block {
             case .table(let table):
-                return MarkdownTableLayout.height(for: table, rowHeight: Self.tableRowHeight(for: environment))
+                return MarkdownTableLayout.height(
+                    for: table, rowHeight: Self.tableRowHeight(for: environment),
+                    rowSpacing: TranscriptRowMetrics.tableRowSpacing,
+                    dividerHeight: TranscriptRowMetrics.tableDividerHeight)
+
             case .thematicBreak:
-                return Self.thematicBreakHeight
+                return TranscriptRowMetrics.thematicBreakHeight
+
+            case .codeBlock:
+                // The box `ToolBodyText` and `MarkdownContentView` draw around every code block —
+                // its padding is inside what the block visually occupies, not outside it, so it
+                // narrows the text TextKit wraps at and adds to the measured height in both places.
+                let attributed = Self.attributedString(for: block, environment: environment)
+                guard attributed.length > 0 else { return 0 }
+                let padding = TranscriptRowMetrics.codeBlockPadding
+                let textWidth = max(0, width - 2 * padding)
+                return Self.textHeight(of: attributed, width: textWidth) + 2 * padding
+
+            case .blockQuote:
+                let attributed = Self.attributedString(for: block, environment: environment)
+                guard attributed.length > 0 else { return 0 }
+                let inset = TranscriptRowMetrics.blockQuoteRuleWidth + TranscriptRowMetrics.blockQuoteSpacing
+                return Self.textHeight(of: attributed, width: max(0, width - inset))
+
+            case .list(let list):
+                let attributed = Self.attributedString(for: block, environment: environment)
+                guard attributed.length > 0 else { return 0 }
+                let inset = TranscriptRowMetrics.listMarkerReservedWidth + TranscriptRowMetrics.listMarkerSpacing
+                let itemGaps = TranscriptRowMetrics.listItemSpacing * Double(max(0, list.items.count - 1))
+                return Self.textHeight(of: attributed, width: max(0, width - inset)) + itemGaps
+
             default:
                 let attributed = Self.attributedString(for: block, environment: environment)
                 guard attributed.length > 0 else { return 0 }
@@ -158,14 +186,14 @@
 
         // MARK: - Non-text blocks
 
-        private static let thematicBreakHeight: Double = 17
-        private static let tableRowVerticalPadding: Double = 12
-
+        /// One row's text height, header or data — `GfmTableView` adds no padding of its own
+        /// around a cell's text, only the spacing and divider ``MarkdownTableLayout`` takes as
+        /// separate parameters.
         private static func tableRowHeight(for environment: MeasurementEnvironment) -> Double {
             let category = UIContentSizeCategory(rawValue: environment.sizeCategoryToken)
             let pointSize = PaiTypography.markdownBody.pointSize(for: category)
             let font = resolveFont(style: .markdownBody, pointSize: pointSize)
-            return Double(font.lineHeight.rounded(.up)) + tableRowVerticalPadding
+            return Double(font.lineHeight.rounded(.up))
         }
     }
 
