@@ -1,5 +1,9 @@
 import Foundation
 
+// This file and the Codable models under Models/ mirror pai-cloud's web/src/api/types.ts by
+// hand. A route or shape added, removed or renamed there is iOS parity work — see
+// https://github.com/frederikb96/pai-cloud/blob/main/docs/IOS_PARITY.md.
+
 // URLSession and friends live in FoundationNetworking on Linux, where the free CI runner builds
 // this package. On Apple platforms the module does not exist and Foundation already has them.
 #if canImport(FoundationNetworking)

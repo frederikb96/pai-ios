@@ -338,8 +338,9 @@ struct UserBubbleView: View {
 
 /// A genuine prompt relayed from another session — drawn like Freddy's own bubble but a different
 /// colour, so a reader can tell it was not him. `PaiPalette` has no dedicated "relay" swatch (the
-/// web's is a literal, untokenised hex outside the 21 tracked custom properties), so this uses the
-/// closest named green rather than adding an asset-catalog colour set for a single use.
+/// web's `--color-relay-*` in `pai-cloud/web/src/index.css`'s `@theme` block is tokenised but
+/// unported — see `PORTING.md`), so this uses the closest named green rather than adding an
+/// asset-catalog colour set for a single use.
 struct RelayedBubbleView: View {
     let text: String
     let sender: String
