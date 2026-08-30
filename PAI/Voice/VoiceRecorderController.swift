@@ -122,13 +122,20 @@ final class VoiceRecorderController {
     private var lastChunkAt: Date?
     private var captureWatchdogTask: Task<Void, Never>?
     private var captureRestartAttempts = 0
+    private var lastCaptureRestartAt: Date?
     /// Comfortably longer than the ~100ms cadence chunks actually arrive at, so a scheduling
     /// hiccup or a busy main actor cannot be mistaken for a dead microphone.
     private static let captureStallSeconds: TimeInterval = 4
-    /// One restart is a route change settling; a second failing the same way is not something
+    /// One restart is a route change settling; a second failing straight away is not something
     /// retrying will fix, and continuing to look live while recording nothing is the worst
-    /// outcome available.
+    /// outcome available. The budget is per *episode*, not per take — see `recoveryHoldSeconds`.
     private static let maxCaptureRestarts = 2
+    /// How long capture has to run cleanly before a restart stops counting against the budget.
+    /// Without this the budget is spent for the life of the take, so an hour-long recording that
+    /// survived two route changes in its first minute would end at the third — even though every
+    /// recovery worked. Two failures in quick succession is the signal; two an hour apart is
+    /// simply a long recording in a moving world.
+    private static let recoveryHoldSeconds: TimeInterval = 60
 
     /// `nonisolated(unsafe)` so `deinit` — which is nonisolated — can unregister it. Written
     /// once on the main actor during setup and read once at deallocation, when nothing else holds
@@ -522,6 +529,7 @@ final class VoiceRecorderController {
         captureWatchdogTask?.cancel()
         lastChunkAt = Date()
         captureRestartAttempts = 0
+        lastCaptureRestartAt = nil
         captureWatchdogTask = Task { [weak self] in await self?.watchForSilentMicrophone() }
     }
 
@@ -538,7 +546,14 @@ final class VoiceRecorderController {
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled, isCapturing, let last = lastChunkAt else { continue }
-            guard Date().timeIntervalSince(last) > Self.captureStallSeconds else { continue }
+            let now = Date()
+            guard now.timeIntervalSince(last) > Self.captureStallSeconds else {
+                if let restarted = lastCaptureRestartAt, now.timeIntervalSince(restarted) > Self.recoveryHoldSeconds {
+                    captureRestartAttempts = 0
+                    lastCaptureRestartAt = nil
+                }
+                continue
+            }
             await recoverSilentMicrophone()
         }
     }
@@ -548,16 +563,23 @@ final class VoiceRecorderController {
             // Out of attempts. Ending the take is what makes this recoverable: the audio captured
             // so far is already on disk, and Freddy is told rather than discovering an hour later
             // that a recording he believed was running captured nothing.
-            capture.stop()
+            //
+            // 🚨 `isCapturing` first and `endCaptureWatchdog()` last, because this runs *inside*
+            // the watchdog's own task: cancelling it up front would leave every `await` below
+            // running in a cancelled task, and the first one that honours cancellation would
+            // abandon the teardown half-done. Clearing `isCapturing` is what actually stops the
+            // loop from acting again in the meantime.
             isCapturing = false
-            endCaptureWatchdog()
+            capture.stop()
             await voiceSession.stop(reason: .error)
             try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
             await persistRecording()
             await VoiceInterruptionNotifier.notify(reason: .error)
+            endCaptureWatchdog()
             return
         }
         captureRestartAttempts += 1
+        lastCaptureRestartAt = Date()
         lastChunkAt = Date()
         await restartCapture()
     }
@@ -584,12 +606,14 @@ final class VoiceRecorderController {
             lastChunkAt = Date()
             checkRawStreamStillMatchesHardwareRate()
         } catch {
+            // Same ordering rule as `recoverSilentMicrophone`'s give-up branch, and for the same
+            // reason: one of this method's callers is the watchdog task itself.
             isCapturing = false
-            endCaptureWatchdog()
             await voiceSession.stop(reason: .error)
             try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
             await persistRecording()
             await VoiceInterruptionNotifier.notify(reason: .error)
+            endCaptureWatchdog()
         }
     }
 
