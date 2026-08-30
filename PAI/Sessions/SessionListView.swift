@@ -275,6 +275,11 @@ private struct SessionRowButton: View {
     var body: some View {
         Button(action: action) {
             SessionRow(row: row)
+                // Without this the row answers only where it draws — its title, its timestamp,
+                // its badges — and the empty width its `Spacer()` opens up is dead. The same
+                // shape is what the long-press gesture below hit-tests against, so a press in
+                // that gap opened nothing either.
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("session-row-\(row.id)")

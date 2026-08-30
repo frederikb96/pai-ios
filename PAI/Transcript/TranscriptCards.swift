@@ -263,6 +263,11 @@ struct CardChrome<Content: View>: View {
                     }
                 }
                 .frame(height: TranscriptRowMetrics.cardHeaderHeight)
+                // The header is a label, an icon and a `Spacer()`, and a plain button is hit-
+                // tested against what it actually draws — so the gap the spacer opens up, which
+                // is most of the header's width on a phone, was not part of the target. A card
+                // reads as one box, so the whole box has to answer a tap on it.
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(onToggle == nil)

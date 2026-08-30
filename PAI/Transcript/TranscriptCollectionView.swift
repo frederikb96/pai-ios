@@ -614,8 +614,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         switch intent {
         case .initialLoad(let target):
             pendingInitialLoad = nil
-            rows = newRows
-            layout.rows = newRows.map { TranscriptLayout.Row(id: $0.id, height: $0.height) }
+            commitRows(newRows)
             collectionView.reloadData()
             // `scrollToItem` right after `reloadData()` runs before the new layout's `prepare()`
             // has — forcing it here is the usual guard against landing at the wrong place, or not
@@ -647,18 +646,16 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         case .compensateFromTopVisibleRow:
             let anchorId = topVisibleRowId()
             let anchorOffsetBefore = anchorId.flatMap { layout.offsetTop(forRowId: $0) }
-            rows = newRows
-            layout.rows = newRows.map { TranscriptLayout.Row(id: $0.id, height: $0.height) }
             if let anchorId, let anchorOffsetBefore {
                 layout.pendingAnchor = (id: anchorId, offsetTopBeforeUpdate: anchorOffsetBefore)
             }
-            applyDelta(delta, oldCount: oldIds.count) { [weak self] in self?.reassertHoldIfNeeded() }
+            applyDelta(delta, newRows: newRows, oldCount: oldIds.count) { [weak self] in
+                self?.reassertHoldIfNeeded()
+            }
 
         case .stickToBottomIfPinned:
-            rows = newRows
-            layout.rows = newRows.map { TranscriptLayout.Row(id: $0.id, height: $0.height) }
             let shouldStick = edgeFollow.isPinned
-            applyDelta(delta, oldCount: oldIds.count) { [weak self] in
+            applyDelta(delta, newRows: newRows, oldCount: oldIds.count) { [weak self] in
                 guard let self else { return }
                 if self.reassertHoldIfNeeded() { return }
                 guard shouldStick else { return }
@@ -667,7 +664,19 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         }
     }
 
-    private func applyDelta(_ delta: RowDelta, oldCount: Int, completion: (() -> Void)?) {
+    /// Hands `newRows` to the data source and tells UIKit what changed.
+    ///
+    /// 🚨 The model is committed **inside** the update block, never before it. `performBatchUpdates`
+    /// asks the data source for the pre-update count itself whenever its cached one is stale — a
+    /// pending `reloadData()` that no layout pass has resolved yet, which is the normal state
+    /// off screen and while the app runs in the background behind a recording. Commit first and
+    /// that question is answered with the *new* count, so UIKit sees "462 before, 462 after, three
+    /// inserts" and raises `_Bug_Detected_In_Client_Of_UICollectionView_...`. Committing inside the
+    /// block is the documented contract and makes the arithmetic true whether or not the cache was
+    /// fresh.
+    private func applyDelta(
+        _ delta: RowDelta, newRows: [TranscriptRow], oldCount: Int, completion: (() -> Void)?
+    ) {
         // `oldCount` is this controller's own bookkeeping (`rows.count` before the update it
         // describes) — not UIKit's, which tracks its own item count from the data source at its
         // last completed layout pass. The two normally agree, but the `isApplyingRows` guard
@@ -683,6 +692,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             // it set would apply a stale snapshot's correction to whatever update next reaches
             // `.unchanged`, an arbitrary jump unrelated to anything that update actually moved.
             layout.pendingAnchor = nil
+            self.commitRows(newRows)
             collectionView.reloadData()
             completion?()
             return
@@ -690,6 +700,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
 
         switch delta {
         case .unchanged:
+            self.commitRows(newRows)
             // Row ids are unchanged — an id-based diff cannot distinguish "same rows, new
             // heights or content" (an expand/collapse toggle, a width or Dynamic Type change, a
             // streamed edit to the last loaded message) from a true no-op, so this branch always
@@ -725,12 +736,14 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         case .appended(let count):
             let indexPaths = (oldCount..<(oldCount + count)).map { IndexPath(item: $0, section: 0) }
             collectionView.performBatchUpdates({
+                self.commitRows(newRows)
                 collectionView.insertItems(at: indexPaths)
             }) { _ in completion?() }
 
         case .prepended(let count):
             let indexPaths = (0..<count).map { IndexPath(item: $0, section: 0) }
             collectionView.performBatchUpdates({
+                self.commitRows(newRows)
                 collectionView.insertItems(at: indexPaths)
             }) { _ in completion?() }
 
@@ -743,6 +756,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             let deletes = (commonPrefix..<(commonPrefix + removed)).map { IndexPath(item: $0, section: 0) }
             let inserts = (commonPrefix..<(commonPrefix + inserted)).map { IndexPath(item: $0, section: 0) }
             collectionView.performBatchUpdates({
+                self.commitRows(newRows)
                 if !deletes.isEmpty { collectionView.deleteItems(at: deletes) }
                 if !inserts.isEmpty { collectionView.insertItems(at: inserts) }
             }) { _ in completion?() }
@@ -751,9 +765,18 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             // Same reasoning as the count-mismatch fallback above: this reload discards whatever
             // update set `.pendingAnchor`, so the anchor must not survive it either.
             layout.pendingAnchor = nil
+            self.commitRows(newRows)
             collectionView.reloadData()
             completion?()
         }
+    }
+
+    /// The one place `rows` and the layout's copy of it change together — they describe the same
+    /// list to two readers, and a pass where only one of them moved is a wrong height applied to
+    /// the wrong row.
+    private func commitRows(_ newRows: [TranscriptRow]) {
+        rows = newRows
+        layout.rows = newRows.map { TranscriptLayout.Row(id: $0.id, height: $0.height) }
     }
 
     private func scrollToBottom(animated: Bool) {
