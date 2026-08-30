@@ -22,14 +22,14 @@ struct RecordingsSheet: View {
     var body: some View {
         NavigationStack {
             Group {
-                if controller.recordings.recordings.isEmpty {
+                if settings.recordings.isEmpty {
                     ContentUnavailableView(
                         "No recordings yet", systemImage: "waveform",
                         description: Text("Recordings you make are kept on this device only.")
                     )
                 } else {
                     List {
-                        ForEach(controller.recordings.recordings) { meta in
+                        ForEach(settings.recordings) { meta in
                             RecordingRow(
                                 meta: meta, isTranscribing: transcribingID == meta.id,
                                 onTap: { Task { await retranscribe(meta) } },
