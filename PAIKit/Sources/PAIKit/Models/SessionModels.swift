@@ -242,6 +242,9 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     public let phaseId: String?
     /// The project's own name, denormalized here so the session list's search can match on it.
     public let projectName: String?
+    /// Running subagents and background shells/monitors this session has started and not
+    /// stopped, folded out of the transcript at ingest. `nil` until reported.
+    public let activityCounts: ActivityCounts?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -273,6 +276,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         case projectId = "project_id"
         case phaseId = "phase_id"
         case projectName = "project_name"
+        case activityCounts = "activity_counts"
     }
 
     public init(
@@ -309,7 +313,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         discovered: Bool?,
         projectId: String?,
         phaseId: String?,
-        projectName: String?
+        projectName: String?,
+        activityCounts: ActivityCounts? = nil
     ) {
         self.id = id
         self.sessionType = sessionType
@@ -345,6 +350,19 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.projectId = projectId
         self.phaseId = phaseId
         self.projectName = projectName
+        self.activityCounts = activityCounts
+    }
+}
+
+/// Running subagents and background shells/monitors a session has started and not stopped.
+/// Derived from the transcript, so only as fresh as the last ingested entry.
+public struct ActivityCounts: Codable, Sendable, Equatable {
+    public let agents: Int
+    public let tasks: Int
+
+    public init(agents: Int, tasks: Int) {
+        self.agents = agents
+        self.tasks = tasks
     }
 }
 
@@ -432,6 +450,9 @@ public struct Machine: Codable, Sendable, Equatable, Identifiable {
     public let ingestEnabled: Bool
     public let capabilities: Capabilities
     public let sessionTypes: [SessionType]
+    /// Progress of the machine's whole-tree backfill. `nil` once pending work reaches zero, or
+    /// before anything has been reported — both read as no backfill.
+    public let backfill: Backfill?
 
     public struct Capabilities: Codable, Sendable, Equatable {
         public let fastSessions: Bool
@@ -450,6 +471,37 @@ public struct Machine: Codable, Sendable, Equatable, Identifiable {
         }
     }
 
+    /// Every field is present only if the agent reported it.
+    public struct Backfill: Codable, Sendable, Equatable {
+        public let totalFiles: Int?
+        public let completeFiles: Int?
+        public let totalBytes: Int?
+        public let shippedBytes: Int?
+        public let pendingBytes: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case totalFiles = "total_files"
+            case completeFiles = "complete_files"
+            case totalBytes = "total_bytes"
+            case shippedBytes = "shipped_bytes"
+            case pendingBytes = "pending_bytes"
+        }
+
+        public init(
+            totalFiles: Int? = nil,
+            completeFiles: Int? = nil,
+            totalBytes: Int? = nil,
+            shippedBytes: Int? = nil,
+            pendingBytes: Int? = nil
+        ) {
+            self.totalFiles = totalFiles
+            self.completeFiles = completeFiles
+            self.totalBytes = totalBytes
+            self.shippedBytes = shippedBytes
+            self.pendingBytes = pendingBytes
+        }
+    }
+
     enum CodingKeys: String, CodingKey {
         case slug
         case displayName = "display_name"
@@ -458,6 +510,7 @@ public struct Machine: Codable, Sendable, Equatable, Identifiable {
         case ingestEnabled = "ingest_enabled"
         case capabilities
         case sessionTypes = "session_types"
+        case backfill
     }
 
     public init(
@@ -467,7 +520,8 @@ public struct Machine: Codable, Sendable, Equatable, Identifiable {
         lastSeenAt: String?,
         ingestEnabled: Bool,
         capabilities: Capabilities,
-        sessionTypes: [SessionType]
+        sessionTypes: [SessionType],
+        backfill: Backfill? = nil
     ) {
         self.slug = slug
         self.displayName = displayName
@@ -476,5 +530,6 @@ public struct Machine: Codable, Sendable, Equatable, Identifiable {
         self.ingestEnabled = ingestEnabled
         self.capabilities = capabilities
         self.sessionTypes = sessionTypes
+        self.backfill = backfill
     }
 }
