@@ -147,6 +147,12 @@ jobs:
               echo "::warning::$name: debug bridge never answered"
               fail=1
             fi
+            # 🚨 The bridge starts listening in `PAIApp.init()`, BEFORE the first frame is drawn —
+            # so "/health answered" proves the process is alive and proves nothing about the
+            # screen. Without this settle the screenshot is a race the app usually wins and
+            # occasionally loses, producing a black PNG that is indistinguishable from a genuinely
+            # broken screen and costs an investigation to dismiss.
+            sleep 3
             xcrun simctl io "$udid" screenshot "artifacts/screen-$name.png"
             # Read AFTER the screenshot, not with the health probe: the bridge answers the moment
             # it is listening, which is before the screen has fetched, measured or drawn anything
