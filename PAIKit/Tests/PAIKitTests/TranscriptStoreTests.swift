@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 
 @testable import PAIKit
@@ -231,7 +232,7 @@ final class TranscriptStoreTests: XCTestCase {
     /// the previous session's stream last reported, until its own first status/connect event
     /// landed. Keyed by session, a session that has reported nothing yet must read as idle and
     /// disconnected regardless of what another session is doing right now.
-    func testIsProcessingAndSseConnectedAreKeyedPerSessionNotGlobal() async {
+    func testIsProcessingAndSseActivityAreKeyedPerSessionNotGlobal() async {
         let store = TranscriptStore()
         store.applySseStatus(
             sessionId: "s1",
@@ -240,14 +241,17 @@ final class TranscriptStoreTests: XCTestCase {
                 queued: nil, queuedTexts: nil, pendingSends: nil, lastError: nil
             )
         )
-        store.setSseConnected(sessionId: "s1", connected: true)
+        let now = Date()
+        store.recordSseConnected(sessionId: "s1", at: now)
 
         XCTAssertTrue(store.isProcessing(for: "s1"))
-        XCTAssertTrue(store.sseConnected(for: "s1"))
+        XCTAssertNotEqual(
+            store.sseActivity(for: "s1").state(now: now, idleThreshold: 5, stallThreshold: 20), .disconnected)
         XCTAssertFalse(
             store.isProcessing(for: "s2"), "a session with no status event yet must not inherit s1's spinner")
-        XCTAssertFalse(
-            store.sseConnected(for: "s2"), "a session with no connect event yet must not inherit s1's connection")
+        XCTAssertEqual(
+            store.sseActivity(for: "s2").state(now: now, idleThreshold: 5, stallThreshold: 20), .disconnected,
+            "a session with no connect event yet must not inherit s1's connection")
     }
 
     // MARK: - Display filtering

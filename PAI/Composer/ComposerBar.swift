@@ -96,6 +96,14 @@ struct ComposerBar: View {
             VoiceRecordingIndicator(controller: voiceController)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
+            if let voiceFailureMessage = voiceFailureMessage(controller: voiceController) {
+                Text(voiceFailureMessage)
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Semantic.errorText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("voice-failure-message")
+            }
+
             if !stagedAttachments.isEmpty {
                 AttachmentPreviewStrip(attachments: stagedAttachments, onRemove: removeAttachment)
             }
@@ -200,6 +208,16 @@ struct ComposerBar: View {
     }
 
     // MARK: - Voice
+
+    /// `setupFailure` (permission denied, `AVAudioSession` could not configure) and
+    /// `lastStartFailure` (the mint/connect itself failed — key not configured, ElevenLabs
+    /// unreachable, not permitted) were both tracked faithfully with nothing ever reading either
+    /// one: tapping the mic did nothing and said nothing, which reads identically to the app being
+    /// broken. Both reset to `nil` at the top of the controller's own `start()`, so this clears
+    /// itself on the next attempt without anything here needing to do so explicitly.
+    private func voiceFailureMessage(controller: VoiceRecorderController) -> String? {
+        controller.setupFailure?.userMessage ?? controller.lastStartFailure?.userMessage
+    }
 
     private func toggleRecording(draftStore: DraftStore, voiceController: VoiceRecorderController) async {
         switch voiceController.state {

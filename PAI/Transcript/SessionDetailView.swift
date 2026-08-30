@@ -29,6 +29,7 @@ struct SessionDetailView: View {
                         requestFactory: connection.requestFactory, searchState: searchState
                     )
                     .overlay { TranscriptLoadState(sessionID: sessionID) }
+                    .overlay(alignment: .top) { TranscriptOlderPageState(sessionID: sessionID) }
                     TranscriptStreamStallBanner(sessionID: sessionID)
                     Divider()
                     if searchState.isActive {
@@ -233,6 +234,52 @@ private struct TranscriptLoadState: View {
             ContentUnavailableView(
                 "No messages yet", systemImage: "bubble.left.and.bubble.right",
                 description: Text("Anything you send will appear here."))
+        }
+    }
+}
+
+/// The counterpart to `TranscriptLoadState` for the other end of the window — paging in older
+/// history rather than the initial load. `window.loadingOlder`/`olderError` were written
+/// faithfully by the paging path and read by nothing, so scrolling up showed no indication a
+/// fetch was in flight and, on failure, no indication it had stopped — indistinguishable from
+/// having reached the true beginning of the conversation either way.
+///
+/// Pinned to the top edge and deliberately outside the collection view itself: a supplementary
+/// header there would need its own height in the row-measurement/anchoring arithmetic the
+/// `scrolling` skill governs, and nothing here needs to move a single row to say what is
+/// happening above the reader's current position. No retry action — `checkOlderPageTrigger()`
+/// already retries the next time the reader scrolls back near the top, which the error text says
+/// plainly rather than duplicating with a button that would do the same thing.
+private struct TranscriptOlderPageState: View {
+    @Environment(TranscriptStore.self) private var transcript
+    let sessionID: String
+
+    var body: some View {
+        let window = transcript.window(for: sessionID)
+        if window.loadingOlder {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Loading earlier messages…")
+            }
+            .font(PaiTypography.caption.font)
+            .foregroundStyle(PaiPalette.Semantic.textMuted)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 12)
+            .background(.bar, in: Capsule())
+            .padding(.top, 8)
+            .accessibilityIdentifier("transcript-older-loading")
+        } else if let error = window.olderError {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle")
+                Text("Couldn't load earlier messages: \(error). Scroll up to try again.")
+            }
+            .font(PaiTypography.caption.font)
+            .foregroundStyle(PaiPalette.Semantic.errorText)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 12)
+            .background(.bar, in: Capsule())
+            .padding(.top, 8)
+            .accessibilityIdentifier("transcript-older-error")
         }
     }
 }

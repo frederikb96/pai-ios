@@ -238,12 +238,10 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             },
             onConnected: { [weak self] in
                 guard let self else { return }
-                self.store.setSseConnected(sessionId: self.sessionID, connected: true)
                 self.store.recordSseConnected(sessionId: self.sessionID, at: Date())
             },
             onDisconnected: { [weak self] in
                 guard let self else { return }
-                self.store.setSseConnected(sessionId: self.sessionID, connected: false)
                 self.store.recordSseDisconnected(sessionId: self.sessionID)
             }
         )

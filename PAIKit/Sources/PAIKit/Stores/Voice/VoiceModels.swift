@@ -39,6 +39,17 @@ public enum VoiceStartFailure: Error, Sendable, Equatable {
 }
 
 extension VoiceStartFailure {
+    /// What the user should see — always non-empty, matching `PaiError.userMessage`'s own
+    /// contract, which `.other` reads through rather than restating.
+    public var userMessage: String {
+        switch self {
+        case .keyNotConfigured: return "Speech-to-text isn't set up on the server yet."
+        case .serviceUnavailable(let detail): return detail ?? "Speech-to-text is unavailable right now."
+        case .notPermitted: return "You don't have permission to use speech-to-text on this session."
+        case .other(let error): return error.userMessage
+        }
+    }
+
     /// Classifies whatever `PaiApiClient.mintVoiceToken` threw. A non-`PaiError` (a
     /// `CancellationError`, say) falls into `.other` rather than being force-cast, since a mint
     /// failing in a way this contract never documented is still a real failure to report.
