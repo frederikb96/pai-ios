@@ -29,7 +29,10 @@ enum VoiceInterruptionNotifier {
         content.interruptionLevel = .timeSensitive
         content.sound = .default
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        // Swallowed rather than surfaced: this whole facility is the nicety that tells him a take
+        // broke, and a take that broke is already the bad news. Failing to deliver that notice is
+        // not worth a second failure path in the caller.
+        try? await UNUserNotificationCenter.current().add(request)
     }
 
     private static func body(for reason: RecordingEndReason) -> String {
