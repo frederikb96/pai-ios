@@ -766,4 +766,21 @@ public struct PaiApiClient: Sendable {
         }
         return .ok(data: data, contentType: http.value(forHTTPHeaderField: "Content-Type"))
     }
+
+    // MARK: - Devices
+
+    /// Tells the backend which device to push a notification to.
+    ///
+    /// Upserted on the token itself rather than on a device id, so re-registering the same
+    /// device never creates a second row, and the server normalises case and whitespace before
+    /// storing — this client sends the token exactly as APNs issued it and lets the server
+    /// decide what equality means.
+    public func registerDevice(token: String) async throws -> DeviceRegistration {
+        struct Body: Encodable { let token: String }
+        return try await send(
+            path: "/api/devices/register",
+            method: "POST",
+            body: try Self.jsonBody(Body(token: token))
+        )
+    }
 }

@@ -27,6 +27,7 @@ struct SessionDetailView: View {
                     TranscriptCollectionView(
                         sessionID: sessionID, store: transcript, apiClient: connection.apiClient, settings: settings,
                         requestFactory: connection.requestFactory, searchState: searchState)
+                        .overlay { TranscriptLoadState(sessionID: sessionID) }
                     TranscriptStreamStallBanner(sessionID: sessionID)
                     Divider()
                     if searchState.isActive {
@@ -199,6 +200,42 @@ private struct PlanUsageBadge: View {
     }
 
     private static let parser = ISO8601DateFormatter()
+}
+
+/// Says why the transcript is empty, when it is empty for a reason.
+///
+/// The store has always recorded `bootstrapping` and `bootstrapError` faithfully and **nothing
+/// ever read them**, so a transcript that failed to load rendered as a blank screen: no error, no
+/// spinner, no way to retry, and nothing anywhere to distinguish it from a session with no
+/// messages. That is the same failure as a stream reporting itself live while delivering nothing —
+/// a screen that is confidently wrong rather than honestly unsure.
+///
+/// Renders nothing at all once messages exist, so it costs the common case nothing.
+private struct TranscriptLoadState: View {
+    @Environment(TranscriptStore.self) private var transcript
+    @Environment(AppEnvironment.self) private var environment
+    let sessionID: String
+
+    var body: some View {
+        let window = transcript.window(for: sessionID)
+        if !TranscriptStore.displayMessages(transcript.messages[sessionID] ?? []).isEmpty {
+            EmptyView()
+        } else if let error = window.bootstrapError {
+            ContentUnavailableView {
+                Label("Couldn't load this conversation", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(error)
+            }
+            .accessibilityIdentifier("transcript-load-error")
+        } else if window.bootstrapping {
+            ProgressView().accessibilityIdentifier("transcript-loading")
+        } else if window.bootstrapped {
+            ContentUnavailableView(
+                "No messages yet", systemImage: "bubble.left.and.bubble.right",
+                description: Text("Anything you send will appear here."))
+        }
+    }
+}
 
 /// Warns when the transcript's SSE connection sits open and silent while a turn is still expected
 /// to produce output — the counterpart to `TerminalScreen`'s status dot, shown only when there is
@@ -239,4 +276,5 @@ private struct TranscriptStreamStallBanner: View {
         guard case .stalled(let elapsed) = state else { return nil }
         let seconds = Int(elapsed.rounded())
         return "No updates for \(seconds)s — still working?"
-    }}
+    }
+}

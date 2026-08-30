@@ -4,6 +4,10 @@ import SwiftUI
 @main
 struct PAIApp: App {
 
+    /// The only way to receive an APNs device token — the callback is delivered to an app
+    /// delegate or nowhere, and SwiftUI has no equivalent.
+    @UIApplicationDelegateAdaptor(PushRegistrar.self) private var pushRegistrar
+
     #if DEBUG
         /// Held for the app's lifetime; a listener that goes out of scope stops listening.
         private static let debugBridge = DebugBridge(router: DebugRoutes.make())

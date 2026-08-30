@@ -19,13 +19,18 @@ public final class PushRegistrationStore {
     private let storage: SettingsKeyValueStore
     /// Injected rather than taking `PaiApiClient` directly, so this type stays free of the
     /// networking layer and a test can assert what was sent without a stub URL protocol.
-    private let registerToken: @Sendable (String) async throws -> Void
+    ///
+    /// Returns the token the backend actually stored, which is its own normalised form rather
+    /// than necessarily the string sent. Remembering what came back, instead of what went out,
+    /// is what stops a normalisation this client does not perform from looking like a token that
+    /// was never registered — which would re-post on every launch, forever, with nothing wrong.
+    private let registerToken: @Sendable (String) async throws -> String
 
     public private(set) var registration: PushRegistration
 
     public init(
         storage: SettingsKeyValueStore,
-        registerToken: @escaping @Sendable (String) async throws -> Void
+        registerToken: @escaping @Sendable (String) async throws -> String
     ) {
         self.storage = storage
         self.registerToken = registerToken
@@ -69,8 +74,7 @@ public final class PushRegistrationStore {
     public func registerWithBackendIfNeeded() async {
         guard registration.needsBackendRegistration, let token = registration.deviceToken else { return }
         do {
-            try await registerToken(token)
-            registration.registeredToken = token
+            registration.registeredToken = try await registerToken(token)
             registration.lastError = nil
         } catch {
             registration.lastError = String(describing: error)

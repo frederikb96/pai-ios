@@ -51,6 +51,15 @@ struct RootView: View {
                 .environment(connection.drafts)
                 .environment(connection.me)
                 .environment(connection.toasts)
+                // Asked here rather than at launch: the system prompt appears at most once per
+                // install, and a cold first launch — before anything has been seen working, and
+                // before there is even a backend to register against — is the worst moment to
+                // spend it. By the time this gate is `.ready` the app has a connection and the
+                // person has seen a session list.
+                .task {
+                    await PushRegistrar.requestAuthorizationIfNeeded(store: connection.push)
+                    await connection.push.registerWithBackendIfNeeded()
+                }
                 .environment(\.terminalStreamClientFactory) { sessionID, callbacks in
                     PaiTerminalStreamClient(
                         sessionId: sessionID,

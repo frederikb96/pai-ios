@@ -12,9 +12,14 @@ final class PushRegistrationStoreTests: XCTestCase {
     private final class Recorder: @unchecked Sendable {
         var tokens: [String] = []
         var shouldThrow = false
-        func register(_ token: String) async throws {
+        /// Stands in for the backend normalising what it stores. Returning something other than
+        /// what was sent is the case that matters: the store must remember the answer, not the
+        /// question.
+        var normalise: (String) -> String = { $0 }
+        func register(_ token: String) async throws -> String {
             if shouldThrow { throw URLError(.notConnectedToInternet) }
             tokens.append(token)
+            return normalise(token)
         }
     }
 
@@ -110,4 +115,18 @@ final class PushRegistrationStoreTests: XCTestCase {
         await store.registerWithBackendIfNeeded()
         XCTAssertEqual(recorder.tokens, [])
     }
+
+    /// The backend stores its own normalised form. Remembering what was SENT rather than what
+    /// came back would leave the two disagreeing, and the store would re-post on every launch
+    /// forever with nothing actually wrong.
+    func testTheStoreRemembersWhatTheBackendConfirmedNotWhatItSent() async {
+        let recorder = Recorder()
+        recorder.normalise = { $0.uppercased() }
+        let store = makeStore(recorder: recorder)
+        store.recordDeviceToken("abc")
+
+        await store.registerWithBackendIfNeeded()
+        XCTAssertEqual(store.registration.registeredToken, "ABC")
+    }
+
 }

@@ -55,6 +55,10 @@ final class AppEnvironment {
         /// App-wide home for a toast/snackbar — see `ToastCenter`'s doc comment for why one is
         /// needed at all.
         let toasts: ToastCenter
+        /// Whether this install can receive a push, and whether the backend has been told which
+        /// device to send it to. Lives on the connection because a device token is worthless
+        /// without a backend to register it against.
+        let push: PushRegistrationStore
     }
 
     private static let backendURLKey = "backendURL"
@@ -128,7 +132,10 @@ final class AppEnvironment {
             settings: SettingsStore(apiClient: client, storage: defaults),
             drafts: DraftStore(api: client),
             me: MeStore(api: client),
-            toasts: ToastCenter()
+            toasts: ToastCenter(),
+            push: PushRegistrationStore(storage: defaults) { token in
+                try await client.registerDevice(token: token).token
+            }
         )
         lastAuthFailure = nil
         router.gate = .ready
