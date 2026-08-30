@@ -2,10 +2,11 @@ name: Free checks
 
 # Everything that does not require Apple hardware, on the self-hosted runner, at no cost.
 #
-# 🚨 This exists because macOS runners bill at **10×**: a private repo's monthly allowance is
-# roughly 200 macOS minutes, and a careless day spends a third of it. Only two files in `PAIKit`
-# touch an Apple-only framework, so the package — all the models, the markdown block model, the
-# display layer, the networking, and every one of its tests — compiles and runs here instead.
+# 🚨 This exists because macOS runners bill at **10×** (budget and reasoning: the `ios` skill's
+# `references/ci-cost.md`), and a careless day spends a real fraction of the month. Only two files
+# in `PAIKit` touch an Apple-only framework, so the package — all the models, the markdown block
+# model, the display layer, the networking, and every one of its tests — compiles and runs here
+# instead.
 #
 # Anything failing here would have failed on macOS too, at ten times the price. Keep it that way:
 # when adding code, prefer a shape that builds on Linux, and guard an Apple-only import rather

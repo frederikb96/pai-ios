@@ -155,6 +155,7 @@ final class PaiPaletteAssetTests: XCTestCase {
             ("surface600", "#475569", 1), ("surface700", "#334155", 1),
             ("surface800", "#1e293b", 1), ("surface900", "#0f172a", 1),
             ("surface950", "#020617", 1),
+            ("relay500", "#10b981", 1), ("relay600", "#059669", 1),
             ("searchHighlightAllHits", "#facc15", 0.32),
             ("searchHighlightCurrentBackground", "#facc15", 1),
             ("searchHighlightCurrentForeground", "#1c1917", 1),

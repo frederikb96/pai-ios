@@ -4,10 +4,11 @@
 
     import SwiftUI
 
-    /// Swift port of the design tokens in `pai-cloud/web/src/index.css`: the 21 `@theme` custom
-    /// properties (`primary`/`surface`), plus the semantic red/amber/green/blue/yellow/orange scale
-    /// used directly as Tailwind utility classes there and never tokenised. A palette covering only
-    /// the 21 is missing half the UI. `pai-cloud` owns this palette; this file mirrors it.
+    /// Swift port of the design tokens in `pai-cloud/web/src/index.css`: the `@theme` block's
+    /// custom properties (`primary`/`surface`), plus the semantic red/amber/green/blue/yellow/orange
+    /// scale used directly as Tailwind utility classes there and never tokenised. A palette covering
+    /// only the `@theme` block is missing half the UI. `pai-cloud` owns this palette; this file
+    /// mirrors it — see `docs/IOS_PARITY.md` there.
     ///
     /// The web picks a step per light/dark pair inline (`bg-surface-50 dark:bg-surface-900`, and
     /// so on for every colour in the app) rather than defining separate light/dark tokens. This
@@ -146,6 +147,14 @@
         public static let orange800 = Color("orange800")
         public static let orange900 = Color("orange900")
         public static let orange950 = Color("orange950")
+
+        // MARK: - Relay (index.css --color-relay-500/600, a message another PAI session relayed
+        // in — the web pairs it with the same bubble shape as `primary`, so the colour alone is
+        // what tells the two apart; kept in agreement with pai-android and pai-cloud's own
+        // comment on the token)
+
+        public static let relay500 = Color("relay500")
+        public static let relay600 = Color("relay600")
 
         // MARK: - Literal hex from index.css itself (not part of the Tailwind scale at all)
 

@@ -15,6 +15,7 @@ private actor FakeVoiceRealtimeTransport: VoiceRealtimeTransport {
     private var queuedMessages: [String] = []
     private var waitingReceivers: [CheckedContinuation<String, Error>] = []
     private var failed = false
+    private var failCloseReason: String?
 
     func setConnectError(_ error: Error?) {
         connectError = error
@@ -23,6 +24,10 @@ private actor FakeVoiceRealtimeTransport: VoiceRealtimeTransport {
     func connect(url: URL) async throws {
         connectCallCount += 1
         if let connectError { throw connectError }
+        // A reconnect opens a genuinely new socket — matching that here is what makes `fail()`
+        // representable as "this one connection dropped", not "every future one will too".
+        failed = false
+        failCloseReason = nil
     }
 
     func send(text: String) async throws {
@@ -34,7 +39,7 @@ private actor FakeVoiceRealtimeTransport: VoiceRealtimeTransport {
             return queuedMessages.removeFirst()
         }
         if failed {
-            throw VoiceTransportError.notConnected
+            throw VoiceTransportError.connectionLost(reason: failCloseReason)
         }
         return try await withCheckedThrowingContinuation { continuation in
             waitingReceivers.append(continuation)
@@ -55,16 +60,21 @@ private actor FakeVoiceRealtimeTransport: VoiceRealtimeTransport {
         }
     }
 
-    /// Test control: simulate the connection dying mid-recording.
-    func fail() {
+    /// Test control: simulate the connection dying mid-recording. `closeReason` matches what
+    /// `URLSessionVoiceRealtimeTransport` would have read from a clean server-initiated close —
+    /// `nil` (the default) is the far more common case of a plain network failure.
+    func fail(closeReason: String? = nil) {
         failed = true
+        failCloseReason = closeReason
         failReceivers()
     }
 
     private func failReceivers() {
         let receivers = waitingReceivers
         waitingReceivers = []
-        for receiver in receivers { receiver.resume(throwing: VoiceTransportError.notConnected) }
+        for receiver in receivers {
+            receiver.resume(throwing: VoiceTransportError.connectionLost(reason: failCloseReason))
+        }
     }
 }
 
@@ -72,6 +82,26 @@ private actor FakeVoiceRealtimeTransport: VoiceRealtimeTransport {
 /// durations, so tests advance this by hand instead of sleeping for real.
 private final class TestClock: @unchecked Sendable {
     var current = Date(timeIntervalSince1970: 0)
+}
+
+/// A `dependencies.sleep` a test can hold open — for the one scenario that genuinely needs a
+/// window where reconnect's backoff has started but `connectTransport()` has not yet run (so
+/// `transport` is still `nil`), which an instantly-resolving sleep can never reliably catch: the
+/// reconnect Task and the test's own assertions would race with no way to know which runs first.
+private actor Gate {
+    private var isOpen = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func open() {
+        isOpen = true
+        continuation?.resume()
+        continuation = nil
+    }
 }
 
 @MainActor
@@ -84,14 +114,15 @@ final class VoiceRecordingSessionTests: XCTestCase {
         mintToken: @escaping @Sendable (VoiceTokenPurpose) async throws -> VoiceToken = { _ in
             VoiceToken(token: "tok", expiresIn: 900)
         },
-        settings: VoiceSettings = VoiceSettings()
+        settings: VoiceSettings = VoiceSettings(),
+        sleep: @escaping @Sendable (Duration) async -> Void = { _ in }
     ) -> VoiceRecordingSession {
         let dependencies = VoiceRecordingDependencies(
             mintToken: mintToken,
             makeRealtimeTransport: { transport },
             settings: { settings },
             now: { [clock] in clock.current },
-            sleep: { _ in }  // instant — the post-commit wait loop must not slow tests down
+            sleep: sleep  // instant by default — the post-commit wait loop must not slow tests down
         )
         return VoiceRecordingSession(dependencies: dependencies)
     }
@@ -281,7 +312,10 @@ final class VoiceRecordingSessionTests: XCTestCase {
         XCTAssertNil(session.lastEndReason)
     }
 
-    func testInterruptionEndsTheTakeKeepingWhateverWasTranscribedSoFar() async {
+    /// A pause is not an end — the take must be resumable, not just quietly abandoned, so this
+    /// is the one behaviour the old `handleInterruption` (which always ended the take) got
+    /// backwards for the case that matters most: an hour in a pocket includes at least one call.
+    func testInterruptionPausesRatherThanEndingTheTake() async {
         let transport = FakeVoiceRealtimeTransport()
         let session = makeSession(transport: transport)
         await session.start(hardwareSampleRate: 24000)
@@ -290,14 +324,91 @@ final class VoiceRecordingSessionTests: XCTestCase {
         await transport.push(#"{"message_type":"partial_transcript","text":"partial words"}"#)
         await waitUntil { session.transcribedText == "partial words" }
 
-        await session.handleInterruption()
+        session.pauseForInterruption()
 
-        XCTAssertEqual(session.state, .idle)
-        XCTAssertEqual(session.lastEndReason, .interrupted)
+        XCTAssertEqual(session.state, .paused)
+        XCTAssertNil(session.lastEndReason)
         XCTAssertEqual(session.transcribedText, "partial words")
     }
 
-    func testLostConnectionDuringRecordingEndsTheTakeAsConnectionLost() async {
+    /// Resuming with the socket still alive is the common case — a short interruption, connection
+    /// untouched — and must not re-mint a token or touch what was already transcribed.
+    func testResumingAfterAShortInterruptionContinuesTheSameTakeWithoutReconnecting() async {
+        let transport = FakeVoiceRealtimeTransport()
+        actor CallCounter { var count = 0; func increment() { count += 1 } }
+        let counter = CallCounter()
+        let session = makeSession(
+            transport: transport,
+            mintToken: { _ in
+                await counter.increment()
+                return VoiceToken(token: "tok", expiresIn: 900)
+            }
+        )
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+        await transport.push(#"{"message_type":"committed_transcript","text":"hello"}"#)
+        await waitUntil { session.transcribedText == "hello" }
+
+        session.pauseForInterruption()
+        session.resumeAfterInterruption()
+
+        XCTAssertEqual(session.state, .recording)
+        XCTAssertEqual(session.transcribedText, "hello")
+        let mintCount = await counter.count
+        XCTAssertEqual(mintCount, 1, "resuming a live socket must not mint a second token")
+    }
+
+    /// Resuming while the interruption caught the take mid-reconnect (no live socket to fall
+    /// back to) must not silently claim `.recording` with nowhere to send audio — it has to
+    /// actually reconnect.
+    func testResumingWithNoLiveTransportReconnectsInsteadOfClaimingRecording() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let gate = Gate()
+        let session = makeSession(transport: transport, sleep: { _ in await gate.wait() })
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        // The gated sleep holds the reconnect backoff open, so this catches the pause exactly
+        // where it matters: `state == .reconnecting` but `connectTransport()` has not run yet —
+        // `transport` is still `nil`.
+        await transport.fail()
+        await waitUntil { session.state == .reconnecting }
+        session.pauseForInterruption()
+        XCTAssertEqual(session.state, .paused)
+
+        session.resumeAfterInterruption()
+        await waitUntil { session.state == .recording }
+
+        let connectCalls = await transport.connectCallCount
+        XCTAssertEqual(connectCalls, 2, "the original connect plus exactly one reconnect")
+
+        // Let the stale, pre-interruption reconnect task's sleep resolve too, rather than leaving
+        // it dangling — its own `state == .reconnecting` guard is what makes waking up harmless.
+        await gate.open()
+    }
+
+    func testStoppingWhilePausedEndsTheTakeAsUserRatherThanBeingIgnored() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+        session.pauseForInterruption()
+
+        await session.stop(reason: .user)
+
+        XCTAssertEqual(session.state, .idle)
+        XCTAssertEqual(session.lastEndReason, .user)
+    }
+
+    // MARK: Reconnect
+
+    /// The scenario the block leader's report calls out by name: a connection drop with no close
+    /// reason at all, the shape of a cellular handoff rather than a documented ElevenLabs close —
+    /// must reconnect rather than ending the take the way a plain network blip used to.
+    func testConnectionLostWithNoCloseReasonReconnectsRatherThanEndingTheTake() async {
         let transport = FakeVoiceRealtimeTransport()
         let session = makeSession(transport: transport)
         await session.start(hardwareSampleRate: 24000)
@@ -305,9 +416,74 @@ final class VoiceRecordingSessionTests: XCTestCase {
         await waitUntil { session.state == .recording }
 
         await transport.fail()
+        await waitUntil { session.state == .reconnecting }
+        XCTAssertNil(session.lastEndReason, "must not have ended the take")
+
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        let connectCalls = await transport.connectCallCount
+        XCTAssertEqual(connectCalls, 2)
+    }
+
+    /// Audio spoken while the connection was down is not lost — it queues the same way
+    /// pre-`session_started` audio always has, and reaches the new connection once it flushes.
+    func testAudioCapturedDuringAReconnectIsBufferedAndFlushedOnceReconnected() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        await transport.fail()
+        await waitUntil { session.state == .reconnecting }
+        await session.ingestAudioChunk(pcm16le: [7, 7, 7])
+        let sentWhileDown = await transport.sentTexts
+        XCTAssertEqual(sentWhileDown.count, 0)
+
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil(async: { await transport.sentTexts.count == 1 })
+
+        let payload = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [7, 7, 7])
+        let sent = await transport.sentTexts
+        XCTAssertTrue(sent[0].contains(payload))
+    }
+
+    /// A close reason `ReconnectPolicy` does not recognise (an ordinary clean close, say, not
+    /// `resource_exhausted`) is the one case that must NOT reconnect — the policy exists
+    /// specifically to distinguish this from the nil-reason case above.
+    func testConnectionLostWithAnUnrecognisedCloseReasonEndsTheTake() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        await transport.fail(closeReason: "normal closure")
         await waitUntil { session.state == .idle }
 
         XCTAssertEqual(session.lastEndReason, .connectionLost)
+    }
+
+    /// `ReconnectPolicy.maxAttempts` is 5 — exhausting it must give up rather than retrying
+    /// forever, the same ceiling the ported Android policy already enforces.
+    func testReconnectGivesUpAfterMaxAttemptsRatherThanRetryingForever() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        // Every reconnect attempt from here on fails to connect at all, so the retry loop must
+        // exhaust `ReconnectPolicy.maxAttempts` on its own rather than looping forever.
+        await transport.setConnectError(URLError(.cannotConnectToHost))
+        await transport.fail()
+        await waitUntil({ session.state == .idle }, iterations: 100_000)
+
+        XCTAssertEqual(session.lastEndReason, .connectionLost)
+        let connectCalls = await transport.connectCallCount
+        // The original connect, plus one attempt per `ReconnectPolicy.maxAttempts`.
+        XCTAssertEqual(connectCalls, 1 + ReconnectPolicy.maxAttempts)
     }
 
     func testProtocolErrorMessageEndsTheTakeAsErrorAndRecordsTheMessage() async {

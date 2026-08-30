@@ -23,11 +23,14 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         String(repeating: "x", count: Int(width) * count)
     }
 
-    /// Sized against 372 = 400 − 2×14, the bubble content width `testAssistantBubble…` and
-    /// friends assert on.
-    private lazy var bubbleSensitiveText = text(linesAtWidth: 400 - 28)
-    /// Sized against 380 = 400 − 2×10, the collapsible-card content width the tool-call tests
-    /// assert on.
+    /// Sized against 324 = 400 − 48 (the leading gutter) − 2×14, the content width a right-aligned
+    /// bubble (a command's own arguments, a relayed prompt) asserts on — never Freddy's own
+    /// prompt, which this file has no test for since `UserBubbleView` shares the identical
+    /// `.userBubble` formula.
+    private lazy var bubbleSensitiveText = text(linesAtWidth: 400 - 48 - 28)
+    /// Sized against 380 = 400 − 2×10, the content width both a collapsible card and the
+    /// uncontained assistant reply assert on — the two share one formula since neither has a
+    /// bubble's own horizontal padding or leading gutter any more.
     private lazy var cardSensitiveText = text(linesAtWidth: 400 - 20)
 
     private func message(
@@ -76,11 +79,12 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
                 metrics: metrics))
     }
 
-    /// 28 is the bubble's own horizontal padding on each edge (`.padding(.horizontal, 14)`)
-    /// doubled — literal here, not `TranscriptRowMetrics.bubbleHorizontalPadding`, so a mutation
-    /// of that constant moves what the code measures at without moving this expectation.
-    func testAssistantBubbleAddsItsOwnPaddingAndTheRowTimestamp() {
-        let msg = message(type: .assistant, content: bubbleSensitiveText)
+    /// The reply is uncontained — no bubble padding of its own, just the same 20 = 2×10 inset
+    /// every collapsible card uses (literal here, not `TranscriptRowMetrics.cardHorizontalPadding`,
+    /// so a mutation of that constant moves what the code measures at without moving this
+    /// expectation) — plus the row's own trailing timestamp chrome.
+    func testAssistantBubbleAddsNoChromeOfItsOwnButStillGetsTheRowTimestamp() {
+        let msg = message(type: .assistant, content: cardSensitiveText)
         let measurer = StubBlockMeasurer()
         let cache = BlockHeightCache()
 
@@ -89,10 +93,10 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             metrics: metrics)
 
         let content = measuredContentHeight(
-            MarkdownParser.parse(bubbleSensitiveText), atWidth: 400 - 28, measurer: measurer, cache: cache)
-        // 10: the bubble's own vertical padding. 8: the inter-card spacing `TranscriptRowContent`'s
-        // `VStack` puts before every child, the timestamp line included. 16: the timestamp line.
-        let expected = content + 10 + 8 + 16
+            MarkdownParser.parse(cardSensitiveText), atWidth: 400 - 20, measurer: measurer, cache: cache)
+        // 8: the inter-card spacing `TranscriptRowContent`'s `VStack` puts before every child, the
+        // timestamp line included. 16: the timestamp line.
+        let expected = content + 8 + 16
         XCTAssertEqual(actual, expected)
     }
 
@@ -135,7 +139,14 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
     /// invites. Both cards use their own boundary-sensitive text so a width mistake on either
     /// one's own inset would show up here too, not only in the single-card tests above.
     func testTwoCardsInOneTurnAreSeparatedByInterCardSpacingExactlyOnce() {
-        let msg = message(type: .assistant, content: bubbleSensitiveText, thinking: cardSensitiveText, timestamp: nil)
+        // Both cards need their own boundary-sensitive text, but a thinking card and the reply
+        // that follows it now share one content-width formula (see `cardSensitiveText`'s own doc
+        // comment) — the same string would land both on the same line-count boundary and hide a
+        // mistake that moved one card's width without the other's, so the reply uses a second,
+        // independently-sized string one line short at that same width instead of `cardSensitiveText`
+        // itself.
+        let replyText = text(linesAtWidth: 400 - 20, count: 99)
+        let msg = message(type: .assistant, content: replyText, thinking: cardSensitiveText, timestamp: nil)
         let measurer = StubBlockMeasurer()
         let cache = BlockHeightCache()
 
@@ -146,16 +157,15 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         let thinkingContent = measuredContentHeight(
             [.codeBlock(language: nil, code: cardSensitiveText)], atWidth: 400 - 20, measurer: measurer, cache: cache)
         let thinkingHeight = 32 + thinkingContent + 12
-        let bubbleContent = measuredContentHeight(
-            MarkdownParser.parse(bubbleSensitiveText), atWidth: 400 - 28, measurer: measurer, cache: cache)
-        let bubbleHeight = bubbleContent + 10
+        let bubbleHeight = measuredContentHeight(
+            MarkdownParser.parse(replyText), atWidth: 400 - 20, measurer: measurer, cache: cache)
         let expected = thinkingHeight + 8 + bubbleHeight
 
         XCTAssertEqual(actual, expected)
     }
 
     func testNoTimestampLineIsAddedWhenTheMessageHasNone() {
-        let msg = message(type: .assistant, content: bubbleSensitiveText, timestamp: nil)
+        let msg = message(type: .assistant, content: cardSensitiveText, timestamp: nil)
         let measurer = StubBlockMeasurer()
         let cache = BlockHeightCache()
 
@@ -164,8 +174,8 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             metrics: metrics)
 
         let content = measuredContentHeight(
-            MarkdownParser.parse(bubbleSensitiveText), atWidth: 400 - 28, measurer: measurer, cache: cache)
-        XCTAssertEqual(actual, content + 10)
+            MarkdownParser.parse(cardSensitiveText), atWidth: 400 - 20, measurer: measurer, cache: cache)
+        XCTAssertEqual(actual, content)
     }
 
     /// An argument-free command degrades to a compact line with no header chrome or padding at
@@ -195,7 +205,7 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             metrics: metrics)
 
         let content = measuredContentHeight(
-            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 28,
+            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 48 - 28,
             measurer: measurer,
             cache: cache)
         // 16 + 4: the command-name line's own pinned height, plus the gap above the arguments.
@@ -216,7 +226,7 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             metrics: metrics)
 
         let content = measuredContentHeight(
-            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 28,
+            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 48 - 28,
             measurer: measurer,
             cache: cache)
         let expected = content + 16 + 4 + 10 + 8 + 16

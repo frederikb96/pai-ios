@@ -125,7 +125,9 @@ struct ComposerBar: View {
                 .background(PaiPalette.Semantic.raisedSurface)
                 .clipShape(RoundedRectangle(cornerRadius: 18))
 
-                if voiceController.state == .recording || voiceController.state == .stopping {
+                if voiceController.state == .recording || voiceController.state == .stopping
+                    || voiceController.state == .paused || voiceController.state == .reconnecting
+                {
                     MuteButton(controller: voiceController) { voiceController.toggleMute() }
                 } else {
                     sendButton(draftStore: draftStore)
@@ -138,7 +140,10 @@ struct ComposerBar: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(PaiPalette.Semantic.panelBackground)
+        // A translucent system material rather than an opaque fill — the composer reads as the
+        // edge of the screen scrolling under it, not as a floating panel of a different colour.
+        // Matches `CreateSessionView`'s own composer-equivalent bar, which already uses this.
+        .background(.bar)
         .sheet(isPresented: $showingPhotoPicker) {
             PhotoAttachmentPicker { staged in stageAttachments(staged) }
         }
@@ -202,7 +207,9 @@ struct ComposerBar: View {
             preVoiceText = text
             await voiceController.start()
             observeLiveTranscript(voiceController: voiceController, draftStore: draftStore)
-        case .recording, .connecting:
+        case .recording, .connecting, .paused, .reconnecting:
+            // A tap always means "end the take", regardless of which of these mid-take states it
+            // caught — `VoiceRecordingSession.stop` accepts all of them.
             let finalText = await voiceController.stop()
             applyVoiceResult(finalText, draftStore: draftStore)
         case .stopping:
@@ -213,10 +220,13 @@ struct ComposerBar: View {
     /// Streams the live partial into the composer as it grows — the `stt-rec: ` prefix is written
     /// once, at the moment recording starts, and only the text after it keeps changing, matching
     /// `VoiceRecordingSession`'s own documented contract for `transcribedText` vs. `result.prefixedText`.
+    ///
+    /// Keeps polling through `.paused`/`.reconnecting` rather than exiting — a resumed take needs
+    /// this same loop still running to pick its live text back up, and nothing else restarts it.
     private func observeLiveTranscript(voiceController: VoiceRecorderController, draftStore: DraftStore) {
         Task {
             var lastPartial = ""
-            while voiceController.state == .connecting || voiceController.state == .recording {
+            while voiceController.state != .idle {
                 let partial = voiceController.transcribedText
                 if partial != lastPartial {
                     lastPartial = partial

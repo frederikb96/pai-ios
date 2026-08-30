@@ -55,6 +55,14 @@ public enum TranscriptRowMetrics {
     /// than a marker needs wraps the measured text a line earlier than the view does (a blank gap,
     /// the safe direction per the `scrolling` skill), where reserving too little would clip.
     public static let listMarkerReservedWidth: Double = 24
+    /// A fixed reserved gap on the leading edge of every right-aligned bubble (Freddy's own
+    /// message, a relayed one, a command with arguments) — what stops a long message going
+    /// edge-to-edge and gives the eye a gutter to read "this is addressed from the right",
+    /// serving the same purpose as the web's `max-w-[80%]` without copying its percentage. A
+    /// fixed point value rather than a fraction of the row's own width, so the view (a
+    /// `.padding(.leading:)`) and the measurer (a width subtraction) compute it from the exact
+    /// same number rather than two formulas that could drift apart.
+    public static let bubbleLeadingGutter: Double = 48
     /// A relayed bubble's "sender · group" line and a command bubble's own-name line — both drawn
     /// above the body text and pinned to this height via an explicit `.frame(height:)` in the
     /// view, so the two can never drift the way an unconstrained font's intrinsic size could.
@@ -164,8 +172,12 @@ public enum TranscriptRowLayout {
     /// own doc comment reasons about, not measured independently.
     private static func chromeBeforeContent(of kind: TranscriptCardPlan.Kind) -> Double {
         switch kind {
-        case .userBubble, .assistantBubble:
+        case .userBubble:
             return TranscriptRowMetrics.bubbleVerticalPadding / 2
+        case .assistantBubble:
+            // No chrome at all: the reply sits directly on the page, not inside a bubble — see
+            // `AssistantBubbleView`'s own doc comment.
+            return 0
         case .relayedBubble, .command:
             let labelChrome = TranscriptRowMetrics.bubbleLabelLineHeight + TranscriptRowMetrics.bubbleLabelSpacing
             return labelChrome + TranscriptRowMetrics.bubbleVerticalPadding / 2
@@ -179,8 +191,14 @@ public enum TranscriptRowLayout {
     /// view lays out can never be computed from two different widths.
     private static func contentWidth(for kind: TranscriptCardPlan.Kind, cellWidth: Double) -> Double {
         switch kind {
-        case .userBubble, .relayedBubble, .assistantBubble, .command:
-            return max(0, cellWidth - 2 * TranscriptRowMetrics.bubbleHorizontalPadding)
+        case .userBubble, .relayedBubble, .command:
+            return max(
+                0,
+                cellWidth - TranscriptRowMetrics.bubbleLeadingGutter - 2 * TranscriptRowMetrics.bubbleHorizontalPadding)
+        case .assistantBubble:
+            // Full row width, minus the same inset every other card uses — no bubble, no
+            // leading gutter, see `AssistantBubbleView`'s own doc comment.
+            return max(0, cellWidth - 2 * TranscriptRowMetrics.cardHorizontalPadding)
         case .thinking, .toolCall, .toolResult, .agentMessage, .system, .legacyCommandOutput:
             return max(0, cellWidth - 2 * TranscriptRowMetrics.cardHorizontalPadding)
         }
@@ -213,7 +231,8 @@ public enum TranscriptRowLayout {
             return (text.isEmpty ? 0 : content) + labelChrome + TranscriptRowMetrics.bubbleVerticalPadding
 
         case .assistantBubble:
-            return content + TranscriptRowMetrics.bubbleVerticalPadding
+            // No chrome — the measured content height is the whole row height.
+            return content
 
         case .command(_, let args):
             // No arguments degrades to a compact, non-interactive line with no header chrome at
