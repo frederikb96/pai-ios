@@ -183,6 +183,10 @@ struct SessionDetailView: View {
 /// the web keeps it even on its narrowest layout for that reason. The seven-day figure moves
 /// slowly but is the one that ends a week early when it runs out, and a percentage with no window
 /// named beside it is ambiguous about which of the two it is.
+// Isolated because `resetsAt` reaches `SessionTimeFormat`, whose cached formatters are
+// main-actor-isolated — a `View` conformance isolates `body` and nothing else, so a computed
+// property beside it is not covered by it.
+@MainActor
 private struct PlanUsageBadge: View {
     let usage: Usage
 

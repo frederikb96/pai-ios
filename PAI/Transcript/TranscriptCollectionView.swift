@@ -734,6 +734,19 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                 collectionView.insertItems(at: indexPaths)
             }) { _ in completion?() }
 
+        case .tailReplaced(let commonPrefix, let removed, let inserted):
+            // Deletes index into the OLD list and inserts into the NEW one, which is exactly
+            // `performBatchUpdates`' contract — so the two ranges legitimately overlap. Kept in
+            // one batch, and not a reload, so `targetContentOffset(forProposedContentOffset:)`
+            // still runs and the anchor set for this update is still honoured: everything above
+            // `commonPrefix` is untouched, and the reader is sitting in it.
+            let deletes = (commonPrefix..<(commonPrefix + removed)).map { IndexPath(item: $0, section: 0) }
+            let inserts = (commonPrefix..<(commonPrefix + inserted)).map { IndexPath(item: $0, section: 0) }
+            collectionView.performBatchUpdates({
+                if !deletes.isEmpty { collectionView.deleteItems(at: deletes) }
+                if !inserts.isEmpty { collectionView.insertItems(at: inserts) }
+            }) { _ in completion?() }
+
         case .replaced:
             // Same reasoning as the count-mismatch fallback above: this reload discards whatever
             // update set `.pendingAnchor`, so the anchor must not survive it either.
