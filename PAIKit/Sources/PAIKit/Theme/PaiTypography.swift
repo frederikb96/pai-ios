@@ -39,7 +39,12 @@
         /// closest curve, not the closest default point size — `.caption` is an exact match at
         /// 12pt, but nothing in Apple's ladder sits at 14pt or 18pt, so `body`/`markdownHeading3`
         /// borrow the curve of the nearest style and keep the base size exact.
-        public struct Style: Equatable {
+        /// `Sendable` because every stored property is a value type and all of them are `let` —
+        /// so the static styles below are shared constants rather than shared mutable state.
+        /// Swift 6 mode will not accept a non-`Sendable` type as a `static let`, and it is right
+        /// not to: the compiler cannot tell a constant from a mutable global without the
+        /// conformance saying so.
+        public struct Style: Equatable, Sendable {
             public let pointSize: CGFloat
             public let weight: Font.Weight
             public let design: Font.Design

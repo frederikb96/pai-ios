@@ -46,12 +46,6 @@ jobs:
           key: dd-${{ runner.os }}-${{ hashFiles('PAIKit/Package.swift', 'PAI.xcodeproj/project.pbxproj') }}
           restore-keys: dd-${{ runner.os }}-
 
-      # Most of the package is tested free on Linux, but the two streaming clients are excluded
-      # there — swift-corelibs-foundation has no `URLSession.bytes(for:)`. This is the only place
-      # their tests can run, so it is where they run.
-      - name: Test what Linux cannot
-        run: swift test --package-path PAIKit --filter 'Sse|Terminal'
-
       # Everything else in the package is already green from free-checks, so this builds only the
       # app target — the part that needs an iOS SDK.
       - name: Build the app
@@ -66,6 +60,17 @@ jobs:
         if: failure()
         run: |
           grep -E "error:" /tmp/build.log | head -40 || echo "no compiler errors in the log"
+
+      # Runs after the app build on purpose. This step compiles the whole package on a macOS host,
+      # which is the only place the UIKit-guarded files compile at all — so it fails for reasons
+      # that have nothing to do with the app target, and running it first means one bad constant
+      # costs the entire run's information. The job still fails if this fails; it just fails
+      # having already answered the expensive question.
+      #
+      # It exists because the two streaming clients are excluded from the Linux build —
+      # swift-corelibs-foundation has no `URLSession.bytes(for:)` — so this is where their tests run.
+      - name: Test what Linux cannot
+        run: swift test --package-path PAIKit --filter 'Sse|Terminal'
 
       - name: Boot a simulator
         id: sim
