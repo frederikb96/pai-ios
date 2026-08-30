@@ -10,12 +10,13 @@ import SwiftUI
 /// to build a second `PaiRequestFactory` on its own, so the connection is injected through the
 /// environment instead of constructed here.
 private struct TerminalStreamClientFactoryKey: EnvironmentKey {
-    static let defaultValue: ((String, PaiTerminalStreamClient.Callbacks) -> PaiTerminalStreamClient)? =
-        nil
+    static let defaultValue:
+        (@MainActor @Sendable (String, PaiTerminalStreamClient.Callbacks) -> PaiTerminalStreamClient)? = nil
 }
 
 extension EnvironmentValues {
-    var terminalStreamClientFactory: ((String, PaiTerminalStreamClient.Callbacks) -> PaiTerminalStreamClient)?
+    var terminalStreamClientFactory:
+        (@MainActor @Sendable (String, PaiTerminalStreamClient.Callbacks) -> PaiTerminalStreamClient)?
     {
         get { self[TerminalStreamClientFactoryKey.self] }
         set { self[TerminalStreamClientFactoryKey.self] = newValue }

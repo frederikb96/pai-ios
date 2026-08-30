@@ -365,6 +365,11 @@ struct SessionRow: View {
 /// The row's timestamp string — pure presentation over `SessionListFormat.timeBucket`, which is
 /// the tested half; picking a `DateFormatter`/`Date.FormatStyle` template per bucket is left to
 /// the view on purpose (see that type's doc comment).
+/// `@MainActor` because `ISO8601DateFormatter` is a reference type and not thread-safe, so a
+/// shared instance needs an isolation domain rather than a promise. Every caller is a view body,
+/// which is already on the main actor — so this costs nothing and is honest, where marking the
+/// statics `nonisolated(unsafe)` would have claimed a safety the formatter does not have.
+@MainActor
 enum SessionTimeFormat {
     private static let fractionalParser: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
