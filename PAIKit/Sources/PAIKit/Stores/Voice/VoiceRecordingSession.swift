@@ -267,6 +267,15 @@ public final class VoiceRecordingSession {
     /// recognise. Treating "no reason" as "assume transient, try again" is what actually covers
     /// that likely case; `ReconnectPolicy.shouldReconnect` still gates the case where a reason
     /// *is* known, so both call sites of that policy are exercised, not just the constructed one.
+    ///
+    /// The socket is deliberately left open while `.paused` (an interruption keeps the take, not
+    /// the connection, alive), so it can still drop out from under a paused take — an idle
+    /// realtime connection closed by the far end mid-call, say. That must never promote `.paused`
+    /// to `.reconnecting` on its own: `.paused` means "the app has no microphone", and a network
+    /// event finding out about that has nothing to reconnect *for* yet. So this only clears
+    /// `transport`, which is the same "reconnect owed" signal `resumeAfterInterruption()` already
+    /// reads for the mid-backoff-interruption case — the retry itself waits for capture to
+    /// actually be running again.
     private func handleConnectionLost(closeReason: String?) async {
         guard state == .recording || state == .connecting || state == .paused || state == .reconnecting else {
             return
@@ -277,11 +286,13 @@ public final class VoiceRecordingSession {
             await finishStop(reason: .connectionLost)
             return
         }
-        reconnectAttempt += 1
-        state = .reconnecting
         transport = nil
         receiveTask?.cancel()
         receiveTask = nil
+        guard state != .paused else { return }
+
+        reconnectAttempt += 1
+        state = .reconnecting
 
         reconnectTask?.cancel()
         reconnectTask = Task { [weak self] in
