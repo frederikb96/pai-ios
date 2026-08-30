@@ -102,10 +102,13 @@ struct NoteEditorSurface: View {
         return true
     }
 
+    /// Deliberately does not publish. Adding the paragraph changes the note by one newline, and a
+    /// tap that is followed by nothing must not rewrite a file — so the region exists on screen
+    /// while the note on disk is untouched, and the first keystroke publishes both together.
+    /// Backspacing straight out of it removes the region again and publishes nothing at all.
     private func focusBelowTheLastRegion() {
         if let target = document.appendTrailingProse() {
             move(to: target)
-            publish()
         } else {
             focusedID = document.items.last?.id
         }
