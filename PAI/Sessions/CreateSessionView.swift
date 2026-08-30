@@ -352,7 +352,10 @@ struct CreateSessionView: View {
             preVoiceText = text
             await voiceController.start()
             observeLiveTranscript(voiceController: voiceController)
-        case .recording, .connecting:
+        case .recording, .connecting, .paused, .reconnecting:
+            // A tap always means "end the take", regardless of which of these mid-take states it
+            // caught — `VoiceRecordingSession.stop` accepts all of them. Same rule as
+            // `ComposerBar`'s own record button: one control, one behaviour, on both screens.
             let finalText = await voiceController.stop()
             applyVoiceResult(finalText)
         case .stopping:
@@ -360,10 +363,13 @@ struct CreateSessionView: View {
         }
     }
 
+    /// Keeps polling through `.paused`/`.reconnecting` rather than exiting — a take resumed after
+    /// an interruption or a dropped connection needs this same loop still running to pick its live
+    /// text back up, and nothing else restarts it. Same rule as `ComposerBar`'s own loop.
     private func observeLiveTranscript(voiceController: VoiceRecorderController) {
         Task {
             var lastPartial = ""
-            while voiceController.state == .connecting || voiceController.state == .recording {
+            while voiceController.state != .idle {
                 let partial = voiceController.transcribedText
                 if partial != lastPartial {
                     lastPartial = partial
