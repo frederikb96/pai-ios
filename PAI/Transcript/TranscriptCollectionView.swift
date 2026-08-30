@@ -146,6 +146,11 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // Every other screen now paints its own ground explicitly (`paiScreenBackground()`) —
+        // this one relied on UIKit's own default (`.systemBackground`), which does not track the
+        // app's screenBackground token and reads wrong the same way an unset screen did before
+        // that modifier existed.
+        view.backgroundColor = UIColor(PaiPalette.Semantic.screenBackground)
         collectionView.frame = view.bounds
         collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         collectionView.backgroundColor = .clear
