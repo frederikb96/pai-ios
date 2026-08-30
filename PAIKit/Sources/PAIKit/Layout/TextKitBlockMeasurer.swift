@@ -39,15 +39,19 @@
             case .thematicBreak:
                 return TranscriptRowMetrics.thematicBreakHeight
 
-            case .codeBlock:
-                // The box `ToolBodyText` and `MarkdownContentView` draw around every code block —
-                // its padding is inside what the block visually occupies, not outside it, so it
-                // narrows the text TextKit wraps at and adds to the measured height in both places.
-                let attributed = Self.attributedString(for: block, environment: environment)
-                guard attributed.length > 0 else { return 0 }
-                let padding = TranscriptRowMetrics.codeBlockPadding
-                let textWidth = max(0, width - 2 * padding)
-                return Self.textHeight(of: attributed, width: textWidth) + 2 * padding
+            case .codeBlock(_, let code):
+                // Measured by line count rather than by TextKit, for the same reason a table is:
+                // the block does not wrap. It scrolls sideways inside its own container, matching
+                // the web's `overflow-x-auto` on every `<pre>`, so its height is the same at every
+                // width — and exact, rather than the result of a layout pass this package cannot
+                // run on Linux.
+                //
+                // The padding is inside what the block visually occupies, not outside it, so it
+                // adds to the measured height here and to the drawn box in `MarkdownContentView`.
+                guard !code.isEmpty else { return 0 }
+                return MarkdownCodeBlockLayout.height(
+                    for: code, lineHeight: Self.codeLineHeight(for: environment),
+                    padding: TranscriptRowMetrics.codeBlockPadding)
 
             case .blockQuote(let blocks):
                 return NestedBlockLayout.blockQuoteHeight(
@@ -170,6 +174,15 @@
         /// One row's text height, header or data — `GfmTableView` adds no padding of its own
         /// around a cell's text, only the spacing and divider ``MarkdownTableLayout`` takes as
         /// separate parameters.
+        /// One line's height inside a fenced block, resolved the same way a table row's is so the
+        /// two non-wrapping blocks answer Dynamic Type identically.
+        private static func codeLineHeight(for environment: MeasurementEnvironment) -> Double {
+            let category = UIContentSizeCategory(rawValue: environment.sizeCategoryToken)
+            let pointSize = PaiTypography.markdownCodeBlock.pointSize(for: category)
+            let font = resolveFont(style: PaiTypography.markdownCodeBlock, pointSize: pointSize)
+            return Double(font.lineHeight.rounded(.up))
+        }
+
         private static func tableRowHeight(for environment: MeasurementEnvironment) -> Double {
             let category = UIContentSizeCategory(rawValue: environment.sizeCategoryToken)
             let pointSize = PaiTypography.markdownBody.pointSize(for: category)

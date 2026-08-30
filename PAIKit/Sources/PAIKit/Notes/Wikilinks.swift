@@ -112,9 +112,15 @@ public enum NoteBodySegment: Equatable, Sendable {
     case embed(target: String, alias: String?)
 }
 
-/// The scheme a resolved wikilink is turned into — intercepted by the note body renderer rather
-/// than ever being followed as a real URL.
-public let noteLinkScheme = "pai-note://"
+/// The URL a resolved wikilink is turned into: the app's own deep link to that note.
+///
+/// The same form a home-screen shortcut and a tapped notification produce, rather than a scheme
+/// of its own. The note body renderer intercepts it and navigates in place — but if one ever
+/// escapes to the system, it round-trips back through `onOpenURL` and lands on the right note,
+/// which a private scheme could not do.
+public func noteLinkURL(id: String) -> String {
+    DeepLink.note(id: id).url?.absoluteString ?? ""
+}
 
 /// `nameToId` keys are lowercased note names; a target is matched by its last path component,
 /// since a container is a flat folder and Obsidian itself resolves a bare wikilink the same way.
@@ -143,7 +149,7 @@ public func splitBodyForRender(_ body: String, nameToId: [String: String]) -> [N
             let basename =
                 link.target.split(separator: "/", omittingEmptySubsequences: false).last.map(String.init) ?? link.target
             if let resolvedId = nameToId[basename.lowercased()] {
-                textParts.append("[\(display)](\(noteLinkScheme)\(resolvedId))")
+                textParts.append("[\(display)](\(noteLinkURL(id: resolvedId)))")
             } else {
                 textParts.append("~~\(display)~~")
             }

@@ -72,7 +72,7 @@ final class NoteWikilinksTests: XCTestCase {
         guard case .text(let markdown) = segments.first else {
             return XCTFail("expected a text segment")
         }
-        XCTAssertTrue(markdown.contains("[Target](pai-note://note-123)"), markdown)
+        XCTAssertTrue(markdown.contains("[Target](pai://note/note-123)"), markdown)
     }
 
     /// A wikilink whose target isn't in the loaded index has to read as visibly broken, not
@@ -92,7 +92,7 @@ final class NoteWikilinksTests: XCTestCase {
         guard case .text(let markdown) = segments.first else {
             return XCTFail("expected a text segment")
         }
-        XCTAssertTrue(markdown.contains("pai-note://note-9"), markdown)
+        XCTAssertTrue(markdown.contains("pai://note/note-9"), markdown)
     }
 
     func testEmbedProducesItsOwnSegmentSeparateFromSurroundingText() {

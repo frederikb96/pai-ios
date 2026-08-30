@@ -522,12 +522,24 @@ struct MarkdownContentView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
         case .codeBlock(_, let code):
-            TranscriptTextHighlighting.plainText(
-                code, font: PaiTypography.markdownCodeBlock.font, highlights: highlights
-            )
-            .foregroundStyle(PaiPalette.Semantic.textPrimary)
-            .textSelection(.enabled)
-            .padding(8)
+            // Scrolls sideways rather than wrapping, matching the web's `overflow-x-auto` on
+            // every `<pre>`. Wrapped, a long line reflows into a shape that is not the code any
+            // more; cut off, most lines of most code are unreadable on a phone.
+            //
+            // 🚨 The height this draws to must equal what `MarkdownCodeBlockLayout` measures, or
+            // every row above the reader moves when this one lays out. That is why the text is
+            // pinned to a line-count height here rather than left to size itself: two independent
+            // answers to "how tall is this" is exactly the disagreement the transcript's
+            // precomputed layout cannot absorb.
+            ScrollView(.horizontal, showsIndicators: true) {
+                TranscriptTextHighlighting.plainText(
+                    code, font: PaiTypography.markdownCodeBlock.font, highlights: highlights
+                )
+                .foregroundStyle(PaiPalette.Semantic.textPrimary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: true, vertical: true)
+                .padding(TranscriptRowMetrics.codeBlockPadding)
+            }
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(PaiPalette.Semantic.raisedSurface, in: RoundedRectangle(cornerRadius: 6))
 
@@ -616,9 +628,20 @@ struct MarkdownContentView: View {
             if run.style.contains(.italic) { intent.insert(.emphasized) }
             if !intent.isEmpty { attributed[range].inlinePresentationIntent = intent }
             if run.style.contains(.strikethrough) { attributed[range].strikethroughStyle = .single }
-            if run.destination != nil {
+            if let destination = run.destination {
                 attributed[range].foregroundColor = PaiPalette.Semantic.accentText
                 attributed[range].underlineStyle = .single
+                // Colour alone only makes it look like a link. `Text` renders a run as tappable
+                // when it carries a real `link` attribute and not otherwise, so without this a
+                // reader gets the affordance and nothing behind it — including a note's own
+                // `[[wikilink]]`, whose whole point is going somewhere.
+                //
+                // A destination that is not a valid URL is left as plain styled text rather than
+                // being coerced into one: a broken link that does nothing is better than one that
+                // opens something arbitrary.
+                if let url = URL(string: destination) {
+                    attributed[range].link = url
+                }
             }
         }
 

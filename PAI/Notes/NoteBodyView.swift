@@ -8,15 +8,16 @@ import UIKit
 /// bubble — the same reuse the web's `NoteBody.tsx` makes of its own bubble renderer, rather than
 /// forking a second markdown renderer for notes.
 ///
-/// 🚨 `MarkdownContentView` colours a markdown link but does not attach SwiftUI's `.link`
-/// attribute to it, so a resolved wikilink renders visibly but is **not tappable** here yet —
-/// that needs a small change in `TranscriptCards.swift`'s `styledText`, which is out of scope for
-/// this file (see this repo's file-ownership split). Until then, open the target note from the
-/// tools panel's Backlinks/Outgoing links tabs, which route through a real `Button`.
+/// A resolved wikilink becomes the app's own `pai://note/<id>` link, and the tap is caught here
+/// rather than handed to the system: navigating in place keeps the reader's back stack, where
+/// letting it out and back in through `onOpenURL` would replace the whole path. Anything else —
+/// a real `https://` link in the note — falls through to the system unchanged.
 struct NoteBodyView: View {
     let noteBody: String
     let nameToId: [String: String]
     let containerId: String?
+
+    @Environment(AppEnvironment.self) private var environment
 
     init(body: String, nameToId: [String: String], containerId: String?) {
         self.noteBody = body
@@ -45,6 +46,13 @@ struct NoteBodyView: View {
             }
             .padding()
         }
+        .environment(
+            \.openURL,
+            OpenURLAction { url in
+                guard case .note(let id) = DeepLink.from(url: url) else { return .systemAction }
+                environment.router.push(.note(id: id))
+                return .handled
+            })
     }
 }
 
