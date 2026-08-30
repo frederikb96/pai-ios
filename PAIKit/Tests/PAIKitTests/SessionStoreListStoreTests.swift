@@ -237,17 +237,13 @@ final class SessionStoreListStoreTests: XCTestCase {
         store.setMachineFilter("laptop")  // fast — cancels the vm fetch's Task and starts a new one
 
         await api.gate.release("browse:laptop")
-        await Task.yield()
-        // Give the laptop fetch a moment to actually land before asserting.
-        try? await Task.sleep(nanoseconds: 5_000_000)
-        XCTAssertEqual(store.rows.map(\.id), ["laptop-session"])
+        await awaitRows(store, ["laptop-session"])
 
-        // The vm request finally answers — its answer must be discarded, not applied on top.
+        // The stale request finally answers, and must be discarded rather than applied on top.
+        // Held over a window rather than sampled once: a fixed sleep asserts how fast a loaded
+        // machine resumes a continuation, and it fails for that reason rather than this one.
         await api.gate.release("browse:vm")
-        try? await Task.sleep(nanoseconds: 5_000_000)
-
-        XCTAssertEqual(
-            store.rows.map(\.id), ["laptop-session"], "the stale vm answer must not have overwritten the laptop rows")
+        await assertRowsStay(store, ["laptop-session"])
     }
 
     /// Same race, through the search branch rather than the browse branch — the two fetch paths
