@@ -85,6 +85,23 @@ jobs:
           MARKETING_VERSION: ${{ steps.version.outputs.marketing }}
           CURRENT_PROJECT_VERSION: ${{ steps.version.outputs.build }}
 
+      # 🚨 UPLOADING IS NOT DISTRIBUTING. The lane sets `skip_waiting_for_build_processing`
+      # deliberately — waiting costs 10-30 minutes on a runner billed at 10x — which also means
+      # fastlane cannot attach the build to a beta group, because Apple has not finished
+      # processing it yet. A build that is uploaded and VALID but attached to no group is
+      # installable by NOBODY, and looks identical to a successful release from every angle
+      # available here: the job is green, App Store Connect lists the build, and the phone shows
+      # nothing.
+      #
+      # So after this job finishes, attach it — the build id comes from
+      # `asc.py builds 6806630985`, the group id from `asc.py groups 6806630985`:
+      #
+      #   asc.py post "betaGroups/<group-id>/relationships/builds" \
+      #     '{"data":[{"type":"builds","id":"<build-id>"}]}'
+      #
+      # Verify with `asc.py get "betaGroups/<group-id>/builds"` — the reverse relationship is
+      # 403 and cannot be read from the build's side. This is not automated; it is one HTTPS call
+      # and could run on the free Linux runner once someone writes it.
       - name: Upload to TestFlight
         if: github.ref_type == 'tag' || github.event.inputs.upload == 'true'
         run: bundle exec fastlane upload
