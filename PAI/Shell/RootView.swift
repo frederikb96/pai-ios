@@ -29,6 +29,10 @@ struct RootView: View {
                             destination(for: route)
                         }
                 }
+                // The one page ground for every screen the stack pushes — none of them paint
+                // their own, so this is what stops each one falling through to pure black. See
+                // `paiScreenBackground()`'s own doc comment for why that step matters.
+                .paiScreenBackground()
                 .environment(environment)
                 .environment(connection.sessions)
                 .environment(connection.machines)
