@@ -9,7 +9,32 @@ public protocol NotesApiClient: Sendable {
         id: String, body: String?, frontmatter: String?, name: String?, summary: String?,
         favourite: Bool?, containerId: String?, expectedHash: String?
     ) async throws -> NoteSaveResult
+    func createNote(name: String, summary: String?, body: String?, containerId: String?) async throws -> NoteDetail
+    func deleteNote(id: String) async throws -> Bool
+    func undeleteNote(id: String) async throws -> NoteDetail
+    func getNoteLinks(id: String) async throws -> NoteLinkGraph
+    func listNoteRevisions(id: String) async throws -> [NoteRevisionSummary]
+    func getNoteRevision(noteId: String, revisionId: String) async throws -> NoteRevisionDetail
+    func restoreNoteRevision(noteId: String, revisionId: String) async throws -> NoteDetail
+    func searchNotes(q: String, containerId: String?, limit: Int?) async throws -> NoteSearchPage
+
     func getNoteContainers() async throws -> [NoteContainer]
+    func createNoteContainer(path: String, name: String, agentSlug: String?, isDefault: Bool) async throws
+        -> NoteContainer
+    func patchNoteContainer(id: String, name: String?, enabled: Bool?, isDefault: Bool?) async throws
+        -> NoteContainer
+    func deleteNoteContainer(id: String) async throws -> Bool
+    func resumeNoteContainer(id: String, action: NoteContainerResumeAction) async throws -> NoteContainer
+    func validateNoteContainerPath(path: String, agentSlug: String?) async throws -> NoteContainerPathCheck
+    func getNoteLinkHealth(containerId: String) async throws -> NoteLinkHealth
+
+    func getNoteAttachment(containerId: String, path: String) async throws -> NoteAttachmentResult
+    func uploadNoteAttachment(containerId: String, filename: String, mimeType: String, data: Data) async throws
+        -> NoteAttachmentUploaded
+    func listNoteAttachments(containerId: String) async throws -> [NoteAttachmentRecord]
+    func deleteNoteAttachment(containerId: String, path: String) async throws -> Bool
+    func renameNoteAttachment(containerId: String, fromPath: String, toPath: String) async throws
+        -> NoteAttachmentRecord
 }
 
 extension PaiApiClient: NotesApiClient {}
@@ -66,6 +91,18 @@ public final class NotesStore {
     public private(set) var drafts: [String: String] = [:]
     public private(set) var saveStates: [String: NoteSaveState] = [:]
 
+    // MARK: The link index, per note — a snapshot rather than something kept live, matching the
+    // web's own choice (`RightPanel.tsx`): cutting and pasting a link around should not disturb
+    // this list while Freddy types, so it only ever refreshes on an explicit reload.
+
+    public private(set) var linkGraphs: [String: NoteLinkGraph] = [:]
+    public private(set) var linkGraphErrors: [String: String] = [:]
+
+    // MARK: Revision history, per note
+
+    public private(set) var revisions: [String: [NoteRevisionSummary]] = [:]
+    public private(set) var revisionErrors: [String: String] = [:]
+
     /// How long typing has to stop before a save goes out. The web uses the same figure; a note
     /// is small enough that a shorter one costs nothing but round trips, and a longer one is
     /// long enough for an app switch to lose the edit.
@@ -97,6 +134,220 @@ public final class NotesStore {
         } catch {
             loadError = (error as? PaiError)?.userMessage ?? "Could not load note containers"
         }
+    }
+
+    // MARK: Creating, renaming, deleting
+
+    /// Creates a note and inserts it at the front of the index — Obsidian's own convention: a
+    /// brand new note is a real file the moment it is created, not a draft that only becomes one
+    /// on first keystroke.
+    public func createNote(name: String, containerId: String? = nil) async -> NoteSummary? {
+        do {
+            let created = try await api.createNote(name: name, summary: nil, body: nil, containerId: containerId)
+            details[created.id] = created
+            notes.insert(created.summaryRow, at: 0)
+            loadError = nil
+            return created.summaryRow
+        } catch {
+            loadError = (error as? PaiError)?.userMessage ?? "Could not create the note"
+            return nil
+        }
+    }
+
+    @discardableResult
+    public func rename(id: String, name: String) async -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        do {
+            let result = try await api.patchNote(
+                id: id, body: nil, frontmatter: nil, name: trimmed, summary: nil, favourite: nil,
+                containerId: nil, expectedHash: nil)
+            guard case .saved(let detail) = result else { return false }
+            details[id] = detail
+            if let index = notes.firstIndex(where: { $0.id == id }) { notes[index] = detail.summaryRow }
+            return true
+        } catch {
+            loadError = (error as? PaiError)?.userMessage ?? "Could not rename the note"
+            return false
+        }
+    }
+
+    /// Starts the confirm-then-undo window — the row, its embedding and its file are all
+    /// untouched on the server until the finalizer fires (some seconds after the caller's own
+    /// undo window closes; see ``undelete(id:)``). Marks the row `pendingDelete` locally rather
+    /// than removing it, matching what the server itself did: the list still holds the row (spec
+    /// row 5.4's "you get a moment to undo it").
+    @discardableResult
+    public func requestDelete(id: String) async -> Bool {
+        do {
+            _ = try await api.deleteNote(id: id)
+            if let index = notes.firstIndex(where: { $0.id == id }) {
+                let n = notes[index]
+                notes[index] = NoteSummary(
+                    id: n.id, name: n.name, summary: n.summary, containerId: n.containerId,
+                    favourite: n.favourite, tags: n.tags, updatedAtMs: n.updatedAtMs, pendingDelete: true)
+            }
+            return true
+        } catch {
+            loadError = (error as? PaiError)?.userMessage ?? "Could not delete the note"
+            return false
+        }
+    }
+
+    @discardableResult
+    public func undelete(id: String) async -> Bool {
+        do {
+            let restored = try await api.undeleteNote(id: id)
+            details[id] = restored
+            if let index = notes.firstIndex(where: { $0.id == id }) {
+                notes[index] = restored.summaryRow
+            } else {
+                notes.insert(restored.summaryRow, at: 0)
+            }
+            return true
+        } catch {
+            loadError = (error as? PaiError)?.userMessage ?? "Could not undo the delete"
+            return false
+        }
+    }
+
+    // MARK: Containers
+
+    @discardableResult
+    public func createContainer(path: String, name: String) async -> NoteContainer? {
+        do {
+            let created = try await api.createNoteContainer(path: path, name: name, agentSlug: nil, isDefault: false)
+            containers.append(created)
+            return created
+        } catch {
+            loadError = (error as? PaiError)?.userMessage ?? "Could not create the container"
+            return nil
+        }
+    }
+
+    public func validateContainerPath(_ path: String) async throws -> NoteContainerPathCheck {
+        try await api.validateNoteContainerPath(path: path, agentSlug: nil)
+    }
+
+    @discardableResult
+    public func setContainerEnabled(_ id: String, enabled: Bool) async -> Bool {
+        await patchContainer(id) {
+            try await self.api.patchNoteContainer(id: id, name: nil, enabled: enabled, isDefault: nil)
+        }
+    }
+
+    @discardableResult
+    public func resumeContainer(_ id: String, action: NoteContainerResumeAction) async -> Bool {
+        await patchContainer(id) { try await self.api.resumeNoteContainer(id: id, action: action) }
+    }
+
+    @discardableResult
+    public func deleteContainer(_ id: String) async -> Bool {
+        do {
+            let deleted = try await api.deleteNoteContainer(id: id)
+            if deleted { containers.removeAll { $0.id == id } }
+            return deleted
+        } catch {
+            loadError = (error as? PaiError)?.userMessage ?? "Could not remove the container"
+            return false
+        }
+    }
+
+    private func patchContainer(_ id: String, _ request: @escaping () async throws -> NoteContainer) async -> Bool {
+        do {
+            let updated = try await request()
+            if let index = containers.firstIndex(where: { $0.id == id }) { containers[index] = updated }
+            return true
+        } catch {
+            loadError = (error as? PaiError)?.userMessage ?? "Could not update the container"
+            return false
+        }
+    }
+
+    // MARK: The link index
+
+    /// Fetches a note's outgoing links and backlinks — a snapshot, not something kept live; see
+    /// this store's own doc comment on ``linkGraphs``.
+    public func loadLinkGraph(id: String) async {
+        do {
+            linkGraphs[id] = try await api.getNoteLinks(id: id)
+            linkGraphErrors[id] = nil
+        } catch {
+            linkGraphErrors[id] = (error as? PaiError)?.userMessage ?? "Could not load links"
+        }
+    }
+
+    // MARK: Revision history
+
+    public func loadRevisions(id: String) async {
+        do {
+            revisions[id] = try await api.listNoteRevisions(id: id)
+            revisionErrors[id] = nil
+        } catch {
+            revisionErrors[id] = (error as? PaiError)?.userMessage ?? "Could not load previous versions"
+        }
+    }
+
+    public func getRevision(noteId: String, revisionId: String) async throws -> NoteRevisionDetail {
+        try await api.getNoteRevision(noteId: noteId, revisionId: revisionId)
+    }
+
+    /// Writes the old content back as a NEW version rather than rewinding, so restoring is
+    /// itself undoable. Refreshes this note's own cached detail and link graph, since both are
+    /// now stale.
+    @discardableResult
+    public func restoreRevision(noteId: String, revisionId: String) async -> Bool {
+        do {
+            let restored = try await api.restoreNoteRevision(noteId: noteId, revisionId: revisionId)
+            details[noteId] = restored
+            if drafts[noteId] == nil { saveStates[noteId] = .clean }
+            if let index = notes.firstIndex(where: { $0.id == noteId }) { notes[index] = restored.summaryRow }
+            await loadLinkGraph(id: noteId)
+            await loadRevisions(id: noteId)
+            return true
+        } catch {
+            loadError = (error as? PaiError)?.userMessage ?? "Could not restore this version"
+            return false
+        }
+    }
+
+    // MARK: Full-text search
+
+    /// A passthrough rather than stored state — the caller (the note list, debouncing its own
+    /// query text) owns the results, loading state and generation guard, the same way the web's
+    /// component-local `useState` does.
+    public func searchNotes(q: String) async throws -> NoteSearchPage {
+        try await api.searchNotes(q: q, containerId: nil, limit: nil)
+    }
+
+    // MARK: Attachments
+
+    public func listAttachments(containerId: String) async throws -> [NoteAttachmentRecord] {
+        try await api.listNoteAttachments(containerId: containerId)
+    }
+
+    public func uploadAttachment(
+        containerId: String, filename: String, mimeType: String, data: Data
+    ) async throws -> NoteAttachmentUploaded {
+        try await api.uploadNoteAttachment(containerId: containerId, filename: filename, mimeType: mimeType, data: data)
+    }
+
+    public func renameAttachment(
+        containerId: String, fromPath: String, toPath: String
+    ) async throws -> NoteAttachmentRecord {
+        try await api.renameNoteAttachment(containerId: containerId, fromPath: fromPath, toPath: toPath)
+    }
+
+    public func deleteAttachment(containerId: String, path: String) async throws -> Bool {
+        try await api.deleteNoteAttachment(containerId: containerId, path: path)
+    }
+
+    public func fetchAttachment(containerId: String, path: String) async throws -> NoteAttachmentResult {
+        try await api.getNoteAttachment(containerId: containerId, path: path)
+    }
+
+    public func loadLinkHealth(containerId: String) async throws -> NoteLinkHealth {
+        try await api.getNoteLinkHealth(containerId: containerId)
     }
 
     /// Fetch one note's content. Safe to call again for a note already open — it refreshes the
