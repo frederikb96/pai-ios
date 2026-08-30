@@ -48,6 +48,15 @@ struct SessionListView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
+                    environment.router.push(.notes)
+                } label: {
+                    Image(systemName: "note.text")
+                }
+                .accessibilityLabel("Notes")
+                .accessibilityIdentifier("open-notes")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
                     environment.router.push(.settings)
                 } label: {
                     Image(systemName: "gearshape")

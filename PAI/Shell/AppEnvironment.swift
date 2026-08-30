@@ -59,6 +59,10 @@ final class AppEnvironment {
         /// device to send it to. Lives on the connection because a device token is worthless
         /// without a backend to register it against.
         let push: PushRegistrationStore
+        /// The note index and every note currently open, with whatever is unsaved in each.
+        /// App-wide rather than per-screen: an unsaved edit has to survive the editor being
+        /// closed, and a note is reachable from three places at once — see `NotesStore`.
+        let notes: NotesStore
         /// The microphone, and whatever take is running on it. App-wide because a recording has
         /// to outlive the screen that started it — see `VoiceRecorderController`'s doc comment.
         /// There is one microphone, so there is one of these.
@@ -145,6 +149,7 @@ final class AppEnvironment {
             push: PushRegistrationStore(storage: defaults) { token in
                 try await client.registerDevice(token: token).token
             },
+            notes: NotesStore(api: client),
             voice: VoiceRecorderController(
                 apiClient: client, settingsStore: settingsStore, drafts: draftStore)
         )

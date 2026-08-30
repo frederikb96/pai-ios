@@ -148,7 +148,7 @@ public struct PaiApiClient: Sendable {
 
     // MARK: Core request helpers
 
-    private func send<T: Decodable>(
+    func send<T: Decodable>(
         path: String,
         method: String = "GET",
         query: [URLQueryItem] = [],
@@ -167,7 +167,7 @@ public struct PaiApiClient: Sendable {
 
     /// For endpoints whose response body the app never reads (e.g. `sendTerminalInput`) — the
     /// status check still runs, the decode does not.
-    private func sendDiscardingResponse(
+    func sendDiscardingResponse(
         path: String,
         method: String,
         query: [URLQueryItem] = [],
@@ -175,6 +175,37 @@ public struct PaiApiClient: Sendable {
         contentType: String? = "application/json"
     ) async throws {
         _ = try await sendRaw(path: path, method: method, query: query, body: body, contentType: contentType)
+    }
+
+    /// Send a request, handing back the raw body for the statuses in `passthrough` rather than
+    /// throwing on them.
+    ///
+    /// Exists for the one shape `PaiError` deliberately cannot carry: a non-2xx answer whose body
+    /// is structured data the caller must act on, not a message to show. A note save answering
+    /// 409 with the server's own version of the note is that — the reader has to be shown both
+    /// sides, so losing the body would leave "discard your edits" as the only recovery.
+    /// Everything else still goes through `checkStatus`, so a passthrough caller cannot
+    /// accidentally swallow an auth failure.
+    func sendPassingThrough(
+        path: String,
+        method: String,
+        query: [URLQueryItem] = [],
+        body: Data? = nil,
+        contentType: String? = "application/json",
+        passthrough: Set<Int>
+    ) async throws -> (statusCode: Int, body: Data) {
+        let request = try requestFactory.makeRequest(
+            path: path, method: method, query: query, body: body, contentType: contentType
+        )
+        let (data, response) = try await urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw PaiError.transport("Response was not HTTP")
+        }
+        guard passthrough.contains(http.statusCode) else {
+            try checkStatus(response: response, data: data)
+            return (http.statusCode, data)
+        }
+        return (http.statusCode, data)
     }
 
     private func sendRaw(

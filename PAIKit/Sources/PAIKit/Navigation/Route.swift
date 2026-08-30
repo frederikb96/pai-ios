@@ -23,6 +23,14 @@ public enum Route: Hashable, Sendable {
     /// pushing the view directly, so what gets photographed is what Freddy actually sees, not a
     /// second `NavigationStack` nested inside the first with its own, different chrome.
     case createSession
+    /// The note index.
+    case notes
+    /// One note's editor. Reached from the index, from a wikilink in another note, and from a
+    /// home-screen shortcut — which is why it carries only an id: a shortcut is configured once
+    /// and opened months later, so anything richer would be stale by the time it is used.
+    case note(id: String)
+    /// The note containers screen — which directories on which machines are synced.
+    case noteContainers
 }
 
 extension Route {
@@ -33,17 +41,29 @@ extension Route {
     /// first regardless. Extend this array and `named(_:sessionID:)` together whenever `Route`
     /// gains a case; the workflow itself asks the running app for this list rather than
     /// hardcoding it, so a new screen becomes photographable without a CI file edit.
-    public static let namedScreens: [String] = ["session", "terminal", "settings", "createSession"]
+    public static let namedScreens: [String] = [
+        "session", "terminal", "settings", "createSession", "notes", "note", "noteContainers",
+    ]
 
     /// Parses a launch-argument screen name into a route. `sessionID` fills in every
     /// session-scoped case — the fixture corpus answers identically for any id, so the caller
-    /// need not know which one fixture mode picked.
-    public static func named(_ name: String, sessionID: String) -> Route? {
+    /// need not know which one fixture mode picked. `noteID` does the same for the note cases.
+    /// The note id every note-scoped fixture route answers under, regardless of which id the
+    /// request actually named — fixed for the same reason `PaiFixtureLaunch.sessionID` is, so the
+    /// screenshot workflow can ask for a note without first discovering which one exists.
+    public static let fixtureNoteID = "6a0b5f2e-9d47-4c1a-8f30-2b7e5c918d64"
+
+    public static func named(
+        _ name: String, sessionID: String, noteID: String = Route.fixtureNoteID
+    ) -> Route? {
         switch name {
         case "session": return .session(id: sessionID)
         case "terminal": return .terminal(sessionID: sessionID)
         case "settings": return .settings
         case "createSession": return .createSession
+        case "notes": return .notes
+        case "note": return .note(id: noteID)
+        case "noteContainers": return .noteContainers
         default: return nil
         }
     }
@@ -139,10 +159,37 @@ public final class Router {
             switch route {
             case .session(let id): return id
             case .terminal(let sessionID): return sessionID
-            case .settings, .createSession: continue
+            case .settings, .createSession, .notes, .note, .noteContainers: continue
             }
         }
         return nil
+    }
+
+    /// The note whose editor is on screen, if one is. Read from the path for the same reason
+    /// `openSessionID` is — a second record of the same fact is the one that goes wrong quietly.
+    public var openNoteID: String? {
+        for route in path.reversed() {
+            switch route {
+            case .note(let id): return id
+            case .session, .terminal, .settings, .createSession, .notes, .noteContainers: continue
+            }
+        }
+        return nil
+    }
+
+    /// Open a note from outside the navigation stack — a home-screen shortcut, or a notification.
+    ///
+    /// Replaces the path rather than pushing onto it: a deep link arrives with no knowledge of
+    /// what the app was showing, and pushing would bury the note under whatever the reader had
+    /// left open. The note index sits underneath so Back has somewhere to go, which is what
+    /// arriving from the app itself would have produced.
+    public func openNote(id: String) {
+        replace(with: [.notes, .note(id: id)])
+    }
+
+    /// Open a session from outside the navigation stack — a tapped notification.
+    public func openSession(id: String) {
+        replace(with: [.session(id: id)])
     }
 
     /// Send the user back to token entry, keeping the backend URL.
