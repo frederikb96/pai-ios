@@ -29,7 +29,11 @@ struct NoteEditorSurface: View {
 
     var body: some View {
         ScrollView(.vertical) {
-            LazyVStack(alignment: .leading, spacing: 2) {
+            // Not lazy. A lazy stack destroys a region's view when it scrolls out of sight, which
+            // for an editor means losing the first responder — and with it the keyboard and the
+            // caret — because the reader scrolled. A note is a handful of regions, so there is
+            // nothing to gain by deferring them.
+            VStack(alignment: .leading, spacing: 2) {
                 ForEach(document.items) { item in
                     MarkdownSourceTextView(
                         text: item.displayText,

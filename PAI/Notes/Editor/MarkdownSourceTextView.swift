@@ -97,7 +97,10 @@ struct MarkdownSourceTextView: UIViewRepresentable {
     /// Height is reported here rather than left to intrinsic sizing, because the two cases need
     /// different answers and only one of them is a question a text view can answer.
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: SegmentTextView, context: Context) -> CGSize? {
-        let width = proposal.width ?? UIScreen.main.bounds.width
+        // A proposal with no width happens only while the parent is still deciding; the view's own
+        // current width is the best answer available and settles on the next pass. Reaching for
+        // the screen instead would be wrong on iPad and is deprecated besides.
+        let width = proposal.width ?? uiView.bounds.width
 
         guard !wraps else {
             return CGSize(
