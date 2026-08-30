@@ -33,14 +33,23 @@ struct SmtpSection: View {
         Toggle("Enabled", isOn: bindingToDraft(\.enabled, fallback: draft))
             .accessibilityIdentifier("smtp-enabled")
 
-        TextField("Host", text: bindingToDraft(\.host, fallback: draft), prompt: Text("mail.example.com"))
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .accessibilityIdentifier("smtp-host")
+        // `LabeledContent` rather than a bare `TextField`: a text field's title is only its
+        // placeholder, so it vanishes the moment the field holds anything — leaving a configured
+        // server as a column of unlabelled strings with no way to tell a host from a recipient.
+        LabeledContent("Host") {
+            TextField("mail.example.com", text: bindingToDraft(\.host, fallback: draft))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .multilineTextAlignment(.trailing)
+                .accessibilityIdentifier("smtp-host")
+        }
 
-        TextField("Port", value: bindingToDraft(\.port, fallback: draft), format: .number)
-            .keyboardType(.numberPad)
-            .accessibilityIdentifier("smtp-port")
+        LabeledContent("Port") {
+            TextField("587", value: bindingToDraft(\.port, fallback: draft), format: .number)
+                .keyboardType(.numberPad)
+                .multilineTextAlignment(.trailing)
+                .accessibilityIdentifier("smtp-port")
+        }
         if !smtp.isPortValid {
             Text("Port must be between 1 and 65535.")
                 .font(PaiTypography.caption.font)
@@ -54,25 +63,31 @@ struct SmtpSection: View {
         }
         .accessibilityIdentifier("smtp-security")
 
-        TextField("Username", text: bindingToDraft(\.username, fallback: draft))
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .accessibilityIdentifier("smtp-username")
+        LabeledContent("Username") {
+            TextField("", text: bindingToDraft(\.username, fallback: draft))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .multilineTextAlignment(.trailing)
+                .accessibilityIdentifier("smtp-username")
+        }
 
         SecretField(title: "Password", identifier: "smtp-password", field: smtp.password)
 
-        TextField(
-            "From address", text: bindingToDraft(\.fromAddress, fallback: draft),
-            prompt: Text("Defaults to the username")
-        )
-        .textInputAutocapitalization(.never)
-        .autocorrectionDisabled()
-        .accessibilityIdentifier("smtp-from")
+        LabeledContent("From") {
+            TextField("Defaults to the username", text: bindingToDraft(\.fromAddress, fallback: draft))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .multilineTextAlignment(.trailing)
+                .accessibilityIdentifier("smtp-from")
+        }
 
-        TextField("Recipient", text: bindingToDraft(\.recipient, fallback: draft))
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .accessibilityIdentifier("smtp-recipient")
+        LabeledContent("Recipient") {
+            TextField("", text: bindingToDraft(\.recipient, fallback: draft))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .multilineTextAlignment(.trailing)
+                .accessibilityIdentifier("smtp-recipient")
+        }
         if !smtp.isRecipientValid {
             Text("Recipient must contain an @.")
                 .font(PaiTypography.caption.font)
