@@ -205,7 +205,10 @@ final class PaiModelsTests: XCTestCase {
              "created_at":null,"updated_at":null,"last_activity_at":null,"working_dir":null,
              "agent":"laptop","kind":"subagent","parent_session_id":"parent-1",
              "subagent_name":"aria","subagent_type":"general-purpose",
-             "subagent_description":"heavy lifting","remote_control":true,"discovered":false,
+             "subagent_description":"heavy lifting","subagent_model":"sonnet",
+             "read_position_message_id":4242,"read_position_offset_px":137,
+             "read_position_at_bottom":false,
+             "remote_control":true,"discovered":false,
              "project_id":"proj-1","phase_id":"phase-1","project_name":"PAIKit"}
             """.utf8)
         let session = try JSONDecoder().decode(Session.self, from: json)
@@ -219,6 +222,13 @@ final class PaiModelsTests: XCTestCase {
         XCTAssertEqual(session.subagentName, "aria")
         XCTAssertEqual(session.subagentType, "general-purpose")
         XCTAssertEqual(session.subagentDescription, "heavy lifting")
+        XCTAssertEqual(session.subagentModel, "sonnet")
+        // A mis-keyed CodingKey decodes to nil rather than throwing, so the
+        // feature reading these would simply never restore anything and
+        // nothing would go red. These assertions are what notices.
+        XCTAssertEqual(session.readPositionMessageId, 4242)
+        XCTAssertEqual(session.readPositionOffsetPx, 137)
+        XCTAssertEqual(session.readPositionAtBottom, false)
         XCTAssertEqual(session.remoteControl, true)
         XCTAssertEqual(session.discovered, false)
         XCTAssertEqual(session.projectId, "proj-1")

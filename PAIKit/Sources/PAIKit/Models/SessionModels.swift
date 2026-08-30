@@ -215,6 +215,21 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// the name instead.
     public let subagentType: String?
     public let subagentDescription: String?
+    /// The model Claude Code recorded for this subagent, from its `.meta.json` sidecar or the
+    /// spawning `Task` call. `nil` for well over half of them — a spawn that named no model
+    /// inherits one, and the backend refuses to guess which, since the agent definition's
+    /// frontmatter is mutable and an env override is invisible. Read a `nil` as unknown, never
+    /// as a default.
+    public let subagentModel: String?
+    /// Where Freddy last stopped reading this transcript, persisted so returning to it restores
+    /// the same position across a reload or a different device. `readPositionAtBottom` is `nil`
+    /// until a position has ever been recorded; `true` means "go straight to the live edge" and
+    /// beats the other two, which are `nil` together in that case. The anchor is a MESSAGE id
+    /// plus an offset within it, never a scroll offset alone — rows are virtualized, so
+    /// everything above the reader changes height as it lays out.
+    public let readPositionMessageId: Int?
+    public let readPositionOffsetPx: Int?
+    public let readPositionAtBottom: Bool?
     /// Whether this CONVERSATION has ever registered with Remote Control — historical and
     /// monotonic, never a statement about whether PAI can drive it now. That question is
     /// `state`; see `docs/ARCHITECTURE.md` "What decides whether a session can be typed into".
@@ -249,6 +264,10 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         case subagentName = "subagent_name"
         case subagentType = "subagent_type"
         case subagentDescription = "subagent_description"
+        case subagentModel = "subagent_model"
+        case readPositionMessageId = "read_position_message_id"
+        case readPositionOffsetPx = "read_position_offset_px"
+        case readPositionAtBottom = "read_position_at_bottom"
         case remoteControl = "remote_control"
         case discovered
         case projectId = "project_id"
@@ -282,6 +301,10 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         subagentName: String?,
         subagentType: String?,
         subagentDescription: String?,
+        subagentModel: String? = nil,
+        readPositionMessageId: Int? = nil,
+        readPositionOffsetPx: Int? = nil,
+        readPositionAtBottom: Bool? = nil,
         remoteControl: Bool?,
         discovered: Bool?,
         projectId: String?,
@@ -313,6 +336,10 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.subagentName = subagentName
         self.subagentType = subagentType
         self.subagentDescription = subagentDescription
+        self.subagentModel = subagentModel
+        self.readPositionMessageId = readPositionMessageId
+        self.readPositionOffsetPx = readPositionOffsetPx
+        self.readPositionAtBottom = readPositionAtBottom
         self.remoteControl = remoteControl
         self.discovered = discovered
         self.projectId = projectId
