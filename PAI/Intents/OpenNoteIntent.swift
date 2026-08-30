@@ -9,8 +9,8 @@ import PAIKit
 /// an icon Freddy names himself. Nothing here is TestFlight-specific — App Intents are part of
 /// the app bundle, so a TestFlight build exposes them exactly as an App Store one would.
 struct OpenNoteIntent: AppIntent {
-    static var title: LocalizedStringResource = "Open Note"
-    static var description = IntentDescription("Open a note in PAI.")
+    static var title: LocalizedStringResource { "Open Note" }
+    static var description: IntentDescription { IntentDescription("Open a note in PAI.") }
 
     /// The app has to come to the front — the whole action is "put me in this note". Without it
     /// the intent would succeed silently while nothing appeared.
@@ -42,8 +42,8 @@ struct OpenNoteIntent: AppIntent {
 /// summariser, so a picker over them would offer a list that is mostly stale by the time anyone
 /// scrolls it — while the id is what a notification and an automation already carry.
 struct OpenSessionIntent: AppIntent {
-    static var title: LocalizedStringResource = "Open Session"
-    static var description = IntentDescription("Open a PAI session by its id.")
+    static var title: LocalizedStringResource { "Open Session" }
+    static var description: IntentDescription { IntentDescription("Open a PAI session by its id.") }
     static var openAppWhenRun: Bool { true }
 
     @Parameter(title: "Session ID")

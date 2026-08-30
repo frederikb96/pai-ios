@@ -64,9 +64,9 @@ private struct NoteAttachmentEmbedView: View {
     let target: String
 
     @Environment(NotesStore.self) private var notes
-    @State private var state: State = .loading
+    @State private var state: LoadState = .loading
 
-    private enum State {
+    private enum LoadState {
         case loading
         case loaded(Data)
         case notFound

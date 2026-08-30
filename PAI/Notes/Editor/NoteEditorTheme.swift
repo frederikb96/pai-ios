@@ -49,13 +49,30 @@ enum NoteEditorTheme {
 
     /// Build the attributed string a text view shows for one segment of source.
     static func attributedText(for source: String, kind: NoteSegmentKind) -> NSAttributedString {
-        let base = kind == .prose ? bodyFont : codeFont
-        let attributed = NSMutableAttributedString(
-            string: source,
-            attributes: [
-                .font: base,
-                .foregroundColor: text,
-            ])
+        let attributed = NSMutableAttributedString(string: source)
+        paint(attributed, kind: kind)
+        return attributed
+    }
+
+    /// Restyle a live text storage in place, leaving its characters — and so the caret, the
+    /// selection and the undo stack — untouched.
+    ///
+    /// This is what runs on every keystroke. Replacing the string instead would record a
+    /// wholesale edit that Undo then reverts as one, which for an editor is worse than no
+    /// highlighting at all.
+    static func repaint(_ storage: NSTextStorage, kind: NoteSegmentKind) {
+        storage.beginEditing()
+        paint(storage, kind: kind)
+        storage.endEditing()
+    }
+
+    private static func paint(_ attributed: NSMutableAttributedString, kind: NoteSegmentKind) {
+        let source = attributed.string
+        let full = NSRange(location: 0, length: attributed.length)
+        // Set, not add: the previous pass's attributes have to go, or a character that stops being
+        // bold stays bold forever.
+        attributed.setAttributes(
+            [.font: kind == .prose ? bodyFont : codeFont, .foregroundColor: text], range: full)
 
         // Block styles come first and inline styles second, in the order the scanner emitted
         // them, so bold inside a heading lands on top of the heading rather than replacing it.
@@ -64,7 +81,6 @@ enum NoteEditorTheme {
             guard range.upperBound <= attributed.length else { continue }
             apply(span.style, to: attributed, range: range)
         }
-        return attributed
     }
 
     private static func apply(_ style: MarkdownSourceStyle, to attributed: NSMutableAttributedString, range: NSRange) {

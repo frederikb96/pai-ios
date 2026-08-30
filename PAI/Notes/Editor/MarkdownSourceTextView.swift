@@ -31,7 +31,13 @@ struct MarkdownSourceTextView: UIViewRepresentable {
     var wraps: Bool { kind == .prose }
 
     func makeUIView(context: Context) -> SegmentTextView {
-        let view = SegmentTextView()
+        // TextKit 1, explicitly. The editor repaints on every keystroke, and the only way to do
+        // that without destroying the undo stack is to change attributes on the text storage in
+        // place — reassigning `attributedText` replaces the whole string, which UIKit records as
+        // one wholesale edit and which drops the selection. `textStorage` is TextKit 1's API, and
+        // merely touching it on a TextKit 2 view silently falls back anyway; asking for it up
+        // front makes that a decision rather than a side effect.
+        let view = SegmentTextView(usingTextLayoutManager: false)
         view.delegate = context.coordinator
         view.onDeleteBackwardAtStart = onDeleteBackwardAtStart
         view.backgroundColor = .clear
@@ -109,10 +115,9 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         }
 
         // A non-wrapping region has exactly one line per newline, so its height is arithmetic
-        // rather than a layout question. Asking the layout system instead would mean reaching for
-        // `layoutManager`, and merely touching that property on iOS 16+ silently downgrades the
-        // text view from TextKit 2 to TextKit 1 — a change in behaviour with no error and no
-        // visible cause.
+        // rather than a layout question — and asking a scrolling text view for a fitting size
+        // gets the proposal back rather than the content's own extent, which would collapse every
+        // code block to nothing.
         let lines = max(1, uiView.text.split(separator: "\n", omittingEmptySubsequences: false).count)
         let lineHeight = NoteEditorTheme.codeFont.lineHeight
         let insets = uiView.textContainerInset.top + uiView.textContainerInset.bottom
@@ -132,12 +137,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
 
         func textViewDidChange(_ textView: UITextView) {
             let source = textView.text ?? ""
-            // Repaint in place. Reassigning `attributedText` would reset the selection, so the
-            // caret is captured and restored around it — and it has not moved, because the
-            // highlighting changed attributes rather than characters.
-            let selected = textView.selectedRange
-            textView.attributedText = NoteEditorTheme.attributedText(for: source, kind: parent.kind)
-            textView.selectedRange = selected
+            NoteEditorTheme.repaint(textView.textStorage, kind: parent.kind)
             parent.onChange(source)
         }
 

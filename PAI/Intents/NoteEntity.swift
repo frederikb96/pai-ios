@@ -21,7 +21,7 @@ struct NoteEntity: AppEntity, Identifiable, Hashable {
         return DisplayRepresentation(title: "\(name)")
     }
 
-    static var defaultQuery = NoteEntityQuery()
+    static var defaultQuery: NoteEntityQuery { NoteEntityQuery() }
 
     init(id: String, name: String, summary: String?) {
         self.id = id

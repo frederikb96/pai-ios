@@ -35,7 +35,7 @@ final class PushRegistrar: NSObject, UIApplicationDelegate, UNUserNotificationCe
     /// onto sessions running elsewhere, so a push about one of them is news whether or not
     /// another session happens to be on screen. Delivery was never the problem; the app was
     /// declining to draw it.
-    func userNotificationCenter(
+    nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
@@ -48,13 +48,16 @@ final class PushRegistrar: NSObject, UIApplicationDelegate, UNUserNotificationCe
     /// signed-in user, on a cold launch — so anything that navigated here would navigate against
     /// a sign-in screen and be lost. `RootView` takes it out of the inbox once it has somewhere
     /// to put it.
-    func userNotificationCenter(
+    nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
+        // Nonisolated because the protocol requirement is, and its parameters are not `Sendable`
+        // — a main-actor implementation cannot satisfy it at all. Only the parsed link crosses
+        // to the main actor, and a `DeepLink` is a value.
         let payload = Self.stringPayload(response.notification.request.content.userInfo)
         guard let link = DeepLink.from(payload: payload) else { return }
-        DeepLinkInbox.shared.receive(link)
+        await MainActor.run { DeepLinkInbox.shared.receive(link) }
     }
 
     /// Flattens the system's `[AnyHashable: Any]` to the string pairs `DeepLink` parses.
