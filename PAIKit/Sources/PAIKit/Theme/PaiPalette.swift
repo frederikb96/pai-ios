@@ -147,6 +147,14 @@
         public static let orange900 = Color("orange900")
         public static let orange950 = Color("orange950")
 
+        // MARK: - Relay (index.css --color-relay-500/600, a message another PAI session relayed
+        // in — the web pairs it with the same bubble shape as `primary`, so the colour alone is
+        // what tells the two apart; kept in agreement with pai-android and pai-cloud's own
+        // comment on the token)
+
+        public static let relay500 = Color("relay500")
+        public static let relay600 = Color("relay600")
+
         // MARK: - Literal hex from index.css itself (not part of the Tailwind scale at all)
 
         /// Search-hit highlight colours. The web's `::highlight()` rules cannot carry padding or
