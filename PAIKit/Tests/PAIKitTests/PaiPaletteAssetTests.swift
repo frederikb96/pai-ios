@@ -82,16 +82,21 @@ final class PaiPaletteAssetTests: XCTestCase {
     }
 
     /// The raw scale (`Colors/<Family>/`) never varies by appearance, so a well-formed entry
-    /// there is a single universal colour. `Colors/Semantic/` is the opposite: every entry must
-    /// carry a genuine light AND dark appearance, or the whole point of the semantic layer — no
-    /// `colorScheme` branching at the call site — silently stops holding.
+    /// there is a single universal colour. `Colors/Semantic/` and `Colors/Notes/` are the
+    /// opposite: every entry must carry a genuine light AND dark appearance, or the whole point of
+    /// those layers — no `colorScheme` branching at the call site — silently stops holding.
+    /// The asset families whose values genuinely differ between light and dark. Everything else
+    /// is a fixed swatch and a per-appearance variant there would be a duplicate, not a fix.
+    private static let appearanceVaryingFamilies: Set<String> = ["Semantic", "Notes"]
+
     func testEveryReferencedAssetHasAWellFormedColorSet() throws {
         for name in Self.referencedNames {
             let colorSetDir = try Self.findColorSet(named: name)
             let decoded = try Self.decodeColorSet(at: colorSetDir)
-            let isSemantic = colorSetDir.deletingLastPathComponent().lastPathComponent == "Semantic"
+            let family = colorSetDir.deletingLastPathComponent().lastPathComponent
+            let variesByAppearance = Self.appearanceVaryingFamilies.contains(family)
 
-            if isSemantic {
+            if variesByAppearance {
                 XCTAssertEqual(
                     decoded.colors.count, 2,
                     "\(name): expected a light entry and a dark-appearance entry")

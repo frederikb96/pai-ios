@@ -273,6 +273,36 @@
             /// `border-amber-300 dark:border-amber-800` — the "blocked" banner's border, 2 files.
             public static let warningBorder = Color("warningBorder")
         }
+
+        /// The note editor and preview, mirroring `index.css`'s `--notes-md-*` block.
+        ///
+        /// Its own set rather than reuse of `Semantic`, and the reason is the one thing that makes
+        /// a note editor feel like an editor: the writing surface is a paper, not a panel. The web
+        /// gives it a near-black ground of its own in dark mode and a purple accent — an Obsidian
+        /// palette, chosen deliberately, and the app's own surface colours are not it.
+        ///
+        /// These are the only tokens here that genuinely vary by appearance, so unlike every scale
+        /// above they carry a dark variant in the asset catalog rather than leaving the choice of
+        /// step to the call site. That mirrors `index.css`, where `--notes-md-*` is the one block
+        /// whose values `.dark` actually redefines.
+        public enum Notes {
+            /// The writing surface itself.
+            public static let background = Color("notesBackground")
+            /// Body text.
+            public static let text = Color("notesText")
+            /// Heading text, and bold — brighter than body.
+            public static let heading = Color("notesHeading")
+            /// Markup punctuation, dimmed but never hidden: the `#` before a heading, the
+            /// asterisks around bold. Dimming rather than hiding them is what separates source
+            /// highlighting from a live preview.
+            public static let muted = Color("notesMuted")
+            /// The ground behind inline code and a fenced block.
+            public static let codeBackground = Color("notesCodeBackground")
+            /// Links, wikilinks and the caret.
+            public static let accent = Color("notesAccent")
+            /// A thematic break, and the edge of a code block.
+            public static let rule = Color("notesRule")
+        }
     }
 
 #endif
