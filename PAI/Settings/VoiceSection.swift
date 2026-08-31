@@ -5,6 +5,12 @@ import SwiftUI
 /// `CLAUDE.md`), so there is exactly one key to configure rather than a provider picker.
 struct VoiceSection: View {
     let settings: SettingsStore
+    @Environment(AppEnvironment.self) private var environment
+
+    /// `nil` only in the moment between sign-out and a fresh sign-in, when this screen is not
+    /// reachable anyway — matching `NotificationsSection`'s own defensive read of the same
+    /// optional rather than assuming `SettingsScreen` guarantees it.
+    private var voice: VoiceRecorderController? { environment.connection?.voice }
 
     var body: some View {
         Section {
@@ -18,14 +24,19 @@ struct VoiceSection: View {
             }
             .accessibilityIdentifier("stt-language")
 
-            // A concrete microphone picker needs `AVAudioSession` device enumeration, which is
-            // the voice-capture block's concern (Apple-only, and it already owns `MicDiagnostics`
-            // for the same reason) — this stores whatever device id that block resolves to,
-            // rather than re-deriving the list here.
-            TextField("Microphone", text: micDeviceBinding, prompt: Text("System default"))
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
+            // `AVAudioSession` names every input port whether or not the mic has ever been
+            // granted, unlike the web's `enumerateDevices()` — so unlike `useAudioInputs.ts`
+            // there is no "reveal names" step, and this can be a real picker rather than a device
+            // id typed in blind.
+            if let voice {
+                Picker("Microphone", selection: micDeviceBinding) {
+                    Text("System default").tag("")
+                    ForEach(voice.availableMicrophones) { option in
+                        Text(option.name).tag(option.uid)
+                    }
+                }
                 .accessibilityIdentifier("mic-device")
+            }
 
             Toggle("Silence Detection", isOn: silenceEnabledBinding)
                 .accessibilityIdentifier("silence-detection-enabled")
