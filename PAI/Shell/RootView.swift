@@ -119,6 +119,8 @@ struct RootView: View {
             NoteEditorScreen(noteID: id)
         case .noteContainers:
             NoteContainersScreen()
+        case .notePreview(let id):
+            NoteEditorScreen(noteID: id, startsInPreview: true)
         }
     }
 

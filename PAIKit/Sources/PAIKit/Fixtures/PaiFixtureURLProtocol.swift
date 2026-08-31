@@ -94,6 +94,17 @@
             ) { PaiFixtures.data(json()) }
         }
 
+        /// Matches a request under `/api/notes/{id}/…`, regardless of which id was asked for —
+        /// the corpus has one note, and a screenshot run never needs to tell notes apart.
+        private static func noteScoped(
+            _ method: String, suffix: String, _ json: @escaping @Sendable () -> String
+        ) -> FixtureRoute {
+            FixtureRoute(
+                method: method,
+                matches: { $0.hasPrefix("/api/notes/") && $0.hasSuffix(suffix) }
+            ) { PaiFixtures.data(json()) }
+        }
+
         /// Covers every `GET` a screen fetches to render itself, plus the one `POST` (minting a
         /// voice token) a screen needs before it can even offer recording. Extend this table
         /// alongside a new store's fetch call — it is the one place a fixture response is wired
@@ -114,6 +125,17 @@
             exact("GET", "/api/favorites") { PaiFixtures.folderFavorites },
             exact("POST", "/api/voice/token") { PaiFixtures.voiceToken },
             sessionScoped("GET", suffix: "/messages") { PaiFixtures.transcript },
+            // The notes half. Order matters here and only here: `/api/notes/containers` would
+            // otherwise be read as a note whose id is "containers".
+            exact("GET", "/api/notes") { PaiFixtures.notesIndex },
+            exact("GET", "/api/notes/containers") { PaiFixtures.noteContainers },
+            noteScoped("GET", suffix: "/attachments") { PaiFixtures.noteAttachments },
+            noteScoped("GET", suffix: "/links") { PaiFixtures.noteLinkGraph },
+            noteScoped("GET", suffix: "/revisions") { PaiFixtures.noteRevisions },
+            FixtureRoute(
+                method: "GET",
+                matches: { $0.hasPrefix("/api/notes/") && $0.split(separator: "/").count == 3 }
+            ) { PaiFixtures.data(PaiFixtures.noteDetail) },
             // The two streams. Without these the terminal photographs blank — its content arrives
             // over the stream and nowhere else — and the transcript's live half never runs at all,
             // so the one screen whose whole design is about streaming would be the one screen

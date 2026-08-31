@@ -11,7 +11,7 @@ struct NoteEditorScreen: View {
 
     /// Edit and preview are exclusive modes, as they are on the web. Not a live preview — see
     /// `MarkdownSourceHighlighter` for why the editor styles the markup instead of replacing it.
-    @State private var isPreviewing = false
+    @State private var isPreviewing: Bool
     @State private var isShowingTools = false
     @State private var isShowingActions = false
     /// Where the tools panel last asked the editor to go. Tokenised so tapping the same heading
@@ -21,6 +21,11 @@ struct NoteEditorScreen: View {
     /// What the in-note search was looking for when it sent the reader somewhere — every
     /// occurrence of it stays painted in the preview until the next jump says otherwise.
     @State private var highlight: String?
+
+    init(noteID: String, startsInPreview: Bool = false) {
+        self.noteID = noteID
+        _isPreviewing = State(initialValue: startsInPreview)
+    }
     /// Outlives each presentation of the tools sheet, so reopening it lands where it was left.
     @State private var toolsState = NoteToolsPanelState()
 

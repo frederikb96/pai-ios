@@ -31,6 +31,11 @@ public enum Route: Hashable, Sendable {
     case note(id: String)
     /// The note containers screen — which directories on which machines are synced.
     case noteContainers
+    /// The same note, opened on its rendered page rather than its source. Reached only from the
+    /// fixture screenshot workflow: the preview is a toggle inside the editor and nothing else
+    /// navigates to it, but it is the screen whose *rendering* most needs photographing, and
+    /// nothing free can see it.
+    case notePreview(id: String)
 }
 
 extension Route {
@@ -43,6 +48,7 @@ extension Route {
     /// hardcoding it, so a new screen becomes photographable without a CI file edit.
     public static let namedScreens: [String] = [
         "session", "terminal", "settings", "createSession", "notes", "note", "noteContainers",
+        "notePreview",
     ]
 
     /// Parses a launch-argument screen name into a route. `sessionID` fills in every
@@ -64,6 +70,7 @@ extension Route {
         case "notes": return .notes
         case "note": return .note(id: noteID)
         case "noteContainers": return .noteContainers
+        case "notePreview": return .notePreview(id: noteID)
         default: return nil
         }
     }
@@ -170,7 +177,7 @@ public final class Router {
             switch route {
             case .session(let id): return id
             case .terminal(let sessionID): return sessionID
-            case .settings, .createSession, .notes, .note, .noteContainers: continue
+            case .settings, .createSession, .notes, .note, .noteContainers, .notePreview: continue
             }
         }
         return nil
@@ -181,7 +188,7 @@ public final class Router {
     public var openNoteID: String? {
         for route in path.reversed() {
             switch route {
-            case .note(let id): return id
+            case .note(let id), .notePreview(let id): return id
             case .session, .terminal, .settings, .createSession, .notes, .noteContainers: continue
             }
         }
