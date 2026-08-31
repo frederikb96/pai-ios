@@ -50,47 +50,34 @@ enum NoteEditorTheme {
 
     // MARK: Painting
 
-    /// Build the attributed string a text view shows for one segment of source.
-    static func attributedText(for source: String, kind: NoteSegmentKind, highlight: String? = nil)
-        -> NSAttributedString
-    {
+    /// Build the attributed string a text view shows for the whole note.
+    static func attributedText(for source: String, highlight: String? = nil) -> NSAttributedString {
         let attributed = NSMutableAttributedString(string: source)
-        paint(attributed, kind: kind, highlight: highlight)
+        paint(attributed, highlight: highlight)
         return attributed
     }
 
     /// Restyle a live text storage in place, leaving its characters — and so the caret, the
     /// selection and the undo stack — untouched.
     ///
-    /// This is what runs on every keystroke. Replacing the string instead would record a
-    /// wholesale edit that Undo then reverts as one, which for an editor is worse than no
-    /// highlighting at all.
-    static func repaint(_ storage: NSTextStorage, kind: NoteSegmentKind, highlight: String? = nil) {
+    /// This is what runs after every keystroke (debounced — see
+    /// `MarkdownSourceTextView.Coordinator.scheduleRepaint`). Replacing the string instead would
+    /// record a wholesale edit that Undo then reverts as one, which for an editor is worse than
+    /// no highlighting at all.
+    static func repaint(_ storage: NSTextStorage, highlight: String? = nil) {
         storage.beginEditing()
-        paint(storage, kind: kind, highlight: highlight)
+        paint(storage, highlight: highlight)
         storage.endEditing()
     }
 
-    private static func paint(
-        _ attributed: NSMutableAttributedString, kind: NoteSegmentKind, highlight: String?
-    ) {
+    private static func paint(_ attributed: NSMutableAttributedString, highlight: String?) {
         let source = attributed.string
         let full = NSRange(location: 0, length: attributed.length)
         // Set, not add: the previous pass's attributes have to go, or a character that stops being
-        // bold stays bold forever.
-        var base: [NSAttributedString.Key: Any] = [
-            .font: kind == .prose ? bodyFont : codeFont, .foregroundColor: text,
-        ]
-        // A code block and a table scroll sideways, and the paragraph style is what actually
-        // decides that: a wide text container stops the *container* forcing a break, but the
-        // layout manager still wraps a paragraph whose style asks it to. Clipping instead lays
-        // each line out at its full length, which is what there is to scroll.
-        if kind != .prose {
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.lineBreakMode = .byClipping
-            base[.paragraphStyle] = paragraph
-        }
-        attributed.setAttributes(base, range: full)
+        // bold stays bold forever. The whole note wraps like ordinary prose now — a fenced code
+        // block or a table lays out inside the same text view as everything else, rather than in
+        // its own non-wrapping region; only `.codeBlockContent` below still marks code out visually.
+        attributed.setAttributes([.font: bodyFont, .foregroundColor: text], range: full)
 
         // Block styles come first and inline styles second, in the order the scanner emitted
         // them, so bold inside a heading lands on top of the heading rather than replacing it.
@@ -129,7 +116,11 @@ enum NoteEditorTheme {
             attributed.addAttributes(
                 [.font: codeFont, .backgroundColor: codeBackground, .foregroundColor: text], range: range)
         case .codeBlockContent:
-            attributed.addAttributes([.font: codeFont, .foregroundColor: text], range: range)
+            // Monospace and a tinted background so a code block still reads as one at a glance
+            // even though it wraps like everything else now, rather than scrolling sideways in
+            // its own box.
+            attributed.addAttributes(
+                [.font: codeFont, .foregroundColor: text, .backgroundColor: codeBackground], range: range)
         case .linkText, .wikilink:
             attributed.addAttribute(.foregroundColor, value: accent, range: range)
         case .url:

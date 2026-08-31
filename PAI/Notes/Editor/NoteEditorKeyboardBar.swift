@@ -4,6 +4,8 @@ import UIKit
 /// What a tap on the editor's keyboard bar is asking for.
 enum NoteEditorBarItem: Equatable {
     case command(MarkdownCommand)
+    case undo
+    case redo
     /// Put a photo or a file into the note, at the caret.
     case attach
     case dismissKeyboard
@@ -21,37 +23,49 @@ final class NoteEditorKeyboardBar: UIView {
 
     private let onItem: (NoteEditorBarItem) -> Void
 
-    /// In tap order rather than in markdown order: what gets used most, first.
+    /// In tap order rather than in markdown order: what gets used most, first. Outdent/indent sit
+    /// next to the list buttons, matching the web editor's own toolbar order.
     private static let commands: [(MarkdownCommand, String, String)] = [
         (.heading, "textformat.size", "Heading"),
         (.bold, "bold", "Bold"),
         (.italic, "italic", "Italic"),
         (.bulletList, "list.bullet", "Bulleted list"),
         (.checkbox, "checklist", "Checklist item"),
+        (.outdent, "decrease.indent", "Outdent"),
+        (.indent, "increase.indent", "Indent"),
         (.inlineCode, "chevron.left.forwardslash.chevron.right", "Code"),
         (.quote, "text.quote", "Quote"),
         (.link, "link", "Link"),
     ]
 
-    /// `showsFormatting` is false inside a fenced block or a table. The buttons write markdown,
-    /// and markdown inside a code block is not markup — tapping Bold there splices `**` into the
-    /// code. Attaching a file and getting the keyboard out of the way still apply anywhere.
+    /// The formatting buttons, hidden as a group while the caret is inside a fenced code block —
+    /// see ``setShowsFormatting(_:)``. Built with a default value here rather than left `nil` so
+    /// the `let stack` below can reference it before `super.init()` returns.
+    private let formattingStack = UIStackView()
+
     init(showsFormatting: Bool, onItem: @escaping (NoteEditorBarItem) -> Void) {
         self.onItem = onItem
         super.init(frame: CGRect(x: 0, y: 0, width: 0, height: 44))
         autoresizingMask = .flexibleWidth
         backgroundColor = .secondarySystemBackground
 
+        for (command, symbol, label) in Self.commands {
+            formattingStack.addArrangedSubview(button(symbol: symbol, label: label, item: .command(command)))
+        }
+        formattingStack.axis = .horizontal
+        formattingStack.spacing = 2
+        formattingStack.isHidden = !showsFormatting
+
         let scroller = UIScrollView()
         scroller.showsHorizontalScrollIndicator = false
         scroller.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = UIStackView(
-            arrangedSubviews: showsFormatting
-                ? Self.commands.map { command, symbol, label in
-                    button(symbol: symbol, label: label, item: .command(command))
-                } : [])
-        stack.addArrangedSubview(button(symbol: "paperclip", label: "Attach a photo or file", item: .attach))
+        let stack = UIStackView(arrangedSubviews: [
+            button(symbol: "arrow.uturn.backward", label: "Undo", item: .undo),
+            button(symbol: "arrow.uturn.forward", label: "Redo", item: .redo),
+            formattingStack,
+            button(symbol: "paperclip", label: "Attach a photo or file", item: .attach),
+        ])
         stack.axis = .horizontal
         stack.spacing = 2
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -84,6 +98,14 @@ final class NoteEditorKeyboardBar: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not used")
+    }
+
+    /// Whether the caret is inside a fenced code block, where the formatting buttons would splice
+    /// markdown into code rather than markup — see ``MarkdownFenceState``. Toggles the whole group
+    /// rather than rebuilding it, so moving the caret in and out of a fence never flickers.
+    func setShowsFormatting(_ shows: Bool) {
+        guard formattingStack.isHidden == shows else { return }
+        formattingStack.isHidden = !shows
     }
 
     private func button(symbol: String, label: String, item: NoteEditorBarItem) -> UIButton {

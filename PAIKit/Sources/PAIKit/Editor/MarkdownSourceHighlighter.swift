@@ -117,12 +117,12 @@ public enum MarkdownSourceHighlighter {
                 index += 1
 
                 if let fence = openFence {
-                    emit(
-                        line, NoteSegmentation.closesFence(text(of: line), opener: fence) ? .marker : .codeBlockContent)
-                    if NoteSegmentation.closesFence(text(of: line), opener: fence) { openFence = nil }
+                    let closes = MarkdownLineSyntax.closesFence(text(of: line), opener: fence)
+                    emit(line, closes ? .marker : .codeBlockContent)
+                    if closes { openFence = nil }
                     continue
                 }
-                if let fence = NoteSegmentation.openingFence(in: text(of: line)) {
+                if let fence = MarkdownLineSyntax.openingFence(in: text(of: line)) {
                     emit(line, .marker)
                     openFence = fence
                     continue
@@ -209,7 +209,7 @@ public enum MarkdownSourceHighlighter {
                 return
             }
 
-            if NoteSegmentation.isTableDelimiter(text(of: content)) {
+            if MarkdownLineSyntax.isTableDelimiter(text(of: content)) {
                 emit(content, .marker)
                 return
             }
