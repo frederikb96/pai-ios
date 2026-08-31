@@ -3,7 +3,7 @@ name: Release
 # Tag-triggered like pai-android, PLUS workflow_dispatch — pai-android has only the tag trigger,
 # and because a pushed tag cannot be reused a failed release build there produced a tag literally
 # named "v0.15.0-fix". macOS minutes are metered, so being able to exercise this without minting
-# throwaway tags matters more here than it did on the free self-hosted Android runner.
+# throwaway tags is worth the extra trigger.
 on:
   push:
     tags: ['v*.*.*']

@@ -1,21 +1,30 @@
 name: Free checks
 
-# Everything that does not require Apple hardware, on the self-hosted runner, at no cost.
+# Everything that does not require Apple hardware, on a GitHub-hosted Linux runner, at no cost.
 #
 # 🚨 This exists because macOS runners bill at **10×** (budget and reasoning: the `ios` skill's
-# `references/ci-cost.md`), and a careless day spends a real fraction of the month. Only two files
-# in `PAIKit` touch an Apple-only framework, so the package — all the models, the markdown block
-# model, the display layer, the networking, and every one of its tests — compiles and runs here
-# instead.
+# `references/ci-cost.md`). Only two files in `PAIKit` touch an Apple-only framework, so the
+# package — all the models, the markdown block model, the display layer, the networking, and every
+# one of its tests — compiles and runs here instead.
 #
 # Anything failing here would have failed on macOS too, at ten times the price. Keep it that way:
 # when adding code, prefer a shape that builds on Linux, and guard an Apple-only import rather
 # than letting it pull the whole package onto a metered runner.
+#
+# 🚨 **Linux runs here, never on a self-hosted runner.** A `pull_request` trigger runs the
+# workflow file as it exists on the pull request's own head, so on a public repository a stranger
+# can rewrite this file and execute what they like on whatever machine it names. A self-hosted
+# runner is a machine inside the cluster; a GitHub-hosted one is a throwaway VM that can reach
+# nothing. Standard Linux and macOS runners are unmetered for public repositories, so there is
+# nothing to buy back by hosting this ourselves.
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -23,7 +32,7 @@ concurrency:
 
 jobs:
   checks:
-    runs-on: arc-runner-pai-ios
+    runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
@@ -31,9 +40,9 @@ jobs:
 
       # Swift's own documented Ubuntu dependency list, plus curl/file/ca-certificates for the
       # setup action itself — it downloads a toolchain, verifies its signature, and identifies
-      # the archive with `file`. The ARC image carries only git, bash and the runner binary, so a
-      # missing package surfaces late: as "Unable to locate executable file", or as the freshly
-      # unpacked toolchain failing to load a shared library.
+      # the archive with `file`. Installed explicitly rather than assumed from the runner image,
+      # because a missing package surfaces late and unhelpfully: as "Unable to locate executable
+      # file", or as the freshly unpacked toolchain failing to load a shared library.
       - name: Install Swift toolchain dependencies
         run: |
           sudo apt-get update -qq
