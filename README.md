@@ -12,7 +12,7 @@ reusing, and because a public repository gets unmetered CI.
 | | Where |
 |---|---|
 | A chat transcript that never jumps while loading older messages — `UICollectionView`, precomputed heights, prepend compensation in the layout rather than after a batch update | `PAIKit/Sources/PAIKit/Layout/`, `PAI/Transcript/` |
-| A markdown editor built from regions, with syntax highlighting over the source rather than a live preview | `PAIKit/Sources/PAIKit/Editor/`, `PAI/Notes/Editor/` |
+| A markdown editor over one plain `UITextView`, with syntax highlighting over the source rather than a live preview | `PAIKit/Sources/PAIKit/Editor/`, `PAI/Notes/Editor/` |
 | A markdown parser that decomposes into synchronously measurable blocks, on top of swift-markdown | `PAIKit/Sources/PAIKit/Markdown/` |
 | A debug bridge — an HTTP server inside the app, `#if DEBUG`, so CI can ask the app what it thinks instead of reading pixels off a screenshot | `PAIKit/Sources/PAIKit/Debug/` |
 | Streaming over `URLSessionDataDelegate` rather than `URLSession.bytes(for:)`, so the transport compiles and tests on Linux | `PAIKit/Sources/PAIKit/Networking/` |
