@@ -14,6 +14,10 @@ import UIKit
 /// Support so a force-quit loses nothing either: `loadPersisted()` reads that mirror back once,
 /// at startup (`AppEnvironment.loadStartupState()`), the same way `RecordingAudioLibrary`'s own
 /// storage is a thin, untested-on-Linux disk layer kept out of `PAIKit` on purpose.
+/// File scope rather than a member: the background write reads it from a detached task, and a
+/// static on a `@MainActor` type is isolated to that actor.
+private let manifestFilename = "manifest.json"
+
 @Observable
 @MainActor
 final class StagedAttachmentStore {
@@ -75,8 +79,6 @@ final class StagedAttachmentStore {
         let key: String
         let records: [AttachmentRecord]
     }
-
-    private static let manifestFilename = "manifest.json"
 
     private static var rootDirectory: URL {
         let base =

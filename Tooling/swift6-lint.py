@@ -24,6 +24,8 @@ TYPE_DECLARATION = re.compile(r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:public |interna
 STORED_STATIC_VAR = re.compile(r"^\s*(?:public |internal |private |fileprivate )?static var [A-Za-z_]\w*\s*(?::[^={]*)?=")
 SHADOWED_WRAPPER = re.compile(r"^\s*(?:public |internal |private |fileprivate )?(?:enum|struct|class|actor) (State|Binding|Environment|Namespace|Observable)\s*[:{]")
 AMBIGUOUS_PAIR = re.compile(r"(?:width|x|dx): \.[A-Za-z]\w*, (?:height|y|dy): \.[A-Za-z]\w*")
+ISOLATED_STATIC = re.compile(r"^\s*(?:public |internal |private |fileprivate )?static (?:let|var) ([A-Za-z_]\w*)\b")
+DETACHED_TASK = re.compile(r"\bTask\.detached\b")
 
 
 #: Inheriting from one of these carries main-actor isolation with no annotation in sight — the
@@ -79,10 +81,49 @@ def main_actor_line_numbers(lines: list[str]) -> set[int]:
     return covered
 
 
+def detached_reads_of_isolated_statics(lines: list[str], isolated: set[int]) -> list[tuple[int, str, str]]:
+    """A static declared inside a main-actor type, read from inside `Task.detached`.
+
+    The static is isolated to that actor, so the detached body cannot touch it — and the error
+    names the *use*, several lines from the declaration that caused it. Everything else in the
+    body is usually a `Sendable` snapshot taken deliberately, which is what makes the one
+    unsnapshotted name easy to miss when reading.
+
+    Scoped by indentation like the rest of this file. Only names declared in this same file count,
+    so a static reached through a type prefix is not considered — that form is qualified and reads
+    as remote, which is exactly when nobody needs a reminder.
+    """
+    names = {
+        match.group(1)
+        for index, line in enumerate(lines)
+        if index in isolated and (match := ISOLATED_STATIC.match(line)) and "nonisolated" not in line
+    }
+    if not names:
+        return []
+
+    findings: list[tuple[int, str, str]] = []
+    for index, line in enumerate(lines):
+        if not DETACHED_TASK.search(line):
+            continue
+        indent = len(line) - len(line.lstrip())
+        for cursor in range(index + 1, len(lines)):
+            body = lines[cursor]
+            if body.strip() and (len(body) - len(body.lstrip())) <= indent:
+                break
+            for name in names:
+                if re.search(rf"(?<![.\w]){re.escape(name)}\b", body):
+                    findings.append((
+                        cursor + 1, body.strip(),
+                        f"'{name}' is a static on a main-actor-isolated type and cannot be read "
+                        "from a detached task — move it to file scope, or snapshot it before the task",
+                    ))
+    return findings
+
+
 def check(path: Path) -> list[tuple[int, str, str]]:
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     isolated = main_actor_line_numbers(lines)
-    findings: list[tuple[int, str, str]] = []
+    findings: list[tuple[int, str, str]] = detached_reads_of_isolated_statics(lines, isolated)
 
     for index, line in enumerate(lines):
         if STORED_STATIC_VAR.match(line) and index not in isolated and "nonisolated(unsafe)" not in line:
