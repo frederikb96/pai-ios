@@ -41,7 +41,7 @@ struct NoteListScreen: View {
 
     var body: some View {
         list
-            .paiScreenBackground()
+            .paiNotesBackground()
             .navigationTitle("Notes")
             .searchable(text: $filterText, prompt: searchPrompt)
             .toolbar {
@@ -181,6 +181,7 @@ struct NoteListScreen: View {
                         row(for: note)
                     }
                     .listStyle(.plain)
+                    .paiNotesListBackground()
                 }
             }
         }
@@ -248,7 +249,7 @@ struct NoteListScreen: View {
             NoteRow(note: note)
         }
         .buttonStyle(.plain)
-        .listRowBackground(PaiPalette.Semantic.panelBackground)
+        .listRowBackground(PaiPalette.Notes.panelBackground)
         // One edge, two buttons: the outer one (listed first) is the full-swipe default. A
         // small swipe reaches Actions first since it sits nearer the row's content; continuing
         // to a full swipe triggers Favourite without a tap, since it owns the edge.
@@ -330,13 +331,14 @@ struct NoteListScreen: View {
                         NoteSearchHitRow(hit: hit)
                     }
                     .buttonStyle(.plain)
-                    .listRowBackground(PaiPalette.Semantic.panelBackground)
+                    .listRowBackground(PaiPalette.Notes.panelBackground)
                 }
                 if searchLoading {
                     ProgressView().frame(maxWidth: .infinity)
                 }
             }
             .listStyle(.plain)
+            .paiNotesListBackground()
         }
     }
 
@@ -360,13 +362,14 @@ struct NoteListScreen: View {
                         NoteRow(note: entry.note, score: entry.hit.score)
                     }
                     .buttonStyle(.plain)
-                    .listRowBackground(PaiPalette.Semantic.panelBackground)
+                    .listRowBackground(PaiPalette.Notes.panelBackground)
                 }
                 if semanticLoading {
                     ProgressView().frame(maxWidth: .infinity)
                 }
             }
             .listStyle(.plain)
+            .paiNotesListBackground()
         }
     }
 

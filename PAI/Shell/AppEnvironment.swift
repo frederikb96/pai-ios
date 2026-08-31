@@ -63,6 +63,9 @@ final class AppEnvironment {
         /// App-wide rather than per-screen: an unsaved edit has to survive the editor being
         /// closed, and a note is reachable from three places at once — see `NotesStore`.
         let notes: NotesStore
+        /// How the index is being browsed — sort order, and whatever a semantic search returned.
+        /// Separate from `NotesStore`, which owns the notes themselves and what is unsaved in them.
+        let notesBrowse: NotesBrowseStore
         /// Photos and files picked in a composer and not yet sent — see `StagedAttachmentStore`.
         let staging: StagedAttachmentStore
         /// The microphone, and whatever take is running on it. App-wide because a recording has
@@ -152,6 +155,7 @@ final class AppEnvironment {
                 try await client.registerDevice(token: token, mutedChannels: mutedChannels)
             },
             notes: NotesStore(api: client),
+            notesBrowse: NotesBrowseStore(api: client, storage: defaults),
             staging: StagedAttachmentStore(),
             voice: VoiceRecorderController(
                 apiClient: client, settingsStore: settingsStore, drafts: draftStore)
