@@ -77,5 +77,50 @@ struct PaiAppShortcuts: AppShortcutsProvider {
             shortTitle: "Open Note",
             systemImageName: "note.text"
         )
+        AppShortcut(
+            intent: OpenNotesIntent(),
+            phrases: [
+                "Open notes in \(.applicationName)",
+                "Open \(.applicationName) notes",
+            ],
+            shortTitle: "Notes",
+            systemImageName: "list.bullet"
+        )
+        AppShortcut(
+            intent: CreateNoteIntent(),
+            phrases: [
+                "Create a note in \(.applicationName)",
+                "New \(.applicationName) note",
+            ],
+            shortTitle: "New Note",
+            systemImageName: "square.and.pencil"
+        )
+        AppShortcut(
+            intent: NewFastSessionIntent(),
+            phrases: [
+                "Start a fast session in \(.applicationName)",
+                "New \(.applicationName) fast session",
+            ],
+            shortTitle: "New Fast Session",
+            systemImageName: "bolt.fill"
+        )
+        AppShortcut(
+            intent: NewHomeSessionIntent(),
+            phrases: [
+                "Start a home session in \(.applicationName)",
+                "New \(.applicationName) home session",
+            ],
+            shortTitle: "New Home Session",
+            systemImageName: "message.fill"
+        )
+        AppShortcut(
+            intent: NewCustomSessionIntent(),
+            phrases: [
+                "Start a \(\.$sessionType) session in \(.applicationName)",
+                "New \(.applicationName) session",
+            ],
+            shortTitle: "New Session of Type",
+            systemImageName: "rectangle.stack.badge.plus"
+        )
     }
 }
