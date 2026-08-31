@@ -1,5 +1,47 @@
+import Observation
 import PAIKit
 import SwiftUI
+
+/// What the tools panel remembers between openings.
+///
+/// Held by whatever presents the panel rather than by the panel itself, because a sheet's content
+/// is built fresh every time it appears: kept inside, the tab resets to the outline, the search
+/// box empties and a long outline is back at the top — so using the panel twice on one note means
+/// finding the same place twice.
+@Observable
+final class NoteToolsPanelState {
+    var tab: NoteToolsTab = .outline
+    var query = ""
+    /// The last entry jumped to from each list, so reopening lands on it rather than at the top.
+    var lastOutlineOffset: Int?
+    var lastSearchOffset: Int?
+}
+
+enum NoteToolsTab: CaseIterable, Hashable {
+    case outline, search, backlinks, links, info, revisions
+
+    var label: String {
+        switch self {
+        case .outline: "Outline"
+        case .search: "Find in note"
+        case .backlinks: "Backlinks"
+        case .links: "Outgoing links"
+        case .info: "Info"
+        case .revisions: "History"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .outline: "list.bullet.indent"
+        case .search: "magnifyingglass"
+        case .backlinks: "arrow.up.left"
+        case .links: "arrow.up.right"
+        case .info: "info.circle"
+        case .revisions: "clock.arrow.circlepath"
+        }
+    }
+}
 
 /// The iOS-native shape of the web's right-hand panel (`RightPanel.tsx`): outline, in-note
 /// search, backlinks, outgoing links, note info and revision history — six tabs behind one icon
@@ -12,38 +54,13 @@ struct NoteToolsPanel: View {
     let onOpenNote: (String) -> Void
     /// A Character offset into the note body the editor should put the caret at.
     let onJumpTo: (Int) -> Void
+    /// Survives the sheet being dismissed — see ``NoteToolsPanelState``.
+    let state: NoteToolsPanelState
 
     @Environment(NotesStore.self) private var notes
     @Environment(ToastCenter.self) private var toasts
 
-    @State private var tab: Tab = .outline
     @State private var isLoading = false
-
-    private enum Tab: CaseIterable, Hashable {
-        case outline, search, backlinks, links, info, revisions
-
-        var label: String {
-            switch self {
-            case .outline: "Outline"
-            case .search: "Find in note"
-            case .backlinks: "Backlinks"
-            case .links: "Outgoing links"
-            case .info: "Info"
-            case .revisions: "History"
-            }
-        }
-
-        var icon: String {
-            switch self {
-            case .outline: "list.bullet.indent"
-            case .search: "magnifyingglass"
-            case .backlinks: "arrow.up.left"
-            case .links: "arrow.up.right"
-            case .info: "info.circle"
-            case .revisions: "clock.arrow.circlepath"
-            }
-        }
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -72,16 +89,17 @@ struct NoteToolsPanel: View {
     private var tabBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 4) {
-                ForEach(Tab.allCases, id: \.self) { candidate in
+                ForEach(NoteToolsTab.allCases, id: \.self) { candidate in
                     Button {
-                        tab = candidate
+                        state.tab = candidate
                     } label: {
                         Image(systemName: candidate.icon)
                             .frame(width: 36, height: 32)
                     }
-                    .foregroundStyle(tab == candidate ? PaiPalette.primary700 : PaiPalette.Semantic.textMuted)
+                    .foregroundStyle(state.tab == candidate ? PaiPalette.primary700 : PaiPalette.Semantic.textMuted)
                     .background(
-                        tab == candidate ? PaiPalette.primary50 : Color.clear, in: RoundedRectangle(cornerRadius: 8)
+                        state.tab == candidate ? PaiPalette.primary50 : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 8)
                     )
                     .accessibilityLabel(candidate.label)
                 }
@@ -93,14 +111,14 @@ struct NoteToolsPanel: View {
 
     @ViewBuilder
     private var content: some View {
-        switch tab {
+        switch state.tab {
         case .outline:
             // The body as it stands on screen, not the last one saved. They differ for as long as
             // the autosave debounce runs, and an outline that is one paragraph behind sends every
             // jump below it to the wrong place.
-            NoteOutlineTab(body: notes.body(for: noteId) ?? "", onJumpTo: onJumpTo)
+            NoteOutlineTab(body: notes.body(for: noteId) ?? "", state: state, onJumpTo: onJumpTo)
         case .search:
-            NoteInNoteSearchTab(body: notes.body(for: noteId) ?? "", onJumpTo: onJumpTo)
+            NoteInNoteSearchTab(body: notes.body(for: noteId) ?? "", state: state, onJumpTo: onJumpTo)
         case .backlinks:
             NoteBacklinksTab(
                 noteId: noteId, error: notes.linkGraphErrors[noteId], graph: notes.linkGraphs[noteId],
@@ -130,31 +148,46 @@ struct NoteToolsPanel: View {
 
 private struct NoteOutlineTab: View {
     let noteBody: String
+    let state: NoteToolsPanelState
     let onJumpTo: (Int) -> Void
 
-    init(body: String, onJumpTo: @escaping (Int) -> Void) {
+    init(body: String, state: NoteToolsPanelState, onJumpTo: @escaping (Int) -> Void) {
         self.noteBody = body
+        self.state = state
         self.onJumpTo = onJumpTo
     }
 
     var body: some View {
         let entries = parseOutline(noteBody)
-        List {
-            if entries.isEmpty {
-                Text("No headings in this note.").foregroundStyle(PaiPalette.Semantic.textMuted)
-            } else {
-                ForEach(entries) { entry in
-                    Button {
-                        onJumpTo(entry.offset)
-                    } label: {
-                        Text(entry.text)
-                            .padding(.leading, CGFloat(entry.level - 1) * 12)
-                            .foregroundStyle(PaiPalette.Semantic.textPrimary)
+        ScrollViewReader { proxy in
+            List {
+                if entries.isEmpty {
+                    Text("No headings in this note.").foregroundStyle(PaiPalette.Semantic.textMuted)
+                } else {
+                    ForEach(entries) { entry in
+                        Button {
+                            state.lastOutlineOffset = entry.offset
+                            onJumpTo(entry.offset)
+                        } label: {
+                            Text(entry.text)
+                                .padding(.leading, CGFloat(entry.level - 1) * 12)
+                                .foregroundStyle(
+                                    state.lastOutlineOffset == entry.offset
+                                        ? PaiPalette.primary700 : PaiPalette.Semantic.textPrimary)
+                        }
+                        .id(entry.offset)
                     }
                 }
             }
+            .listStyle(.plain)
+            // Reopening a long outline at the top means finding the same heading again by hand.
+            // Restoring by remembered entry rather than by scroll offset, because the outline is
+            // rebuilt from the current body and an offset into the previous one lands anywhere.
+            .onAppear {
+                guard let last = state.lastOutlineOffset else { return }
+                proxy.scrollTo(last, anchor: .center)
+            }
         }
-        .listStyle(.plain)
     }
 }
 
@@ -162,37 +195,49 @@ private struct NoteOutlineTab: View {
 
 private struct NoteInNoteSearchTab: View {
     let noteBody: String
+    let state: NoteToolsPanelState
     let onJumpTo: (Int) -> Void
-    @State private var query = ""
 
-    init(body: String, onJumpTo: @escaping (Int) -> Void) {
+    init(body: String, state: NoteToolsPanelState, onJumpTo: @escaping (Int) -> Void) {
         self.noteBody = body
+        self.state = state
         self.onJumpTo = onJumpTo
     }
 
     var body: some View {
-        let occurrences = findOccurrences(body: noteBody, query: query)
+        @Bindable var state = state
+        let occurrences = findOccurrences(body: noteBody, query: state.query)
         VStack(spacing: 0) {
-            TextField("Find in this note", text: $query)
+            TextField("Find in this note", text: $state.query)
                 .textFieldStyle(.roundedBorder)
                 .padding(8)
-            if !query.isEmpty {
+            if !state.query.isEmpty {
                 Text("\(occurrences.count) \(occurrences.count == 1 ? "match" : "matches")")
                     .font(PaiTypography.caption.font)
                     .foregroundStyle(PaiPalette.Semantic.textMuted)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 8)
             }
-            List(occurrences) { occ in
-                Button {
-                    onJumpTo(occ.offset)
-                } label: {
-                    Text(occ.context)
-                        .lineLimit(2)
-                        .foregroundStyle(PaiPalette.Semantic.textPrimary)
+            ScrollViewReader { proxy in
+                List(occurrences) { occ in
+                    Button {
+                        state.lastSearchOffset = occ.offset
+                        onJumpTo(occ.offset)
+                    } label: {
+                        Text(occ.context)
+                            .lineLimit(2)
+                            .foregroundStyle(
+                                state.lastSearchOffset == occ.offset
+                                    ? PaiPalette.primary700 : PaiPalette.Semantic.textPrimary)
+                    }
+                    .id(occ.offset)
+                }
+                .listStyle(.plain)
+                .onAppear {
+                    guard let last = state.lastSearchOffset else { return }
+                    proxy.scrollTo(last, anchor: .center)
                 }
             }
-            .listStyle(.plain)
         }
     }
 }
@@ -360,6 +405,16 @@ private struct NoteInfoTab: View {
                     // app, moving it to the top of a list sorted by modification time, for a
                     // value nobody touched.
                     .onChange(of: summary) { _, edited in
+                        // The summary is one line of YAML frontmatter. A newline typed into it
+                        // would have to be re-emitted as a block scalar or escaped, and the field
+                        // exists to be a sentence semantic search can match on — so a paragraph
+                        // break becomes a space here rather than a rewrite of the note's header.
+                        let flattened = edited.replacingOccurrences(
+                            of: "\n", with: " ", options: [], range: nil)
+                        if flattened != edited {
+                            summary = flattened
+                            return
+                        }
                         guard edited != (notes.detail(for: noteId)?.summary ?? "") else { return }
                         scheduleSave()
                     }

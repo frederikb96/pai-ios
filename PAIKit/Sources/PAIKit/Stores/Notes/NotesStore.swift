@@ -150,9 +150,16 @@ public final class NotesStore {
     /// Creates a note and inserts it at the front of the index — Obsidian's own convention: a
     /// brand new note is a real file the moment it is created, not a draft that only becomes one
     /// on first keystroke.
+    ///
+    /// The name is made free before it is asked for — see ``NoteNaming/freeName(base:taken:)``.
+    /// Creating a note is not the same act as naming one, and a "New note" button that fails
+    /// because a note called `Untitled` already exists has no way forward at all.
     public func createNote(name: String, containerId: String? = nil) async -> NoteSummary? {
+        let free = NoteNaming.freeName(
+            base: name,
+            taken: notes.filter { containerId == nil || $0.containerId == containerId }.map(\.name))
         do {
-            let created = try await api.createNote(name: name, summary: nil, body: nil, containerId: containerId)
+            let created = try await api.createNote(name: free, summary: nil, body: nil, containerId: containerId)
             details[created.id] = created
             notes.insert(created.summaryRow, at: 0)
             loadError = nil

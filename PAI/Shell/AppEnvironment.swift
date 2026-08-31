@@ -63,6 +63,8 @@ final class AppEnvironment {
         /// App-wide rather than per-screen: an unsaved edit has to survive the editor being
         /// closed, and a note is reachable from three places at once — see `NotesStore`.
         let notes: NotesStore
+        /// Photos and files picked in a composer and not yet sent — see `StagedAttachmentStore`.
+        let staging: StagedAttachmentStore
         /// The microphone, and whatever take is running on it. App-wide because a recording has
         /// to outlive the screen that started it — see `VoiceRecorderController`'s doc comment.
         /// There is one microphone, so there is one of these.
@@ -150,6 +152,7 @@ final class AppEnvironment {
                 try await client.registerDevice(token: token, mutedChannels: mutedChannels)
             },
             notes: NotesStore(api: client),
+            staging: StagedAttachmentStore(),
             voice: VoiceRecorderController(
                 apiClient: client, settingsStore: settingsStore, drafts: draftStore)
         )

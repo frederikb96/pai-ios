@@ -68,6 +68,7 @@ struct RootView: View {
                 .environment(connection.me)
                 .environment(connection.toasts)
                 .environment(connection.notes)
+                .environment(connection.staging)
                 // Only settles a token the backend has not seen yet — silent, and a no-op in the
                 // common case. Asking for permission is deliberately NOT here: the system prompt
                 // appears at most once per install and never again, so spending it the instant

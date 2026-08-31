@@ -18,6 +18,8 @@ struct NoteEditorScreen: View {
     /// twice is two requests rather than one that appears unchanged.
     @State private var jump: NoteJumpRequest?
     @State private var jumpToken = 0
+    /// Outlives each presentation of the tools sheet, so reopening it lands where it was left.
+    @State private var toolsState = NoteToolsPanelState()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -44,13 +46,18 @@ struct NoteEditorScreen: View {
             NavigationStack {
                 NoteToolsPanel(
                     noteId: noteID, onOpenNote: { openNote($0) },
-                    onJumpTo: { characterOffset in jumpToEditor(characterOffset) })
+                    onJumpTo: { characterOffset in jumpToEditor(characterOffset) },
+                    state: toolsState)
             }
         }
         .sheet(isPresented: $isShowingActions) {
             NoteActionsSheet(
                 noteId: noteID, onOpenNote: { openNote($0) },
-                onJumpTo: { jumpToEditor($0) })
+                onJumpTo: { jumpToEditor($0) },
+                // The note this sheet is about is the one already on screen, so offering to open
+                // it would push a second copy of this very editor.
+                showsOpenNote: false,
+                onDeleted: { environment.router.dismissNote(id: noteID) })
         }
     }
 
@@ -63,7 +70,7 @@ struct NoteEditorScreen: View {
                     containerId: notes.detail(for: noteID)?.containerId)
             } else {
                 NoteEditorSurface(
-                    text: body, revision: notes.externalRevision(for: noteID), jump: jump,
+                    noteID: noteID, text: body, revision: notes.externalRevision(for: noteID), jump: jump,
                     onChange: { notes.edit(id: noteID, body: $0) })
             }
         } else {

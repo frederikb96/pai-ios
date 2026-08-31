@@ -17,6 +17,7 @@ struct ComposerBar: View {
     @Environment(SettingsStore.self) private var settings
     @Environment(MachineStore.self) private var machines
     @Environment(SessionListStore.self) private var sessions
+    @Environment(StagedAttachmentStore.self) private var staging
 
     let sessionID: String
 
@@ -25,7 +26,6 @@ struct ComposerBar: View {
     @State private var textHeight: CGFloat = ComposerTextEditor.minHeight
     @State private var scrollToTailOnNextUpdate = false
 
-    @State private var stagedAttachments: [StagedAttachment] = []
     @State private var isSending = false
     @State private var sendErrorMessage: String?
 
@@ -36,6 +36,12 @@ struct ComposerBar: View {
 
     init(sessionID: String) {
         self.sessionID = sessionID
+    }
+
+    /// Held per session in a store that outlives this view — a file picked, then a trip to another
+    /// session and back, must still be attached on return.
+    private var stagedAttachments: [StagedAttachment] {
+        staging.attachments(for: sessionID)
     }
 
     var body: some View {
@@ -296,7 +302,7 @@ struct ComposerBar: View {
         if !messageText.isEmpty { settings.saveSentMessage(messageText) }
 
         draftStore.setDraftText(key: sessionID, text: "")
-        stagedAttachments = []
+        staging.set([], for: sessionID)
         isSending = true
         sendErrorMessage = nil
 
@@ -315,7 +321,7 @@ struct ComposerBar: View {
                 // The web keeps the text and files on a failed send so nothing typed is lost —
                 // the draft itself is never cleared until the request actually resolves.
                 draftStore.setDraftText(key: sessionID, text: messageText)
-                stagedAttachments = attachmentsSnapshot
+                staging.set(attachmentsSnapshot, for: sessionID)
                 sendErrorMessage = (error as? PaiError)?.userMessage ?? "Failed to send message"
             }
             isSending = false
@@ -323,7 +329,7 @@ struct ComposerBar: View {
     }
 
     private func removeAttachment(_ attachment: StagedAttachment) {
-        stagedAttachments.removeAll { $0.id == attachment.id }
+        staging.remove(id: attachment.id, from: sessionID)
     }
 
     /// The one entry point every attachment source (photo picker, file picker, temporary note,
@@ -341,7 +347,7 @@ struct ComposerBar: View {
     private func stageAttachments(_ staged: [StagedAttachment]) {
         let oversize = staged.filter { $0.currentSize > maxAttachmentBytes }
         let accepted = staged.filter { $0.currentSize <= maxAttachmentBytes }
-        stagedAttachments.append(contentsOf: accepted)
+        staging.append(accepted, to: sessionID)
         if let first = oversize.first {
             let suffix = oversize.count > 1 ? " and \(oversize.count - 1) other file(s)" : ""
             sendErrorMessage = "\(first.filename)\(suffix) exceeds the 50MB limit and was not attached."

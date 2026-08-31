@@ -146,7 +146,9 @@ final class NoteEditorDocumentTests: XCTestCase {
     func testAnEditChangesOnlyWhatWasEdited() {
         let source = "# Title\n\n```sh\necho\n```\n\nend\n"
         var document = NoteEditorDocument(source: source)
-        _ = document.edit(id: document.items.last!.id, displayText: "the end")
+        let last = document.items.last!
+        XCTAssertEqual(last.displayText, "end\n", "the last prose region shows its own trailing newline")
+        _ = document.edit(id: last.id, displayText: "the end\n")
         XCTAssertEqual(document.source, "# Title\n\n```sh\necho\n```\n\nthe end\n")
     }
 
@@ -240,5 +242,58 @@ final class NoteEditorDocumentTrailingProseTests: XCTestCase {
         let before = document.source
         XCTAssertNil(document.appendTrailingProse())
         XCTAssertEqual(document.source, before)
+    }
+}
+
+/// Which region owns the newlines at its end.
+///
+/// Everywhere but the very bottom of a note those newlines are the gap between two regions and the
+/// editor hides them, which is what keeps the file byte-exact through an edit. At the bottom there
+/// is nothing for them to separate, and hiding them there is the bug this covers: the text view
+/// holds the paragraph break that was just typed, the segment absorbs it into a separator, and the
+/// next update resets the view to the line it was already on. Return appears to do nothing — on a
+/// brand new note, where the caret is always at the end, it appears to do nothing ever.
+final class NoteEditorDocumentTrailingNewlineTests: XCTestCase {
+
+    func testReturnAtTheEndOfAFreshNoteProducesANewline() {
+        var document = NoteEditorDocument(source: "")
+        _ = document.edit(id: document.items[0].id, displayText: "okok")
+        _ = document.edit(id: document.items[0].id, displayText: "okok\n")
+        XCTAssertEqual(document.source, "okok\n")
+        XCTAssertEqual(document.items[0].displayText, "okok\n", "the view would be reset to the line above")
+    }
+
+    func testReturnAtTheEndOfAnExistingNoteProducesANewline() {
+        var document = NoteEditorDocument(source: "a\n")
+        XCTAssertEqual(document.items[0].displayText, "a\n")
+        _ = document.edit(id: document.items[0].id, displayText: "a\n\n")
+        XCTAssertEqual(document.source, "a\n\n")
+        XCTAssertEqual(document.items[0].displayText, "a\n\n")
+    }
+
+    /// The other half of the rule, and the reason it is scoped to the last region rather than
+    /// applied everywhere: a separator that became visible mid-note could be deleted, and deleting
+    /// the blank line above a fence joins it to the paragraph.
+    func testARegionBeforeAnotherStillHidesItsSeparator() {
+        let document = NoteEditorDocument(source: "text\n\n```\nx\n```\n")
+        XCTAssertEqual(document.items[0].displayText, "text")
+    }
+
+    /// A block at the bottom keeps its separator hidden too — shown, it would draw an empty line
+    /// inside the box below the closing fence, and the height arithmetic would count it.
+    func testATrailingCodeBlockDoesNotShowItsSeparator() {
+        let document = NoteEditorDocument(source: "text\n\n```\nx\n```\n")
+        XCTAssertEqual(document.items[1].displayText, "```\nx\n```")
+    }
+
+    /// The paragraph appended under a trailing block is itself the last region, so Return works in
+    /// it for the same reason it works anywhere else at the bottom.
+    func testTheParagraphAppendedUnderABlockCanTakeAParagraphBreak() {
+        var document = NoteEditorDocument(source: "```\nx\n```\n")
+        guard let target = document.appendTrailingProse() else {
+            return XCTFail("no paragraph was appended under the block")
+        }
+        _ = document.edit(id: target.itemID, displayText: "hi\n")
+        XCTAssertEqual(document.source, "```\nx\n```\n\nhi\n")
     }
 }

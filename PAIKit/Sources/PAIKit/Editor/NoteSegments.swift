@@ -62,9 +62,20 @@ public struct NoteSegment: Equatable, Sendable, Hashable {
         return String(body.dropLast(trailingSeparator.count))
     }
 
+    /// ``displayText`` with the trailing newlines left on it.
+    ///
+    /// For the last prose region of a note there is nothing after it for those newlines to
+    /// separate, so they are text somebody is typing rather than a boundary. Hidden there, a
+    /// paragraph break pressed at the very end of a note is absorbed into the separator and the
+    /// text view is reset to the line it was already on — Return appears to do nothing at all.
+    public var displayTextKeepingTrailingNewlines: String {
+        String(text.dropFirst(leadingSeparator.count))
+    }
+
     /// Rebuild this segment from edited display text, putting the separators back.
-    public func withDisplayText(_ newText: String) -> NoteSegment {
-        NoteSegment(kind: kind, text: leadingSeparator + newText + trailingSeparator)
+    public func withDisplayText(_ newText: String, keepingTrailingNewlines: Bool = false) -> NoteSegment {
+        NoteSegment(
+            kind: kind, text: leadingSeparator + newText + (keepingTrailingNewlines ? "" : trailingSeparator))
     }
 }
 

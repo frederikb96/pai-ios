@@ -12,6 +12,10 @@ struct CaretRequest: Equatable {
     let token: Int
     /// A UTF-16 offset into the region's display text.
     let offset: Int
+    /// Whether this is an arrival rather than a keystroke's own caret move — an outline heading, a
+    /// search hit — and so should settle a third of the way down the page instead of scrolling by
+    /// the minimum. See ``MarkdownSourceTextView/Coordinator/scrollCaretIntoView(_:settlingAtTopThird:)``.
+    var settlesAtTopThird: Bool = false
 }
 
 /// One editable region of a note.
@@ -40,6 +44,10 @@ struct MarkdownSourceTextView: UIViewRepresentable {
     /// joining this region to the one above; false lets the text view do its usual nothing.
     let onDeleteBackwardAtStart: () -> Bool
     let onFocus: () -> Void
+    /// The keyboard bar's paperclip, carrying the caret's UTF-16 offset within this region — where
+    /// whatever is picked has to end up. Captured at the tap because presenting a picker takes the
+    /// keyboard away, and with it the selection.
+    let onAttach: (Int) -> Void
 
     var wraps: Bool { kind == .prose }
 
@@ -57,9 +65,14 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         view.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
         view.textContainer.lineFragmentPadding = 0
         view.tintColor = NoteEditorTheme.accent
-        view.autocorrectionType = .no
-        view.autocapitalizationType = .none
-        view.spellCheckingType = .no
+        view.inputAccessoryView = context.coordinator.keyboardBar
+        // Prose is written to be read, so it gets the keyboard everything else on the phone has —
+        // including the predictive bar, which is hidden outright by `.no` and whose absence reads
+        // as the app having broken the keyboard. Code and tables keep it off: an identifier is not
+        // a word, and a correction applied to one is a bug written into the vault.
+        view.autocorrectionType = wraps ? .yes : .no
+        view.autocapitalizationType = wraps ? .sentences : .none
+        view.spellCheckingType = wraps ? .default : .no
         // Markdown is punctuation. Smart quotes and dashes would rewrite `--force` and `"a"` as
         // they are typed, which is the same corruption the transcript parser disables smart
         // punctuation to avoid — and here it would be written back to the vault.
@@ -77,8 +90,9 @@ struct MarkdownSourceTextView: UIViewRepresentable {
             view.showsVerticalScrollIndicator = false
             view.showsHorizontalScrollIndicator = true
             view.textContainer.widthTracksTextView = false
-            view.textContainer.size = CGSize(
-                width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+            // Large and finite. The layout manager does arithmetic on this width, and an
+            // infinity-adjacent value in it produces a wrapped line rather than an error.
+            view.textContainer.size = CGSize(width: 1_000_000, height: 1_000_000)
             view.textContainer.lineBreakMode = .byClipping
             view.backgroundColor = NoteEditorTheme.codeBackground
             view.layer.cornerRadius = 6
@@ -111,7 +125,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
             context.coordinator.appliedCaretToken = caret.token
             let clamped = min(max(caret.offset, 0), view.text.utf16.count)
             view.selectedRange = NSRange(location: clamped, length: 0)
-            context.coordinator.scrollCaretIntoView(view)
+            context.coordinator.scrollCaretIntoView(view, settlingAtTopThird: caret.settlesAtTopThird)
         }
     }
 
@@ -157,23 +171,99 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         /// The last caret request actually applied — see ``CaretRequest``.
         var appliedCaretToken = Int.min
 
+        /// Built once and kept, because `inputAccessoryView` is read every time the view becomes
+        /// first responder and a fresh bar per focus would flicker as the keyboard comes up.
+        lazy var keyboardBar: NoteEditorKeyboardBar = NoteEditorKeyboardBar { [weak self] item in
+            self?.handle(item)
+        }
+
+        /// The text view this coordinator drives, set on the first delegate callback. The bar's
+        /// actions arrive from UIKit with no view attached to them.
+        private weak var textView: UITextView?
+
         init(parent: MarkdownSourceTextView) {
             self.parent = parent
         }
 
         func textViewDidChange(_ textView: UITextView) {
+            self.textView = textView
             let source = textView.text ?? ""
             NoteEditorTheme.repaint(textView.textStorage, kind: parent.kind)
             parent.onChange(source)
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
+            self.textView = textView
             parent.onFocus()
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
+            self.textView = textView
             guard textView.isFirstResponder else { return }
             scrollCaretIntoView(textView)
+        }
+
+        /// Return inside a list carries the marker down, and the indentation with it.
+        ///
+        /// Done here rather than after the fact because the newline must not be inserted first:
+        /// reacting to it would put the marker on screen one frame late, and undoing it would take
+        /// two presses of Undo to get back to where the reader was.
+        func textView(
+            _ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String
+        ) -> Bool {
+            self.textView = textView
+            guard text == "\n", parent.kind == .prose else { return true }
+            guard
+                let continuation = MarkdownListContinuation.onReturn(
+                    text: textView.text ?? "", caretUtf16: range.location)
+            else { return true }
+            let target = NSRange(
+                location: range.location - continuation.deleteBefore,
+                length: range.length + continuation.deleteBefore)
+            guard target.location >= 0 else { return true }
+            apply(
+                MarkdownEdit(
+                    range: target, replacement: continuation.insert,
+                    selection: NSRange(
+                        location: target.location + continuation.insert.utf16.count, length: 0)),
+                to: textView)
+            return false
+        }
+
+        // MARK: The keyboard bar
+
+        private func handle(_ item: NoteEditorBarItem) {
+            guard let textView else { return }
+            switch item {
+            case .dismissKeyboard:
+                textView.resignFirstResponder()
+            case .attach:
+                parent.onAttach(textView.selectedRange.location)
+            case .command(let command):
+                guard
+                    let edit = MarkdownEditing.edit(
+                        command, in: textView.text ?? "", selection: textView.selectedRange)
+                else { return }
+                apply(edit, to: textView)
+            }
+        }
+
+        /// Put an edit through the text view's own editing path rather than assigning its text.
+        ///
+        /// Assigning replaces the whole string, which UIKit records as one wholesale change: Undo
+        /// after a formatting button would then discard the paragraph rather than the formatting.
+        private func apply(_ edit: MarkdownEdit, to textView: UITextView) {
+            guard
+                let start = textView.position(from: textView.beginningOfDocument, offset: edit.range.location),
+                let end = textView.position(from: start, offset: edit.range.length),
+                let range = textView.textRange(from: start, to: end)
+            else { return }
+            textView.replace(range, withText: edit.replacement)
+            textView.selectedRange = edit.selection
+            // Called explicitly: a programmatic replace not reaching the delegate would leave the
+            // note on screen and the note on disk disagreeing, with nothing to notice it. Reaching
+            // it twice merely publishes the same text twice.
+            textViewDidChange(textView)
         }
 
         /// Keep the caret on screen inside whatever scroll view the page is built from.
@@ -184,10 +274,15 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         /// typing near the bottom of a long note puts the caret under the keyboard and leaves it
         /// there.
         ///
+        /// `settlingAtTopThird` is for an arrival rather than a keystroke — a heading tapped in the
+        /// outline, a search hit. Scrolling by the minimum leaves the target flush against the
+        /// navigation bar, or already on screen and apparently unmoved; a third of the way down is
+        /// where a reader looks for the thing they just asked for.
+        ///
         /// The enclosing scroll view is found by walking superviews rather than being passed in,
         /// because SwiftUI does not hand one over. Public API throughout, and a page that turns
         /// out not to be built from a `UIScrollView` simply gets nothing rather than misbehaving.
-        func scrollCaretIntoView(_ textView: UITextView) {
+        func scrollCaretIntoView(_ textView: UITextView, settlingAtTopThird: Bool = false) {
             guard let selection = textView.selectedTextRange else { return }
             var ancestor = textView.superview
             while let candidate = ancestor, !(candidate is UIScrollView) { ancestor = candidate.superview }
@@ -196,14 +291,27 @@ struct MarkdownSourceTextView: UIViewRepresentable {
             let caret = textView.caretRect(for: selection.end)
             guard !caret.isNull, !caret.isInfinite else { return }
             let inScrollView = scrollView.convert(caret, from: textView)
-            // Padded so the caret does not sit flush against the keyboard or the navigation bar,
-            // which reads as clipped even when every pixel of it is on screen.
-            let padded = inScrollView.insetBy(dx: 0, dy: -24)
             // Deferred: this is reached from `updateUIView`, which runs inside a layout pass, and
             // scrolling from inside one re-enters layout.
             DispatchQueue.main.async {
                 guard textView.isFirstResponder else { return }
-                scrollView.scrollRectToVisible(padded, animated: false)
+                guard settlingAtTopThird else {
+                    // Padded so the caret does not sit flush against the keyboard or the navigation
+                    // bar, which reads as clipped even when every pixel of it is on screen.
+                    scrollView.scrollRectToVisible(inScrollView.insetBy(dx: 0, dy: -24), animated: false)
+                    return
+                }
+                let visible =
+                    scrollView.bounds.height - scrollView.adjustedContentInset.top
+                    - scrollView.adjustedContentInset.bottom
+                let lowest = max(
+                    -scrollView.adjustedContentInset.top,
+                    scrollView.contentSize.height - visible - scrollView.adjustedContentInset.top)
+                let wanted = inScrollView.minY - visible / 3 - scrollView.adjustedContentInset.top
+                let clamped = min(
+                    max(wanted, -scrollView.adjustedContentInset.top), max(lowest, -scrollView.adjustedContentInset.top)
+                )
+                scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: clamped), animated: true)
             }
         }
     }

@@ -19,13 +19,20 @@ public struct NoteEditorDocument: Equatable, Sendable {
     public struct Item: Equatable, Sendable, Identifiable {
         public let id: UUID
         public var segment: NoteSegment
+        /// Whether this region's trailing newlines are its own text rather than the gap to the
+        /// region after it. True only for a note's last prose region, which has no region after
+        /// it — see ``NoteSegment/displayTextKeepingTrailingNewlines``.
+        public var ownsTrailingNewlines: Bool
 
-        public init(id: UUID = UUID(), segment: NoteSegment) {
+        public init(id: UUID = UUID(), segment: NoteSegment, ownsTrailingNewlines: Bool = false) {
             self.id = id
             self.segment = segment
+            self.ownsTrailingNewlines = ownsTrailingNewlines
         }
 
-        public var displayText: String { segment.displayText }
+        public var displayText: String {
+            ownsTrailingNewlines ? segment.displayTextKeepingTrailingNewlines : segment.displayText
+        }
         public var kind: NoteSegmentKind { segment.kind }
     }
 
@@ -50,12 +57,25 @@ public struct NoteEditorDocument: Equatable, Sendable {
         let segments = NoteSegmentation.split(source)
         // A note with nothing in it still needs one place to type. Without this the editor opens
         // on an empty note showing no text view at all, which reads as a failure to load.
-        self.items =
+        self.items = Self.stamped(
             segments.isEmpty ? [Item(segment: NoteSegment(kind: .prose, text: ""))] : segments.map { Item(segment: $0) }
+        )
     }
 
     public init(items: [Item]) {
-        self.items = items
+        self.items = Self.stamped(items)
+    }
+
+    /// Hand the last prose region ownership of its own trailing newlines, and take it from
+    /// everything else. Applied wherever `items` is assigned, so no code path can hold a stale
+    /// answer to "am I the last one" after a region was added or removed above it.
+    private static func stamped(_ items: [Item]) -> [Item] {
+        guard let lastIndex = items.indices.last else { return items }
+        return items.enumerated().map { index, item in
+            var copy = item
+            copy.ownsTrailingNewlines = index == lastIndex && item.segment.kind == .prose
+            return copy
+        }
     }
 
     public var source: String { NoteSegmentation.join(items.map(\.segment)) }
@@ -75,7 +95,8 @@ public struct NoteEditorDocument: Equatable, Sendable {
     /// when it did not.
     public mutating func edit(id: UUID, displayText: String) -> CaretTarget? {
         guard let index = index(of: id) else { return nil }
-        let updated = items[index].segment.withDisplayText(displayText)
+        let updated = items[index].segment.withDisplayText(
+            displayText, keepingTrailingNewlines: items[index].ownsTrailingNewlines)
         guard updated != items[index].segment else { return nil }
 
         let resplit = NoteSegmentation.split(
@@ -135,7 +156,7 @@ public struct NoteEditorDocument: Equatable, Sendable {
 
         let rekeyed = reidentify(NoteSegmentation.split(texts.joined()))
         guard !rekeyed.isEmpty else {
-            items = [Item(segment: NoteSegment(kind: .prose, text: ""))]
+            items = Self.stamped([Item(segment: NoteSegment(kind: .prose, text: ""))])
             return CaretTarget(itemID: items[0].id, offset: 0)
         }
         let landing = rekeyed[min(index - 1, rekeyed.count - 1)]
@@ -210,14 +231,15 @@ public struct NoteEditorDocument: Equatable, Sendable {
     private func reidentify(_ segments: [NoteSegment]) -> [Item] {
         var available: [NoteSegment: [UUID]] = [:]
         for item in items { available[item.segment, default: []].append(item.id) }
-        return segments.map { segment in
-            if var ids = available[segment], !ids.isEmpty {
-                let id = ids.removeFirst()
-                available[segment] = ids
-                return Item(id: id, segment: segment)
-            }
-            return Item(segment: segment)
-        }
+        return Self.stamped(
+            segments.map { segment in
+                if var ids = available[segment], !ids.isEmpty {
+                    let id = ids.removeFirst()
+                    available[segment] = ids
+                    return Item(id: id, segment: segment)
+                }
+                return Item(segment: segment)
+            })
     }
 
     /// Where the caret goes after the structure changed under it: the end of whichever segment

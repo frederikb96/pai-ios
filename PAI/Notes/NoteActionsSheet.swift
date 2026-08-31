@@ -15,34 +15,28 @@ struct NoteActionsSheet: View {
     /// there the only sensible landing is the note itself, so a caller with no editor open passes
     /// something that opens it.
     let onJumpTo: (Int) -> Void
+    /// Whether to offer "Open note". Presented from the note list it is the point of the sheet;
+    /// presented from inside the note's own editor it pushes a second copy of the screen the
+    /// reader is already looking at, and Back then appears not to work.
+    var showsOpenNote: Bool = true
+    /// Called after the note has actually been deleted, so a caller showing that note can leave.
+    /// Without it the editor stays open on a note that no longer exists.
+    var onDeleted: () -> Void = {}
 
     @Environment(\.dismiss) private var dismiss
     @Environment(NotesStore.self) private var notes
     @Environment(ToastCenter.self) private var toasts
 
     @State private var path: [NoteActionsRoute] = []
+    @State private var toolsState = NoteToolsPanelState()
 
     var body: some View {
         NavigationStack(path: $path) {
             RootNoteActionsList(
-                noteId: noteId, notes: notes, path: $path,
+                noteId: noteId, notes: notes, path: $path, showsOpenNote: showsOpenNote,
                 onOpenNote: {
                     dismiss()
                     onOpenNote(noteId)
-                },
-                onDelete: {
-                    Task {
-                        guard await notes.requestDelete(id: noteId) else {
-                            toasts.show(notes.loadError ?? "Could not delete the note", kind: .error)
-                            return
-                        }
-                        dismiss()
-                        toasts.show(
-                            "Note deleted",
-                            action: .init(label: "Undo") { [notes] in Task { await notes.undelete(id: noteId) } },
-                            lifetimeNanos: 15_000_000_000
-                        )
-                    }
                 }
             )
             .navigationDestination(for: NoteActionsRoute.self) { route in
@@ -76,6 +70,7 @@ struct NoteActionsSheet: View {
                             return
                         }
                         dismiss()
+                        onDeleted()
                         toasts.show(
                             "Note deleted",
                             action: .init(label: "Undo") { [notes] in Task { await notes.undelete(id: noteId) } },
@@ -93,7 +88,8 @@ struct NoteActionsSheet: View {
                 onJumpTo: { offset in
                     dismiss()
                     onJumpTo(offset)
-                })
+                },
+                state: toolsState)
         }
     }
 }
@@ -108,16 +104,18 @@ private struct RootNoteActionsList: View {
     let noteId: String
     let notes: NotesStore
     @Binding var path: [NoteActionsRoute]
+    let showsOpenNote: Bool
     let onOpenNote: () -> Void
-    let onDelete: () -> Void
 
     var body: some View {
         List {
             if let note = notes.summary(for: noteId) {
-                Button {
-                    onOpenNote()
-                } label: {
-                    Label("Open note", systemImage: "note.text")
+                if showsOpenNote {
+                    Button {
+                        onOpenNote()
+                    } label: {
+                        Label("Open note", systemImage: "note.text")
+                    }
                 }
 
                 Button {

@@ -145,6 +145,17 @@ public final class Router {
         path.removeSubrange(index...)
     }
 
+    /// Leave a note's editor, from the editor itself — after deleting the note it was showing.
+    ///
+    /// A plain `pop()` is wrong for that: the delete can be confirmed from a sheet presented over
+    /// the editor, and by the time it succeeds the reader may have navigated on. Dropping from the
+    /// first matching route leaves a note opened twice in one path nowhere, and does nothing when
+    /// the path does not contain it.
+    public func dismissNote(id: String) {
+        guard let index = path.firstIndex(of: .note(id: id)) else { return }
+        path.removeSubrange(index...)
+    }
+
     /// Replace the whole path, for a deep link or a restored session.
     public func replace(with routes: [Route]) {
         path = routes
