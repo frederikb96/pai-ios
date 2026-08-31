@@ -15,6 +15,8 @@ public enum MarkdownCommand: String, Equatable, Sendable, CaseIterable {
     case checkbox
     case quote
     case link
+    case indent
+    case outdent
 }
 
 /// One replacement to make, in UTF-16 units, matching what a text view's `NSRange` speaks.
@@ -60,6 +62,8 @@ public enum MarkdownEditing {
         case .quote:
             return togglePrefix(text, selection, applied: ["> "], strippable: ["> "], insert: "> ")
         case .heading: return cycleHeading(text, selection)
+        case .indent: return indent(text, selection)
+        case .outdent: return outdent(text, selection)
         }
     }
 
@@ -144,9 +148,78 @@ public enum MarkdownEditing {
             return line.indent + insert + line.rest
         }
         let replacement = rewritten.joined(separator: "\n")
-        return MarkdownEdit(
-            range: span, replacement: replacement,
-            selection: NSRange(location: span.location, length: replacement.utf16.count))
+
+        // Collapse to a caret the way `cycleHeading` does, rather than trying to preserve a
+        // selection across markup that just changed shape: it keeps the content it was next to,
+        // landing after a marker just added or replaced — which is what leaves the reader able to
+        // keep typing instead of overwriting the very thing they just formatted.
+        let firstLine = carried[0]
+        let firstRewritten = rewritten[0]
+        let localOld = selection.location - span.location
+        let indentLength = firstLine.indent.utf16.count
+        let local: Int
+        if let existing = firstLine.existing {
+            let existingLength = existing.utf16.count
+            if localOld <= indentLength {
+                local = localOld
+            } else if localOld <= indentLength + existingLength {
+                local = removing ? indentLength : indentLength + insert.utf16.count
+            } else {
+                local = localOld + (removing ? -existingLength : insert.utf16.count - existingLength)
+            }
+        } else {
+            local = localOld < indentLength ? localOld : localOld + insert.utf16.count
+        }
+        let caret = span.location + min(max(local, 0), firstRewritten.utf16.count)
+        return MarkdownEdit(range: span, replacement: replacement, selection: NSRange(location: caret, length: 0))
+    }
+
+    // MARK: Indent / outdent
+
+    /// A tab at the start of every line the selection touches — Freddy's own convention, matching
+    /// the web editor (`noteEditing.ts`'s `indentLines`).
+    private static func indent(_ text: String, _ selection: NSRange) -> MarkdownEdit {
+        let utf16 = Array(text.utf16)
+        let span = lineSpan(utf16, selection)
+        let lines = string(utf16, span).components(separatedBy: "\n")
+        let rewritten = lines.map { "\t" + $0 }
+        let replacement = rewritten.joined(separator: "\n")
+
+        guard selection.length == 0 else {
+            // A real selection stays selected across the whole reindented block, matching the web
+            // editor, so a second tap keeps indenting the same lines rather than needing a reselect.
+            return MarkdownEdit(
+                range: span, replacement: replacement,
+                selection: NSRange(location: span.location, length: replacement.utf16.count))
+        }
+        // A caret shifts by the single tab inserted before its own line — `lineSpan` for an empty
+        // selection always covers exactly that one line.
+        let caret = span.location + (selection.location - span.location) + 1
+        return MarkdownEdit(range: span, replacement: replacement, selection: NSRange(location: caret, length: 0))
+    }
+
+    /// One level of indentation off every line the selection touches — a leading tab if there is
+    /// one, otherwise up to four leading spaces (`noteEditing.ts`'s `outdentLines`). A line with
+    /// neither is left alone rather than eating into its own content.
+    private static func outdent(_ text: String, _ selection: NSRange) -> MarkdownEdit {
+        let utf16 = Array(text.utf16)
+        let span = lineSpan(utf16, selection)
+        let lines = string(utf16, span).components(separatedBy: "\n")
+        let removed: [Int] = lines.map { line in
+            if line.hasPrefix("\t") { return 1 }
+            return line.prefix(4).prefix { $0 == " " }.count
+        }
+        let rewritten = zip(lines, removed).map { line, count in String(line.dropFirst(count)) }
+        let replacement = rewritten.joined(separator: "\n")
+
+        guard selection.length == 0 else {
+            return MarkdownEdit(
+                range: span, replacement: replacement,
+                selection: NSRange(location: span.location, length: replacement.utf16.count))
+        }
+        let localOld = selection.location - span.location
+        let caret = span.location + max(localOld - removed[0], 0)
+        return MarkdownEdit(range: span, replacement: replacement, selection: NSRange(location: caret, length: 0))
     }
 
     /// None → `#` → `##` → `###` → none, on the line the selection starts in.
