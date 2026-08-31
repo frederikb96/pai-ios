@@ -8,7 +8,10 @@ import UniformTypeIdentifiers
 /// (`docs/ARCHITECTURE.md`: "Attachments are not synced: they stay in the client that picked
 /// them"), which is also why this lives beside the text field rather than in `DraftStore`.
 struct StagedAttachment: Identifiable, Equatable {
-    let id = UUID()
+    /// Settable so a restore from disk can keep the id it was stored under. Left to itself it
+    /// would be given a fresh one, and the data file named after the old id would be treated as
+    /// stale and rewritten on the next save.
+    var id = UUID()
     var filename: String
     var mimeType: String
     var data: Data

@@ -26,6 +26,10 @@ struct NoteBodyView: View {
     let highlight: String?
 
     @Environment(AppEnvironment.self) private var environment
+    /// The note a tapped `[[wikilink]]` points to, held until the confirm dialog answers — an
+    /// accidental tap must neither navigate nor lose the page currently being read, the same
+    /// guarantee ``NoteAttachmentEmbedView`` already gives a tapped attachment.
+    @State private var pendingNoteLink: String?
 
     init(
         body: String, nameToId: [String: String], containerId: String?,
@@ -72,10 +76,25 @@ struct NoteBodyView: View {
         .environment(
             \.openURL,
             OpenURLAction { url in
+                // An https link falls through to `.systemAction` and opens in the default
+                // browser — the system's own behaviour is already correct here and needs no
+                // confirmation, unlike a link to another note, which this page can act on itself.
                 guard case .note(let id)? = DeepLink.from(url: url) else { return .systemAction }
-                environment.router.push(.note(id: id))
+                pendingNoteLink = id
                 return .handled
-            })
+            }
+        )
+        .confirmationDialog(
+            "Open this note?",
+            isPresented: Binding(get: { pendingNoteLink != nil }, set: { if !$0 { pendingNoteLink = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Open") {
+                if let id = pendingNoteLink { environment.router.push(.note(id: id)) }
+                pendingNoteLink = nil
+            }
+            Button("Cancel", role: .cancel) { pendingNoteLink = nil }
+        }
     }
 
     @ViewBuilder
@@ -202,19 +221,15 @@ struct NotePreviewBlockView: View {
     }
 
     /// Every occurrence of `highlightQuery` in `text`, in this block's own rendered coordinates —
-    /// safe to convert straight to an `NSRange` via `Range<String.Index>` because `Foundation`
-    /// does the UTF-16 conversion, not hand-rolled Character/byte arithmetic. The first occurrence
-    /// is marked current exactly when this block is the one the jump landed on — a cheap way to
-    /// distinguish it from the rest, correct whenever a block has only one hit, which is most of
-    /// them.
+    /// `highlightRanges` hands back Character ranges already relative to `text` itself, safe to
+    /// convert straight to an `NSRange` because `Foundation` does the UTF-16 conversion, not
+    /// hand-rolled Character/byte arithmetic. The first occurrence is marked current exactly when
+    /// this block is the one the jump landed on — a cheap way to distinguish it from the rest,
+    /// correct whenever a block has only one hit, which is most of them.
     private func highlightSpans(in text: String) -> [TranscriptHighlightSpan] {
         guard let highlightQuery, !highlightQuery.isEmpty else { return [] }
-        let occurrences = findOccurrences(body: text, query: highlightQuery)
-        return occurrences.enumerated().compactMap { index, occurrence in
-            guard let start = text.index(text.startIndex, offsetBy: occurrence.matchStart, limitedBy: text.endIndex),
-                let end = text.index(text.startIndex, offsetBy: occurrence.matchEnd, limitedBy: text.endIndex)
-            else { return nil }
-            return (range: NSRange(start..<end, in: text), isCurrent: isCurrentTarget && index == 0)
+        return highlightRanges(in: text, query: highlightQuery).enumerated().map { index, range in
+            (range: NSRange(range, in: text), isCurrent: isCurrentTarget && index == 0)
         }
     }
 

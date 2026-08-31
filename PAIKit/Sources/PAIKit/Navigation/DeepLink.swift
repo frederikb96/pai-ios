@@ -6,10 +6,14 @@ import Observation
 ///
 /// Carries an id and nothing else, for the same reason ``Route`` does — a shortcut is configured
 /// once and opened months later, so anything richer would be describing a note that has since
-/// been renamed, moved or deleted.
+/// been renamed, moved or deleted. `notesList` and `createSession` carry nothing at all, for the
+/// same reason: there is nothing about either destination a shortcut could still be describing
+/// months later.
 public enum DeepLink: Equatable, Sendable, Hashable {
     case session(id: String)
     case note(id: String)
+    case notesList
+    case createSession
 
     /// The routes this link lands on. Whole paths rather than single routes: a deep link arrives
     /// knowing nothing about what the app was showing, so it replaces the stack, and a note with
@@ -18,6 +22,8 @@ public enum DeepLink: Equatable, Sendable, Hashable {
         switch self {
         case .session(let id): return [.session(id: id)]
         case .note(let id): return [.notes, .note(id: id)]
+        case .notesList: return [.notes]
+        case .createSession: return [.createSession]
         }
     }
 }
@@ -51,9 +57,9 @@ extension DeepLink {
     /// The custom URL scheme, for a shortcut or a widget that opens the app by URL rather than
     /// through an App Intent.
     ///
-    /// `pai://session/<id>` and `pai://note/<id>`. Rejects anything else rather than guessing,
-    /// including a well-formed URL with an unknown host — a link the app does not understand
-    /// must not silently open some other screen.
+    /// `pai://session/<id>`, `pai://note/<id>`, `pai://notes` and `pai://createsession`. Rejects
+    /// anything else rather than guessing, including a well-formed URL with an unknown host — a
+    /// link the app does not understand must not silently open some other screen.
     public static func from(url: URL) -> DeepLink? {
         guard url.scheme?.lowercased() == "pai",
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
@@ -67,13 +73,21 @@ extension DeepLink {
         // which is what a caller building the URL from components produces.
         var segments = components.percentEncodedPath.split(separator: "/").map(String.init)
         if let host = components.percentEncodedHost, !host.isEmpty { segments.insert(host, at: 0) }
-        guard segments.count == 2 else { return nil }
-        let id = segments[1].removingPercentEncoding ?? segments[1]
-        guard !id.isEmpty else { return nil }
-        switch segments[0].lowercased() {
-        case "session": return .session(id: id)
-        case "note": return .note(id: id)
-        default: return nil
+        guard let kind = segments.first else { return nil }
+        switch kind.lowercased() {
+        case "session", "note":
+            guard segments.count == 2 else { return nil }
+            let id = segments[1].removingPercentEncoding ?? segments[1]
+            guard !id.isEmpty else { return nil }
+            return kind.lowercased() == "session" ? .session(id: id) : .note(id: id)
+        case "notes":
+            guard segments.count == 1 else { return nil }
+            return .notesList
+        case "createsession":
+            guard segments.count == 1 else { return nil }
+            return .createSession
+        default:
+            return nil
         }
     }
 
@@ -81,6 +95,8 @@ extension DeepLink {
         switch self {
         case .session(let id): return URL(string: "pai://session/\(Self.escape(id))")
         case .note(let id): return URL(string: "pai://note/\(Self.escape(id))")
+        case .notesList: return URL(string: "pai://notes")
+        case .createSession: return URL(string: "pai://createsession")
         }
     }
 
