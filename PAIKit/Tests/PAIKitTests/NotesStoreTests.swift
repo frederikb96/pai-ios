@@ -18,11 +18,37 @@ private final class FakeNotesApi: NotesApiClient, @unchecked Sendable {
     var restoreRevisionResult: NoteDetail?
     var getNoteLinksResult: NoteLinkGraph = NoteLinkGraph(outgoing: [], backlinks: [], extractionSkipped: false)
     var getNotesResult: [NoteSummary] = []
+    var getNoteResult: NoteDetail?
+
+    /// Off by default, so every ordinary test's `getNote` answers immediately. A test driving the
+    /// load-vs-save race turns this on and holds the call open with a continuation instead of a
+    /// sleep, so the ordering is exact rather than hoped-for.
+    var getNoteGateEnabled = false
+    private var getNoteStarted: CheckedContinuation<Void, Never>?
+    private var getNoteRelease: CheckedContinuation<Void, Never>?
 
     func getNotes(containerId: String?, favourite: Bool?, limit: Int, offset: Int) async throws -> [NoteSummary] {
         getNotesResult
     }
-    func getNote(id: String) async throws -> NoteDetail { fatalError("not scripted") }
+
+    /// Suspends until the in-flight `getNote` call is released, resolving as soon as that call
+    /// has actually started so a test can then drive something else to completion in between.
+    func waitUntilGetNoteStarted() async {
+        await withCheckedContinuation { self.getNoteStarted = $0 }
+    }
+
+    func releaseGetNote() {
+        getNoteRelease?.resume()
+        getNoteRelease = nil
+    }
+
+    func getNote(id: String) async throws -> NoteDetail {
+        guard getNoteGateEnabled else { return getNoteResult ?? NoteFixture.detail(id: id) }
+        getNoteStarted?.resume()
+        getNoteStarted = nil
+        await withCheckedContinuation { self.getNoteRelease = $0 }
+        return getNoteResult ?? NoteFixture.detail(id: id)
+    }
 
     func patchNote(
         id: String, body: String?, frontmatter: String?, name: String?, summary: String?,
@@ -209,5 +235,44 @@ final class NotesStoreTests: XCTestCase {
 
         XCTAssertFalse(ok)
         XCTAssertEqual(store.notes[0].name, "Old Name")
+    }
+
+    /// The race the spurious "changed elsewhere" banner was traced to: `loadNote` — fired by the
+    /// tools panel refreshing, or the screen re-appearing — can still be in flight when an
+    /// autosave completes. Applying the load's answer regardless would roll `details` back to the
+    /// pre-save hash, and the *next* autosave would then send that stale hash as its precondition
+    /// and be told, correctly, that the note "changed elsewhere" — when the only thing that
+    /// happened was its own earlier save. Driven with a gate rather than a sleep, so the ordering
+    /// under test is exact rather than hoped-for.
+    func testALoadInFlightDuringASaveDoesNotRewindTheBaseline() async {
+        let api = FakeNotesApi()
+        api.getNotesResult = [NoteFixture.summary(id: "n1")]
+        let store = NotesStore(api: api)
+        await store.refresh()
+        // Seed a baseline the way opening the note would, before the race begins.
+        api.getNoteResult = NoteFixture.detail(id: "n1", name: "Before The Edit")
+        await store.loadNote(id: "n1")
+        XCTAssertEqual(store.detail(for: "n1")?.name, "Before The Edit")
+
+        // A second load starts — the tools panel refreshing while the reader is still typing —
+        // and is held right at the point its GET request has gone out.
+        api.getNoteGateEnabled = true
+        api.getNoteResult = NoteFixture.detail(id: "n1", name: "Stale, from before the save")
+        let raceLoad = Task { await store.loadNote(id: "n1") }
+        await api.waitUntilGetNoteStarted()
+
+        // The autosave completes entirely while that load is still suspended.
+        api.patchNoteResult = .saved(NoteFixture.detail(id: "n1", name: "Saved by the autosave"))
+        store.edit(id: "n1", body: "new body")
+        await store.flush(id: "n1")
+        XCTAssertEqual(store.detail(for: "n1")?.name, "Saved by the autosave")
+
+        // Only now does the stale GET's response land.
+        api.releaseGetNote()
+        await raceLoad.value
+
+        XCTAssertEqual(
+            store.detail(for: "n1")?.name, "Saved by the autosave",
+            "a load that started before the save must not roll the baseline back once it returns after it")
     }
 }

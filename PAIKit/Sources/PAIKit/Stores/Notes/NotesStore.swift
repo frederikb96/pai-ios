@@ -87,6 +87,12 @@ public final class NotesStore {
 
     /// The last content read from the server, per note id. What a save is conditional against.
     public private(set) var details: [String: NoteDetail] = [:]
+    /// Bumped every time ``details`` is written for a note, by any of `loadNote`, `saveNow` or
+    /// `resolveConflict`. A `loadNote` in flight captures this before its request goes out and
+    /// checks it again before applying the response — if a save landed in between, the load's
+    /// answer describes a note that no longer exists and is dropped rather than rolling the
+    /// baseline back to a hash the next autosave would send as a now-stale precondition.
+    private var detailVersion: [String: Int] = [:]
     /// The body as it currently stands on screen, for a note edited since it was loaded.
     public private(set) var drafts: [String: String] = [:]
     public private(set) var saveStates: [String: NoteSaveState] = [:]
@@ -160,7 +166,7 @@ public final class NotesStore {
             taken: notes.filter { containerId == nil || $0.containerId == containerId }.map(\.name))
         do {
             let created = try await api.createNote(name: free, summary: nil, body: nil, containerId: containerId)
-            details[created.id] = created
+            setDetail(created, for: created.id)
             notes.insert(created.summaryRow, at: 0)
             loadError = nil
             return created.summaryRow
@@ -179,7 +185,7 @@ public final class NotesStore {
                 id: id, body: nil, frontmatter: nil, name: trimmed, summary: nil, favourite: nil,
                 containerId: nil, expectedHash: nil)
             guard case .saved(let detail) = result else { return false }
-            details[id] = detail
+            setDetail(detail, for: id)
             if let index = notes.firstIndex(where: { $0.id == id }) { notes[index] = detail.summaryRow }
             return true
         } catch {
@@ -214,7 +220,7 @@ public final class NotesStore {
     public func undelete(id: String) async -> Bool {
         do {
             let restored = try await api.undeleteNote(id: id)
-            details[id] = restored
+            setDetail(restored, for: id)
             if let index = notes.firstIndex(where: { $0.id == id }) {
                 notes[index] = restored.summaryRow
             } else {
@@ -315,7 +321,7 @@ public final class NotesStore {
     public func restoreRevision(noteId: String, revisionId: String) async -> Bool {
         do {
             let restored = try await api.restoreNoteRevision(noteId: noteId, revisionId: revisionId)
-            details[noteId] = restored
+            setDetail(restored, for: noteId)
             // The restored text is the whole point of the action, so it replaces whatever is on
             // screen — the one place a draft is deliberately dropped without asking, because
             // asking was the button that got us here.
@@ -375,10 +381,27 @@ public final class NotesStore {
     /// baseline a save is conditional against, and deliberately leaves any local edit alone,
     /// since discarding typing to adopt a background fetch is the one thing an editor must never
     /// do on its own.
+    ///
+    /// Called both on screen appear and every time the tools panel opens or refreshes, so this
+    /// routinely runs alongside an autosave. Guarded against landing after one: this GET's answer
+    /// can describe the note from before a concurrent save applied, and applying it regardless
+    /// would roll ``details`` back to a hash the next autosave then sends as a stale precondition
+    /// — the client conflicting with its own successful save a moment earlier.
     public func loadNote(id: String) async {
+        let versionAtStart = detailVersion[id] ?? 0
         do {
             let detail = try await api.getNote(id: id)
-            details[id] = detail
+            guard detailVersion[id] ?? 0 == versionAtStart else {
+                #if DEBUG
+                    DebugLogBuffer.shared.append(
+                        .warning, "notes-store",
+                        "loadNote(\(id)) discarded: a save (or another load) wrote details[\(id)] while this "
+                            + "GET was in flight — version \(versionAtStart) at the start, "
+                            + "\(detailVersion[id] ?? 0) now")
+                #endif
+                return
+            }
+            setDetail(detail, for: id)
             bumpExternalRevision(id)
             if drafts[id] == nil {
                 saveStates[id] = .clean
@@ -389,6 +412,13 @@ public final class NotesStore {
         } catch {
             saveStates[id] = .failed((error as? PaiError)?.userMessage ?? "Could not open note")
         }
+    }
+
+    /// The one place ``details`` is written, so a version bump can never be forgotten on one path
+    /// and leave another (``loadNote``'s guard above) unable to trust it.
+    private func setDetail(_ detail: NoteDetail, for id: String) {
+        details[id] = detail
+        detailVersion[id, default: 0] += 1
     }
 
     /// What the editor should show: the local edit if there is one, otherwise what was fetched.
@@ -458,7 +488,7 @@ public final class NotesStore {
                 favourite: nil, containerId: nil, expectedHash: baseline.contentHash)
             switch result {
             case .saved(let detail):
-                details[id] = detail
+                setDetail(detail, for: id)
                 // Only clear the draft if nothing was typed while the request was in flight —
                 // otherwise the newer keystrokes would be dropped and the editor would show text
                 // the server has never seen while reporting itself clean.
@@ -475,6 +505,12 @@ public final class NotesStore {
                     notes.insert(detail.summaryRow, at: 0)
                 }
             case .conflict(let conflict):
+                #if DEBUG
+                    DebugLogBuffer.shared.append(
+                        .warning, "notes-store",
+                        "saveNow(\(id)) conflict: sent expectedHash=\(baseline.contentHash.prefix(8)), "
+                            + "server holds \(conflict.currentHash.prefix(8))")
+                #endif
                 saveStates[id] = .conflict(conflict)
             }
         } catch {
@@ -504,7 +540,7 @@ public final class NotesStore {
                     summary: nil, favourite: nil, containerId: nil, expectedHash: conflict.currentHash)
                 switch result {
                 case .saved(let detail):
-                    details[id] = detail
+                    setDetail(detail, for: id)
                     if drafts[id] == pending {
                         drafts[id] = nil
                         saveStates[id] = .clean
@@ -513,6 +549,12 @@ public final class NotesStore {
                         scheduleSave(id: id)
                     }
                 case .conflict(let again):
+                    #if DEBUG
+                        DebugLogBuffer.shared.append(
+                            .warning, "notes-store",
+                            "resolveConflict(\(id), keeping: .mine) conflicted again against "
+                                + "\(again.currentHash.prefix(8)) — the vault moved on a second time")
+                    #endif
                     saveStates[id] = .conflict(again)
                 }
             } catch {
@@ -533,7 +575,7 @@ public final class NotesStore {
                 id: id, body: nil, frontmatter: nil, name: nil, summary: nil, favourite: favourite,
                 containerId: nil, expectedHash: nil)
             guard case .saved(let detail) = result else { return }
-            details[id] = detail
+            setDetail(detail, for: id)
             if let index = notes.firstIndex(where: { $0.id == id }) {
                 notes[index] = detail.summaryRow
             }
@@ -552,7 +594,7 @@ public final class NotesStore {
                 id: id, body: nil, frontmatter: nil, name: nil, summary: summary, favourite: nil,
                 containerId: nil, expectedHash: nil)
             guard case .saved(let detail) = result else { return false }
-            details[id] = detail
+            setDetail(detail, for: id)
             if let index = notes.firstIndex(where: { $0.id == id }) { notes[index] = detail.summaryRow }
             return true
         } catch {
