@@ -140,6 +140,7 @@ final class AppEnvironment {
         // a struct literal cannot refer to fields it is still building.
         let settingsStore = SettingsStore(apiClient: client, storage: defaults)
         let draftStore = DraftStore(api: client)
+        let toasts = ToastCenter()
 
         connection = Connection(
             requestFactory: factory,
@@ -150,7 +151,7 @@ final class AppEnvironment {
             settings: settingsStore,
             drafts: draftStore,
             me: MeStore(api: client),
-            toasts: ToastCenter(),
+            toasts: toasts,
             push: PushRegistrationStore(storage: defaults) { token, mutedChannels in
                 try await client.registerDevice(token: token, mutedChannels: mutedChannels)
             },
@@ -158,7 +159,7 @@ final class AppEnvironment {
             notesBrowse: NotesBrowseStore(api: client, storage: defaults),
             staging: StagedAttachmentStore(),
             voice: VoiceRecorderController(
-                apiClient: client, settingsStore: settingsStore, drafts: draftStore)
+                apiClient: client, settingsStore: settingsStore, drafts: draftStore, toasts: toasts)
         )
         lastAuthFailure = nil
         router.gate = .ready

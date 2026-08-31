@@ -38,12 +38,25 @@ final class VoiceRecorderController {
         }
     }
 
+    /// One port `AVAudioSession` offers as an input — the platform's equivalent of the web's
+    /// `MediaDeviceInfo`, minus the name-hiding: iOS names every port whether or not the mic has
+    /// ever been granted, so there is no `useAudioInputs.ts`-style "reveal names" step here.
+    struct MicrophoneOption: Identifiable, Equatable, Sendable {
+        let uid: String
+        let name: String
+        var id: String { uid }
+    }
+
     private(set) var voiceSession: VoiceRecordingSession
     private(set) var isCapturing = false
     private(set) var setupFailure: SetupFailure?
     /// The bytes behind past recordings. The list itself belongs to `SettingsStore`, which is
     /// what the settings screen renders and what persists.
     private let recordingAudio: RecordingAudioLibrary
+    /// Refreshed on every `AVAudioSession.routeChangeNotification`, matching the web's
+    /// `useAudioInputs` re-reading its list on the `devicechange` event — plugging in a headset
+    /// while the picker is open should offer it immediately.
+    private(set) var availableMicrophones: [MicrophoneOption] = []
 
     var state: VoiceRecordingState { voiceSession.state }
     var isMuted: Bool { voiceSession.isMuted }
@@ -72,6 +85,7 @@ final class VoiceRecorderController {
     private let settingsStore: SettingsStore
     private let drafts: DraftStore
     private let apiClient: PaiApiClient
+    private let toasts: ToastCenter
     private let capture = MicrophoneCapture()
     private let audioStorage = FileRecordingAudioStorage()
     private let audioSession = AVAudioSession.sharedInstance()
@@ -141,11 +155,14 @@ final class VoiceRecorderController {
     /// once on the main actor during setup and read once at deallocation, when nothing else holds
     /// a reference, so there is no concurrent access for the isolation to protect.
     private nonisolated(unsafe) var interruptionObserver: NSObjectProtocol?
+    /// Same discipline as `interruptionObserver`, for `AVAudioSession.routeChangeNotification`.
+    private nonisolated(unsafe) var routeChangeObserver: NSObjectProtocol?
 
-    init(apiClient: PaiApiClient, settingsStore: SettingsStore, drafts: DraftStore) {
+    init(apiClient: PaiApiClient, settingsStore: SettingsStore, drafts: DraftStore, toasts: ToastCenter) {
         self.apiClient = apiClient
         self.settingsStore = settingsStore
         self.drafts = drafts
+        self.toasts = toasts
         self.recordingAudio = RecordingAudioLibrary(storage: audioStorage)
 
         voiceSession = VoiceRecordingSession(
@@ -167,11 +184,16 @@ final class VoiceRecorderController {
         }
 
         observeInterruptions()
+        refreshAvailableMicrophones()
+        observeRouteChanges()
     }
 
     deinit {
         if let interruptionObserver {
             NotificationCenter.default.removeObserver(interruptionObserver)
+        }
+        if let routeChangeObserver {
+            NotificationCenter.default.removeObserver(routeChangeObserver)
         }
     }
 
@@ -217,6 +239,15 @@ final class VoiceRecorderController {
         takeTimestampMs = timestampMs
         let hardwareRate = capture.hardwareSampleRate
         let transportRate = VoiceAudioRatePolicy.transportRate(hardwareRate: hardwareRate)
+        // Told once, at the start of the take — matching the web's `startRecording`, which warns
+        // here rather than waiting for `RecordingsSheet` to show it after the fact. Nothing
+        // downstream can undo a narrowband route; the only useful move is naming what is costing
+        // the accuracy while there is still time to disconnect it.
+        if VoiceAudioRatePolicy.isNarrowband(rate: transportRate) {
+            toasts.show(
+                "Mic is narrowband (\(transportRate / 1000) kHz, \(currentInputLabel())) — "
+                    + "transcription will be poor. Disconnect the headset to use the phone mic.")
+        }
         openStreamingFiles(
             id: RecordingMeta.id(forTimestampMs: timestampMs), sentRate: transportRate, rawRate: hardwareRate)
         wireCaptureCallbacks()
@@ -395,6 +426,53 @@ final class VoiceRecorderController {
             .playAndRecord, mode: .measurement,
             options: [.duckOthers, .allowBluetooth, .overrideMutedMicrophoneInterruption])
         try audioSession.setActive(true)
+        applyPreferredMicrophone()
+    }
+
+    /// `AVAudioSession.setPreferredInput` — the platform's equivalent of the web's
+    /// `deviceId: { exact }` constraint (`web/src/hooks/useVoiceRecording.ts`'s
+    /// `audioConstraints`). Called from `configureAudioSession()`, so it runs both on a fresh
+    /// start and on every resume after an interruption — a route can change while paused (an
+    /// AirPod case reconnecting to a different port, say), and the chosen device should still win
+    /// once capture resumes.
+    ///
+    /// An empty id means whatever the system would route anyway, matching the web's own
+    /// `deviceId ? {...} : true`. A stored id that names no currently available port — the
+    /// headset went back in its case — is forgotten rather than kept, exactly as
+    /// `startRecording`'s catch branch forgets a vanished `micDeviceId` on the web: kept, it
+    /// would fail the same way on every future take, and the picker would keep claiming a device
+    /// that is not there.
+    private func applyPreferredMicrophone() {
+        let deviceId = settingsStore.micDeviceId
+        guard !deviceId.isEmpty else { return }
+        guard let port = audioSession.availableInputs?.first(where: { $0.uid == deviceId }) else {
+            forgetStaleMicrophoneChoice()
+            return
+        }
+        do {
+            try audioSession.setPreferredInput(port)
+        } catch {
+            forgetStaleMicrophoneChoice()
+        }
+    }
+
+    private func forgetStaleMicrophoneChoice() {
+        settingsStore.setMicDeviceId("")
+        toasts.show("The microphone from settings is gone — recording with the default one.")
+    }
+
+    private func refreshAvailableMicrophones() {
+        availableMicrophones = (audioSession.availableInputs ?? []).map {
+            MicrophoneOption(uid: $0.uid, name: $0.portName)
+        }
+    }
+
+    private func observeRouteChanges() {
+        routeChangeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: audioSession, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.refreshAvailableMicrophones() }
+        }
     }
 
     private func observeInterruptions() {
