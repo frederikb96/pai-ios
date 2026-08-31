@@ -82,7 +82,8 @@ extension PaiFixtures {
 
     public static let claudeAuthHealthy: String = #"""
         {
-          "known": true, "logged_in": true, "subscription": "max",
+          "known": true, "logged_in": true, "health": "ok", "rejected_since": null,
+          "subscription": "max",
           "access_expires_at": 1798623600000, "refresh_expires_at": 1801611600000,
           "login": null, "last_error": null, "reported_at": "2026-08-29T09:41:00Z"
         }
@@ -96,10 +97,25 @@ extension PaiFixtures {
 
     public static let claudeAuthSignedOut: String = #"""
         {
-          "known": true, "logged_in": false, "subscription": null,
+          "known": true, "logged_in": false, "health": "signed_out", "rejected_since": null,
+          "subscription": null,
           "access_expires_at": null, "refresh_expires_at": null,
           "login": null, "last_error": "refresh token rejected: invalid_grant",
           "reported_at": "2026-08-29T09:35:00Z"
+        }
+        """#
+
+    /// The state that looks healthy from every angle except the one that counts: a credential
+    /// file that parses fine, an access token whose own expiry is hours away, a refresh token a
+    /// month out — and an account that answers 401 to every request. Shaped from the live
+    /// snapshot of the outage that produced it, so nothing here is tidier than the wire.
+    public static let claudeAuthRejected: String = #"""
+        {
+          "known": true, "logged_in": false, "health": "rejected",
+          "rejected_since": 1798620000000,
+          "subscription": "max",
+          "access_expires_at": 1798623600000, "refresh_expires_at": 1801611600000,
+          "login": null, "last_error": null, "reported_at": "2026-08-29T09:42:00Z"
         }
         """#
 

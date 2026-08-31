@@ -178,6 +178,41 @@ public enum ClaudeLoginState: String, Codable, Sendable, Equatable {
     case verifying
 }
 
+/// What the VM's stored credential is actually worth. `signedOut` is the credential file's own
+/// verdict; `rejected` is Anthropic's — the file is present and parses fine, and the account will
+/// not accept it. Neither can launch a session, so both drive the same UI and differ only in
+/// wording.
+///
+/// `.unrecognized` rather than throwing, for the reason `BlockerKind` documents: a value this
+/// build has not heard of must not fail the whole decode of an auth snapshot the UI needs.
+public enum CredentialHealth: Sendable, Hashable {
+    case ok, rejected, signedOut
+    case unrecognized(String)
+}
+
+extension CredentialHealth: Codable {
+    private static let knownValues: [String: CredentialHealth] = [
+        "ok": .ok,
+        "rejected": .rejected,
+        "signed_out": .signedOut,
+    ]
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = Self.knownValues[raw] ?? .unrecognized(raw)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .ok: try container.encode("ok")
+        case .rejected: try container.encode("rejected")
+        case .signedOut: try container.encode("signed_out")
+        case .unrecognized(let raw): try container.encode(raw)
+        }
+    }
+}
+
 public struct ClaudeLogin: Codable, Sendable, Equatable {
     public let id: String
     /// The authorize URL to open. Whole — never a fragment read off a screen.
@@ -201,9 +236,20 @@ public struct ClaudeLogin: Codable, Sendable, Equatable {
 /// What the VM reports about its Claude credential. `known` is false while the agent is
 /// silent — different from "signed out" — so the UI must not raise an alarm about a state
 /// nobody actually reported.
+///
+/// 🚨 `loggedIn` means "a session can be launched right now", **not** "a credential file
+/// exists". Deciding it any other way — most temptingly by comparing `refreshExpiresAt` against
+/// the clock — is what let the web UI stay silent through an outage in which the access token
+/// had died, every request came back 401, and the refresh token was still a month from expiring.
+/// There is one authority on this question and it is the agent: read `loggedIn`, and use
+/// `health` only to choose the wording.
 public struct ClaudeAuth: Codable, Sendable, Equatable {
     public let known: Bool
     public let loggedIn: Bool?
+    /// Why, when `loggedIn` is false — and which of the two stories to tell.
+    public let health: CredentialHealth?
+    /// Epoch ms Anthropic started refusing the credential; nil while it accepts it.
+    public let rejectedSince: Double?
     public let subscription: String?
     /// Epoch ms the short-lived access token expires. Refreshed automatically.
     public let accessExpiresAt: Double?
@@ -216,6 +262,8 @@ public struct ClaudeAuth: Codable, Sendable, Equatable {
     enum CodingKeys: String, CodingKey {
         case known
         case loggedIn = "logged_in"
+        case health
+        case rejectedSince = "rejected_since"
         case subscription
         case accessExpiresAt = "access_expires_at"
         case refreshExpiresAt = "refresh_expires_at"
@@ -227,6 +275,8 @@ public struct ClaudeAuth: Codable, Sendable, Equatable {
     public init(
         known: Bool,
         loggedIn: Bool?,
+        health: CredentialHealth? = nil,
+        rejectedSince: Double? = nil,
         subscription: String?,
         accessExpiresAt: Double?,
         refreshExpiresAt: Double?,
@@ -236,6 +286,8 @@ public struct ClaudeAuth: Codable, Sendable, Equatable {
     ) {
         self.known = known
         self.loggedIn = loggedIn
+        self.health = health
+        self.rejectedSince = rejectedSince
         self.subscription = subscription
         self.accessExpiresAt = accessExpiresAt
         self.refreshExpiresAt = refreshExpiresAt
@@ -251,6 +303,8 @@ public struct ClaudeAuth: Codable, Sendable, Equatable {
 public struct ClaudeLoginCodeResponse: Codable, Sendable, Equatable {
     public let known: Bool
     public let loggedIn: Bool?
+    public let health: CredentialHealth?
+    public let rejectedSince: Double?
     public let subscription: String?
     public let accessExpiresAt: Double?
     public let refreshExpiresAt: Double?
@@ -263,6 +317,8 @@ public struct ClaudeLoginCodeResponse: Codable, Sendable, Equatable {
     enum CodingKeys: String, CodingKey {
         case known
         case loggedIn = "logged_in"
+        case health
+        case rejectedSince = "rejected_since"
         case subscription
         case accessExpiresAt = "access_expires_at"
         case refreshExpiresAt = "refresh_expires_at"
@@ -275,6 +331,8 @@ public struct ClaudeLoginCodeResponse: Codable, Sendable, Equatable {
     public init(
         known: Bool,
         loggedIn: Bool?,
+        health: CredentialHealth? = nil,
+        rejectedSince: Double? = nil,
         subscription: String?,
         accessExpiresAt: Double?,
         refreshExpiresAt: Double?,
@@ -286,6 +344,8 @@ public struct ClaudeLoginCodeResponse: Codable, Sendable, Equatable {
     ) {
         self.known = known
         self.loggedIn = loggedIn
+        self.health = health
+        self.rejectedSince = rejectedSince
         self.subscription = subscription
         self.accessExpiresAt = accessExpiresAt
         self.refreshExpiresAt = refreshExpiresAt
@@ -301,6 +361,8 @@ public struct ClaudeLoginCodeResponse: Codable, Sendable, Equatable {
         ClaudeAuth(
             known: known,
             loggedIn: loggedIn,
+            health: health,
+            rejectedSince: rejectedSince,
             subscription: subscription,
             accessExpiresAt: accessExpiresAt,
             refreshExpiresAt: refreshExpiresAt,

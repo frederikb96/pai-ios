@@ -388,6 +388,31 @@ final class PaiModelsTests: XCTestCase {
         XCTAssertNil(auth.loggedIn)
     }
 
+    /// A refused credential must arrive as `loggedIn == false` even though every timestamp in
+    /// the payload looks healthy — that combination is the whole outage this state was added
+    /// for, and a client that reads the expiries instead sees nothing wrong with it.
+    func testClaudeAuthRejectedIsNotLoggedInDespiteHealthyExpiries() throws {
+        let auth = try JSONDecoder().decode(
+            ClaudeAuth.self, from: Data(PaiFixtures.claudeAuthRejected.utf8),
+        )
+
+        XCTAssertEqual(auth.loggedIn, false)
+        XCTAssertEqual(auth.health, .rejected)
+        XCTAssertNotNil(auth.rejectedSince)
+        // Present, in the future, and completely beside the point.
+        XCTAssertNotNil(auth.refreshExpiresAt)
+    }
+
+    /// A health value this build has never heard of must not fail the decode of a snapshot the
+    /// sign-in UI needs — the same reasoning `BlockerKind.unrecognized` exists for.
+    func testClaudeAuthKeepsAnUnknownHealthRatherThanFailingTheWholeSnapshot() throws {
+        let json = Data(#"{"known": true, "logged_in": false, "health": "quarantined"}"#.utf8)
+        let auth = try JSONDecoder().decode(ClaudeAuth.self, from: json)
+
+        XCTAssertEqual(auth.loggedIn, false)
+        XCTAssertEqual(auth.health, .unrecognized("quarantined"))
+    }
+
     // MARK: - UserRole
 
     /// The backend removed guest access; `UserRole` carries only `.owner` now — this pins that a
