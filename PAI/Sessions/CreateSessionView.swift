@@ -24,6 +24,8 @@ struct CreateSessionView: View {
     @Environment(SessionListStore.self) private var sessionList
     @Environment(MachineStore.self) private var machines
     @Environment(SettingsStore.self) private var settings
+    @Environment(DraftStore.self) private var drafts
+    @Environment(StagedAttachmentStore.self) private var staging
 
     @State private var createSession: CreateSessionStore?
     @State private var isPresentingDirectoryBrowser = false
@@ -31,14 +33,15 @@ struct CreateSessionView: View {
 
     // MARK: - Composer state
     //
-    // Deliberately local rather than a `DraftStore` sync — see `CreateSessionStore`'s doc comment
-    // on why the "new" draft's launch-choice half is never synced independently of the text half.
+    // Text and attachments both live in the shared `DraftStore`/`StagedAttachmentStore`, under
+    // `DraftKey.newSession` — the same mechanism a session's own composer uses, so cancelling out
+    // of this screen and coming back (or a force-quit) loses nothing typed or attached. Only the
+    // machine and launch-type pickers stay local view state; `CreateSessionStore`'s doc comment
+    // explains why.
 
-    @State private var text = ""
     @State private var textHeight: CGFloat = ComposerTextEditor.minHeight
     @State private var scrollToTailOnNextUpdate = false
     @State private var preVoiceText = ""
-    @State private var stagedAttachments: [StagedAttachment] = []
     @FocusState private var isComposerFocused: Bool
 
     @State private var showingPhotoPicker = false
@@ -64,8 +67,13 @@ struct CreateSessionView: View {
             // visible cause. The audio itself is still saved, so it is recoverable from Past
             // Recordings; only the live transcript, which had nowhere durable to go from this
             // screen, is lost.
-            guard let voiceController = environment.connection?.voice, isRecordingHere(voiceController) else { return }
-            Task { await voiceController.stop() }
+            if let voiceController = environment.connection?.voice, isRecordingHere(voiceController) {
+                Task { await voiceController.stop() }
+            }
+            // Debounced writes land regardless (the pending `Task` lives on `DraftStore`, not on
+            // this view), but flushing explicitly here is what makes Cancel-then-force-quit safe
+            // without depending on the 700ms window having already elapsed.
+            Task { await drafts.flush(key: DraftKey.newSession) }
         }
         .task {
             guard createSession == nil, let connection = environment.connection else { return }
@@ -75,6 +83,21 @@ struct CreateSessionView: View {
             // session about to launch on whichever machine turns out to be reachable.
             await machines.refresh()
             await store.start()
+            await drafts.syncFromServer()
+            // A persisted launch choice — restored after a relaunch, or set by a home-screen
+            // shortcut ahead of navigating here — wins over the preselection `store.start()` just
+            // applied. `workingDir` implies `sessionType == "custom"` already (`selectWorkingDir`
+            // sets both), so restoring it alone is enough; a plain type restores through its own
+            // setter.
+            let persisted = drafts.draft(for: DraftKey.newSession)
+            if let workingDir = persisted.workingDir {
+                store.selectWorkingDir(workingDir)
+            } else if let sessionType = persisted.sessionType {
+                store.selectSessionType(sessionType)
+            }
+            // The point of this screen is the text field — true whether it was reached by tapping
+            // "+" or by a home-screen shortcut built to land here ready to type.
+            isComposerFocused = true
         }
     }
 
@@ -121,6 +144,7 @@ struct CreateSessionView: View {
                 DirectoryBrowserView(agent: createSession.selectedMachine, api: environment.connection?.apiClient) {
                     path in
                     createSession.selectWorkingDir(path)
+                    drafts.selectWorkingDir(path)
                 }
             }
             .sheet(isPresented: $showingPhotoPicker) {
@@ -171,6 +195,11 @@ struct CreateSessionView: View {
                 let isSelected = createSession.selectedMachine == machine.slug
                 Button {
                     createSession.selectMachine(machine.slug)
+                    // Each machine's type list — and any browsed directory — is its own; carrying
+                    // a persisted choice across a machine switch is the exact `bypassPermissions`
+                    // wrong-checkout hazard `selectMachine`'s own doc comment describes. Matches
+                    // the web's `NewSessionView.handleAgentChange` clearing both in the draft too.
+                    drafts.selectWorkingDir(nil)
                     isComposerFocused = true
                 } label: {
                     Text(machine.displayName)
@@ -200,6 +229,7 @@ struct CreateSessionView: View {
             ForEach(createSession.availableSessionTypes) { type in
                 SessionTypeCard(type: type, isSelected: createSession.selectedSessionTypeId == type.id) {
                     createSession.selectSessionType(type.id)
+                    drafts.selectSessionType(type.id)
                     isComposerFocused = true
                 }
                 .accessibilityIdentifier("session-type-\(type.id)")
@@ -225,17 +255,19 @@ struct CreateSessionView: View {
             Button("Change") { isPresentingDirectoryBrowser = true }
                 .buttonStyle(.borderless)
                 .font(PaiTypography.caption.font)
-            Button("Clear") { createSession.selectWorkingDir(nil) }
-                .buttonStyle(.borderless)
-                .font(PaiTypography.caption.font)
+            Button("Clear") {
+                createSession.selectWorkingDir(nil)
+                drafts.selectWorkingDir(nil)
+            }
+            .buttonStyle(.borderless)
+            .font(PaiTypography.caption.font)
         }
     }
 
     // MARK: - Composer
 
-    /// The same shape `ComposerBar`'s drivable composer uses, minus drafts (out of scope, see
-    /// this type's doc comment) and minus the Cancel action (`hasSession: false` — nothing is
-    /// running yet).
+    /// The same shape `ComposerBar`'s drivable composer uses, over the same `DraftKey.newSession`
+    /// draft, minus the Cancel action (`hasSession: false` — nothing is running yet).
     private func composerBar(_ createSession: CreateSessionStore, _ voiceController: VoiceRecorderController)
         -> some View
     {
@@ -254,7 +286,7 @@ struct CreateSessionView: View {
             // arrangement on its own.
             HStack(alignment: .bottom, spacing: 8) {
                 ComposerTextEditor(
-                    text: $text, height: $textHeight, placeholder: "What would you like to work on?",
+                    text: textBinding, height: $textHeight, placeholder: "What would you like to work on?",
                     scrollToTailOnNextUpdate: $scrollToTailOnNextUpdate,
                     onPasteImages: { images in
                         stageAttachments(
@@ -293,10 +325,11 @@ struct CreateSessionView: View {
                 }
             }
         }
-        // This screen's composer text is local rather than a draft (see this type's own note), so
-        // unlike `ComposerBar` the live transcript has to be polled into it here. `.task(id:)`
-        // rather than a free-standing `Task` so it keeps running across `.paused`/`.reconnecting`
-        // but stops with the view, instead of outliving it once per visit.
+        // The recorder runs here with no draft key (see `isRecordingHere`'s doc comment), so
+        // unlike `ComposerBar` the live transcript has to be polled into the draft here rather
+        // than arriving already written. `.task(id:)` rather than a free-standing `Task` so it
+        // keeps running across `.paused`/`.reconnecting` but stops with the view, instead of
+        // outliving it once per visit.
         .task(id: isRecordingHere(voiceController)) {
             guard isRecordingHere(voiceController) else { return }
             var lastPartial = ""
@@ -304,7 +337,9 @@ struct CreateSessionView: View {
                 let partial = voiceController.transcribedText
                 if partial != lastPartial {
                     lastPartial = partial
-                    text = VoiceRecorderController.composeLiveText(pre: preVoiceText, partial: partial)
+                    drafts.setDraftText(
+                        key: DraftKey.newSession,
+                        text: VoiceRecorderController.composeLiveText(pre: preVoiceText, partial: partial))
                     scrollToTailOnNextUpdate = true
                 }
                 try? await Task.sleep(for: .milliseconds(150))
@@ -352,6 +387,10 @@ struct CreateSessionView: View {
             switch await createSession.create(message: messageText, files: files) {
             case .created(let session):
                 sessionList.prependOptimisticSession(session)
+                // Same "clear only once it is truly sent" rule `ComposerBar` follows: nothing
+                // here undoes this on failure, since the failure branch below never reaches it.
+                drafts.clearDraft(key: DraftKey.newSession)
+                staging.set([], for: DraftKey.newSession)
                 // Push before dismissing. A push onto the stack behind a sheet that is in the
                 // middle of dismissing is dropped often enough to be a known iOS trap, and the
                 // failure is silent: the session is created and the user stays on the list,
@@ -369,7 +408,7 @@ struct CreateSessionView: View {
     // MARK: - Attachments
 
     private func removeAttachment(_ attachment: StagedAttachment) {
-        stagedAttachments.removeAll { $0.id == attachment.id }
+        staging.remove(id: attachment.id, from: DraftKey.newSession)
     }
 
     /// The one entry point every attachment source funnels through — a 50MB file discovered here
@@ -377,11 +416,30 @@ struct CreateSessionView: View {
     private func stageAttachments(_ staged: [StagedAttachment]) {
         let oversize = staged.filter { $0.currentSize > maxAttachmentBytes }
         let accepted = staged.filter { $0.currentSize <= maxAttachmentBytes }
-        stagedAttachments.append(contentsOf: accepted)
+        staging.append(accepted, to: DraftKey.newSession)
         if let first = oversize.first {
             let suffix = oversize.count > 1 ? " and \(oversize.count - 1) other file(s)" : ""
             errorMessage = "\(first.filename)\(suffix) exceeds the 50MB limit and was not attached."
         }
+    }
+
+    // MARK: - Text / drafts
+
+    /// See `ComposerBar.textBinding`'s own doc comment for why the draft store is the field's
+    /// only storage — the same reasoning applies here.
+    private var textBinding: Binding<String> {
+        Binding(
+            get: { drafts.draft(for: DraftKey.newSession).text },
+            set: { newValue in drafts.setDraftText(key: DraftKey.newSession, text: newValue) }
+        )
+    }
+
+    private var text: String {
+        drafts.draft(for: DraftKey.newSession).text
+    }
+
+    private var stagedAttachments: [StagedAttachment] {
+        staging.attachments(for: DraftKey.newSession)
     }
 
     // MARK: - Voice
@@ -400,9 +458,9 @@ struct CreateSessionView: View {
         switch voiceController.state {
         case .idle:
             preVoiceText = text
-            // No draft key: this sheet keeps its composer text local on purpose (see the type's
-            // own note on the "new" draft), so the transcript is polled below rather than written
-            // into `DraftStore` the way the chat composer's is.
+            // No draft key: the recorder itself never touches `DraftStore` for this take, so the
+            // transcript is polled into it explicitly above rather than arriving already written
+            // the way the chat composer's does.
             await voiceController.start(draftKey: nil, preText: text)
         case .recording, .connecting, .paused, .reconnecting:
             // A tap always means "end the take", regardless of which of these mid-take states it
@@ -417,14 +475,16 @@ struct CreateSessionView: View {
 
     private func applyVoiceResult(_ prefixedText: String) {
         guard !prefixedText.isEmpty else {
-            text = preVoiceText
+            drafts.setDraftText(key: DraftKey.newSession, text: preVoiceText)
             return
         }
-        text = preVoiceText.isEmpty ? prefixedText : "\(preVoiceText) \(prefixedText)"
+        let combined = preVoiceText.isEmpty ? prefixedText : "\(preVoiceText) \(prefixedText)"
+        drafts.setDraftText(key: DraftKey.newSession, text: combined)
     }
 
     private func appendTranscript(_ prefixedText: String) {
-        text = text.isEmpty ? prefixedText : "\(text) \(prefixedText)"
+        let combined = text.isEmpty ? prefixedText : "\(text) \(prefixedText)"
+        drafts.setDraftText(key: DraftKey.newSession, text: combined)
     }
 }
 
