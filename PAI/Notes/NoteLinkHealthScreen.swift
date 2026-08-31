@@ -64,6 +64,7 @@ struct NoteLinkHealthScreen: View {
             }
         }
         .listStyle(.insetGrouped)
+        .paiNotesListBackground()
         .navigationTitle("Link health")
         .navigationBarTitleDisplayMode(.inline)
         .task { await reload() }

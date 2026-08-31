@@ -34,6 +34,22 @@
             scrollContentBackground(.hidden)
                 .background(PaiPalette.Semantic.screenBackground, ignoresSafeAreaEdges: .all)
         }
+
+        /// The page ground for the notes section.
+        ///
+        /// Its own neutral greys rather than the app's blue-tinted slate, because the writing
+        /// surface is the thing the section is *about* and everything around it reads as a frame
+        /// for it. Crossing from the index into a note, or from the editor into the preview,
+        /// should not look like crossing into a different app.
+        public func paiNotesBackground() -> some View {
+            background(PaiPalette.Notes.background, ignoresSafeAreaEdges: .all)
+        }
+
+        /// ``paiNotesBackground()`` for a `List` or `Form`, which paint a ground of their own.
+        public func paiNotesListBackground() -> some View {
+            scrollContentBackground(.hidden)
+                .background(PaiPalette.Notes.background, ignoresSafeAreaEdges: .all)
+        }
     }
 
 #endif

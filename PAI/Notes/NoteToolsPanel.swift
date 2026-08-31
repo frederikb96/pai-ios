@@ -79,6 +79,7 @@ struct NoteToolsPanel: View {
             Divider()
             content
         }
+        .paiNotesBackground()
         .navigationTitle("Outline, links & history")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -191,6 +192,7 @@ private struct NoteOutlineTab: View {
                 }
             }
             .listStyle(.plain)
+            .paiNotesListBackground()
             // Reopening a long outline at the top means finding the same heading again by hand.
             // Restoring by remembered entry rather than by scroll offset, because the outline is
             // rebuilt from the current body and an offset into the previous one lands anywhere.
@@ -244,6 +246,7 @@ private struct NoteInNoteSearchTab: View {
                     .id(occ.offset)
                 }
                 .listStyle(.plain)
+                .paiNotesListBackground()
                 .onAppear {
                     guard let last = state.lastSearchOffset else { return }
                     proxy.scrollTo(last, anchor: .center)
@@ -295,6 +298,7 @@ private struct NoteBacklinksTab: View {
                     }
                 }
                 .listStyle(.plain)
+                .paiNotesListBackground()
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -337,6 +341,7 @@ private struct NoteOutgoingLinksTab: View {
                     }
                 }
                 .listStyle(.plain)
+                .paiNotesListBackground()
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -548,6 +553,7 @@ private struct NoteRevisionsTab: View {
             }
         }
         .listStyle(.plain)
+        .paiNotesListBackground()
         .task { await notes.loadRevisions(id: noteId) }
     }
 

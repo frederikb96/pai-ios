@@ -34,7 +34,7 @@ struct NoteAttachmentsScreen: View {
             }
         }
         .listStyle(.plain)
-        .paiScreenBackground()
+        .paiNotesBackground()
         .navigationTitle(containerName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -80,7 +80,7 @@ struct NoteAttachmentsScreen: View {
                 .foregroundStyle(PaiPalette.Semantic.textMuted)
             }
         }
-        .listRowBackground(PaiPalette.Semantic.panelBackground)
+        .listRowBackground(PaiPalette.Notes.panelBackground)
         .swipeActions(edge: .trailing) {
             Button(role: .destructive) {
                 Task { await delete(attachment) }

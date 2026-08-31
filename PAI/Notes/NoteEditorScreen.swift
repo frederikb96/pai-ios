@@ -31,7 +31,7 @@ struct NoteEditorScreen: View {
             }
             content
         }
-        .paiScreenBackground()
+        .paiNotesBackground()
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbar }

@@ -302,6 +302,11 @@
             public static let accent = Color("notesAccent")
             /// A thematic break, and the edge of a code block.
             public static let rule = Color("notesRule")
+            /// A row or card sitting on ``background`` — the second of the three depth steps,
+            /// within the notes section's own neutral family rather than the app's blue-tinted
+            /// one. The whole section shares the writing surface's greys so that opening a note,
+            /// previewing it and browsing the index are visibly one place.
+            public static let panelBackground = Color("notesPanelBackground")
         }
     }
 
