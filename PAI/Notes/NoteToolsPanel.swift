@@ -2,6 +2,17 @@ import Observation
 import PAIKit
 import SwiftUI
 
+/// Where the panel is sending the reader, and what it was looking for.
+///
+/// The query travels with the offset because the preview highlights every occurrence of it, and a
+/// bare offset cannot say what was being searched for — or that this jump came from the outline,
+/// where there is nothing to highlight at all.
+struct NoteJumpTarget: Equatable {
+    /// A Character offset into the note body.
+    let characterOffset: Int
+    let query: String?
+}
+
 /// What the tools panel remembers between openings.
 ///
 /// Held by whatever presents the panel rather than by the panel itself, because a sheet's content
@@ -52,8 +63,8 @@ enum NoteToolsTab: CaseIterable, Hashable {
 struct NoteToolsPanel: View {
     let noteId: String
     let onOpenNote: (String) -> Void
-    /// A Character offset into the note body the editor should put the caret at.
-    let onJumpTo: (Int) -> Void
+    /// Where in the note the editor should go.
+    let onJumpTo: (NoteJumpTarget) -> Void
     /// Survives the sheet being dismissed — see ``NoteToolsPanelState``.
     let state: NoteToolsPanelState
 
@@ -149,9 +160,9 @@ struct NoteToolsPanel: View {
 private struct NoteOutlineTab: View {
     let noteBody: String
     let state: NoteToolsPanelState
-    let onJumpTo: (Int) -> Void
+    let onJumpTo: (NoteJumpTarget) -> Void
 
-    init(body: String, state: NoteToolsPanelState, onJumpTo: @escaping (Int) -> Void) {
+    init(body: String, state: NoteToolsPanelState, onJumpTo: @escaping (NoteJumpTarget) -> Void) {
         self.noteBody = body
         self.state = state
         self.onJumpTo = onJumpTo
@@ -167,7 +178,7 @@ private struct NoteOutlineTab: View {
                     ForEach(entries) { entry in
                         Button {
                             state.lastOutlineOffset = entry.offset
-                            onJumpTo(entry.offset)
+                            onJumpTo(NoteJumpTarget(characterOffset: entry.offset, query: nil))
                         } label: {
                             Text(entry.text)
                                 .padding(.leading, CGFloat(entry.level - 1) * 12)
@@ -196,9 +207,9 @@ private struct NoteOutlineTab: View {
 private struct NoteInNoteSearchTab: View {
     let noteBody: String
     let state: NoteToolsPanelState
-    let onJumpTo: (Int) -> Void
+    let onJumpTo: (NoteJumpTarget) -> Void
 
-    init(body: String, state: NoteToolsPanelState, onJumpTo: @escaping (Int) -> Void) {
+    init(body: String, state: NoteToolsPanelState, onJumpTo: @escaping (NoteJumpTarget) -> Void) {
         self.noteBody = body
         self.state = state
         self.onJumpTo = onJumpTo
@@ -222,7 +233,7 @@ private struct NoteInNoteSearchTab: View {
                 List(occurrences) { occ in
                     Button {
                         state.lastSearchOffset = occ.offset
-                        onJumpTo(occ.offset)
+                        onJumpTo(NoteJumpTarget(characterOffset: occ.offset, query: state.query))
                     } label: {
                         Text(occ.context)
                             .lineLimit(2)

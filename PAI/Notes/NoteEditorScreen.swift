@@ -18,6 +18,9 @@ struct NoteEditorScreen: View {
     /// twice is two requests rather than one that appears unchanged.
     @State private var jump: NoteJumpRequest?
     @State private var jumpToken = 0
+    /// What the in-note search was looking for when it sent the reader somewhere — every
+    /// occurrence of it stays painted in the preview until the next jump says otherwise.
+    @State private var highlight: String?
     /// Outlives each presentation of the tools sheet, so reopening it lands where it was left.
     @State private var toolsState = NoteToolsPanelState()
 
@@ -46,14 +49,14 @@ struct NoteEditorScreen: View {
             NavigationStack {
                 NoteToolsPanel(
                     noteId: noteID, onOpenNote: { openNote($0) },
-                    onJumpTo: { characterOffset in jumpToEditor(characterOffset) },
+                    onJumpTo: { jumpTo($0) },
                     state: toolsState)
             }
         }
         .sheet(isPresented: $isShowingActions) {
             NoteActionsSheet(
                 noteId: noteID, onOpenNote: { openNote($0) },
-                onJumpTo: { jumpToEditor($0) },
+                onJumpTo: { jumpTo($0) },
                 // The note this sheet is about is the one already on screen, so offering to open
                 // it would push a second copy of this very editor.
                 showsOpenNote: false,
@@ -67,7 +70,8 @@ struct NoteEditorScreen: View {
             if isPreviewing {
                 NoteBodyView(
                     body: body, nameToId: buildNameToId(notes.notes),
-                    containerId: notes.detail(for: noteID)?.containerId)
+                    containerId: notes.detail(for: noteID)?.containerId,
+                    jump: jump, highlight: highlight)
             } else {
                 NoteEditorSurface(
                     noteID: noteID, text: body, revision: notes.externalRevision(for: noteID), jump: jump,
@@ -121,16 +125,18 @@ struct NoteEditorScreen: View {
         return name.isEmpty ? "Untitled" : name
     }
 
-    /// Put the caret at an offset the tools panel named — an outline heading, a search hit.
+    /// Go where the tools panel pointed — an outline heading, a search hit.
     ///
-    /// Leaves preview mode first, because the panel's whole purpose is to get somewhere in the
-    /// text and a jump landing behind a rendered page is a jump nobody can see.
-    private func jumpToEditor(_ characterOffset: Int) {
+    /// Whichever mode is open answers it: the editor puts the caret there, the preview scrolls the
+    /// rendered page there. Leaving preview to answer a jump would be the wrong reading of the ask
+    /// — someone browsing a rendered note who taps a heading wants to be further down that page,
+    /// not looking at its markup.
+    private func jumpTo(_ target: NoteJumpTarget) {
         isShowingTools = false
         isShowingActions = false
-        isPreviewing = false
+        highlight = target.query
         jumpToken += 1
-        jump = NoteJumpRequest(token: jumpToken, characterOffset: characterOffset)
+        jump = NoteJumpRequest(token: jumpToken, characterOffset: target.characterOffset)
     }
 
     /// Pushed rather than replaced: following a link from inside a note is navigation within the

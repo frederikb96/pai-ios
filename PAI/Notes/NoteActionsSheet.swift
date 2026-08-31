@@ -14,7 +14,7 @@ struct NoteActionsSheet: View {
     /// offset into this note's body. Reached from the note list as well as from the editor, and
     /// there the only sensible landing is the note itself, so a caller with no editor open passes
     /// something that opens it.
-    let onJumpTo: (Int) -> Void
+    let onJumpTo: (NoteJumpTarget) -> Void
     /// Whether to offer "Open note". Presented from the note list it is the point of the sheet;
     /// presented from inside the note's own editor it pushes a second copy of the screen the
     /// reader is already looking at, and Back then appears not to work.
@@ -85,9 +85,9 @@ struct NoteActionsSheet: View {
                     dismiss()
                     onOpenNote(id)
                 },
-                onJumpTo: { offset in
+                onJumpTo: { target in
                     dismiss()
-                    onJumpTo(offset)
+                    onJumpTo(target)
                 },
                 state: toolsState)
         }
