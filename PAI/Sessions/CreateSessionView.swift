@@ -26,6 +26,7 @@ struct CreateSessionView: View {
     @Environment(SettingsStore.self) private var settings
     @Environment(DraftStore.self) private var drafts
     @Environment(StagedAttachmentStore.self) private var staging
+    @Environment(ClaudeAuthStore.self) private var claudeAuth
 
     @State private var createSession: CreateSessionStore?
     @State private var isPresentingDirectoryBrowser = false
@@ -137,7 +138,11 @@ struct CreateSessionView: View {
                     .padding(.horizontal, 20)
                     .padding(.top, 24)
                 }
-                composerBar(createSession, voiceController)
+                if ClaudeAuthPredicates.needsSignIn(claudeAuth.auth) {
+                    signInBlockedRow
+                } else {
+                    composerBar(createSession, voiceController)
+                }
             }
             .paiScreenBackground()
             .sheet(isPresented: $isPresentingDirectoryBrowser) {
@@ -265,6 +270,26 @@ struct CreateSessionView: View {
     }
 
     // MARK: - Composer
+
+    /// A session started without a working credential does not fail — it launches, never
+    /// registers with Remote Control, and sits spinning until a timeout blames the connection.
+    /// So the composer is replaced rather than greyed out, matching the web's `NewSessionView`:
+    /// the answer is above, in the sign-in banner, and nothing typed here could reach anything
+    /// until that is done.
+    private var signInBlockedRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "key.fill")
+            Text("Sign in to Claude above first — a session started now could not start.")
+        }
+        .font(PaiTypography.body.font)
+        .foregroundStyle(PaiPalette.Semantic.textMuted)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PaiPalette.Semantic.raisedSurface, in: RoundedRectangle(cornerRadius: 14))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
 
     /// The same shape `ComposerBar`'s drivable composer uses, over the same `DraftKey.newSession`
     /// draft, minus the Cancel action (`hasSession: false` — nothing is running yet).

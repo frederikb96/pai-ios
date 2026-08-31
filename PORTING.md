@@ -25,10 +25,3 @@ Needs a backend change first: the list route returns no creation timestamp, only
 `GET /api/notes/{id}` does, so the sort menu can offer last-modified, name and favourites-first and
 nothing else. Adding `created_at_ms` to the notes-list projection, to `web/src/api/types.ts`'s
 `NoteSummary` and to this repo's own model would close it.
-
-### Claude sign-in banner and the new-session gate — pai-cloud anchor: `web/src/components/ClaudeAuthBanner.tsx`, `web/src/stores/claudeAuth.ts`
-Needs `PAI/` because: it is a banner above the whole app plus a composer the new-session screen
-withholds. The model half is already here — `ClaudeAuth.health` / `rejectedSince`, and the rule
-that `loggedIn` is the only thing that may gate a launch. What is missing is anything that shows
-it: the phone can currently start a session against a credential the account refuses, and the
-session then hangs with no explanation, which is the exact experience the web fix removed.
