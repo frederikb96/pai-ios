@@ -304,11 +304,20 @@ struct ToolBodyText: View {
     var body: some View {
         ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
             if case .codeBlock(_, let code) = block {
-                coloredText(for: code, highlights: highlightsByBlockIndex[index] ?? [])
-                    .textSelection(.enabled)
-                    .padding(TranscriptRowMetrics.codeBlockPadding)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(PaiPalette.Semantic.raisedSurface, in: RoundedRectangle(cornerRadius: 6))
+                // Scrolls sideways rather than wrapping, exactly as `MarkdownContentView` draws
+                // the same block — and for a reason beyond matching the web's `overflow-x-auto`:
+                // `TextKitBlockMeasurer` measures a code block by its line count, on the premise
+                // that it does not wrap. Left to wrap, a card is drawn taller than the row it was
+                // given and the overflow is simply cut off, so an expanded card shows part of its
+                // output and no way to reach the rest.
+                ScrollView(.horizontal, showsIndicators: true) {
+                    coloredText(for: code, highlights: highlightsByBlockIndex[index] ?? [])
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: true, vertical: true)
+                        .padding(TranscriptRowMetrics.codeBlockPadding)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(PaiPalette.Semantic.raisedSurface, in: RoundedRectangle(cornerRadius: 6))
             } else {
                 MarkdownContentView(blocks: [block], highlights: [0: highlightsByBlockIndex[index] ?? []])
             }
