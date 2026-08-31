@@ -72,10 +72,25 @@ final class DeepLinkTests: XCTestCase {
         XCTAssertNil(DeepLink.from(url: URL(string: "pai://note/n1/extra")!))
     }
 
+    /// `notesList` and `createSession` carry no id, so they parse from a bare host — but they must
+    /// not swallow a trailing segment nobody asked them to, the same guard `testRejectsExtra
+    /// PathSegments` proves for the id-carrying cases.
+    func testParsesTheIdLessLinks() {
+        XCTAssertEqual(DeepLink.from(url: URL(string: "pai://notes")!), .notesList)
+        XCTAssertEqual(DeepLink.from(url: URL(string: "pai://createsession")!), .createSession)
+    }
+
+    func testRejectsAnExtraSegmentAfterAnIdLessHost() {
+        XCTAssertNil(DeepLink.from(url: URL(string: "pai://notes/extra")!))
+        XCTAssertNil(DeepLink.from(url: URL(string: "pai://createsession/extra")!))
+    }
+
     /// A shortcut stores the URL this property produces and hands it back months later, so the
     /// two sides have to agree for ids that are not URL-safe.
     func testAURLRoundTripsThroughParsing() {
-        for link in [DeepLink.session(id: "a b/c"), .note(id: "n#1"), .note(id: "plain")] {
+        for link in [
+            DeepLink.session(id: "a b/c"), .note(id: "n#1"), .note(id: "plain"), .notesList, .createSession,
+        ] {
             guard let url = link.url else { return XCTFail("\(link) produced no URL") }
             XCTAssertEqual(DeepLink.from(url: url), link, "\(url) did not round-trip")
         }
@@ -87,6 +102,14 @@ final class DeepLinkTests: XCTestCase {
     /// back stack strands the reader on one note with no way into the app.
     func testANoteLinkLandsOnTheIndexAndThenTheNote() {
         XCTAssertEqual(DeepLink.note(id: "n1").routes, [.notes, .note(id: "n1")])
+    }
+
+    func testNotesListLandsOnTheIndex() {
+        XCTAssertEqual(DeepLink.notesList.routes, [.notes])
+    }
+
+    func testCreateSessionLandsOnTheCreateSessionRoute() {
+        XCTAssertEqual(DeepLink.createSession.routes, [.createSession])
     }
 
     func testASessionLinkLandsDirectlyOnTheSession() {
