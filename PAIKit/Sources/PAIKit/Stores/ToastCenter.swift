@@ -50,8 +50,8 @@ public final class ToastCenter {
     public init() {}
 
     /// Shows a message and lets it dismiss itself after `lifetimeNanos`. A toast carrying an
-    /// `action` (the undo-delete case) must pass the same window the action itself stays live
-    /// for — ``SessionListStore/deleteUndoNanos`` — so the button can never outlive what it undoes.
+    /// `action` (the note undo-delete case) must pass the same window the action itself stays
+    /// live for, so the button can never outlive what it undoes.
     @discardableResult
     public func show(
         _ text: String, kind: ToastMessage.Kind = .info, action: ToastMessage.Action? = nil,

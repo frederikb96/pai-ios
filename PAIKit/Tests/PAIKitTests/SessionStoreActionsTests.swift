@@ -92,16 +92,15 @@ final class SessionStoreActionsTests: XCTestCase {
         XCTAssertEqual(since, ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: 1_750_000_000 - 3600)))
     }
 
-    func testDeleteWithHoldDelegatesToTheListStoreRatherThanCallingTheApiDirectly() async {
+    func testDeleteNowDelegatesToTheListStoreRatherThanCallingTheApiDirectly() async {
         let (listStore, _) = await makeListStore(session: SessionFixture.make(id: "s1"))
         await listStore.loadInitialSessions()
         let actionsApi = FakeSessionActionsApi()
         let store = SessionActionsStore(sessionId: "s1", sessionList: listStore, api: actionsApi)
 
-        store.deleteWithHold()
+        store.deleteNow()
 
         XCTAssertTrue(listStore.syncedSessions.isEmpty)
-        XCTAssertEqual(listStore.pendingDelete?.session.id, "s1")
     }
 }
 

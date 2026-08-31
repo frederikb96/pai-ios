@@ -11,7 +11,7 @@ public protocol SessionListApiClient: Sendable {
     func searchSessions(
         q: String, mode: SessionSearchMode?, agent: String?, limit: Int?
     ) async throws -> [SessionSearchResult]
-    /// Only reached through the delete-hold in `deleteSessionWithHold(id:)` — see its doc comment.
+    /// Only reached through `SessionListStore.deleteSession(id:)` — see its doc comment.
     func deleteSession(sessionId: String) async throws -> DeleteResponse
 }
 
@@ -52,12 +52,6 @@ public enum SessionListEmptyState: Sendable, Equatable {
     case none, loadingFirstResults, noMatchingSessions, noSessionsYet
 }
 
-/// A session `deleteSessionWithHold` has removed from the list but not yet asked the server to
-/// delete — `session` is kept so `undoDelete()` can restore the exact row rather than re-fetching.
-public struct PendingDelete: Sendable, Equatable {
-    public let session: Session
-}
-
 /// Swift port of the session list's data flow: `pai-cloud/web/src/stores/session.ts` (the synced
 /// list) and the filter/search routing inline in `Sidebar.tsx` (`useServerFilteredSessions`,
 /// the debounce effect, the id-fragment short-circuit). Everything a session list VIEW needs is
@@ -83,9 +77,6 @@ public final class SessionListStore {
     static let sessionsPageSize = 100
     static let searchResultLimit = 100
     static let defaultSemanticThreshold = 0.0
-    /// How long a deleted row waits before the DELETE actually reaches the server — the same
-    /// window the web's undo toast holds open (`stores/session.ts`'s `deleteSession`).
-    public static let deleteUndoNanos: UInt64 = 5_000_000_000
     /// Long enough that ordinary typing produces one request, short enough that results still
     /// feel responsive. Applied only to raw typed text — a chip click, a mode toggle and the
     /// Enter key all bypass this, because each is a discrete choice, not a keystroke stream.
@@ -105,9 +96,6 @@ public final class SessionListStore {
     /// another account's. Kept so a view that keeps asking about the same missing id (a stale
     /// deep link, say) does not re-fire the same request on every read.
     public private(set) var unknownSessionIds: Set<String> = []
-    /// A session removed from the list by `deleteSessionWithHold`, waiting out its undo window
-    /// before the DELETE actually fires. See that method's doc comment.
-    public private(set) var pendingDelete: PendingDelete?
 
     // MARK: Filter / search UI state
 
@@ -135,22 +123,15 @@ public final class SessionListStore {
     private var debounceTask: Task<Void, Never>?
     private var serverFilteredTask: Task<Void, Never>?
     private var pollTask: Task<Void, Never>?
-    /// The delayed real DELETE armed by `deleteSessionWithHold`. Cancelled by `undoDelete()`, and
-    /// replaced (with the previous one fired immediately) if a second delete lands while one is
-    /// already waiting out its hold — matching the web, where only one row is ever mid-undo.
-    private var pendingDeleteTask: Task<Void, Never>?
 
     private let api: SessionListApiClient
     private let debounceNanos: UInt64
-    private let deleteUndoNanos: UInt64
 
     public init(
-        api: SessionListApiClient, debounceNanos: UInt64 = SessionListStore.defaultTextDebounceNanos,
-        deleteUndoNanos: UInt64 = SessionListStore.deleteUndoNanos
+        api: SessionListApiClient, debounceNanos: UInt64 = SessionListStore.defaultTextDebounceNanos
     ) {
         self.api = api
         self.debounceNanos = debounceNanos
-        self.deleteUndoNanos = deleteUndoNanos
     }
 
     // MARK: - The view's surface
@@ -425,49 +406,26 @@ public final class SessionListStore {
         syncedSessions.insert(session, at: 0)
     }
 
-    // MARK: - Delete, with a client-side undo hold
+    // MARK: - Delete
 
-    /// Removes a row from the list immediately and fires the real `DELETE` only after
-    /// ``deleteUndoNanos`` — the server delete is irreversible (it purges messages, outbox and
-    /// drafts, and cascades turns to phases to projects), so the hold is what makes "delete" safe
-    /// to tap by accident. Swift port of `session.ts`'s `deleteSession`.
-    ///
-    /// Deleting a second row while one is already mid-hold fires the first one's DELETE right
-    /// away rather than silently dropping it — only one row is ever mid-undo, matching the web.
-    public func deleteSessionWithHold(id: String) {
+    /// Removes a row from the list at once and fires the real `DELETE` off the synchronous path —
+    /// the row disappearing is what has to feel instant, not the network round trip. There is no
+    /// hold and no undo: the delete is irreversible (it purges messages, the outbox and drafts,
+    /// and cascades turns to phases to projects), and an undo that only worked because the delete
+    /// had not happened yet would be worse than none. Swift port of `session.ts`'s `deleteSession`.
+    public func deleteSession(id: String) {
         guard let session = session(withId: id) else { return }
-        if let pendingDelete {
-            pendingDeleteTask?.cancel()
-            let staleId = pendingDelete.session.id
-            Task { [api] in _ = try? await api.deleteSession(sessionId: staleId) }
-        }
-
         syncedSessions.removeAll { $0.id == id }
         serverFilteredResults.removeAll { $0.session.id == id }
-        pendingDelete = PendingDelete(session: session)
-
-        pendingDeleteTask = Task { [weak self, api, deleteUndoNanos] in
-            try? await Task.sleep(nanoseconds: deleteUndoNanos)
-            guard !Task.isCancelled else { return }
-            // Clearing `pendingDelete` before the request goes out, not after it returns, is what
-            // makes the hold actually irreversible the moment it elapses: `undoDelete()` guards on
-            // `pendingDelete`, so a tap landing while this `DELETE` is in flight must find it
-            // already gone rather than restoring a row the server is mid-way through deleting.
-            guard let self, self.pendingDelete?.session.id == id else { return }
-            self.pendingDelete = nil
-            _ = try? await api.deleteSession(sessionId: id)
+        Task { [weak self, api] in
+            do {
+                _ = try await api.deleteSession(sessionId: id)
+            } catch {
+                // The request never reached the backend, so the session still exists there —
+                // leaving it gone from the list would be a lie.
+                self?.upsertSession(session)
+            }
         }
-    }
-
-    /// Restores the row the last `deleteSessionWithHold` removed, and cancels the delayed DELETE
-    /// so it never fires. A no-op once the hold has already elapsed — the delete is irreversible
-    /// past that point, matching the server.
-    public func undoDelete() {
-        guard let pendingDelete else { return }
-        pendingDeleteTask?.cancel()
-        pendingDeleteTask = nil
-        upsertSession(pendingDelete.session)
-        self.pendingDelete = nil
     }
 
     // MARK: - Sources B/C: routing, debounce, generation + cancellation
