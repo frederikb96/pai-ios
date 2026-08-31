@@ -53,6 +53,12 @@ struct SubagentListScreen: View {
             store = newStore
             await newStore.loadInitial()
             hasLoadedInitial = true
+            // Seeds the store's baseline with whatever the count already is at this moment —
+            // `.onChange` below never fires for the value already in place when the view first
+            // appeared, only for a later change, so without this the FIRST real change (0 agents
+            // to 1) would be silently swallowed rather than triggering a refresh. Matches the web's
+            // `SubagentPanel.tsx`, which seeds its own baseline ref at mount for the same reason.
+            await newStore.noteParentAgentsCount(parentAgentsCount)
         }
         .onChange(of: parentAgentsCount) { _, newCount in
             guard let store else { return }

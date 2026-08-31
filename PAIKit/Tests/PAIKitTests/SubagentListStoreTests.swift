@@ -90,6 +90,39 @@ final class SubagentListStoreTests: XCTestCase {
         XCTAssertEqual(store.subagents.map(\.id), ["a2", "a1"])
     }
 
+    /// The exact sequence `SubagentListScreen` drives, not each half in isolation: its `.task`
+    /// seeds the baseline with whatever the count already is right after `loadInitial()`, because
+    /// `.onChange` never fires for the value already in place when the view first appears — only
+    /// for a later change. Regression for the bug where that seed call was missing entirely: a
+    /// session going from zero subagents to one showed nothing, because the FIRST real change was
+    /// consumed as the baseline instead of triggering a refresh. The other tests above all pass an
+    /// arbitrary baseline in by hand, which is why none of them caught it.
+    func testSeedingAtLoadThenTheFirstRealChangeStillRefreshes() async {
+        let api = FakeSubagentListApi()
+        await api.setResults([.success(page([]))])
+        let store = SubagentListStore(parentSessionId: parentId, api: api)
+        await store.loadInitial()
+        let callsAfterLoad = await api.calls.count
+
+        // The screen's `.task` seeds with the count already in place — zero subagents running,
+        // matching `loadInitial`'s own empty result — never an arbitrary constant. Checking the
+        // call count, not just the return value, is what actually distinguishes "the guard
+        // skipped this" from "the guard ran a fetch that happened to find nothing new": an empty
+        // fixture would report `false` from a stray fetch too, and only the extra call reveals it.
+        let seeded = await store.noteParentAgentsCount(0)
+        XCTAssertFalse(seeded, "the seed call itself must never be read as a change")
+        let callsAfterSeed = await api.calls.count
+        XCTAssertEqual(callsAfterSeed, callsAfterLoad, "seeding the baseline must not itself trigger a fetch")
+
+        let firstSubagent = makeSubagent(id: "a1")
+        await api.setResults([.success(page([firstSubagent]))])
+        let prepended = await store.noteParentAgentsCount(1)
+
+        XCTAssertTrue(
+            prepended, "the first real change after seeding must refresh, not be swallowed as a second baseline")
+        XCTAssertEqual(store.subagents.map(\.id), ["a1"])
+    }
+
     /// A count change whose refreshed page carries no id this store has not already seen updates
     /// rows in place and must answer `false` — the signal a view uses to skip its scroll
     /// compensation for an ordinary content update.
