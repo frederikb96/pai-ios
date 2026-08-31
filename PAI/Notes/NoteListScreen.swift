@@ -210,7 +210,6 @@ struct NoteListScreen: View {
                 tagFilterButton
             }
             .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
         }

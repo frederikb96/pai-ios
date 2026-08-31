@@ -178,8 +178,16 @@ jobs:
             # screen. Without this settle the screenshot is a race the app usually wins and
             # occasionally loses, producing a black PNG that is indistinguishable from a genuinely
             # broken screen and costs an investigation to dismiss.
-            sleep 3
+            sleep 6
             xcrun simctl io "$udid" screenshot "artifacts/screen-$name.png"
+            # A screen caught before its first frame is a black PNG that still compresses to tens
+            # of kilobytes, so the size floor below cannot see it — and it is indistinguishable
+            # from a screen that genuinely renders nothing, which costs a metered run to tell
+            # apart. One retake settles it: a real blank screen is blank the second time too.
+            if [ "$(stat -f %z "artifacts/screen-$name.png")" -le 100000 ]; then
+              sleep 5
+              xcrun simctl io "$udid" screenshot "artifacts/screen-$name.png"
+            fi
             # Read AFTER the screenshot, not with the health probe: the bridge answers the moment
             # it is listening, which is before the screen has fetched, measured or drawn anything
             # worth logging. This is what distinguishes "nothing arrived" from "nothing measured"
