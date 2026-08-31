@@ -27,6 +27,14 @@ struct NoteEditorSurface: View {
     /// What the in-note search is looking for, painted across the note — see
     /// ``MarkdownSourceTextView/highlight``.
     let highlight: String?
+    /// Whether the screen has a sheet up over this editor — the outline/links/history panel or
+    /// the actions sheet, neither of which resigns the editor's first responder status on its
+    /// own. Folded into the text view's effective focus below, alongside this view's own local
+    /// sheets (the attachment picker), rather than left to the text view to guess: without it, a
+    /// store update the sheet's own reload triggers rebuilds this screen, and the hidden text
+    /// view — still holding first-responder status from before the sheet opened, or reclaiming it
+    /// on the rebuild — steals the keyboard (and any keystrokes) right back from the sheet.
+    let isCoveredBySheet: Bool
     let onChange: (String) -> Void
 
     @Environment(NotesStore.self) private var notes
@@ -51,22 +59,29 @@ struct NoteEditorSurface: View {
 
     init(
         noteID: String, text: String, revision: Int, jump: NoteJumpRequest?, highlight: String?,
-        onChange: @escaping (String) -> Void
+        isCoveredBySheet: Bool, onChange: @escaping (String) -> Void
     ) {
         self.noteID = noteID
         self.text = text
         self.revision = revision
         self.jump = jump
         self.highlight = highlight
+        self.isCoveredBySheet = isCoveredBySheet
         self.onChange = onChange
         _lastPublished = State(initialValue: text)
+    }
+
+    /// Every sheet that covers this view, whether presented by the screen above or by this view's
+    /// own attachment flow — see ``isCoveredBySheet``.
+    private var isCovered: Bool {
+        isCoveredBySheet || isChoosingAttachment || isPickingPhoto || isPickingFile
     }
 
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 0) {
                 MarkdownSourceTextView(
-                    text: text, isFocused: isFocused, caret: caret, highlight: highlight,
+                    text: text, isFocused: isFocused && !isCovered, caret: caret, highlight: highlight,
                     onChange: { edited($0) },
                     onFocus: { isFocused = true },
                     onAttach: { offset in beginAttachment(at: offset) }

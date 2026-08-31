@@ -96,8 +96,15 @@ struct MarkdownSourceTextView: UIViewRepresentable {
             context.coordinator.paintedHighlight = highlight
         }
 
-        if isFocused, !view.isFirstResponder {
-            view.becomeFirstResponder()
+        // `isFocused` drives first-responder status in both directions, not only upwards: a
+        // sheet covering this view (see `NoteEditorSurface/isCoveredBySheet`) makes it false
+        // regardless of whether the reader was mid-keystroke, and this is what actually lets go
+        // of the keyboard rather than merely skipping the next reclaim — a view that already is
+        // first responder stays one under an `if isFocused` with no `else`, sheet or not.
+        if isFocused {
+            if !view.isFirstResponder { view.becomeFirstResponder() }
+        } else if view.isFirstResponder {
+            view.resignFirstResponder()
         }
 
         if let caret, caret.token != context.coordinator.appliedCaretToken {
