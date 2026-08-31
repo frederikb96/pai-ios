@@ -190,6 +190,34 @@ actor FakeClaudeAuthApi: ClaudeAuthApiClient {
     }
 }
 
+// MARK: - SubagentListApiClient
+
+actor FakeSubagentListApi: SubagentListApiClient {
+    struct GetSessionsCall: Equatable {
+        let cursor: String?
+        let kind: SessionKind?
+        let parent: String?
+    }
+
+    private(set) var calls: [GetSessionsCall] = []
+    /// FIFO per call — each `getSessions` call pulls the next queued result, so a test can script
+    /// a first page and a distinct top-page refresh independently.
+    var results: [Result<SessionsPage, PaiError>] = [.success(SessionsPage(sessions: [], nextCursor: nil))]
+
+    func getSessions(
+        since: String?, limit: Int?, cursor: String?, agent: String?, kind: SessionKind?, parent: String?, q: String?
+    ) async throws -> SessionsPage {
+        calls.append(GetSessionsCall(cursor: cursor, kind: kind, parent: parent))
+        let result =
+            results.count > 1
+            ? results.removeFirst() : (results.first ?? .success(SessionsPage(sessions: [], nextCursor: nil)))
+        switch result {
+        case let .success(page): return page
+        case let .failure(error): throw error
+        }
+    }
+}
+
 // MARK: - CreateSessionApiClient
 
 actor FakeCreateSessionApi: CreateSessionApiClient {
@@ -359,6 +387,7 @@ enum SessionFixture {
         kind: SessionKind? = .conversation,
         claudeSessionId: String? = nil,
         projectName: String? = nil,
+        parentSessionId: String? = nil,
         subagentName: String? = nil,
         subagentType: String? = nil,
         activityCounts: ActivityCounts? = nil
@@ -385,7 +414,7 @@ enum SessionFixture {
             workingDir: workingDir,
             agent: agent,
             kind: kind,
-            parentSessionId: nil,
+            parentSessionId: parentSessionId,
             subagentName: subagentName,
             subagentType: subagentType,
             subagentDescription: nil,

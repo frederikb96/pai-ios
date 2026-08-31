@@ -122,6 +122,8 @@ struct RootView: View {
             SettingsScreen()
         case .createSession:
             CreateSessionRouteScreen()
+        case .subagents(let parentID):
+            SubagentListScreen(parentSessionId: parentID)
         case .notes:
             NoteListScreen()
         case .note(let id):

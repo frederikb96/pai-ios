@@ -23,6 +23,10 @@ public enum Route: Hashable, Sendable {
     /// pushing the view directly, so what gets photographed is what Freddy actually sees, not a
     /// second `NavigationStack` nested inside the first with its own, different chrome.
     case createSession
+    /// One conversation's own subagents — reached from its actions menu, never from a subagent
+    /// itself (a subagent's own children are flattened into its top-level parent, so it has
+    /// nothing of its own to show here).
+    case subagents(parentID: String)
     /// The note index.
     case notes
     /// One note's editor. Reached from the index, from a wikilink in another note, and from a
@@ -47,7 +51,7 @@ extension Route {
     /// gains a case; the workflow itself asks the running app for this list rather than
     /// hardcoding it, so a new screen becomes photographable without a CI file edit.
     public static let namedScreens: [String] = [
-        "session", "terminal", "settings", "createSession", "notes", "note", "noteContainers",
+        "session", "terminal", "settings", "createSession", "subagents", "notes", "note", "noteContainers",
         "notePreview",
     ]
 
@@ -67,6 +71,7 @@ extension Route {
         case "terminal": return .terminal(sessionID: sessionID)
         case "settings": return .settings
         case "createSession": return .createSession
+        case "subagents": return .subagents(parentID: sessionID)
         case "notes": return .notes
         case "note": return .note(id: noteID)
         case "noteContainers": return .noteContainers
@@ -177,7 +182,7 @@ public final class Router {
             switch route {
             case .session(let id): return id
             case .terminal(let sessionID): return sessionID
-            case .settings, .createSession, .notes, .note, .noteContainers, .notePreview: continue
+            case .settings, .createSession, .subagents, .notes, .note, .noteContainers, .notePreview: continue
             }
         }
         return nil
@@ -189,7 +194,7 @@ public final class Router {
         for route in path.reversed() {
             switch route {
             case .note(let id), .notePreview(let id): return id
-            case .session, .terminal, .settings, .createSession, .notes, .noteContainers: continue
+            case .session, .terminal, .settings, .createSession, .subagents, .notes, .noteContainers: continue
             }
         }
         return nil
