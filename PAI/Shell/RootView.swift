@@ -156,13 +156,23 @@ struct RootView: View {
 /// list) rather than pushing `CreateSessionView` directly, so the fixture screenshot workflow
 /// photographs the exact thing Freddy sees rather than that view's own `NavigationStack` nested
 /// inside this one with different, misleading chrome. See `Route.createSession`'s doc comment.
+///
+/// A home-screen shortcut reaches this same route (`DeepLink.createSession`), where — unlike the
+/// fixture workflow — nothing else pops it back off: popping itself the moment its own sheet is
+/// dismissed is what stops Cancel from leaving Freddy on a blank, transparent screen with a stray
+/// system Back button.
 private struct CreateSessionRouteScreen: View {
+    @Environment(AppEnvironment.self) private var environment
     @State private var isPresented = true
 
     var body: some View {
         Color.clear
             .sheet(isPresented: $isPresented) {
                 CreateSessionView()
+            }
+            .onChange(of: isPresented) { _, presented in
+                guard !presented else { return }
+                environment.router.pop()
             }
     }
 }

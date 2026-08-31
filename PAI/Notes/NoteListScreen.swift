@@ -72,22 +72,16 @@ struct NoteListScreen: View {
                     }
                     .accessibilityLabel("Note list actions")
                 }
+                // A chooser here used to offer "New note" beside "New container" — the second of
+                // those pushes to exactly the screen the "…" menu's own "Containers" item does,
+                // and that screen has its own plus for making one. Plus means new note directly.
                 ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button {
-                            Task { await createNote() }
-                        } label: {
-                            Label("New note", systemImage: "square.and.pencil")
-                        }
-                        Button {
-                            environment.router.push(.noteContainers)
-                        } label: {
-                            Label("New container", systemImage: "folder.badge.plus")
-                        }
+                    Button {
+                        Task { await createNote() }
                     } label: {
                         Image(systemName: "plus")
                     }
-                    .accessibilityLabel("Create")
+                    .accessibilityLabel("New note")
                 }
             }
             .task {

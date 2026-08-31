@@ -28,11 +28,19 @@ struct SessionActionsSheet: View {
                     RootActionsList(actions: actions, isOwner: me.isOwner, path: $path) {
                         actions.deleteWithHold()
                         dismiss()
+                        // Leaves a dead transcript screen behind otherwise: the row is gone from
+                        // the list the moment `deleteWithHold` runs, but nothing pops the screen
+                        // that was *about* that row unless this sheet was reached from the list
+                        // itself, where the path never held it to begin with — a no-op there.
+                        environment.router.dismissSession(id: sessionId)
                         toasts.show(
                             "Session deleted",
                             action: .init(label: "Undo") { [sessionList] in sessionList.undoDelete() },
                             lifetimeNanos: SessionListStore.deleteUndoNanos
                         )
+                    } onClose: {
+                        dismiss()
+                        environment.router.dismissSession(id: sessionId)
                     } onCloseFailed: {
                         toasts.show(actions.errorMessage ?? "Could not close the session", kind: .error)
                     }
@@ -90,6 +98,7 @@ private struct RootActionsList: View {
     let isOwner: Bool
     @Binding var path: [ActionsRoute]
     let onDelete: () -> Void
+    let onClose: () -> Void
     let onCloseFailed: () -> Void
 
     @State private var copiedConversationId = false
@@ -162,7 +171,11 @@ private struct RootActionsList: View {
                     if session.state != nil, session.state != .closed {
                         Button {
                             Task {
-                                if !(await actions.close()) { onCloseFailed() }
+                                if await actions.close() {
+                                    onClose()
+                                } else {
+                                    onCloseFailed()
+                                }
                             }
                         } label: {
                             Label("Close session", systemImage: "power")

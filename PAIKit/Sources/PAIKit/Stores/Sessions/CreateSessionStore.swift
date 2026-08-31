@@ -22,13 +22,12 @@ public enum CreateSessionResult: Sendable, Equatable {
 /// NewSessionView.tsx`'s machine/session-type wiring, `SessionTypePicker.tsx`'s preselect effect,
 /// and `stores/session.ts`'s `createSession`.
 ///
-/// **Deliberately does not own composer text or attachments.** The web's `'new'` draft couples
-/// `text` with `sessionType`/`workingDir` in one server object (`stores/drafts.ts`), synced by one
-/// 700ms-debounced `PUT`. Syncing only this store's half of that object independently of whoever
-/// owns the text half would race the same server row rather than share it — that needs one
-/// shared drafts store, not two independently-debounced writers, so server-side draft sync of the
-/// launch choices is left out of this store rather than half-built;
-/// `selectedMachine`/`selectedSessionTypeId`/`workingDir` below are in-memory only.
+/// **Does not own composer text or attachments, and does not itself write to the server.**
+/// `selectedSessionTypeId`/`workingDir` below are this screen's in-memory picker state; the view
+/// mirrors every change into `DraftStore`'s `DraftKey.newSession` entry, the same object holding
+/// the composer text and debounced through the same 700ms `PUT` — one shared writer for the whole
+/// `new` draft, not this store racing the text half for the same server row. `selectedMachine` is
+/// the one choice that is never mirrored: see `reset()`.
 @MainActor
 @Observable
 public final class CreateSessionStore {

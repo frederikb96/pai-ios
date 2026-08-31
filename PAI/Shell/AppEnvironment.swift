@@ -176,6 +176,7 @@ final class AppEnvironment {
         await connection.settings.refreshSecretPresence()
         await connection.machines.refresh()
         await connection.me.refresh()
+        await connection.staging.loadPersisted()
         // Session polling belongs to the app, not to the list screen. Tied to a view it stops
         // the moment a session is opened — so states, titles and warning badges freeze exactly
         // while the user is reading one — and restarting it on return re-fetches the first page,
