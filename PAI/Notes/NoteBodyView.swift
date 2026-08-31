@@ -204,9 +204,8 @@ struct NotePreviewBlockView: View {
     /// Every occurrence of `highlightQuery` in `text`, in this block's own rendered coordinates —
     /// safe to convert straight to an `NSRange` via `Range<String.Index>` because `Foundation`
     /// does the UTF-16 conversion, not hand-rolled Character/byte arithmetic. The first occurrence
-    /// is marked current exactly when this block is the one the jump landed on — "first" rather
-    /// than "the one nearest the jumped offset" is the cheap version of "distinguishable from the
-    /// others" the task asked for, and correct whenever a block has only one hit, which is most of
+    /// is marked current exactly when this block is the one the jump landed on — a cheap way to
+    /// distinguish it from the rest, correct whenever a block has only one hit, which is most of
     /// them.
     private func highlightSpans(in text: String) -> [TranscriptHighlightSpan] {
         guard let highlightQuery, !highlightQuery.isEmpty else { return [] }
