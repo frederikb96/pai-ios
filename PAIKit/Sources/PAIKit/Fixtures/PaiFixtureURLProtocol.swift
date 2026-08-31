@@ -94,6 +94,18 @@
             ) { PaiFixtures.data(json()) }
         }
 
+        /// Picks which `ClaudeAuth` snapshot `/api/auth/claude` answers with — `-PaiFixtureAuthState
+        /// signedOut|rejected|loginInProgress`, defaulting to the healthy body so the sign-in
+        /// banner stays absent (and every other screenshot unaffected) unless a run asks for it.
+        private static func claudeAuthFixtureBody() -> String {
+            switch PaiFixtureLaunch.requestedAuthState() {
+            case "signedOut": return PaiFixtures.claudeAuthSignedOut
+            case "rejected": return PaiFixtures.claudeAuthRejected
+            case "loginInProgress": return PaiFixtures.claudeAuthLoginInProgress
+            default: return PaiFixtures.claudeAuthHealthy
+            }
+        }
+
         /// Matches a request under `/api/notes/{id}/…`, regardless of which id was asked for —
         /// the corpus has one note, and a screenshot run never needs to tell notes apart.
         private static func noteScoped(
@@ -120,7 +132,7 @@
             exact("GET", "/api/usage") { PaiFixtures.usage },
             exact("GET", "/api/settings/secrets") { PaiFixtures.secretStatuses },
             exact("GET", "/api/settings/smtp") { PaiFixtures.smtpSettings },
-            exact("GET", "/api/auth/claude") { PaiFixtures.claudeAuthHealthy },
+            exact("GET", "/api/auth/claude") { claudeAuthFixtureBody() },
             exact("GET", "/api/browse") { PaiFixtures.browseResult },
             exact("GET", "/api/favorites") { PaiFixtures.folderFavorites },
             exact("POST", "/api/voice/token") { PaiFixtures.voiceToken },

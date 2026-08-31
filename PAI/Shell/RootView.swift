@@ -53,6 +53,14 @@ struct RootView: View {
                                 destination(for: route)
                             }
                     }
+                    // A block above the stack's own content, pushing it down rather than
+                    // floating over it — the same "above the whole app" placement the web gives
+                    // it, so it reads on the session list and inside an open conversation alike.
+                    // Decorates the `NavigationStack` itself, which stays one view instance across
+                    // every push, so the inset persists regardless of what the stack shows.
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        ClaudeAuthBanner()
+                    }
                     ToastOverlay(toasts: connection.toasts)
                 }
                 // The one page ground for every screen the stack pushes — none of them paint
@@ -62,6 +70,7 @@ struct RootView: View {
                 .environment(environment)
                 .environment(connection.sessions)
                 .environment(connection.machines)
+                .environment(connection.claudeAuth)
                 .environment(connection.transcript)
                 .environment(connection.settings)
                 .environment(connection.drafts)
@@ -113,6 +122,8 @@ struct RootView: View {
             SettingsScreen()
         case .createSession:
             CreateSessionRouteScreen()
+        case .subagents(let parentID):
+            SubagentListScreen(parentSessionId: parentID)
         case .notes:
             NoteListScreen()
         case .note(let id):

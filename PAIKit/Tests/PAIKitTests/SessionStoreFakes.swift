@@ -128,6 +128,96 @@ actor FakeMachineDirectoryApi: MachineDirectoryApiClient {
     }
 }
 
+// MARK: - ClaudeAuthApiClient
+
+actor FakeClaudeAuthApi: ClaudeAuthApiClient {
+    private(set) var getCallCount = 0
+    private(set) var startLoginCallCount = 0
+    private(set) var submitCodeCalls: [(loginId: String, code: String)] = []
+    private(set) var cancelLoginCallCount = 0
+
+    var getResult: Result<ClaudeAuth, PaiError> = .success(
+        ClaudeAuth(
+            known: false, loggedIn: nil, subscription: nil, accessExpiresAt: nil, refreshExpiresAt: nil,
+            login: nil, lastError: nil, reportedAt: nil
+        ))
+    var startLoginResult: Result<ClaudeAuth, PaiError>?
+    var submitCodeResult: Result<ClaudeLoginCodeResponse, PaiError>?
+    var cancelLoginResult: Result<ClaudeAuth, PaiError>?
+
+    func getClaudeAuth() async throws -> ClaudeAuth {
+        getCallCount += 1
+        switch getResult {
+        case let .success(auth): return auth
+        case let .failure(error): throw error
+        }
+    }
+
+    func startClaudeLogin() async throws -> ClaudeAuth {
+        startLoginCallCount += 1
+        guard let startLoginResult else { return try unwrap(getResult) }
+        switch startLoginResult {
+        case let .success(auth): return auth
+        case let .failure(error): throw error
+        }
+    }
+
+    func submitClaudeLoginCode(loginId: String, code: String) async throws -> ClaudeLoginCodeResponse {
+        submitCodeCalls.append((loginId, code))
+        guard let submitCodeResult else {
+            throw PaiError.transport("no submitCodeResult scripted")
+        }
+        switch submitCodeResult {
+        case let .success(response): return response
+        case let .failure(error): throw error
+        }
+    }
+
+    func cancelClaudeLogin() async throws -> ClaudeAuth {
+        cancelLoginCallCount += 1
+        guard let cancelLoginResult else { return try unwrap(getResult) }
+        switch cancelLoginResult {
+        case let .success(auth): return auth
+        case let .failure(error): throw error
+        }
+    }
+
+    private func unwrap(_ result: Result<ClaudeAuth, PaiError>) throws -> ClaudeAuth {
+        switch result {
+        case let .success(auth): return auth
+        case let .failure(error): throw error
+        }
+    }
+}
+
+// MARK: - SubagentListApiClient
+
+actor FakeSubagentListApi: SubagentListApiClient {
+    struct GetSessionsCall: Equatable {
+        let cursor: String?
+        let kind: SessionKind?
+        let parent: String?
+    }
+
+    private(set) var calls: [GetSessionsCall] = []
+    /// FIFO per call — each `getSessions` call pulls the next queued result, so a test can script
+    /// a first page and a distinct top-page refresh independently.
+    var results: [Result<SessionsPage, PaiError>] = [.success(SessionsPage(sessions: [], nextCursor: nil))]
+
+    func getSessions(
+        since: String?, limit: Int?, cursor: String?, agent: String?, kind: SessionKind?, parent: String?, q: String?
+    ) async throws -> SessionsPage {
+        calls.append(GetSessionsCall(cursor: cursor, kind: kind, parent: parent))
+        let result =
+            results.count > 1
+            ? results.removeFirst() : (results.first ?? .success(SessionsPage(sessions: [], nextCursor: nil)))
+        switch result {
+        case let .success(page): return page
+        case let .failure(error): throw error
+        }
+    }
+}
+
 // MARK: - CreateSessionApiClient
 
 actor FakeCreateSessionApi: CreateSessionApiClient {
@@ -297,6 +387,7 @@ enum SessionFixture {
         kind: SessionKind? = .conversation,
         claudeSessionId: String? = nil,
         projectName: String? = nil,
+        parentSessionId: String? = nil,
         subagentName: String? = nil,
         subagentType: String? = nil,
         activityCounts: ActivityCounts? = nil
@@ -323,7 +414,7 @@ enum SessionFixture {
             workingDir: workingDir,
             agent: agent,
             kind: kind,
-            parentSessionId: nil,
+            parentSessionId: parentSessionId,
             subagentName: subagentName,
             subagentType: subagentType,
             subagentDescription: nil,

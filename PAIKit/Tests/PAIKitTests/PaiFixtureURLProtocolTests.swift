@@ -26,6 +26,14 @@ final class PaiFixtureURLProtocolTests: XCTestCase {
         XCTAssertEqual(body(match), PaiFixtures.sessions)
     }
 
+    /// `swift test`'s own process never carries `-PaiFixtureAuthState`, so this exercises the
+    /// route's default branch — the one every screenshot that is not itself about the sign-in
+    /// banner relies on staying the healthy body.
+    func testClaudeAuthRouteDefaultsToTheHealthyBodyWithNoLaunchArgument() {
+        let match = PaiFixtureURLProtocol.route(method: "GET", path: "/api/auth/claude")
+        XCTAssertEqual(body(match), PaiFixtures.claudeAuthHealthy)
+    }
+
     func testSessionScopedRouteMatchesAnyID() {
         let first = PaiFixtureURLProtocol.route(method: "GET", path: "/api/session/one/messages")
         let second = PaiFixtureURLProtocol.route(method: "GET", path: "/api/session/305df4d3/messages")

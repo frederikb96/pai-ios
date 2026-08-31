@@ -43,6 +43,9 @@ struct SessionActionsSheet: View {
                         environment.router.dismissSession(id: sessionId)
                     } onCloseFailed: {
                         toasts.show(actions.errorMessage ?? "Could not close the session", kind: .error)
+                    } onOpenSubagents: {
+                        dismiss()
+                        environment.router.push(.subagents(parentID: sessionId))
                     }
                 } else {
                     ProgressView()
@@ -100,6 +103,7 @@ private struct RootActionsList: View {
     let onDelete: () -> Void
     let onClose: () -> Void
     let onCloseFailed: () -> Void
+    let onOpenSubagents: () -> Void
 
     @State private var copiedConversationId = false
 
@@ -111,6 +115,14 @@ private struct RootActionsList: View {
                         path.append(.rename)
                     } label: {
                         Label("Rename", systemImage: "pencil")
+                    }
+                }
+
+                // A subagent's own children, if any, are flattened into its top-level parent's
+                // list — this view has nothing of its own to show for one.
+                if session.kind != .subagent {
+                    Button(action: onOpenSubagents) {
+                        Label("Subagents", systemImage: "cpu")
                     }
                 }
 
