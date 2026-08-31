@@ -10,15 +10,16 @@ struct NoteContainersScreen: View {
 
     @State private var busyId: String?
     @State private var showAdd = false
+    @State private var openTool: ContainerTool?
 
     var body: some View {
         List {
             ForEach(notes.containers) { container in
                 ContainerRow(
                     container: container, busy: busyId == container.id, notes: notes, toasts: toasts,
-                    setBusy: { busyId = $0 }
+                    setBusy: { busyId = $0 }, open: { openTool = $0 }
                 )
-                .listRowBackground(PaiPalette.Semantic.panelBackground)
+                .listRowBackground(PaiPalette.Notes.panelBackground)
             }
             if notes.containers.isEmpty {
                 Text("No containers yet — add the folder your notes sync from.")
@@ -26,8 +27,15 @@ struct NoteContainersScreen: View {
             }
         }
         .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .paiScreenBackground()
+        .paiNotesListBackground()
+        .navigationDestination(item: $openTool) { tool in
+            switch tool {
+            case .attachments(let id, let name):
+                NoteAttachmentsScreen(containerId: id, containerName: name)
+            case .linkHealth(let id):
+                NoteLinkHealthScreen(containerId: id)
+            }
+        }
         .navigationTitle("Containers")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -49,12 +57,26 @@ struct NoteContainersScreen: View {
     }
 }
 
+/// A screen reached from a container row.
+///
+/// Pushed from one destination on the screen rather than from a `NavigationLink` per row control:
+/// two links inside a single `List` row are both activated by a tap anywhere in it, so tapping
+/// "Attachments" pushes the link health screen with the attachments screen underneath it — and
+/// Back reads as the app going the wrong way.
+private enum ContainerTool: Hashable, Identifiable {
+    case attachments(containerId: String, containerName: String)
+    case linkHealth(containerId: String)
+
+    var id: Self { self }
+}
+
 private struct ContainerRow: View {
     let container: NoteContainer
     let busy: Bool
     let notes: NotesStore
     let toasts: ToastCenter
     let setBusy: (String?) -> Void
+    let open: (ContainerTool) -> Void
 
     private static let stateLabel: [String: String] = [
         "pending": "Not scanned yet", "active": "Syncing",
@@ -98,13 +120,12 @@ private struct ContainerRow: View {
                 .lineLimit(2)
 
             HStack(spacing: 12) {
-                NavigationLink("Attachments") {
-                    NoteAttachmentsScreen(containerId: container.id, containerName: container.name)
+                Button("Attachments") {
+                    open(.attachments(containerId: container.id, containerName: container.name))
                 }
-                NavigationLink("Link health") {
-                    NoteLinkHealthScreen(containerId: container.id)
-                }
+                Button("Link health") { open(.linkHealth(containerId: container.id)) }
             }
+            .buttonStyle(.plain)
             .font(PaiTypography.caption.font)
             .foregroundStyle(PaiPalette.primary600)
 
