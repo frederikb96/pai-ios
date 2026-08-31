@@ -91,6 +91,51 @@ final class MarkdownEditingCommandsTests: XCTestCase {
         XCTAssertEqual(applied(.checkbox, to: "- thing", NSRange(location: 3, length: 0))!.0, "- [ ] thing")
     }
 
+    /// The caret has to be a zero-length point right after the marker, not a selection spanning
+    /// the whole rewritten line — a selected line is what the very next keystroke overwrites,
+    /// content and all. A blank line is the common case: tap Bullet, then type the item.
+    func testBulletOnABlankLineLeavesACaretAfterTheMarkerNotASelection() {
+        let (text, selection) = applied(.bulletList, to: "", NSRange(location: 0, length: 0))!
+        XCTAssertEqual(text, "- ")
+        XCTAssertEqual(selection, NSRange(location: 2, length: 0))
+    }
+
+    func testCheckboxOnABlankLineLeavesACaretAfterTheMarker() {
+        let (text, selection) = applied(.checkbox, to: "", NSRange(location: 0, length: 0))!
+        XCTAssertEqual(text, "- [ ] ")
+        XCTAssertEqual(selection, NSRange(location: 6, length: 0))
+    }
+
+    func testQuoteOnABlankLineLeavesACaretAfterTheMarker() {
+        let (text, selection) = applied(.quote, to: "", NSRange(location: 0, length: 0))!
+        XCTAssertEqual(text, "> ")
+        XCTAssertEqual(selection, NSRange(location: 2, length: 0))
+    }
+
+    /// The caret was mid-word ("th" | "ing"), not at an edge — it has to keep the same content
+    /// next to it afterwards, shifted only by however much the marker itself grew.
+    func testACaretMidWordKeepsItsPositionRelativeToTheContent() {
+        let (text, selection) = applied(.bulletList, to: "thing", NSRange(location: 2, length: 0))!
+        XCTAssertEqual(text, "- thing")
+        XCTAssertEqual(selection, NSRange(location: 4, length: 0))
+    }
+
+    /// Replacing a shorter existing marker with a longer one (bullet -> checkbox) still has to
+    /// leave a caret, not a selection spanning the new marker plus the original text.
+    func testCheckboxReplacingABulletLeavesACaretNotASelection() {
+        let (text, selection) = applied(.checkbox, to: "- thing", NSRange(location: 3, length: 0))!
+        XCTAssertEqual(text, "- [ ] thing")
+        XCTAssertEqual(selection, NSRange(location: 7, length: 0))
+    }
+
+    /// A real multi-line selection still collapses to a caret rather than a selection spanning
+    /// the freshly-inserted markers — landing where the first line's own content now starts.
+    func testAMultiLineSelectionCollapsesToACaretPastTheFirstMarker() {
+        let (text, selection) = applied(.bulletList, to: "one\ntwo", NSRange(location: 0, length: 7))!
+        XCTAssertEqual(text, "- one\n- two")
+        XCTAssertEqual(selection, NSRange(location: 2, length: 0))
+    }
+
     // MARK: Headings
 
     func testTheHeadingButtonWalksDownTheLevelsAndBackToNone() {
@@ -117,6 +162,59 @@ final class MarkdownEditingCommandsTests: XCTestCase {
 
     func testASelectionPastTheEndIsRefusedRatherThanTrapping() {
         XCTAssertNil(MarkdownEditing.edit(.bold, in: "hi", selection: NSRange(location: 0, length: 99)))
+    }
+}
+
+/// Indent and outdent, matching the web editor's own (`noteEditing.ts`'s `indentLines` /
+/// `outdentLines`): a tab per line, on and off.
+final class MarkdownIndentTests: XCTestCase {
+
+    private func applied(_ command: MarkdownCommand, to text: String, _ selection: NSRange) -> (String, NSRange)? {
+        guard let edit = MarkdownEditing.edit(command, in: text, selection: selection) else { return nil }
+        let mutable = NSMutableString(string: text)
+        mutable.replaceCharacters(in: edit.range, with: edit.replacement)
+        return (mutable as String, edit.selection)
+    }
+
+    func testIndentAddsATabToEveryLineTheSelectionTouches() {
+        let (text, _) = applied(.indent, to: "one\ntwo\nthree", NSRange(location: 1, length: 6))!
+        XCTAssertEqual(text, "\tone\n\ttwo\nthree")
+    }
+
+    /// A caret with nothing selected still indents the line it is on.
+    func testIndentWithAnEmptyCaretIndentsItsOwnLine() {
+        let (text, selection) = applied(.indent, to: "item", NSRange(location: 2, length: 0))!
+        XCTAssertEqual(text, "\titem")
+        XCTAssertEqual(selection, NSRange(location: 3, length: 0), "the caret follows the content, shifted by the tab")
+    }
+
+    func testOutdentRemovesALeadingTab() {
+        XCTAssertEqual(applied(.outdent, to: "\titem", NSRange(location: 3, length: 0))!.0, "item")
+    }
+
+    /// No tab: up to four leading spaces come off instead, matching the web's own fallback.
+    func testOutdentFallsBackToUpToFourLeadingSpaces() {
+        XCTAssertEqual(applied(.outdent, to: "      deep", NSRange(location: 8, length: 0))!.0, "  deep")
+    }
+
+    /// A line with neither is left alone rather than eating into its own content.
+    func testOutdentOnAnUnindentedLineDoesNothing() {
+        XCTAssertEqual(applied(.outdent, to: "flush", NSRange(location: 0, length: 0))!.0, "flush")
+    }
+
+    /// Indenting and outdenting are exact inverses for the common case, which is what makes
+    /// pressing the button twice in a row feel predictable.
+    func testIndentThenOutdentRoundTrips() {
+        let (indented, _) = applied(.indent, to: "line", NSRange(location: 0, length: 0))!
+        XCTAssertEqual(applied(.outdent, to: indented, NSRange(location: 0, length: 0))!.0, "line")
+    }
+
+    /// A real multi-line selection stays selected across the whole reindented block — matching
+    /// the web editor — so repeated taps keep indenting (or outdenting) the same lines.
+    func testIndentKeepsAMultiLineSelectionSelected() {
+        let (text, selection) = applied(.indent, to: "one\ntwo", NSRange(location: 0, length: 7))!
+        XCTAssertEqual(text, "\tone\n\ttwo")
+        XCTAssertEqual(selection, NSRange(location: 0, length: 9))
     }
 }
 

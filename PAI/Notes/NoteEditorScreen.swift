@@ -12,6 +12,10 @@ struct NoteEditorScreen: View {
     /// Edit and preview are exclusive modes, as they are on the web. Not a live preview — see
     /// `MarkdownSourceHighlighter` for why the editor styles the markup instead of replacing it.
     @State private var isPreviewing: Bool
+    /// Also gate the editor's own focus while either is presented — see
+    /// `NoteEditorSurface/isCoveredBySheet`. Neither sheet resigns the editor on its own, and a
+    /// store update the sheet triggers (its own reload, most commonly) rebuilds this screen and
+    /// would otherwise hand the editor its first-responder status straight back.
     @State private var isShowingTools = false
     @State private var isShowingActions = false
     /// Where the tools panel last asked the editor to go. Tokenised so tapping the same heading
@@ -87,7 +91,8 @@ struct NoteEditorScreen: View {
             } else {
                 NoteEditorSurface(
                     noteID: noteID, text: body, revision: notes.externalRevision(for: noteID), jump: jump,
-                    highlight: highlight, onChange: { notes.edit(id: noteID, body: $0) })
+                    highlight: highlight, isCoveredBySheet: isShowingTools || isShowingActions,
+                    onChange: { notes.edit(id: noteID, body: $0) })
             }
         } else {
             ProgressView()

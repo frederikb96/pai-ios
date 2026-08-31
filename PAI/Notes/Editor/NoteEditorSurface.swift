@@ -12,13 +12,10 @@ struct NoteJumpRequest: Equatable {
     let characterOffset: Int
 }
 
-/// The editable markdown surface: one region per stretch of the note that shares a wrapping
-/// behaviour, stacked.
+/// The editable markdown surface: the whole note in one wrapping text view.
 ///
-/// The design is in ``NoteSegment``'s own documentation, and the short version is that regions
-/// exist only where they have to: around fenced code and tables, which scroll sideways while
-/// everything else wraps. A note with no code is one text view, and editing it is entirely
-/// UIKit's own behaviour.
+/// Fenced code and tables lay out inside it rather than in a region of their own — see
+/// ``MarkdownSourceTextView``'s own documentation for why, and what that removed.
 struct NoteEditorSurface: View {
     let noteID: String
     let text: String
@@ -27,27 +24,34 @@ struct NoteEditorSurface: View {
     /// because `text` also comes back changed from a save that normalised anything at all.
     let revision: Int
     let jump: NoteJumpRequest?
-    /// What the in-note search is looking for, painted across every region — see
+    /// What the in-note search is looking for, painted across the note — see
     /// ``MarkdownSourceTextView/highlight``.
     let highlight: String?
+    /// Whether the screen has a sheet up over this editor — the outline/links/history panel or
+    /// the actions sheet, neither of which resigns the editor's first responder status on its
+    /// own. Folded into the text view's effective focus below, alongside this view's own local
+    /// sheets (the attachment picker), rather than left to the text view to guess: without it, a
+    /// store update the sheet's own reload triggers rebuilds this screen, and the hidden text
+    /// view — still holding first-responder status from before the sheet opened, or reclaiming it
+    /// on the rebuild — steals the keyboard (and any keystrokes) right back from the sheet.
+    let isCoveredBySheet: Bool
     let onChange: (String) -> Void
 
     @Environment(NotesStore.self) private var notes
     @Environment(ToastCenter.self) private var toasts
 
-    @State private var document: NoteEditorDocument
-    @State private var focusedID: UUID?
-    @State private var caret: PlacedCaret?
+    @State private var isFocused = false
+    @State private var caret: CaretRequest?
     @State private var caretToken = 0
     /// What this view last handed upwards. Compared against an incoming `text` to tell "the note
-    /// reloaded from the server" from "this is our own edit coming back", which must not rebuild
-    /// the document under the caret.
+    /// reloaded from the server" from "this is our own edit coming back", which must not disturb
+    /// the caret.
     @State private var lastPublished: String
 
-    /// Where an attachment picked from the keyboard bar has to land. Captured when the paperclip
-    /// is tapped rather than read afterwards: presenting a picker takes the keyboard away, and the
-    /// selection with it.
-    @State private var attachmentLanding: AttachmentLanding?
+    /// Where an attachment picked from the keyboard bar has to land — a UTF-16 offset into the
+    /// note. Captured when the paperclip is tapped rather than read afterwards: presenting a
+    /// picker takes the keyboard away, and the selection with it.
+    @State private var attachmentOffset: Int?
     @State private var isChoosingAttachment = false
     @State private var isPickingPhoto = false
     @State private var isPickingFile = false
@@ -55,48 +59,42 @@ struct NoteEditorSurface: View {
 
     init(
         noteID: String, text: String, revision: Int, jump: NoteJumpRequest?, highlight: String?,
-        onChange: @escaping (String) -> Void
+        isCoveredBySheet: Bool, onChange: @escaping (String) -> Void
     ) {
         self.noteID = noteID
         self.text = text
         self.revision = revision
         self.jump = jump
         self.highlight = highlight
+        self.isCoveredBySheet = isCoveredBySheet
         self.onChange = onChange
-        _document = State(initialValue: NoteEditorDocument(source: text))
         _lastPublished = State(initialValue: text)
+    }
+
+    /// Every sheet that covers this view, whether presented by the screen above or by this view's
+    /// own attachment flow — see ``isCoveredBySheet``.
+    private var isCovered: Bool {
+        isCoveredBySheet || isChoosingAttachment || isPickingPhoto || isPickingFile
     }
 
     var body: some View {
         ScrollView(.vertical) {
-            // Not lazy. A lazy stack destroys a region's view when it scrolls out of sight, which
-            // for an editor means losing the first responder — and with it the keyboard and the
-            // caret — because the reader scrolled. A note is a handful of regions, so there is
-            // nothing to gain by deferring them.
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(document.items) { item in
-                    MarkdownSourceTextView(
-                        text: item.displayText,
-                        kind: item.kind,
-                        isFocused: focusedID == item.id,
-                        caret: caret?.itemID == item.id ? caret?.request : nil,
-                        highlight: highlight,
-                        onChange: { edited(item.id, $0) },
-                        onDeleteBackwardAtStart: { mergeBackward(from: item.id) },
-                        onFocus: { focusedID = item.id },
-                        onAttach: { offset in beginAttachment(in: item.id, at: offset) }
-                    )
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                // Tapping under the last region puts the caret in it, which is what a page of text
-                // does — and a note whose last region is a code block gets a paragraph to type in,
-                // since otherwise there is nowhere below the block at all. Sized rather than
-                // painted behind the stack: a background is exactly as tall as the content, so the
-                // empty space this exists to catch is the one place it would not be.
+            VStack(alignment: .leading, spacing: 0) {
+                MarkdownSourceTextView(
+                    text: text, isFocused: isFocused && !isCovered, caret: caret, highlight: highlight,
+                    onChange: { edited($0) },
+                    onFocus: { isFocused = true },
+                    onAttach: { offset in beginAttachment(at: offset) }
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // Tapping under the note puts the caret at its end, which is what a page of text
+                // does. Sized rather than painted behind the stack: a background is exactly as
+                // tall as the content, so the empty space this exists to catch is the one place
+                // it would not be.
                 Color.clear
                     .contentShape(Rectangle())
                     .frame(height: 140)
-                    .onTapGesture { focusBelowTheLastRegion() }
+                    .onTapGesture { focusAtEnd() }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -115,7 +113,7 @@ struct NoteEditorSurface: View {
         .confirmationDialog("Add to this note", isPresented: $isChoosingAttachment, titleVisibility: .visible) {
             Button("Photo") { isPickingPhoto = true }
             Button("File") { isPickingFile = true }
-            Button("Cancel", role: .cancel) { attachmentLanding = nil }
+            Button("Cancel", role: .cancel) { attachmentOffset = nil }
         }
         .sheet(isPresented: $isPickingPhoto) {
             PhotoAttachmentPicker { staged in Task { await upload(staged) } }
@@ -125,64 +123,44 @@ struct NoteEditorSurface: View {
         }
     }
 
-    private func edited(_ id: UUID, _ displayText: String) {
-        if let moved = document.edit(id: id, displayText: displayText) {
-            move(to: moved)
-        } else {
-            // Cleared rather than left standing: a caret request is an instruction to move the
-            // caret, and one that outlived the restructure that produced it would drag the caret
-            // back on the next redraw.
-            caret = nil
-        }
-        publish()
+    private func edited(_ newText: String) {
+        // Cleared rather than left standing: a caret request is an instruction to move the caret,
+        // and one that outlived the keystroke that produced it would drag the caret back on the
+        // next redraw.
+        caret = nil
+        publish(newText)
     }
 
-    private func mergeBackward(from id: UUID) -> Bool {
-        guard let target = document.mergeBackward(from: id) else { return false }
-        move(to: target)
-        publish()
-        return true
-    }
-
-    /// Deliberately does not publish. Adding the paragraph changes the note by one newline, and a
-    /// tap that is followed by nothing must not rewrite a file — so the region exists on screen
-    /// while the note on disk is untouched, and the first keystroke publishes both together.
-    /// Backspacing straight out of it removes the region again and publishes nothing at all.
-    private func focusBelowTheLastRegion() {
-        if let target = document.appendTrailingProse() {
-            move(to: target)
-        } else {
-            focusedID = document.items.last?.id
-        }
+    private func focusAtEnd() {
+        move(to: text.utf16.count)
+        isFocused = true
     }
 
     private func goTo(_ request: NoteJumpRequest?) {
-        guard let request, let target = document.locate(characterOffset: request.characterOffset) else { return }
-        move(to: target, settlingAtTopThird: true)
+        guard let request else { return }
+        let clamped = min(max(request.characterOffset, 0), text.count)
+        move(to: String(text.prefix(clamped)).utf16.count, settlingAtTopThird: true)
     }
 
-    private func move(to target: NoteEditorDocument.CaretTarget, settlingAtTopThird: Bool = false) {
+    private func move(to utf16Offset: Int, settlingAtTopThird: Bool = false) {
         caretToken += 1
-        focusedID = target.itemID
-        caret = PlacedCaret(
-            itemID: target.itemID,
-            request: CaretRequest(
-                token: caretToken, offset: target.offset, settlesAtTopThird: settlingAtTopThird))
+        isFocused = true
+        caret = CaretRequest(token: caretToken, offset: utf16Offset, settlesAtTopThird: settlingAtTopThird)
     }
 
-    private func publish() {
-        lastPublished = document.source
-        onChange(lastPublished)
+    private func publish(_ newText: String) {
+        lastPublished = newText
+        onChange(newText)
     }
 
     // MARK: Attachments
 
-    private func beginAttachment(in itemID: UUID, at offset: Int) {
+    private func beginAttachment(at offset: Int) {
         guard notes.detail(for: noteID)?.containerId != nil else {
             toasts.show("This note has no container, so there is nowhere to put a file", kind: .error)
             return
         }
-        attachmentLanding = AttachmentLanding(itemID: itemID, offset: offset)
+        attachmentOffset = offset
         isChoosingAttachment = true
     }
 
@@ -191,10 +169,10 @@ struct NoteEditorSurface: View {
     /// The whole batch becomes one edit rather than one per file, so Undo takes them back together
     /// and the autosave debounce sees a single change.
     private func upload(_ staged: [StagedAttachment]) async {
-        guard let landing = attachmentLanding, let containerId = notes.detail(for: noteID)?.containerId,
+        guard let offset = attachmentOffset, let containerId = notes.detail(for: noteID)?.containerId,
             !staged.isEmpty
         else { return }
-        attachmentLanding = nil
+        attachmentOffset = nil
         isUploading = true
         defer { isUploading = false }
 
@@ -209,47 +187,26 @@ struct NoteEditorSurface: View {
             }
         }
         guard !embeds.isEmpty else { return }
-        insert(embeds.joined(separator: "\n"), into: landing.itemID, atUtf16: landing.offset)
+        insert(embeds.joined(separator: "\n"), atUtf16: offset)
     }
 
-    private func insert(_ snippet: String, into itemID: UUID, atUtf16 offset: Int) {
-        guard let index = document.index(of: itemID) else { return }
-        let edited = NSMutableString(string: document.items[index].displayText)
-        let at = min(max(offset, 0), edited.length)
-        edited.insert(snippet, at: at)
-        if let moved = document.edit(id: itemID, displayText: edited as String) {
-            move(to: moved)
-        } else {
-            move(to: .init(itemID: itemID, offset: at + snippet.utf16.count))
-        }
-        publish()
+    private func insert(_ snippet: String, atUtf16 offset: Int) {
+        let mutable = NSMutableString(string: text)
+        let at = min(max(offset, 0), mutable.length)
+        mutable.insert(snippet, at: at)
+        move(to: at + snippet.utf16.count)
+        publish(mutable as String)
     }
 
     /// Take on a body that arrived from somewhere other than this view — a first load, a restored
     /// revision, a conflict resolved in favour of the vault.
     ///
     /// Still guarded on the text actually differing: the note is reloaded whenever the tools panel
-    /// refreshes, and rebuilding the document for a body that came back identical would destroy
-    /// the caret.
+    /// refreshes, and rebuilding under a body that came back identical would destroy the caret.
     private func adoptIfChangedElsewhere() {
         guard text != lastPublished else { return }
-        document = NoteEditorDocument(source: text)
         lastPublished = text
         caret = nil
-        focusedID = nil
+        isFocused = false
     }
-}
-
-/// Where an attachment picked from the keyboard bar goes back to.
-private struct AttachmentLanding: Equatable {
-    let itemID: UUID
-    /// UTF-16 offset within that region's display text.
-    let offset: Int
-}
-
-/// A caret request plus which region it belongs to. Separate from ``CaretRequest`` because the
-/// text view is handed only the part that concerns it.
-private struct PlacedCaret: Equatable {
-    let itemID: UUID
-    let request: CaretRequest
 }
