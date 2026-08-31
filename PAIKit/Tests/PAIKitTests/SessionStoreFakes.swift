@@ -128,6 +128,68 @@ actor FakeMachineDirectoryApi: MachineDirectoryApiClient {
     }
 }
 
+// MARK: - ClaudeAuthApiClient
+
+actor FakeClaudeAuthApi: ClaudeAuthApiClient {
+    private(set) var getCallCount = 0
+    private(set) var startLoginCallCount = 0
+    private(set) var submitCodeCalls: [(loginId: String, code: String)] = []
+    private(set) var cancelLoginCallCount = 0
+
+    var getResult: Result<ClaudeAuth, PaiError> = .success(
+        ClaudeAuth(
+            known: false, loggedIn: nil, subscription: nil, accessExpiresAt: nil, refreshExpiresAt: nil,
+            login: nil, lastError: nil, reportedAt: nil
+        ))
+    var startLoginResult: Result<ClaudeAuth, PaiError>?
+    var submitCodeResult: Result<ClaudeLoginCodeResponse, PaiError>?
+    var cancelLoginResult: Result<ClaudeAuth, PaiError>?
+
+    func getClaudeAuth() async throws -> ClaudeAuth {
+        getCallCount += 1
+        switch getResult {
+        case let .success(auth): return auth
+        case let .failure(error): throw error
+        }
+    }
+
+    func startClaudeLogin() async throws -> ClaudeAuth {
+        startLoginCallCount += 1
+        guard let startLoginResult else { return try unwrap(getResult) }
+        switch startLoginResult {
+        case let .success(auth): return auth
+        case let .failure(error): throw error
+        }
+    }
+
+    func submitClaudeLoginCode(loginId: String, code: String) async throws -> ClaudeLoginCodeResponse {
+        submitCodeCalls.append((loginId, code))
+        guard let submitCodeResult else {
+            throw PaiError.transport("no submitCodeResult scripted")
+        }
+        switch submitCodeResult {
+        case let .success(response): return response
+        case let .failure(error): throw error
+        }
+    }
+
+    func cancelClaudeLogin() async throws -> ClaudeAuth {
+        cancelLoginCallCount += 1
+        guard let cancelLoginResult else { return try unwrap(getResult) }
+        switch cancelLoginResult {
+        case let .success(auth): return auth
+        case let .failure(error): throw error
+        }
+    }
+
+    private func unwrap(_ result: Result<ClaudeAuth, PaiError>) throws -> ClaudeAuth {
+        switch result {
+        case let .success(auth): return auth
+        case let .failure(error): throw error
+        }
+    }
+}
+
 // MARK: - CreateSessionApiClient
 
 actor FakeCreateSessionApi: CreateSessionApiClient {

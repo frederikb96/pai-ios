@@ -14,6 +14,7 @@
 
         static let modeFlag = "-PaiFixtureMode"
         static let routeFlag = "-PaiFixtureRoute"
+        static let authStateFlag = "-PaiFixtureAuthState"
 
         /// The session id every session-scoped fixture route answers under, regardless of which
         /// id the request actually named — fixed so a screenshot workflow can always ask for this
@@ -29,6 +30,15 @@
         /// the root screen" — the session list needs no route to reach.
         public static func requestedRouteName(arguments: [String] = ProcessInfo.processInfo.arguments) -> String? {
             value(for: routeFlag, in: arguments)
+        }
+
+        /// Which `GET /api/auth/claude` body to serve — `-PaiFixtureAuthState
+        /// signedOut|rejected|loginInProgress`. Absent means the ordinary healthy default, so
+        /// every screenshot other than the sign-in banner itself is unaffected by this flag
+        /// existing at all — the one state a screen's own fetches otherwise can never reach,
+        /// since fixture mode has no live agent to report a real outage from.
+        public static func requestedAuthState(arguments: [String] = ProcessInfo.processInfo.arguments) -> String? {
+            value(for: authStateFlag, in: arguments)
         }
 
         static func value(for flag: String, in arguments: [String]) -> String? {

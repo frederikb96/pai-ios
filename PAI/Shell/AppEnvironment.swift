@@ -42,6 +42,9 @@ final class AppEnvironment {
         let apiClient: PaiApiClient
         let sessions: SessionListStore
         let machines: MachineStore
+        /// The VM's Claude sign-in — app-wide rather than per-screen, since one credential backs
+        /// every session and the banner it drives is mounted once at the root.
+        let claudeAuth: ClaudeAuthStore
         let transcript: TranscriptStore
         let settings: SettingsStore
         /// App-wide rather than per-composer: a draft is how a half-written message reaches
@@ -103,6 +106,7 @@ final class AppEnvironment {
     /// being broken rather than as needing a new token.
     func handleAuthenticationFailure(detail: String?) {
         connection?.sessions.stopPolling()
+        connection?.claudeAuth.stopPolling()
         tokens.write(nil)
         connection = nil
         lastAuthFailure = detail
@@ -111,6 +115,7 @@ final class AppEnvironment {
 
     func signOut() {
         connection?.sessions.stopPolling()
+        connection?.claudeAuth.stopPolling()
         tokens.write(nil)
         connection = nil
         lastAuthFailure = nil
@@ -147,6 +152,7 @@ final class AppEnvironment {
             apiClient: client,
             sessions: SessionListStore(api: client),
             machines: MachineStore(api: client),
+            claudeAuth: ClaudeAuthStore(api: client),
             transcript: TranscriptStore(),
             settings: settingsStore,
             drafts: draftStore,
@@ -183,6 +189,7 @@ final class AppEnvironment {
         // discarding whatever they had scrolled to. The web polls from its root for the same
         // reason.
         connection.sessions.startPolling()
+        connection.claudeAuth.startPolling()
     }
 
     /// An API client built from stored credentials alone, for code that runs without an

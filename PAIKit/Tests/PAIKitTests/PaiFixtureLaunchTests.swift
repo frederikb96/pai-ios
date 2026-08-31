@@ -30,6 +30,17 @@ final class PaiFixtureLaunchTests: XCTestCase {
         XCTAssertNil(PaiFixtureLaunch.requestedRouteName(arguments: ["/path/to/app", "-PaiFixtureRoute"]))
     }
 
+    func testRequestedAuthStateReadsTheValueFollowingItsOwnFlag() {
+        let state = PaiFixtureLaunch.requestedAuthState(
+            arguments: ["/path/to/app", "-PaiFixtureMode", "-PaiFixtureAuthState", "rejected"]
+        )
+        XCTAssertEqual(state, "rejected")
+    }
+
+    func testRequestedAuthStateIsNilWhenAbsent() {
+        XCTAssertNil(PaiFixtureLaunch.requestedAuthState(arguments: ["/path/to/app", "-PaiFixtureMode"]))
+    }
+
     func testFlagOrderDoesNotMatter() {
         let name = PaiFixtureLaunch.requestedRouteName(
             arguments: ["/path/to/app", "-PaiFixtureRoute", "terminal", "-PaiFixtureMode"]
