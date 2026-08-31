@@ -133,6 +133,34 @@ private enum NoteFixture {
 @MainActor
 final class NotesStoreTests: XCTestCase {
 
+    /// `requestDelete` marks a row `pendingDelete` rather than removing it, for the undo window,
+    /// and nothing prunes it back out short of a full `refresh()` — so a stale row is exactly what
+    /// `createNote`'s taken-name scan sees on the very next create. Left unfiltered, a
+    /// create-delete-create cycle climbs the number forever even though the server has long since
+    /// finished deleting the note and no note by that name exists anywhere.
+    func testCreatingAfterDeletingDoesNotClimbThePendingDeleteRow() async {
+        let api = FakeNotesApi()
+        let store = NotesStore(api: api)
+        await store.refresh()
+
+        api.createNoteResult = NoteFixture.detail(id: "n1", name: "Untitled")
+        _ = await store.createNote(name: "Untitled")
+
+        let deleted = await store.requestDelete(id: "n1")
+        XCTAssertTrue(deleted)
+        XCTAssertTrue(store.notes.first { $0.id == "n1" }?.pendingDelete ?? false)
+
+        api.createNoteResult = NoteFixture.detail(id: "n2", name: "Untitled")
+        _ = await store.createNote(name: "Untitled")
+
+        // What the fake echoes back is scripted and would pass either way — the free name
+        // actually asked for, on the other hand, is only right if the taken-name scan saw past
+        // the pendingDelete row.
+        XCTAssertEqual(
+            api.createNoteCalls.last?.name, "Untitled",
+            "a row already marked pendingDelete must not count as a name still in use")
+    }
+
     func testCreateNoteInsertsAtFrontOfIndex() async {
         let api = FakeNotesApi()
         api.createNoteResult = NoteFixture.detail(id: "abc", name: "Untitled")

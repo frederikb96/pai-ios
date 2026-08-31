@@ -160,10 +160,17 @@ public final class NotesStore {
     /// The name is made free before it is asked for — see ``NoteNaming/freeName(base:taken:)``.
     /// Creating a note is not the same act as naming one, and a "New note" button that fails
     /// because a note called `Untitled` already exists has no way forward at all.
+    ///
+    /// `taken` excludes `pendingDelete` rows — `requestDelete` marks a row rather than removing
+    /// it, for the undo window, and nothing here ever prunes it back out short of a full
+    /// `refresh()`. Counting it as taken anyway is what let repeated create-then-delete climb the
+    /// number forever: the server had long since finished deleting the note, but this index had
+    /// not caught up and had no reason to before this call ran again.
     public func createNote(name: String, containerId: String? = nil) async -> NoteSummary? {
         let free = NoteNaming.freeName(
             base: name,
-            taken: notes.filter { containerId == nil || $0.containerId == containerId }.map(\.name))
+            taken: notes.filter { !$0.pendingDelete && (containerId == nil || $0.containerId == containerId) }
+                .map(\.name))
         do {
             let created = try await api.createNote(name: free, summary: nil, body: nil, containerId: containerId)
             setDetail(created, for: created.id)
