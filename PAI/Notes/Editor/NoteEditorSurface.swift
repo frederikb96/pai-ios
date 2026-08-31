@@ -27,6 +27,9 @@ struct NoteEditorSurface: View {
     /// because `text` also comes back changed from a save that normalised anything at all.
     let revision: Int
     let jump: NoteJumpRequest?
+    /// What the in-note search is looking for, painted across every region — see
+    /// ``MarkdownSourceTextView/highlight``.
+    let highlight: String?
     let onChange: (String) -> Void
 
     @Environment(NotesStore.self) private var notes
@@ -50,11 +53,15 @@ struct NoteEditorSurface: View {
     @State private var isPickingFile = false
     @State private var isUploading = false
 
-    init(noteID: String, text: String, revision: Int, jump: NoteJumpRequest?, onChange: @escaping (String) -> Void) {
+    init(
+        noteID: String, text: String, revision: Int, jump: NoteJumpRequest?, highlight: String?,
+        onChange: @escaping (String) -> Void
+    ) {
         self.noteID = noteID
         self.text = text
         self.revision = revision
         self.jump = jump
+        self.highlight = highlight
         self.onChange = onChange
         _document = State(initialValue: NoteEditorDocument(source: text))
         _lastPublished = State(initialValue: text)
@@ -73,6 +80,7 @@ struct NoteEditorSurface: View {
                         kind: item.kind,
                         isFocused: focusedID == item.id,
                         caret: caret?.itemID == item.id ? caret?.request : nil,
+                        highlight: highlight,
                         onChange: { edited(item.id, $0) },
                         onDeleteBackwardAtStart: { mergeBackward(from: item.id) },
                         onFocus: { focusedID = item.id },

@@ -38,6 +38,9 @@ struct MarkdownSourceTextView: UIViewRepresentable {
     /// outside the text view asked to jump. Nil means leave the caret alone, which is every
     /// ordinary keystroke.
     let caret: CaretRequest?
+    /// What the in-note search is looking for. Every occurrence in this region stays painted while
+    /// it is set, which is what makes "find in note" usable without leaving the editor.
+    let highlight: String?
 
     let onChange: (String) -> Void
     /// Backspace with the caret at the very start. Returning true means the editor handled it by
@@ -99,7 +102,8 @@ struct MarkdownSourceTextView: UIViewRepresentable {
             view.textContainerInset = UIEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
         }
 
-        view.attributedText = NoteEditorTheme.attributedText(for: text, kind: kind)
+        view.attributedText = NoteEditorTheme.attributedText(for: text, kind: kind, highlight: highlight)
+        context.coordinator.paintedHighlight = highlight
         return view
     }
 
@@ -112,9 +116,16 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         // single most obvious way an editor feels broken.
         if view.text != text {
             let selected = view.selectedRange
-            view.attributedText = NoteEditorTheme.attributedText(for: text, kind: kind)
+            view.attributedText = NoteEditorTheme.attributedText(for: text, kind: kind, highlight: highlight)
             view.selectedRange = NSRange(
                 location: min(selected.location, view.text.utf16.count), length: 0)
+            context.coordinator.paintedHighlight = highlight
+        } else if context.coordinator.paintedHighlight != highlight {
+            // The text is unchanged and only what is being searched for moved, so the string must
+            // not be reassigned — restyling the storage in place leaves the caret and the undo
+            // stack alone.
+            NoteEditorTheme.repaint(view.textStorage, kind: kind, highlight: highlight)
+            context.coordinator.paintedHighlight = highlight
         }
 
         if isFocused, !view.isFirstResponder {
@@ -170,6 +181,9 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         var parent: MarkdownSourceTextView
         /// The last caret request actually applied — see ``CaretRequest``.
         var appliedCaretToken = Int.min
+        /// What the storage was last painted for, so a changed query repaints and an unchanged one
+        /// does not.
+        var paintedHighlight: String?
 
         /// Built once and kept, because `inputAccessoryView` is read every time the view becomes
         /// first responder and a fresh bar per focus would flicker as the keyboard comes up.
@@ -188,7 +202,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         func textViewDidChange(_ textView: UITextView) {
             self.textView = textView
             let source = textView.text ?? ""
-            NoteEditorTheme.repaint(textView.textStorage, kind: parent.kind)
+            NoteEditorTheme.repaint(textView.textStorage, kind: parent.kind, highlight: parent.highlight)
             parent.onChange(source)
         }
 

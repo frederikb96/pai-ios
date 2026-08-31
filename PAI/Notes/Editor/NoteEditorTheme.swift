@@ -44,13 +44,18 @@ enum NoteEditorTheme {
     static var rule: UIColor { UIColor(PaiPalette.Notes.rule) }
     static var codeBackground: UIColor { UIColor(PaiPalette.Notes.codeBackground) }
     static var background: UIColor { UIColor(PaiPalette.Notes.background) }
+    /// Behind a "find in note" hit. The transcript's own search colour, so a hit looks the same
+    /// wherever it is found.
+    static var searchHighlight: UIColor { UIColor(PaiPalette.SearchHighlight.allHits) }
 
     // MARK: Painting
 
     /// Build the attributed string a text view shows for one segment of source.
-    static func attributedText(for source: String, kind: NoteSegmentKind) -> NSAttributedString {
+    static func attributedText(for source: String, kind: NoteSegmentKind, highlight: String? = nil)
+        -> NSAttributedString
+    {
         let attributed = NSMutableAttributedString(string: source)
-        paint(attributed, kind: kind)
+        paint(attributed, kind: kind, highlight: highlight)
         return attributed
     }
 
@@ -60,13 +65,15 @@ enum NoteEditorTheme {
     /// This is what runs on every keystroke. Replacing the string instead would record a
     /// wholesale edit that Undo then reverts as one, which for an editor is worse than no
     /// highlighting at all.
-    static func repaint(_ storage: NSTextStorage, kind: NoteSegmentKind) {
+    static func repaint(_ storage: NSTextStorage, kind: NoteSegmentKind, highlight: String? = nil) {
         storage.beginEditing()
-        paint(storage, kind: kind)
+        paint(storage, kind: kind, highlight: highlight)
         storage.endEditing()
     }
 
-    private static func paint(_ attributed: NSMutableAttributedString, kind: NoteSegmentKind) {
+    private static func paint(
+        _ attributed: NSMutableAttributedString, kind: NoteSegmentKind, highlight: String?
+    ) {
         let source = attributed.string
         let full = NSRange(location: 0, length: attributed.length)
         // Set, not add: the previous pass's attributes have to go, or a character that stops being
@@ -80,6 +87,14 @@ enum NoteEditorTheme {
             let range = NSRange(location: span.location, length: span.length)
             guard range.upperBound <= attributed.length else { continue }
             apply(span.style, to: attributed, range: range)
+        }
+
+        // Last, so a hit inside inline code is still visibly a hit — that span paints a background
+        // of its own, and whichever is applied second is the one that shows.
+        guard let highlight, !highlight.isEmpty else { return }
+        for range in SearchText.findMatches(in: source, query: highlight)
+        where range.upperBound <= attributed.length {
+            attributed.addAttribute(.backgroundColor, value: searchHighlight, range: range)
         }
     }
 

@@ -75,7 +75,7 @@ struct NoteEditorScreen: View {
             } else {
                 NoteEditorSurface(
                     noteID: noteID, text: body, revision: notes.externalRevision(for: noteID), jump: jump,
-                    onChange: { notes.edit(id: noteID, body: $0) })
+                    highlight: highlight, onChange: { notes.edit(id: noteID, body: $0) })
             }
         } else {
             ProgressView()
