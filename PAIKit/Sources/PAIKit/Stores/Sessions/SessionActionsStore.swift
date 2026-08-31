@@ -49,9 +49,9 @@ public enum ExportPreset: CaseIterable, Sendable, Equatable {
 
 /// Every action the session actions menu offers, built fresh per presentation (the same lifetime
 /// shape `CreateSessionStore` uses) and scoped to one session. Swift port of the mutating half of
-/// `web/src/components/SessionActionsMenu.tsx` — delete's hold-and-undo shape lives on
-/// `SessionListStore` itself (`deleteSessionWithHold`/`undoDelete`), since it is the list's row
-/// that disappears and reappears, not a fact about one menu instance.
+/// `web/src/components/SessionActionsMenu.tsx` — delete's immediate-removal shape lives on
+/// `SessionListStore` itself (`deleteSession(id:)`), since it is the list's row that disappears,
+/// not a fact about one menu instance.
 ///
 /// Every mutation here writes its result back into `sessionList` via `replaceSession(_:)` so the
 /// row (and the open header, which reads through the same store) reflects it immediately rather
@@ -138,10 +138,10 @@ public final class SessionActionsStore {
         }
     }
 
-    /// Removes the row from the list and starts its five-second undo window — see
-    /// `SessionListStore.deleteSessionWithHold`'s doc comment for why the hold exists at all.
-    public func deleteWithHold() {
-        sessionList.deleteSessionWithHold(id: sessionId)
+    /// Removes the row from the list and fires the real DELETE at once — see
+    /// `SessionListStore.deleteSession`'s doc comment for why there is no hold and no undo.
+    public func deleteNow() {
+        sessionList.deleteSession(id: sessionId)
     }
 
     // MARK: - Move pickers

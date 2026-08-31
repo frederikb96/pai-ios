@@ -26,18 +26,14 @@ struct SessionActionsSheet: View {
             Group {
                 if let actions {
                     RootActionsList(actions: actions, isOwner: me.isOwner, path: $path) {
-                        actions.deleteWithHold()
+                        actions.deleteNow()
                         dismiss()
                         // Leaves a dead transcript screen behind otherwise: the row is gone from
-                        // the list the moment `deleteWithHold` runs, but nothing pops the screen
-                        // that was *about* that row unless this sheet was reached from the list
-                        // itself, where the path never held it to begin with — a no-op there.
+                        // the list the moment `deleteNow` runs, but nothing pops the screen that
+                        // was *about* that row unless this sheet was reached from the list itself,
+                        // where the path never held it to begin with — a no-op there.
                         environment.router.dismissSession(id: sessionId)
-                        toasts.show(
-                            "Session deleted",
-                            action: .init(label: "Undo") { [sessionList] in sessionList.undoDelete() },
-                            lifetimeNanos: SessionListStore.deleteUndoNanos
-                        )
+                        toasts.show("Session deleted")
                     } onClose: {
                         dismiss()
                         environment.router.dismissSession(id: sessionId)
@@ -106,6 +102,7 @@ private struct RootActionsList: View {
     let onOpenSubagents: () -> Void
 
     @State private var copiedConversationId = false
+    @State private var confirmingDelete = false
 
     var body: some View {
         List {
@@ -194,7 +191,9 @@ private struct RootActionsList: View {
                         }
                     }
 
-                    Button(role: .destructive, action: onDelete) {
+                    Button(role: .destructive) {
+                        confirmingDelete = true
+                    } label: {
                         Label("Delete session", systemImage: "trash")
                     }
                 }
@@ -203,6 +202,20 @@ private struct RootActionsList: View {
             }
         }
         .accessibilityIdentifier("session-actions-list")
+        // No undo past this point — the confirm step is the only safety net there is, matching
+        // the web's `DeleteConfirmDialog` wording exactly.
+        .confirmationDialog(
+            "Delete session?", isPresented: $confirmingDelete, titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive, action: onDelete)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let session = actions.session {
+                Text(
+                    "\"\(SessionListDomain.sessionHeaderTitle(for: session))\" and everything derived from it — turns, summaries — will be deleted immediately and cannot be undone. Extracted memories are kept."
+                )
+            }
+        }
     }
 
     private static func formatIdleWindow(_ minutes: Int?) -> String {

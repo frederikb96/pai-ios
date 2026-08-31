@@ -673,43 +673,38 @@ final class SessionStoreListStoreTests: XCTestCase {
         XCTAssertTrue(store.syncedSessions.isEmpty)
     }
 
-    // MARK: - deleteSessionWithHold / undoDelete
+    // MARK: - deleteSession
 
-    // 20ms, for the same reason `shortDebounceNanos` is short: fast enough for a suite, slow
-    // enough that "before the hold elapses" and "after it elapses" are reliably distinguishable.
-    private static let shortDeleteHoldNanos: UInt64 = 20_000_000
-
-    private func makeStoreWithShortDeleteHold(api: FakeSessionListApi) -> SessionListStore {
-        SessionListStore(api: api, deleteUndoNanos: Self.shortDeleteHoldNanos)
-    }
-
-    func testDeleteSessionWithHoldRemovesTheRowImmediatelyAndDoesNotCallDeleteBeforeTheHoldElapses() async {
+    /// The row disappearing is the part that has to feel instant — this asserts it happens
+    /// synchronously, before the real DELETE has any chance to have returned (the gate holds it
+    /// open the whole test, so a row still present here would mean the removal was waiting on the
+    /// network rather than happening up front).
+    func testDeleteSessionRemovesTheRowAtOnce() async {
         let api = FakeSessionListApi()
         await api.setGetSessionsResult { _ in
             .success(SessionsPage(sessions: [SessionFixture.make(id: "s1")], nextCursor: nil))
         }
-        let store = makeStoreWithShortDeleteHold(api: api)
+        await api.gate.arm("delete:s1")
+        let store = makeStore(api: api)
         await store.loadInitialSessions()
 
-        store.deleteSessionWithHold(id: "s1")
+        store.deleteSession(id: "s1")
 
         XCTAssertTrue(store.syncedSessions.isEmpty)
-        XCTAssertEqual(store.pendingDelete?.session.id, "s1")
-        let callsRightAfter = await api.deleteSessionCalls
-        XCTAssertTrue(callsRightAfter.isEmpty, "the real DELETE must wait out the hold, not fire immediately")
+        await api.gate.release("delete:s1")
     }
 
-    /// The hold actually elapsing must fire the real DELETE — the counterpart to the "not before"
-    /// assertion above; without this, a hold that never fires at all would also pass that test.
-    func testDeleteSessionWithHoldFiresTheRealDeleteOnceTheHoldElapses() async {
+    /// The counterpart to the immediate-removal assertion above: the real DELETE must actually go
+    /// out, off the synchronous path, not merely be implied by the row's absence.
+    func testDeleteSessionFiresTheRealDeleteWithoutWaiting() async {
         let api = FakeSessionListApi()
         await api.setGetSessionsResult { _ in
             .success(SessionsPage(sessions: [SessionFixture.make(id: "s1")], nextCursor: nil))
         }
-        let store = makeStoreWithShortDeleteHold(api: api)
+        let store = makeStore(api: api)
         await store.loadInitialSessions()
 
-        store.deleteSessionWithHold(id: "s1")
+        store.deleteSession(id: "s1")
 
         let deadline = ContinuousClock().now + .seconds(5)
         while await api.deleteSessionCalls.isEmpty, ContinuousClock().now < deadline {
@@ -717,60 +712,27 @@ final class SessionStoreListStoreTests: XCTestCase {
         }
         let calls = await api.deleteSessionCalls
         XCTAssertEqual(calls, ["s1"])
-        XCTAssertNil(store.pendingDelete, "pendingDelete must clear once the real delete has actually gone out")
     }
 
-    func testUndoDeleteRestoresTheRowAndCancelsTheRealDelete() async {
+    /// A DELETE that never reaches the backend must not leave the list lying about what still
+    /// exists there — the row comes back rather than staying silently gone.
+    func testDeleteSessionRestoresTheRowIfTheRealDeleteFails() async {
         let api = FakeSessionListApi()
         await api.setGetSessionsResult { _ in
             .success(SessionsPage(sessions: [SessionFixture.make(id: "s1")], nextCursor: nil))
         }
-        let store = makeStoreWithShortDeleteHold(api: api)
-        await store.loadInitialSessions()
-        store.deleteSessionWithHold(id: "s1")
-
-        store.undoDelete()
-
-        XCTAssertEqual(store.syncedSessions.map(\.id), ["s1"])
-        XCTAssertNil(store.pendingDelete)
-        // Held well past the hold window the mutation could otherwise still fire within — proving
-        // this needs the cancellation to have actually taken, not merely a lucky sample.
-        try? await Task.sleep(nanoseconds: Self.shortDeleteHoldNanos * 10)
-        let calls = await api.deleteSessionCalls
-        XCTAssertTrue(calls.isEmpty, "undo must cancel the delayed DELETE, not merely restore the row")
-    }
-
-    /// The hold elapsing and the real `DELETE` actually reaching the server are two different
-    /// moments — a tap landing in between them must not restore a row the request already left
-    /// no way to cancel. The gate holds the fake's `deleteSession` open past the point it has
-    /// started, which is the only way to observe "in flight" as distinct from "not yet begun" or
-    /// "already returned".
-    func testUndoDeleteIsANoOpOnceTheRealDeleteIsAlreadyInFlight() async {
-        let api = FakeSessionListApi()
-        await api.setGetSessionsResult { _ in
-            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1")], nextCursor: nil))
-        }
-        await api.gate.arm("delete:s1")
-        let store = makeStoreWithShortDeleteHold(api: api)
+        await api.setDeleteSessionResult(.failure(.transport("offline")))
+        let store = makeStore(api: api)
         await store.loadInitialSessions()
 
-        store.deleteSessionWithHold(id: "s1")
+        store.deleteSession(id: "s1")
+        XCTAssertTrue(store.syncedSessions.isEmpty, "the row must vanish at once regardless of how the request ends")
 
         let deadline = ContinuousClock().now + .seconds(5)
-        while await api.deleteSessionCalls.isEmpty, ContinuousClock().now < deadline {
+        while store.syncedSessions.isEmpty, ContinuousClock().now < deadline {
             try? await Task.sleep(nanoseconds: 2_000_000)
         }
-        let callsInFlight = await api.deleteSessionCalls
-        XCTAssertEqual(callsInFlight, ["s1"], "the real DELETE must have already started")
-
-        store.undoDelete()
-
-        XCTAssertTrue(
-            store.syncedSessions.isEmpty,
-            "the row must not come back once the server request is already in flight")
-        XCTAssertNil(store.pendingDelete)
-
-        await api.gate.release("delete:s1")
+        XCTAssertEqual(store.syncedSessions.map(\.id), ["s1"])
     }
 }
 
@@ -782,6 +744,10 @@ extension FakeSessionListApi {
 
     func setSearchResult(_ closure: @escaping @Sendable (SearchCall) async -> Result<[SessionSearchResult], PaiError>) {
         searchResult = closure
+    }
+
+    func setDeleteSessionResult(_ result: Result<DeleteResponse, PaiError>) {
+        deleteSessionResult = result
     }
 }
 
