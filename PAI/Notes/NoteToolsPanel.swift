@@ -1,6 +1,7 @@
 import Observation
 import PAIKit
 import SwiftUI
+import UIKit
 
 /// Where the panel is sending the reader, and what it was looking for.
 ///
@@ -153,6 +154,14 @@ struct NoteToolsPanel: View {
         async let detail: Void = notes.loadNote(id: noteId)
         async let links: Void = notes.loadLinkGraph(id: noteId)
         _ = await (detail, links)
+        // The editor underneath this sheet re-affirms its own first responder status whenever
+        // its screen's body re-evaluates, and the two calls above are exactly the kind of
+        // NotesStore update that triggers one — see NoteEditorScreen/NoteEditorSurface's
+        // `focusedID`, which this sheet has no way to reach or reset directly. Resigning
+        // whatever that just made first responder hands the keyboard back to a neutral state, so
+        // a tap on one of this panel's own fields isn't fighting a UITextView it cannot see. Not
+        // a full fix — see the outline/search focus row's report for what the real one needs.
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 }
 
@@ -211,19 +220,39 @@ private struct NoteInNoteSearchTab: View {
     let state: NoteToolsPanelState
     let onJumpTo: (NoteJumpTarget) -> Void
 
+    /// What `findOccurrences` actually runs against — a note's worth of lowercasing and
+    /// Character-arraying on every keystroke is exactly the per-keystroke, unbounded-by-size cost
+    /// this debounce exists to avoid paying while someone is still typing.
+    @State private var debouncedQuery: String
+    @FocusState private var isSearchFieldFocused: Bool
+
     init(body: String, state: NoteToolsPanelState, onJumpTo: @escaping (NoteJumpTarget) -> Void) {
         self.noteBody = body
         self.state = state
         self.onJumpTo = onJumpTo
+        _debouncedQuery = State(initialValue: state.query)
     }
 
     var body: some View {
         @Bindable var state = state
-        let occurrences = findOccurrences(body: noteBody, query: state.query)
+        let occurrences = findOccurrences(body: noteBody, query: debouncedQuery)
         VStack(spacing: 0) {
-            TextField("Find in this note", text: $state.query)
-                .textFieldStyle(.roundedBorder)
-                .padding(8)
+            HStack(spacing: 6) {
+                TextField("Find in this note", text: $state.query)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($isSearchFieldFocused)
+                if !state.query.isEmpty {
+                    Button {
+                        state.query = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(PaiPalette.Semantic.textMuted)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear search")
+                }
+            }
+            .padding(8)
             if !state.query.isEmpty {
                 Text("\(occurrences.count) \(occurrences.count == 1 ? "match" : "matches")")
                     .font(PaiTypography.caption.font)
@@ -235,7 +264,7 @@ private struct NoteInNoteSearchTab: View {
                 List(occurrences) { occ in
                     Button {
                         state.lastSearchOffset = occ.offset
-                        onJumpTo(NoteJumpTarget(characterOffset: occ.offset, query: state.query))
+                        onJumpTo(NoteJumpTarget(characterOffset: occ.offset, query: debouncedQuery))
                     } label: {
                         Text(occ.context)
                             .lineLimit(2)
@@ -252,6 +281,14 @@ private struct NoteInNoteSearchTab: View {
                     proxy.scrollTo(last, anchor: .center)
                 }
             }
+        }
+        // `.task(id:)` cancels and restarts its own sleep on every keystroke — the debounce is
+        // the cancellation, not a timer this view has to manage by hand.
+        .task(id: state.query) {
+            guard state.query != debouncedQuery else { return }
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled else { return }
+            debouncedQuery = state.query
         }
     }
 }
@@ -399,6 +436,7 @@ private struct NoteInfoTab: View {
 
     @State private var summary = ""
     @State private var saveTask: Task<Void, Never>?
+    @FocusState private var isSummaryFieldFocused: Bool
 
     private static let sourceLabel: [String: String] = [
         "ui": "this app", "disk": "the synced folder on disk", "mcp": "an MCP tool call",
@@ -414,6 +452,7 @@ private struct NoteInfoTab: View {
                         axis: .vertical
                     )
                     .lineLimit(2...5)
+                    .focused($isSummaryFieldFocused)
                     // Compared against what the note already holds rather than fired on any
                     // change: this field is filled in from the note when the tab appears, and
                     // that assignment is a change like any other. Left unguarded, merely opening
@@ -421,12 +460,11 @@ private struct NoteInfoTab: View {
                     // app, moving it to the top of a list sorted by modification time, for a
                     // value nobody touched.
                     .onChange(of: summary) { _, edited in
-                        // The summary is one line of YAML frontmatter. A newline typed into it
-                        // would have to be re-emitted as a block scalar or escaped, and the field
-                        // exists to be a sentence semantic search can match on — so a paragraph
-                        // break becomes a space here rather than a rewrite of the note's header.
-                        let flattened = edited.replacingOccurrences(
-                            of: "\n", with: " ", options: [], range: nil)
+                        // The summary is one line of YAML frontmatter — Return must not leave a
+                        // line break in it, matching what the backend's own frontmatter writer
+                        // already does to whatever reaches it (see `flattenNoteSummaryLine`'s doc
+                        // comment).
+                        let flattened = flattenNoteSummaryLine(edited)
                         if flattened != edited {
                             summary = flattened
                             return

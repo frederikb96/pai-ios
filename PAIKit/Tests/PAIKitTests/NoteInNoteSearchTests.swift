@@ -17,13 +17,25 @@ final class NoteInNoteSearchTests: XCTestCase {
         XCTAssertEqual(occurrences.count, 1)
     }
 
-    /// `matchStart`/`matchEnd` index into `context`, not into the whole body — a caller
-    /// highlighting the hit must be able to slice `context` directly with them.
-    func testMatchOffsetsAreRelativeToContextNotBody() {
-        let occurrences = findOccurrences(body: "needle", query: "needle")
+    /// `offset`/`length` index into `body`, not into `context` — a caller highlighting the hit
+    /// must be able to slice the body it searched directly with them, regardless of how far into
+    /// the body the match sits (`context` only ever covers a fixed-size window around it).
+    func testMatchOffsetAndLengthAreAbsoluteIntoBody() {
+        let body = String(repeating: "x", count: 80) + "needle" + String(repeating: "y", count: 80)
+        let occurrences = findOccurrences(body: body, query: "needle")
         let occ = occurrences[0]
-        let context = Array(occ.context)
-        XCTAssertEqual(String(context[occ.matchStart..<occ.matchEnd]), "needle")
+        let chars = Array(body)
+        XCTAssertEqual(String(chars[occ.offset..<(occ.offset + occ.length)]), "needle")
+    }
+
+    /// Composes `findOccurrences` with `highlightRanges` the way `NotePreviewBlockView` actually
+    /// uses them — the shape neither piece tested in isolation would catch. Regression for the
+    /// bug where a match anywhere but the very start of the text was highlighted at an unrelated
+    /// position, because a context-relative offset was reused directly as one into the block.
+    func testHighlightRangesLandOnEveryRealMatchNotJustTheFirst() {
+        let text = String(repeating: "x", count: 80) + "Test" + String(repeating: "y", count: 20) + "Test end"
+        let ranges = highlightRanges(in: text, query: "Test")
+        XCTAssertEqual(ranges.map { String(text[$0]) }, ["Test", "Test"])
     }
 
     /// Context near the start of the body must not run off the front — it should clamp to 0
