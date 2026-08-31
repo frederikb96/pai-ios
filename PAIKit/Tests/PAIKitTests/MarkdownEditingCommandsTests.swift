@@ -119,3 +119,28 @@ final class MarkdownEditingCommandsTests: XCTestCase {
         XCTAssertNil(MarkdownEditing.edit(.bold, in: "hi", selection: NSRange(location: 0, length: 99)))
     }
 }
+
+/// The heading button against levels it does not itself produce.
+final class MarkdownHeadingCycleTests: XCTestCase {
+
+    private func heading(_ text: String) -> String {
+        guard let edit = MarkdownEditing.edit(.heading, in: text, selection: NSRange(location: 0, length: 0))
+        else { return text }
+        let mutable = NSMutableString(string: text)
+        mutable.replaceCharacters(in: edit.range, with: edit.replacement)
+        return mutable as String
+    }
+
+    /// A `####` typed by hand or pasted from elsewhere is a heading. Recognising only the three
+    /// levels the button produces would prepend to it, giving `# #### Title`.
+    func testADeeperHeadingIsStrippedRatherThanPrependedTo() {
+        XCTAssertEqual(heading("#### Deep"), "Deep")
+        XCTAssertEqual(heading("###### Deepest"), "Deepest")
+    }
+
+    /// A hash with no space after it is not a heading — a `#tag` at the start of a line must not
+    /// lose its hash to the heading button.
+    func testAHashWithNoSpaceIsNotAHeading() {
+        XCTAssertEqual(heading("#tag and more"), "# #tag and more")
+    }
+}

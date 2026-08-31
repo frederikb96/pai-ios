@@ -36,11 +36,11 @@ struct NoteTagFilterSheet: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .listRowBackground(PaiPalette.Semantic.panelBackground)
+                .listRowBackground(PaiPalette.Notes.panelBackground)
             }
             .listStyle(.plain)
             .searchable(text: $query, prompt: "Find a tag")
-            .paiScreenBackground()
+            .paiNotesBackground()
             .navigationTitle(selected.isEmpty ? "Tags" : "Tags (\(selected.count))")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

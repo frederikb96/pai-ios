@@ -187,7 +187,9 @@ struct MarkdownSourceTextView: UIViewRepresentable {
 
         /// Built once and kept, because `inputAccessoryView` is read every time the view becomes
         /// first responder and a fresh bar per focus would flicker as the keyboard comes up.
-        lazy var keyboardBar: NoteEditorKeyboardBar = NoteEditorKeyboardBar { [weak self] item in
+        lazy var keyboardBar: NoteEditorKeyboardBar = NoteEditorKeyboardBar(
+            showsFormatting: parent.kind == .prose
+        ) { [weak self] item in
             self?.handle(item)
         }
 
@@ -254,6 +256,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
             case .attach:
                 parent.onAttach(textView.selectedRange.location)
             case .command(let command):
+                guard parent.kind == .prose else { return }
                 guard
                     let edit = MarkdownEditing.edit(
                         command, in: textView.text ?? "", selection: textView.selectedRange)

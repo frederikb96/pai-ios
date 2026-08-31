@@ -33,7 +33,10 @@ final class NoteEditorKeyboardBar: UIView {
         (.link, "link", "Link"),
     ]
 
-    init(onItem: @escaping (NoteEditorBarItem) -> Void) {
+    /// `showsFormatting` is false inside a fenced block or a table. The buttons write markdown,
+    /// and markdown inside a code block is not markup — tapping Bold there splices `**` into the
+    /// code. Attaching a file and getting the keyboard out of the way still apply anywhere.
+    init(showsFormatting: Bool, onItem: @escaping (NoteEditorBarItem) -> Void) {
         self.onItem = onItem
         super.init(frame: CGRect(x: 0, y: 0, width: 0, height: 44))
         autoresizingMask = .flexibleWidth
@@ -44,9 +47,10 @@ final class NoteEditorKeyboardBar: UIView {
         scroller.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = UIStackView(
-            arrangedSubviews: Self.commands.map { command, symbol, label in
-                button(symbol: symbol, label: label, item: .command(command))
-            })
+            arrangedSubviews: showsFormatting
+                ? Self.commands.map { command, symbol, label in
+                    button(symbol: symbol, label: label, item: .command(command))
+                } : [])
         stack.addArrangedSubview(button(symbol: "paperclip", label: "Attach a photo or file", item: .attach))
         stack.axis = .horizontal
         stack.spacing = 2

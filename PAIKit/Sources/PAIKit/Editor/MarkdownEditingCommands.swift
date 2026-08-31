@@ -154,9 +154,13 @@ public enum MarkdownEditing {
         let utf16 = Array(text.utf16)
         let span = lineSpan(utf16, NSRange(location: selection.location, length: 0))
         let line = string(utf16, span)
-        let current = headingCycle.lastIndex { line.hasPrefix($0) }
-        let stripped = current.map { String(line.dropFirst(headingCycle[$0].count)) } ?? line
-        let next = current.map { $0 + 1 } ?? 0
+        // Every ATX level is stripped, not only the three the button produces: a `####` typed by
+        // hand or pasted in is a heading, and prepending to it makes `# #### Title`.
+        let hashes = line.prefix { $0 == "#" }.count
+        let isHeading = (1...6).contains(hashes) && line.dropFirst(hashes).first == " "
+        let stripped = isHeading ? String(line.dropFirst(hashes + 1)) : line
+        let current = isHeading ? headingCycle.firstIndex(where: { $0.count == hashes + 1 }) : nil
+        let next = current.map { $0 + 1 } ?? (isHeading ? headingCycle.count : 0)
         let replacement = (next < headingCycle.count ? headingCycle[next] : "") + stripped
         let delta = replacement.utf16.count - line.utf16.count
         return MarkdownEdit(
