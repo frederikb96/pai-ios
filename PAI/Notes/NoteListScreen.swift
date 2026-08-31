@@ -3,60 +3,91 @@ import SwiftUI
 
 /// The note index (spec parity with `pai-cloud/web/src/apps/notes/NoteList.tsx`): client-side
 /// filter-as-you-type over the already-loaded index, favourites and tags narrowing it further,
-/// and a full-text mode that reaches the server for a literal substring match over note bodies.
-///
-/// Semantic search is deliberately out of scope here — it needs a `/api/memory/search`-shaped
-/// route and a shared relative-threshold slider this app has no equivalent of yet, and porting
-/// those is a separate piece of work from the notes module itself.
+/// a full-text mode that reaches the server for a literal substring match over note bodies, and a
+/// semantic mode that reaches `POST /api/memory/search` for a meaning-based match over each
+/// note's summary.
 struct NoteListScreen: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(NotesStore.self) private var notes
+    @Environment(NotesBrowseStore.self) private var browse
     @Environment(ToastCenter.self) private var toasts
 
     @State private var filterText = ""
     @State private var favouritesOnly = false
     @State private var selectedTags: [String] = []
     @State private var mode: Mode = .filter
-    @State private var debouncedQuery = ""
+    @State private var showTagFilter = false
 
     @State private var searchResults: [NoteSearchHit] = []
     @State private var searchTruncated = false
     @State private var searchLoading = false
     @State private var searchError: String?
 
+    @State private var semanticResults: [NoteSemanticHit] = []
+    @State private var semanticLoading = false
+    @State private var semanticError: String?
+
     @State private var actionsTargetId: String?
     @State private var previewTargetId: String?
 
-    private enum Mode: Equatable { case filter, fullText }
+    private enum Mode: Equatable { case filter, fullText, semantic }
+
+    /// Drives the debounced search `.task` — one id covering both server-reaching modes so a
+    /// mode switch and a keystroke are never two separate tasks racing each other.
+    private struct SearchTrigger: Equatable {
+        let query: String
+        let mode: Mode
+    }
 
     var body: some View {
         list
             .paiScreenBackground()
             .navigationTitle("Notes")
-            .searchable(text: $filterText, prompt: mode == .fullText ? "Search note text" : "Filter notes")
+            .searchable(text: $filterText, prompt: searchPrompt)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        environment.router.push(.noteContainers)
+                    Menu {
+                        Menu("Sort by") {
+                            ForEach(NoteSortOrder.allCases) { order in
+                                Button {
+                                    browse.setSortOrder(order)
+                                } label: {
+                                    if browse.sortOrder == order {
+                                        Label(order.label, systemImage: "checkmark")
+                                    } else {
+                                        Text(order.label)
+                                    }
+                                }
+                            }
+                        }
+                        Divider()
+                        Button {
+                            environment.router.push(.noteContainers)
+                        } label: {
+                            Label("Containers", systemImage: "folder")
+                        }
+                        .accessibilityIdentifier("open-note-containers")
                     } label: {
-                        Image(systemName: "folder")
+                        Image(systemName: "ellipsis.circle")
                     }
-                    .accessibilityLabel("Note containers")
-                    .accessibilityIdentifier("open-note-containers")
+                    .accessibilityLabel("Note list actions")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        Task {
-                            guard let created = await notes.createNote(name: "Untitled") else {
-                                toasts.show(notes.loadError ?? "Could not create the note", kind: .error)
-                                return
-                            }
-                            environment.router.push(.note(id: created.id))
+                    Menu {
+                        Button {
+                            Task { await createNote() }
+                        } label: {
+                            Label("New note", systemImage: "square.and.pencil")
+                        }
+                        Button {
+                            environment.router.push(.noteContainers)
+                        } label: {
+                            Label("New container", systemImage: "folder.badge.plus")
                         }
                     } label: {
-                        Image(systemName: "square.and.pencil")
+                        Image(systemName: "plus")
                     }
-                    .accessibilityLabel("New note")
+                    .accessibilityLabel("Create")
                 }
             }
             .task {
@@ -64,17 +95,22 @@ struct NoteListScreen: View {
                 await notes.refresh()
             }
             .refreshable { await notes.refresh() }
-            .task(id: filterText) {
-                guard mode == .fullText else { return }
+            .task(id: SearchTrigger(query: filterText, mode: mode)) {
+                guard mode == .fullText || mode == .semantic else { return }
                 let trimmed = filterText.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else {
                     searchResults = []
                     searchTruncated = false
+                    semanticResults = []
                     return
                 }
                 try? await Task.sleep(for: .milliseconds(1000))
                 guard !Task.isCancelled else { return }
-                await runFullTextSearch(trimmed)
+                if mode == .fullText {
+                    await runFullTextSearch(trimmed)
+                } else {
+                    await runSemanticSearch(trimmed)
+                }
             }
             .sheet(item: Binding(get: { actionsTargetId.map(NoteId.init) }, set: { actionsTargetId = $0?.value })) {
                 target in
@@ -106,6 +142,22 @@ struct NoteListScreen: View {
             }
     }
 
+    private var searchPrompt: String {
+        switch mode {
+        case .filter: return "Filter notes"
+        case .fullText: return "Search note text"
+        case .semantic: return "Search by meaning"
+        }
+    }
+
+    private func createNote() async {
+        guard let created = await notes.createNote(name: "Untitled") else {
+            toasts.show(notes.loadError ?? "Could not create the note", kind: .error)
+            return
+        }
+        environment.router.push(.note(id: created.id))
+    }
+
     @ViewBuilder
     private var list: some View {
         VStack(spacing: 0) {
@@ -116,6 +168,8 @@ struct NoteListScreen: View {
                         "Notes unavailable", systemImage: "exclamationmark.triangle", description: Text(error))
                 } else if mode == .fullText {
                     fullTextResults
+                } else if mode == .semantic {
+                    semanticResultsView
                 } else if visibleNotes.isEmpty && !notes.isLoading {
                     ContentUnavailableView(
                         "No notes", systemImage: "note.text",
@@ -134,16 +188,8 @@ struct NoteListScreen: View {
 
     private var filterChips: some View {
         HStack(spacing: 8) {
-            Button {
-                mode = mode == .fullText ? .filter : .fullText
-                filterText = ""
-                searchResults = []
-            } label: {
-                Label("Full text", systemImage: "text.magnifyingglass")
-                    .font(PaiTypography.caption.font)
-            }
-            .buttonStyle(.bordered)
-            .tint(mode == .fullText ? PaiPalette.primary500 : PaiPalette.Semantic.textMuted)
+            modeChip(target: .fullText, label: "Full text", systemImage: "text.magnifyingglass")
+            modeChip(target: .semantic, label: "Semantic", systemImage: "sparkles")
 
             if mode == .filter {
                 Button {
@@ -156,7 +202,7 @@ struct NoteListScreen: View {
                 .tint(favouritesOnly ? PaiPalette.amber500 : PaiPalette.Semantic.textMuted)
             }
 
-            tagMenu
+            tagFilterButton
 
             Spacer()
         }
@@ -164,35 +210,34 @@ struct NoteListScreen: View {
         .padding(.vertical, 6)
     }
 
-    private var tagMenu: some View {
+    private func modeChip(target: Mode, label: String, systemImage: String) -> some View {
+        Button {
+            mode = mode == target ? .filter : target
+            filterText = ""
+            searchResults = []
+            semanticResults = []
+        } label: {
+            Label(label, systemImage: systemImage)
+                .font(PaiTypography.caption.font)
+        }
+        .buttonStyle(.bordered)
+        .tint(mode == target ? PaiPalette.primary500 : PaiPalette.Semantic.textMuted)
+    }
+
+    private var tagFilterButton: some View {
         let options = collectTags(notes.notes.filter { !$0.pendingDelete })
-        return Menu {
-            ForEach(options) { option in
-                Button {
-                    if selectedTags.contains(option.key) {
-                        selectedTags.removeAll { $0 == option.key }
-                    } else {
-                        selectedTags.append(option.key)
-                    }
-                } label: {
-                    // A `Label` needs a symbol name that exists; an empty one draws nothing and
-                    // leaves the two states differing only by a gap nobody can see.
-                    if selectedTags.contains(option.key) {
-                        Label("\(option.label) (\(option.count))", systemImage: "checkmark")
-                    } else {
-                        Text("\(option.label) (\(option.count))")
-                    }
-                }
-            }
-            if !selectedTags.isEmpty {
-                Divider()
-                Button("Clear tags") { selectedTags = [] }
-            }
+        return Button {
+            showTagFilter = true
         } label: {
             Label(selectedTags.isEmpty ? "Tags" : "Tags (\(selectedTags.count))", systemImage: "tag")
                 .font(PaiTypography.caption.font)
         }
+        .buttonStyle(.bordered)
+        .tint(selectedTags.isEmpty ? PaiPalette.Semantic.textMuted : PaiPalette.primary500)
         .disabled(options.isEmpty)
+        .sheet(isPresented: $showTagFilter) {
+            NoteTagFilterSheet(options: options, selected: $selectedTags)
+        }
     }
 
     @ViewBuilder
@@ -204,15 +249,17 @@ struct NoteListScreen: View {
         }
         .buttonStyle(.plain)
         .listRowBackground(PaiPalette.Semantic.panelBackground)
-        .swipeActions(edge: .leading) {
+        // One edge, two buttons: the outer one (listed first) is the full-swipe default. A
+        // small swipe reaches Actions first since it sits nearer the row's content; continuing
+        // to a full swipe triggers Favourite without a tap, since it owns the edge.
+        .swipeActions(edge: .trailing) {
             Button {
                 Task { await notes.setFavourite(id: note.id, favourite: !note.favourite) }
             } label: {
                 Label(note.favourite ? "Unfavourite" : "Favourite", systemImage: "star")
             }
             .tint(PaiPalette.amber500)
-        }
-        .swipeActions(edge: .trailing) {
+
             Button {
                 actionsTargetId = note.id
             } label: {
@@ -244,6 +291,17 @@ struct NoteListScreen: View {
             searchTruncated = page.truncated
         } catch {
             searchError = (error as? PaiError)?.userMessage ?? "Search failed"
+        }
+    }
+
+    private func runSemanticSearch(_ query: String) async {
+        semanticLoading = true
+        semanticError = nil
+        defer { semanticLoading = false }
+        do {
+            semanticResults = try await browse.searchSemantic(q: query)
+        } catch {
+            semanticError = (error as? PaiError)?.userMessage ?? "Search failed"
         }
     }
 
@@ -282,6 +340,48 @@ struct NoteListScreen: View {
         }
     }
 
+    @ViewBuilder
+    private var semanticResultsView: some View {
+        if let semanticError {
+            ContentUnavailableView(
+                "Search failed", systemImage: "exclamationmark.triangle", description: Text(semanticError))
+        } else if filterText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            ContentUnavailableView(
+                "Search by meaning", systemImage: "sparkles",
+                description: Text("Type to search notes by what they mean, not just their words."))
+        } else if semanticVisible.isEmpty && !semanticLoading {
+            ContentUnavailableView("No matches", systemImage: "sparkles")
+        } else {
+            List {
+                ForEach(semanticVisible) { entry in
+                    Button {
+                        environment.router.push(.note(id: entry.note.id))
+                    } label: {
+                        NoteRow(note: entry.note, score: entry.hit.score)
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(PaiPalette.Semantic.panelBackground)
+                }
+                if semanticLoading {
+                    ProgressView().frame(maxWidth: .infinity)
+                }
+            }
+            .listStyle(.plain)
+        }
+    }
+
+    /// Every semantic hit resolved against the already-loaded index — the search route answers
+    /// only an id and a score (see `NotesBrowseStore`'s doc comment), never a name or summary
+    /// that could go stale relative to what a note holds now.
+    private var semanticVisible: [SemanticNoteHit] {
+        let byId = Dictionary(
+            uniqueKeysWithValues: notes.notes.filter { !$0.pendingDelete }.map { ($0.id, $0) })
+        return semanticResults.compactMap { hit in
+            guard let note = byId[hit.noteId], noteHasAllTags(note, selected: selectedTags) else { return nil }
+            return SemanticNoteHit(hit: hit, note: note)
+        }
+    }
+
     private var visibleNotes: [NoteSummary] {
         let live = notes.notes.filter { !$0.pendingDelete }
         let scoped = favouritesOnly ? live.filter(\.favourite) : live
@@ -289,7 +389,7 @@ struct NoteListScreen: View {
         let filtered =
             filterText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? tagged : tagged.filter { noteMatchesQuery($0, query: filterText) }
-        return filtered.sorted { $0.updatedAtMs > $1.updatedAtMs }
+        return sortNotes(filtered, order: browse.sortOrder)
     }
 }
 
@@ -299,20 +399,59 @@ private struct NoteId: Identifiable {
     var id: String { value }
 }
 
+/// A semantic hit resolved against the already-loaded index — see `semanticVisible`'s own doc
+/// comment. `Identifiable` by note id, the same identity `ForEach` uses for the plain index list.
+private struct SemanticNoteHit: Identifiable {
+    let hit: NoteSemanticHit
+    let note: NoteSummary
+    var id: String { hit.noteId }
+}
+
+/// The row's timestamp — pure presentation over `SessionListFormat.timeBucket`, which is the
+/// tested half; picking a `Date.FormatStyle` template per bucket is left to the view on purpose
+/// (see that type's own doc comment). Mirrors the session list's own `SessionTimeFormat` rather
+/// than a third convention, since both read the same three buckets.
+private enum NoteTimeFormat {
+    static func text(for updatedAtMs: Int) -> String {
+        let date = Date(timeIntervalSince1970: Double(updatedAtMs) / 1000)
+        switch SessionListFormat.timeBucket(for: date) {
+        case .today:
+            return date.formatted(date: .omitted, time: .shortened)
+        case .thisWeek:
+            return date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+        case .older:
+            return date.formatted(.dateTime.month(.abbreviated).day())
+        }
+    }
+}
+
 private struct NoteRow: View {
     let note: NoteSummary
+    var score: Double? = nil
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(note.name.isEmpty ? "Untitled" : note.name)
-                    .font(PaiTypography.bodyEmphasized.font)
-                    .foregroundStyle(PaiPalette.Semantic.textPrimary)
-                if let summary = note.summary, !summary.isEmpty {
-                    Text(summary)
+                HStack(spacing: 6) {
+                    Text(note.name.isEmpty ? "Untitled" : note.name)
+                        .font(PaiTypography.bodyEmphasized.font)
+                        .foregroundStyle(PaiPalette.Semantic.textPrimary)
+                    if let score {
+                        Text("\(Int((score * 100).rounded()))%")
+                            .font(.system(size: 10))
+                            .foregroundStyle(PaiPalette.Semantic.textFaint)
+                    }
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(NoteTimeFormat.text(for: note.updatedAtMs))
                         .font(PaiTypography.caption.font)
-                        .foregroundStyle(PaiPalette.Semantic.textMuted)
-                        .lineLimit(2)
+                        .foregroundStyle(PaiPalette.Semantic.textFaint)
+                    if let summary = note.summary, !summary.isEmpty {
+                        Text(summary)
+                            .font(PaiTypography.caption.font)
+                            .foregroundStyle(PaiPalette.Semantic.textMuted)
+                            .lineLimit(2)
+                    }
                 }
             }
             Spacer(minLength: 0)
@@ -336,8 +475,7 @@ private struct NoteSearchHitRow: View {
             Text(hit.note.name.isEmpty ? "Untitled" : hit.note.name)
                 .font(PaiTypography.bodyEmphasized.font)
                 .foregroundStyle(PaiPalette.Semantic.textPrimary)
-            Text(hit.extract)
-                .font(PaiTypography.caption.font)
+            highlightedExtract
                 .foregroundStyle(PaiPalette.Semantic.textMuted)
                 .lineLimit(3)
             if hit.matchCount > 1 {
@@ -348,5 +486,16 @@ private struct NoteSearchHitRow: View {
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
+    }
+
+    /// Reuses the transcript's own search-highlight painting (`TranscriptTextHighlighting`,
+    /// `TranscriptSearchPainting`) so a note's full-text hits look the same as a highlighted
+    /// transcript hit rather than a second, differently-coloured convention.
+    private var highlightedExtract: Text {
+        let highlights: [TranscriptHighlightSpan] = NoteExtractHighlight.ranges(
+            extract: hit.extract, offsets: hit.extractOffsets
+        ).map { ($0, false) }
+        return TranscriptTextHighlighting.plainText(
+            hit.extract, font: PaiTypography.caption.font, highlights: highlights)
     }
 }

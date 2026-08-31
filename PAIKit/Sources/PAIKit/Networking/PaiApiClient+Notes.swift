@@ -170,6 +170,30 @@ extension PaiApiClient {
         return try await send(path: "/api/notes/search", query: query)
     }
 
+    // MARK: Semantic search
+
+    /// `POST /api/memory/search`, scoped to `filter: {"type": "note"}` — meaning-based search
+    /// over the summary each note contributes to memory, ported from the web's `NoteList.tsx`
+    /// (`semantic` mode). The route is generic across memories, phase summaries and notes;
+    /// nothing here reuses it for those, so this stays a notes-only wrapper rather than a
+    /// general memory-search client.
+    public func searchNotesSemantic(q: String, limit: Int = 100) async throws -> [NoteSemanticHit] {
+        struct Body: Encodable {
+            let query: String
+            let limit: Int
+            let filter: [String: String]
+        }
+        let payload: Data
+        do {
+            payload = try JSONEncoder().encode(Body(query: q, limit: limit, filter: ["type": "note"]))
+        } catch {
+            throw PaiError.decoding("\(error)")
+        }
+        let response: NoteSemanticSearchResponse = try await send(
+            path: "/api/memory/search", method: "POST", body: payload)
+        return response.results
+    }
+
     // MARK: Containers
 
     public func getNoteContainers() async throws -> [NoteContainer] {
@@ -310,6 +334,10 @@ extension PaiApiClient {
 
     struct NoteAttachmentsPage: Decodable, Sendable {
         let attachments: [NoteAttachmentRecord]
+    }
+
+    struct NoteSemanticSearchResponse: Decodable, Sendable {
+        let results: [NoteSemanticHit]
     }
 
     // MARK: Helpers
