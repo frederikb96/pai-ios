@@ -187,28 +187,33 @@ struct NoteListScreen: View {
         }
     }
 
+    /// Scrolled rather than wrapped. Four chips do not fit across a phone, and a `Label` given
+    /// less width than its text needs breaks the word instead of shrinking — "Favourites" reads as
+    /// "Favourite / s".
     private var filterChips: some View {
-        HStack(spacing: 8) {
-            modeChip(target: .fullText, label: "Full text", systemImage: "text.magnifyingglass")
-            modeChip(target: .semantic, label: "Semantic", systemImage: "sparkles")
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                modeChip(target: .fullText, label: "Full text", systemImage: "text.magnifyingglass")
+                modeChip(target: .semantic, label: "Semantic", systemImage: "sparkles")
 
-            if mode == .filter {
-                Button {
-                    favouritesOnly.toggle()
-                } label: {
-                    Label("Favourites", systemImage: favouritesOnly ? "star.fill" : "star")
-                        .font(PaiTypography.caption.font)
+                if mode == .filter {
+                    Button {
+                        favouritesOnly.toggle()
+                    } label: {
+                        Label("Favourites", systemImage: favouritesOnly ? "star.fill" : "star")
+                            .font(PaiTypography.caption.font)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(favouritesOnly ? PaiPalette.amber500 : PaiPalette.Semantic.textMuted)
                 }
-                .buttonStyle(.bordered)
-                .tint(favouritesOnly ? PaiPalette.amber500 : PaiPalette.Semantic.textMuted)
+
+                tagFilterButton
             }
-
-            tagFilterButton
-
-            Spacer()
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
     }
 
     private func modeChip(target: Mode, label: String, systemImage: String) -> some View {

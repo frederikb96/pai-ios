@@ -78,8 +78,19 @@ enum NoteEditorTheme {
         let full = NSRange(location: 0, length: attributed.length)
         // Set, not add: the previous pass's attributes have to go, or a character that stops being
         // bold stays bold forever.
-        attributed.setAttributes(
-            [.font: kind == .prose ? bodyFont : codeFont, .foregroundColor: text], range: full)
+        var base: [NSAttributedString.Key: Any] = [
+            .font: kind == .prose ? bodyFont : codeFont, .foregroundColor: text,
+        ]
+        // A code block and a table scroll sideways, and the paragraph style is what actually
+        // decides that: a wide text container stops the *container* forcing a break, but the
+        // layout manager still wraps a paragraph whose style asks it to. Clipping instead lays
+        // each line out at its full length, which is what there is to scroll.
+        if kind != .prose {
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineBreakMode = .byClipping
+            base[.paragraphStyle] = paragraph
+        }
+        attributed.setAttributes(base, range: full)
 
         // Block styles come first and inline styles second, in the order the scanner emitted
         // them, so bold inside a heading lands on top of the heading rather than replacing it.

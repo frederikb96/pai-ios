@@ -41,6 +41,13 @@ struct NoteEditorScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbar }
         .task { await notes.loadNote(id: noteID) }
+        // The index resolves this note's wikilinks, and a note can be opened without ever passing
+        // through the list — a shortcut, a tapped notification, a link from another note. Without
+        // it every `[[link]]` renders struck through as though its target had been deleted.
+        .task {
+            guard notes.notes.isEmpty else { return }
+            await notes.refresh()
+        }
         // A pending edit must not wait on the debounce when the app is leaving the foreground:
         // iOS can suspend before it fires, and the edit would be gone with no sign it existed.
         .onChange(of: scenePhase) { _, phase in
