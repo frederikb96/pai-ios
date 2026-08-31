@@ -2,11 +2,12 @@ import XCTest
 @testable import PAIKit
 
 private func makeNote(
-    id: String = "1", name: String, summary: String? = nil, tags: [String] = []
+    id: String = "1", name: String, summary: String? = nil, tags: [String] = [],
+    favourite: Bool = false, updatedAtMs: Int = 0
 ) -> NoteSummary {
     NoteSummary(
-        id: id, name: name, summary: summary, containerId: nil, favourite: false, tags: tags,
-        updatedAtMs: 0, pendingDelete: false)
+        id: id, name: name, summary: summary, containerId: nil, favourite: favourite, tags: tags,
+        updatedAtMs: updatedAtMs, pendingDelete: false)
 }
 
 final class NoteFilterTests: XCTestCase {
@@ -76,5 +77,50 @@ final class NoteFilterTests: XCTestCase {
     func testTagSelectionIsCaseInsensitive() {
         let note = makeNote(name: "a", tags: ["SVA"])
         XCTAssertTrue(noteHasAllTags(note, selected: ["sva"]))
+    }
+
+    // MARK: - sortNotes
+
+    func testModifiedOrdersMostRecentlyUpdatedFirst() {
+        let notes = [
+            makeNote(id: "old", name: "b", updatedAtMs: 100),
+            makeNote(id: "new", name: "a", updatedAtMs: 200),
+        ]
+        XCTAssertEqual(sortNotes(notes, order: .modified).map(\.id), ["new", "old"])
+    }
+
+    func testNameOrdersAlphabeticallyFoldingCase() {
+        let notes = [
+            makeNote(id: "b", name: "banana"),
+            makeNote(id: "a", name: "Apple"),
+        ]
+        XCTAssertEqual(sortNotes(notes, order: .name).map(\.id), ["a", "b"])
+    }
+
+    /// Two notes sharing a name still need a deterministic order — most recently modified wins,
+    /// the same tie-break every other case in this function uses.
+    func testNameTiesBreakOnMostRecentlyModified() {
+        let notes = [
+            makeNote(id: "old", name: "Same", updatedAtMs: 100),
+            makeNote(id: "new", name: "Same", updatedAtMs: 200),
+        ]
+        XCTAssertEqual(sortNotes(notes, order: .name).map(\.id), ["new", "old"])
+    }
+
+    /// The whole point of this order: a favourite outranks recency, not the other way round.
+    func testFavouritesFirstOutranksModifiedTime() {
+        let notes = [
+            makeNote(id: "recent", name: "a", favourite: false, updatedAtMs: 500),
+            makeNote(id: "old-favourite", name: "b", favourite: true, updatedAtMs: 1),
+        ]
+        XCTAssertEqual(sortNotes(notes, order: .favouritesFirst).map(\.id), ["old-favourite", "recent"])
+    }
+
+    func testFavouritesFirstTiesBreakOnMostRecentlyModified() {
+        let notes = [
+            makeNote(id: "old", name: "a", favourite: true, updatedAtMs: 100),
+            makeNote(id: "new", name: "b", favourite: true, updatedAtMs: 200),
+        ]
+        XCTAssertEqual(sortNotes(notes, order: .favouritesFirst).map(\.id), ["new", "old"])
     }
 }

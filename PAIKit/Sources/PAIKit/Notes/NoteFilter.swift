@@ -60,3 +60,40 @@ public func noteHasAllTags(_ note: NoteSummary, selected: [String]) -> Bool {
     let present = Set(note.tags.map { $0.lowercased() })
     return selected.allSatisfy { present.contains($0) }
 }
+
+/// How the note list orders its rows. `.modified` is the long-standing default; the other two
+/// use only fields the list route already returns. There is deliberately no `.created` case: the
+/// list route (`NoteSummary`) never carries a creation timestamp, only `NoteDetail` does, so
+/// offering it here would need a backend field added to `GET /api/notes` first.
+public enum NoteSortOrder: String, Codable, Sendable, CaseIterable, Identifiable {
+    case modified, name, favouritesFirst
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .modified: return "Last modified"
+        case .name: return "Name"
+        case .favouritesFirst: return "Favourites first"
+        }
+    }
+}
+
+/// Orders an already-filtered slice of the index. Every case breaks its own ties on
+/// `updatedAtMs` descending, so the list never looks unordered within a tied group. `.name`
+/// folds case and diacritics the same way `noteMatchesQuery` above does, so "müller" and
+/// "Müller" sit together rather than split across an upper/lower-case boundary.
+public func sortNotes(_ notes: [NoteSummary], order: NoteSortOrder) -> [NoteSummary] {
+    switch order {
+    case .modified:
+        return notes.sorted { $0.updatedAtMs > $1.updatedAtMs }
+    case .name:
+        return notes.sorted { a, b in
+            let (na, nb) = (normalizeForNoteSearch(a.name), normalizeForNoteSearch(b.name))
+            return na != nb ? na < nb : a.updatedAtMs > b.updatedAtMs
+        }
+    case .favouritesFirst:
+        return notes.sorted { a, b in
+            a.favourite != b.favourite ? a.favourite : a.updatedAtMs > b.updatedAtMs
+        }
+    }
+}
