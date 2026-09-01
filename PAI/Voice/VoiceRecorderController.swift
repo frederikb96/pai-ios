@@ -769,6 +769,35 @@ final class VoiceRecorderController {
         audioSession.currentRoute.inputs.first?.portName ?? "Microphone"
     }
 
+    // MARK: - Startup reconciliation
+
+    /// A take that survives a hard kill — force-quit, an OS kill under memory pressure, a dead
+    /// battery — never reaches `persistRecording()`, so its WAV file is complete and playable on
+    /// disk while `settingsStore.recordings` has no entry for it, and the plus-icon picker shows
+    /// nothing. This walks the Recordings directory for exactly that gap and synthesizes a
+    /// `.crashed`-tagged entry for anything it finds — see `RecordingReconciliation`'s own doc
+    /// comment for why this exists at all.
+    ///
+    /// 🚨 Never deletes anything. An id whose header cannot be read, or whose header declares no
+    /// audio (a `start()` stub the process died before ever appending to), is left on disk
+    /// exactly as found rather than cleaned up — the one thing this must not become is the
+    /// startup cleanup that destroys the take it was built to save.
+    ///
+    /// Call once, at launch, before any screen has a chance to render an empty picker for a take
+    /// that is actually sitting right there — `AppEnvironment.loadStartupState()`.
+    func reconcileOrphanedRecordings() {
+        let known = Set(settingsStore.recordings.map(\.id))
+        let orphans = RecordingReconciliation.orphanedIds(onDisk: audioStorage.idsOnDisk(), known: known)
+        for id in orphans.sorted() {
+            guard let header = audioStorage.sentHeader(id: id) else { continue }
+            let take = RecordingReconciliation.OrphanedTake(
+                id: id, sampleRate: header.sampleRate, dataSize: header.dataSize,
+                rawStored: audioStorage.hasRaw(id: id))
+            guard let meta = RecordingReconciliation.metadata(for: take) else { continue }
+            settingsStore.saveRecording(meta)
+        }
+    }
+
     // MARK: - Settings mapping
 
     /// `SettingsStore` persists `SttLanguage` (this app's own enum, deliberately with no

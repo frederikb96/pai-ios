@@ -27,6 +27,13 @@ struct SessionActionsSheet: View {
                 if let actions {
                     RootActionsList(actions: actions, isOwner: me.isOwner, path: $path) {
                         actions.deleteNow()
+                        // This is the one moment a deleted session's staged attachments can be
+                        // told apart from one merely not yet loaded — `deleteSession` is the
+                        // app's single delete entry point (`SessionListStore.deleteSession`'s own
+                        // doc comment), so nothing else needs to guess at whether a session is
+                        // truly gone. `set([], for:)` both clears the in-memory list and removes
+                        // the disk mirror, the same as the composer's own send-clears-it path.
+                        environment.connection?.staging.set([], for: sessionId)
                         dismiss()
                         // Leaves a dead transcript screen behind otherwise: the row is gone from
                         // the list the moment `deleteNow` runs, but nothing pops the screen that

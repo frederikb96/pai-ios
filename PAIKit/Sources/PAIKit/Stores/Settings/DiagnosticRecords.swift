@@ -15,10 +15,15 @@ public struct SentMessage: Codable, Sendable, Equatable {
 }
 
 /// Why a recording stopped — the first thing to know when one is too short. Port of
-/// `stores/settings.ts`'s `RecordingEnd`.
+/// `stores/settings.ts`'s `RecordingEnd`, plus `.crashed`, which the web has no equivalent of:
+/// only iOS reconciles a take the app never got to close (`RecordingReconciliation`).
 public enum RecordingEndReason: String, Codable, Sendable, CaseIterable {
     case user, silence, interrupted, error
     case connectionLost = "connection-lost"
+    /// Never written by `VoiceRecorderController.persistRecording()` — only by
+    /// `RecordingReconciliation.metadata(for:)`, for a take a startup pass found on disk with no
+    /// matching `RecordingMeta`. Lets the row read as recovered rather than an ordinary take.
+    case crashed
 }
 
 /// The device the recording was captured on, as far as it could be told at the time — port of

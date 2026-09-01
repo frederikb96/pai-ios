@@ -88,6 +88,19 @@ final class StagedAttachmentStore {
         return base.appendingPathComponent("StagedAttachments", isDirectory: true)
     }
 
+    /// Serializes each session's disk writes to the order `set(_:for:)` called them in.
+    /// `Task.detached` alone gives no such guarantee — two overlapping writes for the same key
+    /// can finish in either order, and a "clear" (the empty-list branch below, called on send)
+    /// that loses that race to a still-in-flight "add" leaves an already-sent attachment on disk
+    /// for `loadPersisted()` to read back on the next launch, which is exactly the symptom this
+    /// fixes: a photo that was sent reappearing in the composer after a relaunch. Each new write
+    /// awaits whichever one preceded it for the same session, so completion order always matches
+    /// call order regardless of how the scheduler happens to run them. Reads and writes of this
+    /// dictionary only ever happen synchronously inside `persist`, itself only ever called from
+    /// `set(_:for:)` on the main actor this whole type is isolated to — so there is no window
+    /// between reading the previous task and installing the new one for a second call to land in.
+    private static var pendingWrites: [String: Task<Void, Never>] = [:]
+
     /// Alphanumerics and hyphens survive as themselves — every session id and `DraftKey.newSession`
     /// already are that — anything else becomes `_` so a key can never escape its own directory.
     private static func directoryName(for key: String) -> String {
@@ -95,10 +108,11 @@ final class StagedAttachmentStore {
         return String(key.unicodeScalars.map { allowed.contains($0) ? Character($0) : "_" })
     }
 
-    /// Fire-and-forget on purpose, matching every other write in this store: nothing here awaits
-    /// completion, and a write racing a later one for the same key only ever loses to a *newer*
-    /// snapshot, since `set(_:for:)` is the only caller and each call carries the full current
-    /// list.
+    /// Fire-and-forget from the caller's side — nothing in `set(_:for:)` awaits completion — but
+    /// not from this method's own: each write awaits the previous one for the same key before
+    /// touching disk, via `pendingWrites`, so a write racing a later one for the same key can
+    /// only ever lose to a *newer* snapshot, matching what the old comment here claimed before
+    /// `Task.detached` scheduling order turned out not to guarantee it.
     private static func persist(_ attachments: [StagedAttachment], for sessionID: String) {
         let directory = rootDirectory.appendingPathComponent(directoryName(for: sessionID), isDirectory: true)
         let manifest = AttachmentManifest(
@@ -108,13 +122,24 @@ final class StagedAttachmentStore {
                     id: $0.id.uuidString, filename: $0.filename, mimeType: $0.mimeType, originalSize: $0.originalSize)
             })
         let files = attachments.map { (name: $0.id.uuidString, data: $0.data) }
-        Task.detached(priority: .utility) {
+        let previous = pendingWrites[sessionID]
+        let task = Task.detached(priority: .utility) {
+            _ = await previous?.value
             let fileManager = FileManager.default
             guard !manifest.records.isEmpty else {
                 try? fileManager.removeItem(at: directory)
                 return
             }
             try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            // A deliberate answer, not an accidental default: a staged attachment is bytes the
+            // backend has never seen, so — like a recording — device backup is the only
+            // redundancy it ever gets before it is sent. Left included on purpose, matching
+            // `FileRecordingAudioStorage`'s identical decision on the same question; excluding
+            // one of the two and not the other would be its own inconsistency bug.
+            var resource = URLResourceValues()
+            resource.isExcludedFromBackup = false
+            var excludable = directory
+            try? excludable.setResourceValues(resource)
             if let encoded = try? JSONEncoder().encode(manifest) {
                 try? encoded.write(to: directory.appendingPathComponent(manifestFilename), options: .atomic)
             }
@@ -128,6 +153,7 @@ final class StagedAttachmentStore {
                 try? file.data.write(to: directory.appendingPathComponent(file.name), options: .atomic)
             }
         }
+        pendingWrites[sessionID] = task
     }
 
     private static func readManifest(at directory: URL) -> AttachmentManifest? {
