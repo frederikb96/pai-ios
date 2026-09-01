@@ -480,32 +480,6 @@ public struct PaiApiClient: Sendable {
         )
     }
 
-    /// Move a session to an existing project, landing it in a fresh blank phase.
-    public func switchSessionProject(sessionId: String, projectId: String) async throws -> Session {
-        struct Body: Encodable {
-            let projectId: String
-            enum CodingKeys: String, CodingKey { case projectId = "project_id" }
-        }
-        return try await send(
-            path: "/api/session/\(sessionId)/switch-project",
-            method: "POST",
-            body: try Self.jsonBody(Body(projectId: projectId))
-        )
-    }
-
-    /// Move a session to an existing phase within its current project.
-    public func switchSessionPhase(sessionId: String, phaseId: String) async throws -> Session {
-        struct Body: Encodable {
-            let phaseId: String
-            enum CodingKeys: String, CodingKey { case phaseId = "phase_id" }
-        }
-        return try await send(
-            path: "/api/session/\(sessionId)/switch-phase",
-            method: "POST",
-            body: try Self.jsonBody(Body(phaseId: phaseId))
-        )
-    }
-
     // MARK: Drafts
 
     public func getDrafts() async throws -> [Draft] {
@@ -600,29 +574,6 @@ public struct PaiApiClient: Sendable {
             method: "DELETE",
             body: try Self.jsonBody(Body(path: path))
         )
-    }
-
-    // MARK: Memory: projects & phases — only what the move-session pickers need
-
-    public func listMemoryProjects(query: String? = nil, limit: Int? = nil, offset: Int? = nil) async throws
-        -> MemoryProjectsPage
-    {
-        var items: [URLQueryItem] = []
-        if let query { items.append(URLQueryItem(name: "query", value: query)) }
-        if let limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
-        if let offset { items.append(URLQueryItem(name: "offset", value: String(offset))) }
-        return try await send(path: "/api/memory/projects", query: items)
-    }
-
-    public func listMemoryPhases(
-        projectId: String? = nil, query: String? = nil, limit: Int? = nil, offset: Int? = nil
-    ) async throws -> MemoryPhasesPage {
-        var items: [URLQueryItem] = []
-        if let projectId { items.append(URLQueryItem(name: "project_id", value: projectId)) }
-        if let query { items.append(URLQueryItem(name: "query", value: query)) }
-        if let limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
-        if let offset { items.append(URLQueryItem(name: "offset", value: String(offset))) }
-        return try await send(path: "/api/memory/phases", query: items)
     }
 
     // MARK: Blocker

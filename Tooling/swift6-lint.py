@@ -26,6 +26,24 @@ SHADOWED_WRAPPER = re.compile(r"^\s*(?:public |internal |private |fileprivate )?
 AMBIGUOUS_PAIR = re.compile(r"(?:width|x|dx): \.[A-Za-z]\w*, (?:height|y|dy): \.[A-Za-z]\w*")
 ISOLATED_STATIC = re.compile(r"^\s*(?:public |internal |private |fileprivate )?static (?:let|var) ([A-Za-z_]\w*)\b")
 DETACHED_TASK = re.compile(r"\bTask\.detached\b")
+#: `nonisolated(unsafe)` is a property qualifier, not a function opting out of actor isolation —
+#: the negative lookahead is what keeps it out of this match.
+NONISOLATED_FUNC = re.compile(r"\bnonisolated(?!\()\b.*\bfunc\b")
+
+#: Main-thread-only UIKit surface, as textual fragments rather than full type signatures — narrow
+#: on purpose, matching `IMPLICITLY_ISOLATED_BASE`'s own shape, so a hit is a real access rather
+#: than a coincidental substring.
+UIKIT_MAIN_THREAD_ONLY = re.compile(
+    r"UIApplication\.shared"
+    r"|UIPasteboard\.general"
+    r"|\.becomeFirstResponder\("
+    r"|\.resignFirstResponder\("
+    r"|\.present\("
+    r"|\.dismiss\("
+    r"|\bUICollectionView\b"
+    r"|\bUIScrollView\b"
+    r"|\bUINotificationFeedbackGenerator\b"
+)
 
 
 #: Inheriting from one of these carries main-actor isolation with no annotation in sight — the
@@ -120,10 +138,54 @@ def detached_reads_of_isolated_statics(lines: list[str], isolated: set[int]) -> 
     return findings
 
 
+def nonisolated_uikit_access(lines: list[str]) -> list[tuple[int, str, str]]:
+    """UIKit touched directly inside a function that opted out of actor isolation.
+
+    `nonisolated func` is legitimate — it is how a delegate callback satisfies a protocol
+    requirement that is not itself `@MainActor` — but the body then runs off the main actor
+    unless it explicitly hops back (`await MainActor.run { ... }`), and a UIKit call written
+    directly in that body raises "Call must be made on main thread" only at runtime, never at
+    compile time. That crash shape is exactly what sent an investigation through ~110 `Task {}`
+    sites and every `nonisolated` declaration in the app looking for a call site nobody could
+    confirm; this rule exists to catch the next one before it needs that hunt.
+
+    Textual and single-file, scoped by indentation like the rest of this module: it catches a
+    UIKit call written directly in the nonisolated function's own body, and misses one reached
+    through a plain helper two calls deep — the same limit `detached_reads_of_isolated_statics`
+    already accepts for its own narrower case.
+    """
+    findings: list[tuple[int, str, str]] = []
+    for index, line in enumerate(lines):
+        if not NONISOLATED_FUNC.search(line):
+            continue
+        indent = len(line) - len(line.lstrip())
+        opening = index
+        while opening < len(lines) and opening - index <= 10 and "{" not in lines[opening]:
+            opening += 1
+        if opening >= len(lines) or "{" not in lines[opening]:
+            # No body found within the lookahead — a protocol requirement with no
+            # implementation, most likely. Nothing to scope, so nothing to scan.
+            continue
+        for cursor in range(opening + 1, len(lines)):
+            body = lines[cursor]
+            if body.strip() and (len(body) - len(body.lstrip())) <= indent:
+                break
+            match = UIKIT_MAIN_THREAD_ONLY.search(body)
+            if match:
+                findings.append((
+                    cursor + 1, body.strip(),
+                    f"'{match.group(0)}' is main-thread-only UIKit, called directly inside a "
+                    "'nonisolated' function — hop to the main actor first "
+                    "(await MainActor.run { ... })",
+                ))
+    return findings
+
+
 def check(path: Path) -> list[tuple[int, str, str]]:
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     isolated = main_actor_line_numbers(lines)
     findings: list[tuple[int, str, str]] = detached_reads_of_isolated_statics(lines, isolated)
+    findings.extend(nonisolated_uikit_access(lines))
 
     for index, line in enumerate(lines):
         if STORED_STATIC_VAR.match(line) and index not in isolated and "nonisolated(unsafe)" not in line:

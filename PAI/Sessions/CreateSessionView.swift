@@ -273,22 +273,15 @@ struct CreateSessionView: View {
 
     /// A session started without a working credential does not fail — it launches, never
     /// registers with Remote Control, and sits spinning until a timeout blames the connection.
-    /// So the composer is replaced rather than greyed out, matching the web's `NewSessionView`:
-    /// the answer is above, in the sign-in banner, and nothing typed here could reach anything
-    /// until that is done.
+    /// So the composer is replaced rather than greyed out, matching the web's `NewSessionView`.
+    ///
+    /// The real `ClaudeAuthBanner`, not a message pointing back at it — this screen is presented
+    /// as a sheet, so the app-wide banner mounted above `RootView`'s own `NavigationStack` is
+    /// underneath it and out of sight for exactly as long as this is on screen. Sign-in has to be
+    /// actionable from here, not just named as being somewhere else.
     private var signInBlockedRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "key.fill")
-            Text("Sign in to Claude above first — a session started now could not start.")
-        }
-        .font(PaiTypography.body.font)
-        .foregroundStyle(PaiPalette.Semantic.textMuted)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(PaiPalette.Semantic.raisedSurface, in: RoundedRectangle(cornerRadius: 14))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        ClaudeAuthBanner()
+            .padding(.vertical, 8)
     }
 
     /// The same shape `ComposerBar`'s drivable composer uses, over the same `DraftKey.newSession`

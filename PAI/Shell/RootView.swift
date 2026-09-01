@@ -32,7 +32,12 @@ struct RootView: View {
                 guard let link = DeepLink.from(url: url) else { return }
                 deepLinks.receive(link)
             }
-            .sheet(item: $pendingCrash, onDismiss: { CrashReporter.clearLast() }) { crash in
+            // No `onDismiss` clear here on purpose: this is the only capture of the reason string
+            // and full symbol list Apple's own crash report leaves out for this exception class,
+            // and deleting it the moment the sheet closes destroys that evidence before anyone can
+            // pull it off the device. It survives until explicitly acknowledged through the debug
+            // bridge's `POST /crash/clear` — see `PAIApp.swift`'s `DebugRoutes`.
+            .sheet(item: $pendingCrash) { crash in
                 CrashReportSheet(record: crash)
             }
     }

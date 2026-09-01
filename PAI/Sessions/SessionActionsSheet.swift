@@ -76,18 +76,12 @@ struct SessionActionsSheet: View {
             IdleTimeoutActionView(actions: actions, toasts: toasts)
         case .export:
             ExportActionView(actions: actions)
-        case .moveProject:
-            MoveToProjectActionView(actions: actions, toasts: toasts, onDone: { dismiss() })
-        case .movePhase:
-            if let projectId = actions.session?.projectId {
-                MoveToPhaseActionView(actions: actions, projectId: projectId, toasts: toasts, onDone: { dismiss() })
-            }
         }
     }
 }
 
 private enum ActionsRoute: Hashable {
-    case rename, timeout, export, moveProject, movePhase
+    case rename, timeout, export
 }
 
 // MARK: - Root list
@@ -120,21 +114,6 @@ private struct RootActionsList: View {
                 if session.kind != .subagent {
                     Button(action: onOpenSubagents) {
                         Label("Subagents", systemImage: "cpu")
-                    }
-                }
-
-                if isOwner, session.kind != .subagent {
-                    Button {
-                        path.append(.moveProject)
-                    } label: {
-                        Label("Move to project…", systemImage: "folder")
-                    }
-                    if session.projectId != nil {
-                        Button {
-                            path.append(.movePhase)
-                        } label: {
-                            Label("Move to phase…", systemImage: "arrow.triangle.branch")
-                        }
                     }
                 }
 
@@ -407,115 +386,4 @@ private struct ShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-
-// MARK: - Move to project / phase
-
-private struct MoveToProjectActionView: View {
-    let actions: SessionActionsStore
-    let toasts: ToastCenter
-    let onDone: () -> Void
-
-    @State private var picker: OffsetPagedListStore<MemoryProject>?
-
-    var body: some View {
-        Group {
-            if let picker {
-                MemoryPickerList(picker: picker, currentId: actions.session?.projectId) { project in
-                    Task {
-                        if await actions.switchProject(project.id) {
-                            onDone()
-                        } else {
-                            toasts.show(actions.errorMessage ?? "Could not move this session", kind: .error)
-                        }
-                    }
-                } rowLabel: {
-                    $0.name ?? "Unnamed project"
-                }
-                .searchable(text: Binding(get: { picker.query }, set: { picker.query = $0 }), prompt: "Search projects")
-            } else {
-                ProgressView()
-            }
-        }
-        .navigationTitle("Move to project")
-        .navigationBarTitleDisplayMode(.inline)
-        .task {
-            guard picker == nil else { return }
-            let store = actions.makeProjectPicker()
-            picker = store
-            await store.reload()
-        }
-    }
-}
-
-private struct MoveToPhaseActionView: View {
-    let actions: SessionActionsStore
-    let projectId: String
-    let toasts: ToastCenter
-    let onDone: () -> Void
-
-    @State private var picker: OffsetPagedListStore<MemoryPhase>?
-
-    var body: some View {
-        Group {
-            if let picker {
-                MemoryPickerList(picker: picker, currentId: actions.session?.phaseId) { phase in
-                    Task {
-                        if await actions.switchPhase(phase.id) {
-                            onDone()
-                        } else {
-                            toasts.show(actions.errorMessage ?? "Could not move this session", kind: .error)
-                        }
-                    }
-                } rowLabel: {
-                    $0.name ?? $0.phaseKey
-                }
-                .searchable(text: Binding(get: { picker.query }, set: { picker.query = $0 }), prompt: "Search phases")
-            } else {
-                ProgressView()
-            }
-        }
-        .navigationTitle("Move to phase")
-        .navigationBarTitleDisplayMode(.inline)
-        .task {
-            guard picker == nil else { return }
-            let store = actions.makePhasePicker(projectId: projectId)
-            picker = store
-            await store.reload()
-        }
-    }
-}
-
-/// Shared list body for both move pickers — a searchable, offset-paged list of single-line rows,
-/// not virtualized (see `OffsetPagedListStore`'s doc comment for why that is fine at this scale).
-private struct MemoryPickerList<Item: Sendable & Identifiable & Equatable>: View where Item.ID == String {
-    let picker: OffsetPagedListStore<Item>
-    let currentId: String?
-    let onSelect: (Item) -> Void
-    let rowLabel: (Item) -> String
-
-    var body: some View {
-        List {
-            ForEach(picker.items.filter { $0.id != currentId }) { item in
-                Button {
-                    onSelect(item)
-                } label: {
-                    Text(rowLabel(item))
-                        .foregroundStyle(PaiPalette.Semantic.textPrimary)
-                }
-            }
-            if picker.hasMore {
-                ProgressView()
-                    .frame(maxWidth: .infinity)
-                    .onAppear { Task { await picker.loadMore() } }
-            }
-            if let error = picker.errorMessage {
-                Text(error).foregroundStyle(PaiPalette.Semantic.errorText)
-            }
-            if picker.items.isEmpty, !picker.isLoading {
-                Text(picker.query.isEmpty ? "No results yet" : "No matches")
-                    .foregroundStyle(PaiPalette.Semantic.textMuted)
-            }
-        }
-    }
 }
