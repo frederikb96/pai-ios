@@ -108,7 +108,8 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         view.isScrollEnabled = false
         view.textContainer.widthTracksTextView = true
 
-        view.attributedText = NoteEditorTheme.attributedText(for: text, highlight: highlight)
+        view.attributedText = NoteEditorTheme.attributedText(
+            for: text, highlight: highlight, showsHangingIndent: onLineMetrics != nil)
         context.coordinator.paintedHighlight = highlight
         return view
     }
@@ -129,7 +130,8 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         // single most obvious way an editor feels broken.
         if view.text != text {
             let selected = view.selectedRange
-            view.attributedText = NoteEditorTheme.attributedText(for: text, highlight: highlight)
+            view.attributedText = NoteEditorTheme.attributedText(
+                for: text, highlight: highlight, showsHangingIndent: onLineMetrics != nil)
             view.selectedRange = NSRange(
                 location: min(selected.location, view.text.utf16.count), length: 0)
             context.coordinator.paintedHighlight = highlight
@@ -143,7 +145,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
             // The text is unchanged and only what is being searched for moved, so the string must
             // not be reassigned — restyling the storage in place leaves the caret and the undo
             // stack alone.
-            NoteEditorTheme.repaint(view.textStorage, highlight: highlight)
+            NoteEditorTheme.repaint(view.textStorage, highlight: highlight, showsHangingIndent: onLineMetrics != nil)
             context.coordinator.paintedHighlight = highlight
         }
 
@@ -285,7 +287,8 @@ struct MarkdownSourceTextView: UIViewRepresentable {
             let onLineMetrics = parent.onLineMetrics
             let work = DispatchWorkItem { [weak textView] in
                 guard let textView, textView.window != nil else { return }
-                NoteEditorTheme.repaint(textView.textStorage, highlight: highlight)
+                NoteEditorTheme.repaint(
+                    textView.textStorage, highlight: highlight, showsHangingIndent: onLineMetrics != nil)
                 if let onLineMetrics {
                     onLineMetrics(MarkdownSourceTextView.lineMetrics(for: textView))
                 }
