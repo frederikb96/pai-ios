@@ -1,12 +1,13 @@
 name: Mac
 
-# The metered half: everything that genuinely needs Apple hardware — building the app target,
-# and running it in a simulator to see what it draws.
+# Everything that genuinely needs Apple hardware — building the app target, and running it in a
+# simulator to see what it draws.
 #
-# 🚨 **Not triggered by pushes to main, deliberately.** macOS bills at 10× (budget and reasoning:
-# the `ios` skill's `references/ci-cost.md`); a session that pushes twenty commits and runs this
-# on each would spend the month in an evening. Work on a branch, then ask for one run when there
-# is something worth looking at — `gh workflow run mac.yml` — or open a pull request.
+# 🚨 **Not triggered by pushes to main, deliberately.** A Mac run takes ten to thirty minutes and
+# queues for a scarcer machine, so firing one on every commit buries the answer you wanted under
+# twenty you did not. Work on a branch, then ask for one run when there is something worth
+# looking at — `gh workflow run mac.yml` — or open a pull request. Batch the questions into that
+# one run rather than spending several to answer them one at a time.
 #
 # One job, one checkout, one build. An earlier split into "compile it" and "run it" workflows
 # built the app twice on every push, for nothing.
@@ -182,8 +183,8 @@ jobs:
             xcrun simctl io "$udid" screenshot "artifacts/screen-$name.png"
             # A screen caught before its first frame is a black PNG that still compresses to tens
             # of kilobytes, so the size floor below cannot see it — and it is indistinguishable
-            # from a screen that genuinely renders nothing, which costs a metered run to tell
-            # apart. One retake settles it: a real blank screen is blank the second time too.
+            # from a screen that genuinely renders nothing, which would otherwise cost another
+            # whole run to tell apart. One retake settles it: a real blank screen is blank twice.
             if [ "$(stat -f %z "artifacts/screen-$name.png")" -le 100000 ]; then
               sleep 5
               xcrun simctl io "$udid" screenshot "artifacts/screen-$name.png"

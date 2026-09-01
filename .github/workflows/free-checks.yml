@@ -1,15 +1,15 @@
 name: Free checks
 
-# Everything that does not require Apple hardware, on a GitHub-hosted Linux runner, at no cost.
+# Everything that does not require Apple hardware, on a GitHub-hosted Linux runner.
 #
-# 🚨 This exists because macOS runners bill at **10×** (budget and reasoning: the `ios` skill's
-# `references/ci-cost.md`). Only two files in `PAIKit` touch an Apple-only framework, so the
-# package — all the models, the markdown block model, the display layer, the networking, and every
-# one of its tests — compiles and runs here instead.
+# This is where nearly all of the real checking happens. Only two files in `PAIKit` touch an
+# Apple-only framework, so the package — all the models, the markdown block model, the display
+# layer, the networking, and every one of its tests — compiles and runs here. A Linux run
+# finishes in a couple of minutes; a Mac run takes ten to thirty and has to queue for a scarcer
+# machine, so anything that can be proven here should be.
 #
-# Anything failing here would have failed on macOS too, at ten times the price. Keep it that way:
-# when adding code, prefer a shape that builds on Linux, and guard an Apple-only import rather
-# than letting it pull the whole package onto a metered runner.
+# Keep it that way when adding code: prefer a shape that builds on Linux, and guard an Apple-only
+# import rather than letting it pull the whole package onto a Mac.
 #
 # 🚨 **Linux runs here, never on a self-hosted runner.** A `pull_request` trigger runs the
 # workflow file as it exists on the pull request's own head, so on a public repository a stranger

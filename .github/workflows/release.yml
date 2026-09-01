@@ -2,8 +2,8 @@ name: Release
 
 # Tag-triggered like pai-android, PLUS workflow_dispatch — pai-android has only the tag trigger,
 # and because a pushed tag cannot be reused a failed release build there produced a tag literally
-# named "v0.15.0-fix". macOS minutes are metered, so being able to exercise this without minting
-# throwaway tags is worth the extra trigger.
+# named "v0.15.0-fix". Being able to exercise this workflow without minting throwaway tags is
+# worth the extra trigger, and keeps the tag list honest.
 on:
   push:
     tags: ['v*.*.*']
@@ -33,7 +33,7 @@ concurrency:
 jobs:
   build:
     runs-on: macos-26
-    # A hung job at the 6-hour default costs roughly $22 on a metered macOS runner.
+    # The 6-hour default would hold a scarce Mac runner for a whole afternoon before failing.
     timeout-minutes: 45
 
     steps:
@@ -67,8 +67,8 @@ jobs:
           echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
       # No test step: the package and its tests run on every push to main in `free-checks`,
-      # on a free runner. Repeating them here would rebuild the whole package on a runner
-      # billing at 10× to re-prove what is already green on this commit. The release-config
+      # on Linux, in a couple of minutes. Repeating them here would rebuild the whole package on
+      # a scarce Mac runner to re-prove what is already green on this commit. The release-config
       # compile error a debug build would miss is still caught — by `fastlane build` below,
       # which archives Release.
 
@@ -86,7 +86,7 @@ jobs:
           CURRENT_PROJECT_VERSION: ${{ steps.version.outputs.build }}
 
       # 🚨 UPLOADING IS NOT DISTRIBUTING. The lane sets `skip_waiting_for_build_processing`
-      # deliberately — waiting costs 10-30 minutes on a runner billed at 10x — which also means
+      # deliberately — waiting would hold the Mac runner for 10-30 idle minutes — which also means
       # fastlane cannot attach the build to a beta group, because Apple has not finished
       # processing it yet. A build that is uploaded and VALID but attached to no group is
       # installable by NOBODY, and looks identical to a successful release from every angle
@@ -131,7 +131,7 @@ jobs:
   # Store Connect, listed by every query, and installable by nobody. This job closes that gap.
   #
   # Its own runner, and a plain Ubuntu one: attaching a build is authenticated HTTPS and needs no
-  # Apple hardware, so doing it here bills at 1x instead of 10x — and the waiting this job does
+  # Apple hardware, so it has no business occupying a Mac — and the waiting this job does
   # (Apple's processing, minutes) is precisely the wait the upload lane refuses to do on macOS.
   #
   # A red job here means the build shipped but reached nobody, which is worth seeing rather than
