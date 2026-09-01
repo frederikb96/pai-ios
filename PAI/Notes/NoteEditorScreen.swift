@@ -31,6 +31,11 @@ struct NoteEditorScreen: View {
     /// sync with a rename that happened elsewhere.
     @State private var titleText = ""
     @State private var isTitleFocused = false
+    /// One-shot: true only for the very next time the title becomes focused, then reset the
+    /// moment that happens (see the `onFocus` callback below) — so a freshly created note's
+    /// placeholder is selected on that first focus, and an ordinary tap to fix a typo later
+    /// never replaces the whole title out from under the reader.
+    @State private var selectsTitleOnFocus = false
 
     init(noteID: String, startsInPreview: Bool = false) {
         self.noteID = noteID
@@ -56,7 +61,10 @@ struct NoteEditorScreen: View {
         .task { await notes.loadNote(id: noteID) }
         .onAppear {
             if titleText.isEmpty { titleText = title }
-            if NoteCreationFocus.shared.consume(id: noteID) { isTitleFocused = true }
+            if NoteCreationFocus.shared.consume(id: noteID) {
+                isTitleFocused = true
+                selectsTitleOnFocus = true
+            }
         }
         .onChange(of: title) { _, newValue in
             // Only while nobody is mid-rename here — the same reason `NoteEditorSurface` only
@@ -132,9 +140,12 @@ struct NoteEditorScreen: View {
                 isInvalid: NoteNaming.collides(
                     name: titleText, containerId: notes.detail(for: noteID)?.containerId, excluding: noteID,
                     among: notes.notes),
-                selectsAllOnFocus: true,
+                selectsAllOnFocus: selectsTitleOnFocus,
                 onChange: { titleText = $0 },
-                onFocus: { isTitleFocused = true },
+                onFocus: {
+                    isTitleFocused = true
+                    selectsTitleOnFocus = false
+                },
                 onCommit: { Task { await commitTitle() } }
             )
             .frame(minWidth: 140, maxWidth: 240)
