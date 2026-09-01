@@ -44,6 +44,7 @@ final class SettingsStoreTests: XCTestCase {
             XCTAssertEqual(store.sentMessages, [])
             XCTAssertEqual(store.recordings, [])
             XCTAssertEqual(store.expandPreferences, [:])
+            XCTAssertEqual(store.showsNoteLineNumbers, false)
 
             // The toggles the web's own regression test singles out as the ones that used to
             // default to true (`settings.test.ts`) — every one of them must read false here too.
@@ -61,6 +62,17 @@ final class SettingsStoreTests: XCTestCase {
 
             let second = try Self.makeStore(storage: storage)
             XCTAssertEqual(second.sttLanguage, .de)
+        }
+    }
+
+    func testSetShowsNoteLineNumbersPersistsAcrossStoreInstances() async throws {
+        try await MainActor.run {
+            let storage = SettingsInMemoryKeyValueStore()
+            let first = try Self.makeStore(storage: storage)
+            first.setShowsNoteLineNumbers(true)
+
+            let second = try Self.makeStore(storage: storage)
+            XCTAssertEqual(second.showsNoteLineNumbers, true)
         }
     }
 

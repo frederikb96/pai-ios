@@ -48,6 +48,17 @@ public enum MarkdownListContinuation {
         return Continuation(deleteBefore: 0, insert: "\n" + marker.next)
     }
 
+    /// How wide `line`'s list marker is, in UTF-16 units — the same prefix `onReturn(text:
+    /// caretUtf16:)` copies down to the next bullet, exposed on its own for a hanging indent to
+    /// measure from. `nil` when the line is not a list item at all.
+    ///
+    /// UTF-16 width and `Character` count agree here without conversion: every character a
+    /// marker can be made of — space, tab, a digit, `-`/`*`/`+`, `.`/`)`, `[`/`]`/`x`/`X` — is
+    /// ASCII, and ASCII is one UTF-16 unit per character.
+    public static func markerPrefixLength(ofLine line: Substring) -> Int? {
+        Marker(line: line)?.prefixLength
+    }
+
     private static func lineStart(in text: String, before caret: String.Index) -> String.Index {
         var index = caret
         while index > text.startIndex {

@@ -50,6 +50,16 @@ final class MarkdownSourceHighlighterTests: XCTestCase {
         XCTAssertEqual(String(decoding: utf16[bold.location..<bold.end], as: UTF16.self), "bold")
     }
 
+    // MARK: Line endings
+
+    /// A CRLF-terminated note must highlight each line on its own — not as one unbroken run
+    /// swallowing the boundary. Two headings separated by `\r\n` are two separate heading spans,
+    /// each still carrying its own marker.
+    func testTwoCrlfSeparatedHeadingsHighlightSeparately() {
+        XCTAssertEqual(styled("# One\r\n# Two\r\n", .heading(level: 1)), ["One", "Two"])
+        XCTAssertEqual(styled("# One\r\n# Two\r\n", .marker), ["# ", "# "])
+    }
+
     // MARK: Headings
 
     func testAHeadingSplitsIntoADimmedMarkerAndStyledText() {

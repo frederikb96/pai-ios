@@ -11,25 +11,18 @@ enum MarkdownLineSyntax {
     /// Splits into lines while keeping each line's terminator, so the pieces rejoin exactly —
     /// `components(separatedBy:)` and `split` both discard it, and `\r\n` has to survive intact:
     /// a note edited on a machine that uses it must not come back rewritten.
+    ///
+    /// Checked with `Character.isNewline` rather than `== "\r"` / `== "\n"`, because Swift
+    /// clusters a `\r\n` pair into a single `Character` that equals neither bare terminator —
+    /// comparing against the literals leaves a CRLF-terminated note looking like one unbroken
+    /// line. `isNewline` is Unicode's own answer to "is this character a line break", and it is
+    /// true for that clustered pair, so no lookahead is needed to tell the two apart.
     static func splitKeepingTerminators(_ source: String) -> [String] {
         var lines: [String] = []
         var current = ""
-        var iterator = source.makeIterator()
-        var pending: Character?
-        while let character = pending ?? iterator.next() {
-            pending = nil
+        for character in source {
             current.append(character)
-            if character == "\r" {
-                if let next = iterator.next() {
-                    if next == "\n" {
-                        current.append(next)
-                    } else {
-                        pending = next
-                    }
-                }
-                lines.append(current)
-                current = ""
-            } else if character == "\n" {
+            if character.isNewline {
                 lines.append(current)
                 current = ""
             }
@@ -61,8 +54,10 @@ enum MarkdownLineSyntax {
         guard line.count - body.count <= 3 else { return false }
         let run = body.prefix { $0 == marker }
         guard run.count >= opener.count else { return false }
-        // Nothing but whitespace may follow a closing fence.
-        return body.dropFirst(run.count).allSatisfy { $0 == " " || $0 == "\n" || $0 == "\r" || $0 == "\t" }
+        // Nothing but whitespace may follow a closing fence. `isNewline` rather than `== "\n"` /
+        // `== "\r"` for the same reason `splitKeepingTerminators` uses it — a CRLF terminator is
+        // one `Character` that equals neither literal on its own.
+        return body.dropFirst(run.count).allSatisfy { $0 == " " || $0 == "\t" || $0.isNewline }
     }
 
     /// Whether a line opens with a `|`, allowing the same three spaces of indentation every other

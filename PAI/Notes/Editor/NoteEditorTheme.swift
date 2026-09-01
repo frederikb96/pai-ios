@@ -79,6 +79,23 @@ enum NoteEditorTheme {
         // its own non-wrapping region; only `.codeBlockContent` below still marks code out visually.
         attributed.setAttributes([.font: bodyFont, .foregroundColor: text], range: full)
 
+        // A wrapped list item's continuation lines align under the item's own text rather than
+        // restarting at the margin — Obsidian's own behaviour, and native TextKit's own way to
+        // get it: `headIndent` is resolved during layout using the real, proportional font
+        // metrics, so there is no separate pixel-measurement pass to keep in step with the font.
+        for indent in MarkdownHangingIndent.indents(for: source) {
+            let range = NSRange(location: indent.location, length: indent.length)
+            guard range.upperBound <= attributed.length else { continue }
+            let markerRange = NSRange(location: indent.location, length: indent.markerWidth)
+            guard markerRange.upperBound <= attributed.length else { continue }
+            // The real marker text, not a placeholder — a run of digits and a run of spaces are
+            // not the same width in a proportional font, and neither is a tab.
+            let marker = (source as NSString).substring(with: markerRange)
+            let style = NSMutableParagraphStyle()
+            style.headIndent = (marker as NSString).size(withAttributes: [.font: bodyFont]).width
+            attributed.addAttribute(.paragraphStyle, value: style, range: range)
+        }
+
         // Block styles come first and inline styles second, in the order the scanner emitted
         // them, so bold inside a heading lands on top of the heading rather than replacing it.
         for span in MarkdownSourceHighlighter.spans(for: source) {

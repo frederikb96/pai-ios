@@ -32,4 +32,54 @@ final class NoteNamingTests: XCTestCase {
     func testAnEmptyBaseFallsBackToUntitled() {
         XCTAssertEqual(NoteNaming.freeName(base: "   ", taken: []), "Untitled")
     }
+
+    // MARK: Local duplicate preview
+
+    private func note(
+        id: String, name: String, containerId: String? = "c1", pendingDelete: Bool = false
+    ) -> NoteSummary {
+        NoteSummary(
+            id: id, name: name, summary: nil, containerId: containerId, favourite: false, tags: [],
+            updatedAtMs: 0, pendingDelete: pendingDelete)
+    }
+
+    func testAnUnusedNameDoesNotCollide() {
+        let notes = [note(id: "a", name: "Groceries")]
+        XCTAssertFalse(NoteNaming.collides(name: "Recipes", containerId: "c1", excluding: "b", among: notes))
+    }
+
+    func testTypingBackTheNoteSOwnCurrentNameIsNotACollision() {
+        let notes = [note(id: "a", name: "Groceries")]
+        XCTAssertFalse(NoteNaming.collides(name: "Groceries", containerId: "c1", excluding: "a", among: notes))
+    }
+
+    func testAnotherNoteSNameIsACollision() {
+        let notes = [note(id: "a", name: "Groceries")]
+        XCTAssertTrue(NoteNaming.collides(name: "Groceries", containerId: "c1", excluding: "b", among: notes))
+    }
+
+    /// The same case- and diacritic-folding `freeName` uses — the backend is a case-insensitive
+    /// filesystem, so `groceries` and `Groceries` are the same file to it.
+    func testCollisionFoldsCase() {
+        let notes = [note(id: "a", name: "Groceries")]
+        XCTAssertTrue(NoteNaming.collides(name: "groceries", containerId: "c1", excluding: "b", among: notes))
+    }
+
+    /// A soft-deleted row is still in the index but is no longer using its name.
+    func testAPendingDeleteRowIsNotACollision() {
+        let notes = [note(id: "a", name: "Groceries", pendingDelete: true)]
+        XCTAssertFalse(NoteNaming.collides(name: "Groceries", containerId: "c1", excluding: "b", among: notes))
+    }
+
+    /// Scoped to the container, matching `freeName`'s own scoping — the same name in a different
+    /// synced folder is a different file on disk.
+    func testANameTakenInAnotherContainerIsNotACollision() {
+        let notes = [note(id: "a", name: "Groceries", containerId: "other")]
+        XCTAssertFalse(NoteNaming.collides(name: "Groceries", containerId: "c1", excluding: "b", among: notes))
+    }
+
+    func testAnEmptyNameNeverCollides() {
+        let notes = [note(id: "a", name: "Groceries")]
+        XCTAssertFalse(NoteNaming.collides(name: "  ", containerId: "c1", excluding: "b", among: notes))
+    }
 }

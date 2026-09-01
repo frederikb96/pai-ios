@@ -11,6 +11,7 @@ struct NoteListScreen: View {
     @Environment(NotesStore.self) private var notes
     @Environment(NotesBrowseStore.self) private var browse
     @Environment(ToastCenter.self) private var toasts
+    @Environment(SettingsStore.self) private var settings
 
     @State private var filterText = ""
     @State private var favouritesOnly = false
@@ -59,6 +60,15 @@ struct NoteListScreen: View {
                                     }
                                 }
                             }
+                        }
+                        Divider()
+                        Toggle(
+                            isOn: Binding(
+                                get: { settings.showsNoteLineNumbers },
+                                set: { settings.setShowsNoteLineNumbers($0) }
+                            )
+                        ) {
+                            Label("Line numbers", systemImage: "list.number")
                         }
                         Divider()
                         Button {
@@ -149,6 +159,11 @@ struct NoteListScreen: View {
             toasts.show(notes.loadError ?? "Could not create the note", kind: .error)
             return
         }
+        // Consumed by `NoteEditorScreen.onAppear` the moment the push below lands, so the
+        // freshly created note opens with its title focused and selected — see
+        // `NoteCreationFocus`'s own doc comment for why this is a one-shot side channel rather
+        // than something `Route` itself carries.
+        NoteCreationFocus.shared.markCreated(id: created.id)
         environment.router.push(.note(id: created.id))
     }
 

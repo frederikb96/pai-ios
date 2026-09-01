@@ -7,6 +7,7 @@ struct NoteEditorScreen: View {
 
     @Environment(AppEnvironment.self) private var environment
     @Environment(NotesStore.self) private var notes
+    @Environment(ToastCenter.self) private var toasts
     @Environment(\.scenePhase) private var scenePhase
 
     /// Edit and preview are exclusive modes, as they are on the web. Not a live preview — see
@@ -26,6 +27,11 @@ struct NoteEditorScreen: View {
     /// occurrence of it stays painted in the preview until the next jump says otherwise.
     @State private var highlight: String?
 
+    /// What the title field currently shows — see ``title`` for how it is seeded and kept in
+    /// sync with a rename that happened elsewhere.
+    @State private var titleText = ""
+    @State private var isTitleFocused = false
+
     init(noteID: String, startsInPreview: Bool = false) {
         self.noteID = noteID
         _isPreviewing = State(initialValue: startsInPreview)
@@ -41,10 +47,28 @@ struct NoteEditorScreen: View {
             content
         }
         .paiNotesBackground()
+        // Kept alongside the tappable title below rather than replaced by it: this is still
+        // what names the back button on whatever screen gets pushed from here, and what
+        // VoiceOver announces — the `.principal` toolbar item only replaces what is drawn.
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbar }
         .task { await notes.loadNote(id: noteID) }
+        .onAppear {
+            if titleText.isEmpty { titleText = title }
+            if NoteCreationFocus.shared.consume(id: noteID) { isTitleFocused = true }
+        }
+        .onChange(of: title) { _, newValue in
+            // Only while nobody is mid-rename here — the same reason `NoteEditorSurface` only
+            // adopts an external body under the same condition: typing must never be interrupted
+            // by an echo of a write this screen itself is about to make.
+            guard !isTitleFocused else { return }
+            titleText = newValue
+        }
+        .onDisappear {
+            guard isTitleFocused else { return }
+            Task { await commitTitle() }
+        }
         // The index resolves this note's wikilinks, and a note can be opened without ever passing
         // through the list — a shortcut, a tapped notification, a link from another note. Without
         // it every `[[link]]` renders struck through as though its target had been deleted.
@@ -102,6 +126,21 @@ struct NoteEditorScreen: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .principal) {
+            NoteTitleField(
+                text: titleText, isFocused: isTitleFocused,
+                isInvalid: NoteNaming.collides(
+                    name: titleText, containerId: notes.detail(for: noteID)?.containerId, excluding: noteID,
+                    among: notes.notes),
+                selectsAllOnFocus: true,
+                onChange: { titleText = $0 },
+                onFocus: { isTitleFocused = true },
+                onCommit: { Task { await commitTitle() } }
+            )
+            .frame(minWidth: 140, maxWidth: 240)
+            .accessibilityLabel("Note title")
+            .accessibilityIdentifier("note-title-field")
+        }
         ToolbarItem(placement: .topBarTrailing) {
             NoteSaveStateBadge(state: notes.saveState(for: noteID))
         }
@@ -140,6 +179,26 @@ struct NoteEditorScreen: View {
     private var title: String {
         let name = notes.detail(for: noteID)?.name ?? notes.summary(for: noteID)?.name ?? ""
         return name.isEmpty ? "Untitled" : name
+    }
+
+    /// Sends the field's current text through the one write path every rename goes through
+    /// (``NotesStore/rename(id:name:)``) — ``NoteNaming/collides`` above only paints the field
+    /// red as it is typed; the server is what actually decides, and this is what asks it.
+    ///
+    /// Unconditional rather than gated on the local check: the field may still read invalid at
+    /// the moment editing ends, and silently dropping the request there would be exactly the
+    /// silent failure spec row 17.3 asks not to happen. A rejection reverts the field to the
+    /// name actually on the note, so the reader is never left looking at a title that was not
+    /// saved.
+    private func commitTitle() async {
+        isTitleFocused = false
+        let trimmed = titleText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != title else { return }
+        guard !trimmed.isEmpty, await notes.rename(id: noteID, name: trimmed) else {
+            toasts.show(notes.loadError ?? "Rename failed", kind: .error)
+            titleText = title
+            return
+        }
     }
 
     /// Go where the tools panel pointed — an outline heading, a search hit.

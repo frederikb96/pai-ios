@@ -39,6 +39,7 @@ public final class SettingsStore {
         static let recordings = "recordings"
         static let expandPreferences = "expandPreferences"
         static let theme = "theme"
+        static let showsNoteLineNumbers = "showsNoteLineNumbers"
     }
 
     static let maxSentMessages = 10
@@ -57,6 +58,9 @@ public final class SettingsStore {
 
     /// Client-side only, like the web's. Nothing about the appearance reaches the server.
     public private(set) var theme: AppTheme
+    /// The note editor's line-number gutter — off by default, since most notes are short enough
+    /// that Obsidian's own gutter is a taste rather than a need.
+    public private(set) var showsNoteLineNumbers: Bool
 
     public let elevenLabsKey: WriteOnlySecretField
     public let smtp: SmtpSettingsStore
@@ -87,6 +91,7 @@ public final class SettingsStore {
         recordings = storage.value(forKey: Keys.recordings) ?? []
         expandPreferences = storage.value(forKey: Keys.expandPreferences) ?? [:]
         theme = storage.value(forKey: Keys.theme) ?? .system
+        showsNoteLineNumbers = storage.value(forKey: Keys.showsNoteLineNumbers) ?? false
     }
 
     // MARK: - Client-side settings, immediate apply
@@ -119,6 +124,11 @@ public final class SettingsStore {
     public func setSilenceDurationMs(_ ms: Double) {
         silenceDurationMs = ms
         storage.setValue(ms, forKey: Keys.silenceDurationMs)
+    }
+
+    public func setShowsNoteLineNumbers(_ enabled: Bool) {
+        showsNoteLineNumbers = enabled
+        storage.setValue(enabled, forKey: Keys.showsNoteLineNumbers)
     }
 
     // MARK: - Expand preferences

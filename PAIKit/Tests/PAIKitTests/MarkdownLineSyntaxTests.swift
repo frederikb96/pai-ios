@@ -69,12 +69,23 @@ final class MarkdownLineSyntaxTests: XCTestCase {
     }
 
     /// Swift clusters `\r\n` into a single `Character` that equals neither a bare `\r` nor a bare
-    /// `\n`, so this line-by-line scan cannot see a boundary inside one — the whole string comes
-    /// back as one "line" rather than being split at each CRLF. Whatever reads these lines to
-    /// find a fence or a table delimiter is blind to that boundary too; recorded here as the
-    /// actual, current behaviour rather than assumed from the terminator-preserving intent above.
-    func testACrlfPairIsOneUnbrokenCharacterNotATerminatorThisScansOn() {
-        XCTAssertEqual(MarkdownLineSyntax.splitKeepingTerminators("a\r\nb\r\n"), ["a\r\nb\r\n"])
+    /// `\n` — checking `isNewline` rather than the two literals is what lets this scan see the
+    /// boundary anyway, and keep the terminator attached to the line it ends.
+    func testACrlfTerminatedNoteSplitsAtEachLine() {
+        XCTAssertEqual(MarkdownLineSyntax.splitKeepingTerminators("a\r\nb\r\n"), ["a\r\n", "b\r\n"])
+    }
+
+    /// A lone `\r` (old Mac style, never followed by `\n`) is also `isNewline` and splits the
+    /// same way — not only the CRLF pair.
+    func testALoneCarriageReturnAlsoSplits() {
+        XCTAssertEqual(MarkdownLineSyntax.splitKeepingTerminators("a\rb\r"), ["a\r", "b\r"])
+    }
+
+    /// A fence closes on a CRLF-terminated line exactly as it would on a bare `\n` one — the
+    /// trailing-whitespace check after the closing run has to see the terminator as whitespace
+    /// either way.
+    func testAFenceClosesOnACrlfTerminatedLine() {
+        XCTAssertTrue(MarkdownLineSyntax.closesFence("```\r\n", opener: "```"))
     }
 
     func testSplitKeepsALoneTrailingLineWithNoTerminator() {

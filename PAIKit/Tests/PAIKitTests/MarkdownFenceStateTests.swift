@@ -40,4 +40,19 @@ final class MarkdownFenceStateTests: XCTestCase {
         let caret = text.range(of: "inner")!.lowerBound.utf16Offset(in: text) + 2
         XCTAssertTrue(MarkdownFenceState.isInsideFence(text: text, caretUtf16: caret))
     }
+
+    /// A note written with Windows line endings must open and close a fence exactly like one
+    /// written with bare `\n` — the line splitter this reads from ties a CRLF pair to the line it
+    /// terminates, same as it would a bare `\n`.
+    func testACaretInsideAFenceStaysInsideItAcrossCrlfLines() {
+        let text = "before\r\n\r\n```\r\ncode\r\n```\r\n\r\nafter\r\n"
+        let caret = text.range(of: "code")!.upperBound.utf16Offset(in: text)
+        XCTAssertTrue(MarkdownFenceState.isInsideFence(text: text, caretUtf16: caret))
+    }
+
+    func testACaretAfterACrlfClosedFenceIsNotInsideIt() {
+        let text = "```\r\ncode\r\n```\r\nafter\r\n"
+        let caret = text.range(of: "after")!.upperBound.utf16Offset(in: text)
+        XCTAssertFalse(MarkdownFenceState.isInsideFence(text: text, caretUtf16: caret))
+    }
 }

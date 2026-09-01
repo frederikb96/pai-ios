@@ -89,4 +89,28 @@ final class MarkdownListContinuationTests: XCTestCase {
         let text = "- 🎉 done\n- "
         XCTAssertEqual(onReturn(text), .init(deleteBefore: 2, insert: ""))
     }
+
+    // MARK: Marker width, on its own
+
+    /// `"- "` is two characters — a hanging indent hangs a wrapped continuation from exactly
+    /// this width, the same prefix `onReturn` copies down to the next bullet.
+    func testABulletsMarkerWidthIsTheDashAndTheSpace() {
+        XCTAssertEqual(MarkdownListContinuation.markerPrefixLength(ofLine: "- one"), 2)
+    }
+
+    func testAnOrderedMarkersWidthIncludesTheDigitsAndTheDelimiter() {
+        XCTAssertEqual(MarkdownListContinuation.markerPrefixLength(ofLine: "12. one"), 4)
+    }
+
+    func testATaskMarkersWidthIncludesTheCheckbox() {
+        XCTAssertEqual(MarkdownListContinuation.markerPrefixLength(ofLine: "- [ ] todo"), 6)
+    }
+
+    func testANestedBulletsWidthIncludesItsIndentation() {
+        XCTAssertEqual(MarkdownListContinuation.markerPrefixLength(ofLine: "    - nested"), 6)
+    }
+
+    func testOrdinaryProseHasNoMarkerWidth() {
+        XCTAssertNil(MarkdownListContinuation.markerPrefixLength(ofLine: "just a paragraph"))
+    }
 }
