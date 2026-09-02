@@ -73,6 +73,22 @@ body was never at risk here — what this actually guards is `NoteEditorScreen`'
 `@State` (`titleText`, `isTitleFocused` above all), which a reused destination would otherwise
 carry over from the note just left.
 
+### Verify: https and note-link confirmation dialogs actually appear — pai-cloud anchor: none, iOS-only guard against an accidental touchscreen tap
+Needs `PAI/` because: `ConfirmedLinkOpening`'s `OpenURLAction` override, and following a tapped
+note link while previewing landing back in preview (`.notePreview`, not `.note`), are both proven
+by what they route to and by a Mac CI screenshot of the resulting page — but a `confirmationDialog`
+mid-presentation cannot be screenshotted from the fixture workflow, so nobody has watched either
+dialog actually appear and dismiss on a real device.
+
+### Verify: session attachment and pai-file chips actually load, confirm and share — pai-cloud anchor: `GET /api/session/{id}/attachment`
+Needs `PAI/` because: `SessionAttachmentChipView`'s state machine (idle → loading → loaded, or the
+confirm-then-fetch path for a `pai-file:` marker) is unit-tested at the row-height/plan level and a
+Mac CI screenshot confirms the idle chip renders with the marker line left unmodified above it — but
+nobody has tapped one on a device: the confirmation dialog, the fetch actually succeeding against a
+live session, the iOS share sheet opening with real bytes, and ``FullScreenImageViewer``'s
+swipe-to-dismiss gesture and its own share button are all unwatched. The same viewer, opened from a
+note's inline embed instead, carries the identical gap.
+
 ### Verify: the formatting-bar settings screen — pai-cloud anchor: `web/src/apps/notes/settings/ToolbarSettings.tsx`
 Needs `PAI/` because: the two-section enable/reorder screen (`NoteToolbarSettingsScreen`), drag
 reordering via `.onMove` with edit mode forced on, and the always-visible drag handle are none of
