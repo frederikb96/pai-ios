@@ -14,7 +14,11 @@ import Observation
 /// stale by the time the screen it opened is still on top of the stack, and a path restored
 /// after a relaunch has no models to carry at all.
 public enum Route: Hashable, Sendable {
-    case session(id: String)
+    /// `messageID` is where to jump once the transcript is open, never part of the route's
+    /// identity — two pushes of the same session that differ only in where they jump to are the
+    /// same screen, so equality and hashing below ignore it deliberately. Nil for an ordinary
+    /// open; set when arrived at from a notification (row 5.28).
+    case session(id: String, messageID: Int? = nil)
     case terminal(sessionID: String)
     case settings
     /// Reached only from the fixture screenshot workflow — real usage never pushes this, it
@@ -40,6 +44,9 @@ public enum Route: Hashable, Sendable {
     /// navigates to it, but it is the screen whose *rendering* most needs photographing, and
     /// nothing free can see it.
     case notePreview(id: String)
+    /// The notification centre (row 5.27) — every alert transition and every agent push, as a
+    /// persistent, filterable log.
+    case notifications
     /// Past Recordings. Reached only from the fixture screenshot workflow, the same way
     /// `.createSession` is: real usage presents `RecordingsSheet` from the composer's plus-icon,
     /// never by pushing a route, so `RootView` reproduces that sheet presentation here rather
@@ -47,6 +54,59 @@ public enum Route: Hashable, Sendable {
     /// anywhere free — no route means the screenshot workflow can never reach it at all,
     /// regardless of whether the list underneath has anything in it.
     case recordings
+
+    /// Ignores `session`'s `messageID` — see that case's doc comment. Everything else is a plain
+    /// per-case comparison, same as the synthesized version this replaces.
+    public static func == (lhs: Route, rhs: Route) -> Bool {
+        switch (lhs, rhs) {
+        case (.session(let a, _), .session(let b, _)): return a == b
+        case (.terminal(let a), .terminal(let b)): return a == b
+        case (.settings, .settings): return true
+        case (.createSession, .createSession): return true
+        case (.subagents(let a), .subagents(let b)): return a == b
+        case (.notes, .notes): return true
+        case (.note(let a), .note(let b)): return a == b
+        case (.noteContainers, .noteContainers): return true
+        case (.notePreview(let a), .notePreview(let b)): return a == b
+        case (.notifications, .notifications): return true
+        case (.recordings, .recordings): return true
+        default: return false
+        }
+    }
+
+    /// Kept consistent with the custom `==` above by construction — hashing the same fields it
+    /// compares, and nothing else, is what keeps the Hashable contract from breaking silently.
+    public func hash(into hasher: inout Hasher) {
+        switch self {
+        case .session(let id, _):
+            hasher.combine(0)
+            hasher.combine(id)
+        case .terminal(let sessionID):
+            hasher.combine(1)
+            hasher.combine(sessionID)
+        case .settings:
+            hasher.combine(2)
+        case .createSession:
+            hasher.combine(3)
+        case .subagents(let parentID):
+            hasher.combine(4)
+            hasher.combine(parentID)
+        case .notes:
+            hasher.combine(5)
+        case .note(let id):
+            hasher.combine(6)
+            hasher.combine(id)
+        case .noteContainers:
+            hasher.combine(7)
+        case .notePreview(let id):
+            hasher.combine(8)
+            hasher.combine(id)
+        case .notifications:
+            hasher.combine(9)
+        case .recordings:
+            hasher.combine(10)
+        }
+    }
 }
 
 extension Route {
@@ -59,7 +119,7 @@ extension Route {
     /// hardcoding it, so a new screen becomes photographable without a CI file edit.
     public static let namedScreens: [String] = [
         "session", "terminal", "settings", "createSession", "subagents", "notes", "note", "noteContainers",
-        "notePreview", "recordings",
+        "notePreview", "notifications", "recordings",
     ]
 
     /// Parses a launch-argument screen name into a route. `sessionID` fills in every
@@ -83,6 +143,7 @@ extension Route {
         case "note": return .note(id: noteID)
         case "noteContainers": return .noteContainers
         case "notePreview": return .notePreview(id: noteID)
+        case "notifications": return .notifications
         case "recordings": return .recordings
         default: return nil
         }
@@ -188,9 +249,10 @@ public final class Router {
     public var openSessionID: String? {
         for route in path.reversed() {
             switch route {
-            case .session(let id): return id
+            case .session(let id, _): return id
             case .terminal(let sessionID): return sessionID
-            case .settings, .createSession, .subagents, .notes, .note, .noteContainers, .notePreview, .recordings:
+            case .settings, .createSession, .subagents, .notes, .note, .noteContainers, .notePreview,
+                .notifications, .recordings:
                 continue
             }
         }
@@ -203,7 +265,8 @@ public final class Router {
         for route in path.reversed() {
             switch route {
             case .note(let id), .notePreview(let id): return id
-            case .session, .terminal, .settings, .createSession, .subagents, .notes, .noteContainers, .recordings:
+            case .session, .terminal, .settings, .createSession, .subagents, .notes, .noteContainers,
+                .notifications, .recordings:
                 continue
             }
         }

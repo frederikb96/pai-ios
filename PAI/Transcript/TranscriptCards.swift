@@ -55,6 +55,11 @@ struct TranscriptRowContent: View {
     /// knows the message id and this view does not need to. Empty outside a search.
     var highlights: [TranscriptSearchHit] = []
     var currentHit: TranscriptSearchHit?
+    /// Whether this is the row a notification deep link (row 5.28) just landed on. Unlike a
+    /// search hit, which highlights one text range via `highlights`/`currentHit`, a deep link's
+    /// target is the whole message — there is no range to paint, so it gets a ring around the
+    /// card instead, "exactly as kind-stepping already treats it" per the design.
+    var isDeepLinkTarget = false
 
     private var cards: [TranscriptCardPlan] {
         TranscriptRowPlan.cards(for: message, isExpanded: isExpanded)
@@ -78,6 +83,15 @@ struct TranscriptRowContent: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // An overlay, never a border baked into the frame — it must not add a point to the row's
+        // measured height, which `TranscriptRowLayout` already computed for a plain bubble.
+        .overlay {
+            if isDeepLinkTarget {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(PaiPalette.primary500, lineWidth: 2)
+                    .padding(-6)
+            }
+        }
     }
 
     /// Groups this card's own hits by which block they fall in — the shape every rendering

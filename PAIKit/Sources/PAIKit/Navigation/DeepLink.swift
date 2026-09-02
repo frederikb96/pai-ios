@@ -10,20 +10,32 @@ import Observation
 /// same reason: there is nothing about either destination a shortcut could still be describing
 /// months later.
 public enum DeepLink: Equatable, Sendable, Hashable {
-    case session(id: String)
+    /// `messageID` is where to jump once the transcript is open — see ``Route/session(id:messageID:)``.
+    case session(id: String, messageID: Int? = nil)
     case note(id: String)
     case notesList
     case createSession
+    /// A tapped push notification (row 5.28), named only by its own id — at send time the backend
+    /// does not yet know which transcript message it will resolve to (`notifications.py`'s anchor
+    /// is filled in lazily), so the payload can only ever carry the notification's own id. Unlike
+    /// every other case, ``routes`` cannot answer this one without a network round trip: resolving
+    /// it is `RootView`'s job (`resolveAndOpenNotification`), which fetches
+    /// `GET /api/notifications/{id}` and routes on what comes back — a session with its anchor if
+    /// one resolved, the centre for an alert, or the centre as the graceful fallback for anything
+    /// that failed to resolve. ``routes`` still answers something for this case (the centre) so
+    /// the type stays total, but nothing in the app is expected to call it for `.notification`.
+    case notification(id: String)
 
     /// The routes this link lands on. Whole paths rather than single routes: a deep link arrives
     /// knowing nothing about what the app was showing, so it replaces the stack, and a note with
     /// no index underneath it would have nowhere for Back to go.
     public var routes: [Route] {
         switch self {
-        case .session(let id): return [.session(id: id)]
+        case .session(let id, let messageID): return [.session(id: id, messageID: messageID)]
         case .note(let id): return [.notes, .note(id: id)]
         case .notesList: return [.notes]
         case .createSession: return [.createSession]
+        case .notification: return [.notifications]
         }
     }
 }
@@ -37,6 +49,14 @@ extension DeepLink {
     /// with.
     public static let sessionIDKey = "pai_session_id"
     public static let noteIDKey = "pai_note_id"
+    /// Present alongside `sessionIDKey` only if a sender ever resolves the jump target itself
+    /// before the push goes out — `push.py`'s own notification link never does this today (see
+    /// `.notification`'s doc comment), so this key is read defensively rather than relied on.
+    public static let messageIDKey = "pai_message_id"
+    /// What `mcp_server.notify` and `alerting._send_push` both actually put in `link` — see
+    /// `notifications`'s doc comment for why this, not a resolved session/message pair, is what
+    /// arrives on the wire.
+    public static let notificationIDKey = "pai_notification_id"
 
     /// Reads a link out of a notification's `userInfo`.
     ///
@@ -45,11 +65,17 @@ extension DeepLink {
     /// system's dictionary is one line at the call site and is the part that genuinely cannot be
     /// tested.
     ///
-    /// A payload naming both is read as the session — a push about a session that also mentions
-    /// a note is still about the session, and silently picking the other one would send the
-    /// reader somewhere they did not ask to go.
+    /// Checked in a fixed order for a payload naming more than one: the notification id first,
+    /// since that is what every push this app currently sends for an agent or alert notification
+    /// actually carries; then session, then note — a push about a session that also mentions a
+    /// note is still about the session, and silently picking the other one would send the reader
+    /// somewhere they did not ask to go.
     public static func from(payload: [String: String]) -> DeepLink? {
-        if let id = payload[sessionIDKey], !id.isEmpty { return .session(id: id) }
+        if let id = payload[notificationIDKey], !id.isEmpty { return .notification(id: id) }
+        if let id = payload[sessionIDKey], !id.isEmpty {
+            let messageID = payload[messageIDKey].flatMap(Int.init)
+            return .session(id: id, messageID: messageID)
+        }
         if let id = payload[noteIDKey], !id.isEmpty { return .note(id: id) }
         return nil
     }
@@ -75,11 +101,15 @@ extension DeepLink {
         if let host = components.percentEncodedHost, !host.isEmpty { segments.insert(host, at: 0) }
         guard let kind = segments.first else { return nil }
         switch kind.lowercased() {
-        case "session", "note":
+        case "session", "note", "notification":
             guard segments.count == 2 else { return nil }
             let id = segments[1].removingPercentEncoding ?? segments[1]
             guard !id.isEmpty else { return nil }
-            return kind.lowercased() == "session" ? .session(id: id) : .note(id: id)
+            switch kind.lowercased() {
+            case "session": return .session(id: id)
+            case "notification": return .notification(id: id)
+            default: return .note(id: id)
+            }
         case "notes":
             guard segments.count == 1 else { return nil }
             return .notesList
@@ -91,12 +121,17 @@ extension DeepLink {
         }
     }
 
+    /// `session`'s `messageID` never appears here — a URL is what a shortcut or widget persists
+    /// and reopens months later, exactly the staleness this type's own doc comment already rules
+    /// out for everything else. `messageID` only ever travels fresh, over an APNs payload this
+    /// process just received or an in-app push while the notification centre is still on screen.
     public var url: URL? {
         switch self {
-        case .session(let id): return URL(string: "pai://session/\(Self.escape(id))")
+        case .session(let id, _): return URL(string: "pai://session/\(Self.escape(id))")
         case .note(let id): return URL(string: "pai://note/\(Self.escape(id))")
         case .notesList: return URL(string: "pai://notes")
         case .createSession: return URL(string: "pai://createsession")
+        case .notification(let id): return URL(string: "pai://notification/\(Self.escape(id))")
         }
     }
 

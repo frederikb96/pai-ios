@@ -136,6 +136,16 @@
             exact("GET", "/api/browse") { PaiFixtures.browseResult },
             exact("GET", "/api/favorites") { PaiFixtures.folderFavorites },
             exact("POST", "/api/voice/token") { PaiFixtures.voiceToken },
+            // Order matters here too, same reason as the notes routes below: `/summary` would
+            // otherwise be read by the generic id lookup as a notification whose id is "summary".
+            exact("GET", "/api/notifications/summary") { PaiFixtures.notificationsSummary },
+            exact("GET", "/api/notifications") { PaiFixtures.notifications },
+            exact("POST", "/api/notifications/read") { PaiFixtures.notificationsMarked },
+            FixtureRoute(
+                method: "GET",
+                matches: { $0.hasPrefix("/api/notifications/") && $0.split(separator: "/").count == 3 }
+            ) { PaiFixtures.data(PaiFixtures.notificationDetail) },
+            exact("POST", "/api/alerts/clear") { PaiFixtures.alertsCleared },
             sessionScoped("GET", suffix: "/messages") { PaiFixtures.transcript },
             // The notes half. Order matters here and only here: `/api/notes/containers` would
             // otherwise be read as a note whose id is "containers".

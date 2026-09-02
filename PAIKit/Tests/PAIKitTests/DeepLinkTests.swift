@@ -37,6 +37,35 @@ final class DeepLinkTests: XCTestCase {
             .session(id: "s"))
     }
 
+    /// Every push this app currently sends for an agent or alert notification carries only this
+    /// key — see `DeepLink.notification`'s doc comment.
+    func testReadsANotificationFromAPushPayload() {
+        XCTAssertEqual(
+            DeepLink.from(payload: [DeepLink.notificationIDKey: "n1"]), .notification(id: "n1"))
+    }
+
+    /// The notification id wins over a session id on the same payload, matching how a session
+    /// already wins over a note — the most specific, most recently-added key is checked first.
+    func testANotificationWinsOverASessionWhenAPayloadNamesBoth() {
+        XCTAssertEqual(
+            DeepLink.from(payload: [DeepLink.notificationIDKey: "n1", DeepLink.sessionIDKey: "s1"]),
+            .notification(id: "n1"))
+    }
+
+    func testReadsAMessageIDAlongsideASession() {
+        XCTAssertEqual(
+            DeepLink.from(payload: [DeepLink.sessionIDKey: "s1", DeepLink.messageIDKey: "42"]),
+            .session(id: "s1", messageID: 42))
+    }
+
+    /// A malformed or non-numeric message id must not fail the whole link — the session is still
+    /// real and worth opening, just without a jump.
+    func testAMalformedMessageIDIsIgnoredRatherThanFailingTheLink() {
+        XCTAssertEqual(
+            DeepLink.from(payload: [DeepLink.sessionIDKey: "s1", DeepLink.messageIDKey: "not-a-number"]),
+            .session(id: "s1", messageID: nil))
+    }
+
     // MARK: URLs
 
     func testParsesASessionURL() {
@@ -45,6 +74,10 @@ final class DeepLinkTests: XCTestCase {
 
     func testParsesANoteURL() {
         XCTAssertEqual(DeepLink.from(url: URL(string: "pai://note/n1")!), .note(id: "n1"))
+    }
+
+    func testParsesANotificationURL() {
+        XCTAssertEqual(DeepLink.from(url: URL(string: "pai://notification/n1")!), .notification(id: "n1"))
     }
 
     /// Some callers build the URL from `URLComponents` with no host, which yields an empty
@@ -90,6 +123,7 @@ final class DeepLinkTests: XCTestCase {
     func testAURLRoundTripsThroughParsing() {
         for link in [
             DeepLink.session(id: "a b/c"), .note(id: "n#1"), .note(id: "plain"), .notesList, .createSession,
+            .notification(id: "n/1"),
         ] {
             guard let url = link.url else { return XCTFail("\(link) produced no URL") }
             XCTAssertEqual(DeepLink.from(url: url), link, "\(url) did not round-trip")
@@ -114,6 +148,21 @@ final class DeepLinkTests: XCTestCase {
 
     func testASessionLinkLandsDirectlyOnTheSession() {
         XCTAssertEqual(DeepLink.session(id: "s1").routes, [.session(id: "s1")])
+    }
+
+    /// A cold push replaces the whole stack with just the session — never `[.notifications,
+    /// .session(...)]`, which is reserved for a tap made from inside the centre itself and never
+    /// travels through `DeepLink` at all (see `.notification`'s doc comment).
+    func testASessionLinkWithAMessageIDStillLandsDirectlyOnTheSession() {
+        XCTAssertEqual(
+            DeepLink.session(id: "s1", messageID: 42).routes, [.session(id: "s1", messageID: 42)])
+    }
+
+    /// `.routes` cannot resolve a bare notification id to anything more specific than the centre
+    /// — see the case's own doc comment for why the real resolution needs a network round trip
+    /// and lives in `RootView` instead.
+    func testANotificationLinkFallsBackToTheCentre() {
+        XCTAssertEqual(DeepLink.notification(id: "n1").routes, [.notifications])
     }
 }
 

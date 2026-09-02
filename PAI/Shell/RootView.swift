@@ -1,5 +1,6 @@
 import PAIKit
 import SwiftUI
+import UserNotifications
 
 /// The app's outermost screen: the gate, and the navigation stack behind it.
 struct RootView: View {
@@ -18,7 +19,12 @@ struct RootView: View {
             .preferredColorScheme(colorScheme)
             .task(id: environment.connection == nil) {
                 await environment.loadStartupState()
-                await environment.pollMachines()
+                // Concurrent, not sequential: `pollMachines()` never returns on its own (it loops
+                // until the task is cancelled), so chaining a second poll after it would simply
+                // never run.
+                async let machinePoll: Void = environment.pollMachines()
+                async let notificationPoll: Void = environment.pollNotificationSummary()
+                _ = await (machinePoll, notificationPoll)
             }
             .onAppear { pendingCrash = CrashReporter.readLast() }
             // Two triggers, because a link and a usable app arrive in either order: tapped while
@@ -84,6 +90,7 @@ struct RootView: View {
                 .environment(connection.notes)
                 .environment(connection.notesBrowse)
                 .environment(connection.staging)
+                .environment(connection.notifications)
                 // Only settles a token the backend has not seen yet — silent, and a no-op in the
                 // common case. Asking for permission is deliberately NOT here: the system prompt
                 // appears at most once per install and never again, so spending it the instant
@@ -108,6 +115,13 @@ struct RootView: View {
                         callbacks: callbacks
                     )
                 }
+                // Mirrors the unread count into the springboard badge (row 5.27 note 7) — the
+                // half `aps.badge` cannot cover, since that only ever updates the badge when a
+                // push actually arrives, not when a swipe or a mark-all-read changes the count
+                // from inside the running app.
+                .onChange(of: connection.notifications.unread) { _, unread in
+                    UNUserNotificationCenter.current().setBadgeCount(unread)
+                }
             } else {
                 // `ready` without a connection should be unreachable; showing sign-in is the only
                 // state a user can act on, and a blank screen is the alternative.
@@ -119,8 +133,8 @@ struct RootView: View {
     @ViewBuilder
     private func destination(for route: Route) -> some View {
         switch route {
-        case .session(let id):
-            SessionDetailView(sessionID: id)
+        case .session(let id, let messageID):
+            SessionDetailView(sessionID: id, initialJumpMessageID: messageID)
         case .terminal(let sessionID):
             TerminalScreen(sessionID: sessionID)
         case .settings:
@@ -137,6 +151,8 @@ struct RootView: View {
             NoteContainersScreen()
         case .notePreview(let id):
             NoteEditorScreen(noteID: id, startsInPreview: true)
+        case .notifications:
+            NotificationCenterScreen()
         case .recordings:
             RecordingsRouteScreen()
         }
@@ -148,9 +164,48 @@ struct RootView: View {
     /// well before the token has been read and the connection built, and discarding it there is
     /// exactly the case this whole mechanism exists for.
     private func consumeDeepLink() {
-        guard environment.router.gate == .ready, environment.connection != nil else { return }
+        guard environment.router.gate == .ready, let connection = environment.connection else { return }
         guard let link = deepLinks.consume() else { return }
+        // `.notification` is the one case `DeepLink.routes` cannot answer on its own — see its
+        // doc comment. Resolving it needs a network round trip, so it gets its own path instead
+        // of the synchronous `replace(with: link.routes)` every other case uses.
+        if case .notification(let id) = link {
+            Task { await resolveAndOpenNotification(id: id, connection: connection) }
+            return
+        }
         environment.router.replace(with: link.routes)
+    }
+
+    /// What a tapped push notification does once the app can act on it (row 5.28). The payload
+    /// only ever carries the notification's own id — the anchor is not resolved at send time —
+    /// so this fetches it fresh and routes on what comes back, rather than trusting anything
+    /// stale the push itself might have carried.
+    ///
+    /// Always replaces the whole stack: a cold push arrives knowing nothing about what the app
+    /// was showing (`Route.session`'s own doc comment), which is also right for a push tapped
+    /// while the app happens to be open — that is a different action from an in-app tap on a row
+    /// inside the centre, which `NotificationCenterScreen.open(_:)` handles by pushing instead,
+    /// so Back there returns to the list rather than wherever the reader was before the push.
+    private func resolveAndOpenNotification(id: String, connection: AppEnvironment.Connection) async {
+        guard let notification = try? await connection.apiClient.getNotification(id: id) else {
+            environment.router.replace(with: [.notifications])
+            return
+        }
+        await connection.notifications.markRead(id)
+        switch notification.kind {
+        case .alert:
+            environment.router.replace(with: [.notifications])
+            connection.notifications.focus(id: notification.id)
+        case .agent:
+            guard let sessionId = notification.sessionId else {
+                // The session is gone — nowhere to land. The centre is the honest fallback: the
+                // notification is real and now marked read, there is simply no transcript left
+                // to show for it.
+                environment.router.replace(with: [.notifications])
+                return
+            }
+            environment.router.replace(with: [.session(id: sessionId, messageID: notification.anchor?.messageId)])
+        }
     }
 
     /// `nil` is "follow the system", which is what an absent override means to SwiftUI too.

@@ -113,6 +113,15 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// edge, which is why this is held in memory rather than persisted.
     private static var lastAnchors: [String: TranscriptAnchor] = [:]
 
+    /// The row currently wearing the deep-link ring, if any — see `beginDeepLinkHighlight(for:)`.
+    private var highlightedMessageId: Int?
+    /// Clears `highlightedMessageId` after its window — cancelled and restarted, never left to
+    /// race a second jump.
+    private var highlightClearTask: Task<Void, Never>?
+    /// How many older pages `jumpToInitialMessage(_:)` will page through before giving up —
+    /// bounded, per the design's own warning that a three-hour session is a lot of pages.
+    private static let maxJumpPages = 30
+
     private lazy var jumpToLatestHostingController = UIHostingController(
         rootView: JumpToLatestButton(onTap: { [weak self] in self?.jumpToLatestTapped() }))
 
@@ -128,9 +137,14 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     private var lastSearchedQuery: String?
     private var lastNavigatedHit: TranscriptSearchHit?
 
+    /// Where to jump once bootstrap has loaded — row 5.28. Consumed once: bootstrap reads it,
+    /// pages backward if the message is not already in the loaded window, and clears it, so a
+    /// later reconnect or width change never re-triggers the jump.
+    private var initialJumpMessageID: Int?
+
     init(
         sessionID: String, store: TranscriptStore, apiClient: PaiApiClient, settings: SettingsStore,
-        requestFactory: PaiRequestFactory, searchState: TranscriptSearchState
+        requestFactory: PaiRequestFactory, searchState: TranscriptSearchState, initialJumpMessageID: Int? = nil
     ) {
         self.sessionID = sessionID
         self.store = store
@@ -138,6 +152,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         self.settings = settings
         self.requestFactory = requestFactory
         self.searchState = searchState
+        self.initialJumpMessageID = initialJumpMessageID
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -146,6 +161,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
 
     deinit {
         bootstrapTask?.cancel()
+        highlightClearTask?.cancel()
         // `deinit` is nonisolated and `disconnect()` is not. Copy the reference out so the hop
         // captures the client rather than `self`, which is already being deallocated.
         let client = sseClient
@@ -286,11 +302,95 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             }
         }
         store.applyBootstrap(sessionId: sessionID, entries: entries, requestedLimit: TranscriptStore.tailLimit)
+
+        // A notification deep link (row 5.28) overrides the ordinary restore-to-last-anchor
+        // below — the target is almost certainly not in the tail just loaded, so this lands at
+        // the bottom first (the same fallback an unresolvable anchor already uses) and refines
+        // once the target page is actually loaded, rather than blocking the first paint on it.
+        if let jumpTarget = initialJumpMessageID {
+            initialJumpMessageID = nil
+            pendingInitialLoad = .bottom
+            recomputeRows(applying: .initialLoad(.bottom))
+            connectStream(initialCursor: store.maxMessageId(for: sessionID))
+            await jumpToInitialMessage(jumpTarget)
+            return
+        }
+
         let loadedIds = TranscriptStore.displayMessages(store.messages[sessionID] ?? []).map(\.id)
         let target = TranscriptRestore.target(for: Self.lastAnchors[sessionID], loadedMessageIds: loadedIds)
         pendingInitialLoad = target
         recomputeRows(applying: .initialLoad(target))
         connectStream(initialCursor: store.maxMessageId(for: sessionID))
+    }
+
+    /// Pages backward until `targetID` is loaded (bounded by `maxJumpPages`), then jumps to it
+    /// with the same visual a search hit gets — see `jumpToRow(_:)`. Gives up silently if the
+    /// message never turns up: per the design, every "not resolvable" reason collapses to the
+    /// same behaviour, staying at the ordinary open rather than landing confidently on the wrong
+    /// place.
+    private func jumpToInitialMessage(_ targetID: Int) async {
+        await loadUntilMessageIsLoaded(targetID)
+        recomputeRows(applying: .compensateFromTopVisibleRow)
+        guard rows.contains(where: { $0.id == targetID }) else { return }
+        jumpToRow(targetID)
+    }
+
+    private func loadUntilMessageIsLoaded(_ targetID: Int) async {
+        var iterations = 0
+        while iterations < Self.maxJumpPages {
+            let window = store.window(for: sessionID)
+            // The window is a contiguous suffix of the transcript (`TranscriptWindow`'s own doc
+            // comment), so once its oldest loaded id is at or before the target, the target is
+            // loaded too — no need to search for it directly.
+            if let oldest = window.oldestLoadedId, oldest <= targetID { return }
+            guard window.hasOlder, let oldestId = window.oldestLoadedId else { return }
+            do {
+                let entries = try await apiClient.getMessages(
+                    sessionId: sessionID, page: .before(id: oldestId, limit: TranscriptStore.olderPageLimit))
+                store.prependOlder(
+                    sessionId: sessionID, entries: entries, requestedLimit: TranscriptStore.olderPageLimit)
+            } catch {
+                return
+            }
+            iterations += 1
+        }
+    }
+
+    /// Scrolls to `messageId` and rings it — the notification deep link's counterpart to
+    /// `scrollToSearchHit(_:)`. No block-level offset here: unlike a search hit, which highlights
+    /// one text range inside a message, a deep link's target is the whole message, so landing on
+    /// the row's own top (minus the same 30%-from-top lead) is the honest position.
+    private func jumpToRow(_ messageId: Int) {
+        guard let rowTop = layout.offsetTop(forRowId: messageId) else { return }
+        let lead = collectionView.bounds.height * 0.3
+        let target = max(0, min(maxContentOffsetY(), CGFloat(rowTop) - lead))
+        collectionView.setContentOffset(CGPoint(x: 0, y: target), animated: true)
+        edgeFollow = EdgeFollowLatch(isPinned: false)
+        holdController.begin(.jump(messageId: messageId))
+        updateJumpToLatestVisibility()
+        beginDeepLinkHighlight(for: messageId)
+    }
+
+    /// Rings `messageId`'s card for a few seconds, or until the reader makes a deliberate gesture
+    /// — `scrollViewWillBeginDragging` clears it early, matching the design's "fading out after
+    /// ~4s or on the first deliberate gesture".
+    private func beginDeepLinkHighlight(for messageId: Int) {
+        highlightedMessageId = messageId
+        reconfigureVisibleCells()
+        highlightClearTask?.cancel()
+        highlightClearTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard let self, !Task.isCancelled else { return }
+            self.clearDeepLinkHighlight()
+        }
+    }
+
+    private func clearDeepLinkHighlight() {
+        guard highlightedMessageId != nil else { return }
+        highlightClearTask?.cancel()
+        highlightClearTask = nil
+        highlightedMessageId = nil
+        reconfigureVisibleCells()
     }
 
     private func connectStream(initialCursor: Int?) {
@@ -565,11 +665,18 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             recomputeRows(applying: .compensateFromTopVisibleRow)
         }
         scrollToSearchHit(hit)
-        let visible = collectionView.indexPathsForVisibleItems
-        if !visible.isEmpty { collectionView.reconfigureItems(at: visible) }
+        reconfigureVisibleCells()
     }
 
     private func clearSearchHighlighting() {
+        reconfigureVisibleCells()
+    }
+
+    /// Forces every visible cell to redraw with whatever it should show right now — search
+    /// highlighting turning on or off, or the deep-link ring beginning or fading. Shared by both
+    /// rather than each keeping its own copy, since a cell's `UIHostingConfiguration` closure
+    /// (`cellForItemAt`) already reads every one of these flags fresh on every call.
+    private func reconfigureVisibleCells() {
         let visible = collectionView.indexPathsForVisibleItems
         if !visible.isEmpty { collectionView.reconfigureItems(at: visible) }
     }
@@ -600,7 +707,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         collectionView.setContentOffset(CGPoint(x: 0, y: target), animated: true)
 
         edgeFollow = EdgeFollowLatch(isPinned: false)
-        holdController.begin(.search(messageId: hit.messageId))
+        holdController.begin(.jump(messageId: hit.messageId))
         updateJumpToLatestVisibility()
     }
 
@@ -833,7 +940,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         case .bottom:
             scrollToBottom(animated: false)
             return true
-        case .restore(let messageId), .search(let messageId):
+        case .restore(let messageId), .jump(let messageId):
             guard let index = rows.firstIndex(where: { $0.id == messageId }) else { return false }
             collectionView.scrollToItem(at: IndexPath(item: index, section: 0), at: .top, animated: false)
             return true
@@ -895,6 +1002,9 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         // short flick up still does not snap back down, since the distance never gets there.
         edgeFollow.recordScrollAway()
         holdController.release()
+        // The deep-link ring's other release path — "fading out after ~4s or on the first
+        // deliberate gesture" (row 5.28's design). A drag is exactly that gesture.
+        clearDeepLinkHighlight()
     }
 
     // MARK: - UICollectionViewDataSource
@@ -921,7 +1031,8 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                     isExpanded: self.expandResolver(forMessageId: messageId),
                     onToggleExpand: { [weak self] key in self?.toggleExpand(messageId: messageId, key: key) },
                     highlights: self.searchHighlights(forMessageId: messageId),
-                    currentHit: self.searchState.currentHit
+                    currentHit: self.searchState.currentHit,
+                    isDeepLinkTarget: messageId == self.highlightedMessageId
                 )
                 // Faded, at the same 0.6 the web uses, so a message still on its way is
                 // legible but visibly not yet part of the conversation. Opacity only — it
@@ -946,11 +1057,13 @@ struct TranscriptCollectionView: UIViewControllerRepresentable {
     let settings: SettingsStore
     let requestFactory: PaiRequestFactory
     let searchState: TranscriptSearchState
+    /// Where to jump once the transcript is open — row 5.28. `nil` for an ordinary open.
+    var initialJumpMessageID: Int? = nil
 
     func makeUIViewController(context: Context) -> TranscriptCollectionViewController {
         TranscriptCollectionViewController(
             sessionID: sessionID, store: store, apiClient: apiClient, settings: settings,
-            requestFactory: requestFactory, searchState: searchState
+            requestFactory: requestFactory, searchState: searchState, initialJumpMessageID: initialJumpMessageID
         )
     }
 
