@@ -48,6 +48,50 @@ final class RouterTests: XCTestCase {
         XCTAssertTrue(router.path.isEmpty)
     }
 
+    // MARK: - Leaving the sub-agent screens
+
+    /// The sub-agents screen opened directly from the session list (no parent transcript beneath
+    /// it), the exact shape that produced the bug: popping it landed on the session list.
+    func testLeavingSubagentsOpenedFromTheListLandsOnTheParentSession() {
+        let old: [Route] = [.subagents(parentID: "a"), .session(id: "sub1")]
+        let new: [Route] = [.subagents(parentID: "a")]  // ordinary pop, still inside the screen
+
+        XCTAssertEqual(Route.pathAfterLeavingSubagents(from: old, to: new), new)
+    }
+
+    func testPoppingTheSubagentsScreenItselfLandsOnTheParentSession() {
+        let old: [Route] = [.subagents(parentID: "a")]
+        let new: [Route] = []  // native pop with nothing underneath it
+
+        XCTAssertEqual(Route.pathAfterLeavingSubagents(from: old, to: new), [.session(id: "a")])
+    }
+
+    /// The sub-agents screen opened from within the parent's own transcript — the path already
+    /// ends where it should, so nothing needs correcting.
+    func testPoppingTheSubagentsScreenWithTheParentAlreadyUnderneathChangesNothing() {
+        let old: [Route] = [.session(id: "a"), .subagents(parentID: "a")]
+        let new: [Route] = [.session(id: "a")]
+
+        XCTAssertEqual(Route.pathAfterLeavingSubagents(from: old, to: new), new)
+    }
+
+    /// A long-press jump straight to the root, skipping over `.subagents` entirely, corrects the
+    /// same as a single pop would — the sub-agent screens were left either way.
+    func testJumpingPastTheSubagentsScreenToTheRootStillLandsOnTheParentSession() {
+        let old: [Route] = [.subagents(parentID: "a"), .session(id: "sub1"), .terminal(sessionID: "sub1")]
+        let new: [Route] = []
+
+        XCTAssertEqual(Route.pathAfterLeavingSubagents(from: old, to: new), [.session(id: "a")])
+    }
+
+    /// Nothing to correct when the path never touched the sub-agent screens at all.
+    func testPoppingUnrelatedRoutesIsUntouched() {
+        let old: [Route] = [.session(id: "a"), .settings]
+        let new: [Route] = [.session(id: "a")]
+
+        XCTAssertEqual(Route.pathAfterLeavingSubagents(from: old, to: new), new)
+    }
+
     func testRoutesToTheSameSessionAreEqualSoTheStackDoesNotGrowOnRepeatedTaps() {
         // NavigationStack dedupes nothing itself; equality is what lets a caller check.
         XCTAssertEqual(Route.session(id: "abc"), Route.session(id: "abc"))

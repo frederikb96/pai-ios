@@ -167,6 +167,35 @@ public enum AppGate: Equatable, Sendable {
     case ready
 }
 
+extension Route {
+    /// What the path should become after an interactive pop (the back gesture, the back button,
+    /// or a long-press jump to an ancestor) — corrected so leaving the sub-agent screens always
+    /// lands on the parent session's transcript, never on whatever the reader would otherwise
+    /// land on.
+    ///
+    /// `NavigationStack`'s own pop is right on its own for the ordinary case — a sub-agent's own
+    /// transcript back to the sub-agent list — but `.subagents(parentID:)` can be reached
+    /// directly from the session list (`SessionActionsSheet`, opened from either screen), with no
+    /// parent transcript underneath it on the stack. Popping *that* screen then lands on the
+    /// session list rather than on the session its sub-agents belong to. Triggers on the
+    /// `.subagents` route leaving the path entirely — a single swipe back out of it, or a
+    /// long-press jump straight past it to an ancestor — never on navigating merely within it.
+    public static func pathAfterLeavingSubagents(from oldPath: [Route], to newPath: [Route]) -> [Route] {
+        guard let parentID = oldPath.subagentsParentID, newPath.subagentsParentID == nil else { return newPath }
+        guard newPath.last != .session(id: parentID) else { return newPath }
+        return newPath + [.session(id: parentID)]
+    }
+}
+
+extension [Route] {
+    fileprivate var subagentsParentID: String? {
+        for route in self {
+            if case .subagents(let id) = route { return id }
+        }
+        return nil
+    }
+}
+
 /// The navigation path, and the gate in front of it.
 ///
 /// Kept as a value-holding observable rather than free functions on the view so that "where is

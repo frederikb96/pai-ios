@@ -351,10 +351,20 @@ struct RootView: View {
         }
     }
 
+    /// `set` only ever runs for a change `NavigationStack` itself drove — a swipe back, the back
+    /// button, or a long-press jump to an ancestor — never for a programmatic push or replace,
+    /// which mutate `Router.path` directly and reach this view through `get` on the next render.
+    /// That is what makes `pathAfterLeavingSubagents` safe to apply unconditionally here: it must
+    /// correct exactly the interactive case and never a deliberate `Router.replace(with:)` such
+    /// as a notification's cold open, which intentionally lands somewhere `Route.subagents` knows
+    /// nothing about.
     private var navigationPath: Binding<[Route]> {
         Binding(
             get: { environment.router.path },
-            set: { environment.router.replace(with: $0) }
+            set: { newValue in
+                let corrected = Route.pathAfterLeavingSubagents(from: environment.router.path, to: newValue)
+                environment.router.replace(with: corrected)
+            }
         )
     }
 }
