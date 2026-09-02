@@ -56,3 +56,15 @@ whether the reconnect-on-foreground timing feels prompt in practice, since only 
 that. Correcting the badge and the shade while the app is backgrounded and untouched has a
 separate, permanent ceiling this cannot close regardless of device verification: nothing sends a
 silent push to wake the app for it (`push.py` only ever sends an alert push).
+
+### Verify: the formatting-bar settings screen — pai-cloud anchor: `web/src/apps/notes/settings/ToolbarSettings.tsx`
+Needs `PAI/` because: the two-section enable/reorder screen (`NoteToolbarSettingsScreen`), drag
+reordering via `.onMove` with edit mode forced on, and the always-visible drag handle are none of
+them exercisable on Linux — only `NoteToolbarLayout.sanitize(rawIds:)` and `SettingsStore`'s
+persistence are. Also unverified: whether an editor already open *underneath* this sheet in the
+nav stack — reachable by opening a note, going Back to the list, then opening this screen — picks
+up a layout change immediately, or only the next time that note is opened. `updateUIView`
+compares old and new `toolbarLayout` on every call and calls `keyboardBar.setLayout(_:)` when they
+differ, so correctness does not depend on when SwiftUI next processes an off-screen
+`UIViewRepresentable`, but only a device shows whether that happens promptly or is deferred until
+the screen is visible again.

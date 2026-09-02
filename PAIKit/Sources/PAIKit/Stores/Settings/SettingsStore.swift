@@ -40,6 +40,7 @@ public final class SettingsStore {
         static let expandPreferences = "expandPreferences"
         static let theme = "theme"
         static let showsNoteLineNumbers = "showsNoteLineNumbers"
+        static let noteToolbarLayout = "noteToolbarLayout"
     }
 
     static let maxSentMessages = 10
@@ -61,6 +62,13 @@ public final class SettingsStore {
     /// The note editor's line-number gutter — off by default, since most notes are short enough
     /// that Obsidian's own gutter is a taste rather than a need.
     public private(set) var showsNoteLineNumbers: Bool
+    /// The note editor's formatting bar: which actions it offers, and in which order. Stored as
+    /// raw strings rather than `[NoteToolbarActionId]` directly — decoding straight into the enum
+    /// array would fail the whole array the moment one id is unrecognised, which is exactly the
+    /// "silently wipes the arrangement" failure ``NoteToolbarLayout/sanitize(rawIds:)`` exists to
+    /// avoid. Always sanitized before being stored here, so every read of this property is safe
+    /// to hand straight to the bar with no further checking.
+    public private(set) var noteToolbarLayout: [NoteToolbarActionId]
 
     public let elevenLabsKey: WriteOnlySecretField
     public let smtp: SmtpSettingsStore
@@ -92,6 +100,8 @@ public final class SettingsStore {
         expandPreferences = storage.value(forKey: Keys.expandPreferences) ?? [:]
         theme = storage.value(forKey: Keys.theme) ?? .system
         showsNoteLineNumbers = storage.value(forKey: Keys.showsNoteLineNumbers) ?? false
+        let storedToolbarIds: [String] = storage.value(forKey: Keys.noteToolbarLayout) ?? []
+        noteToolbarLayout = NoteToolbarLayout.sanitize(rawIds: storedToolbarIds)
     }
 
     // MARK: - Client-side settings, immediate apply
@@ -129,6 +139,14 @@ public final class SettingsStore {
     public func setShowsNoteLineNumbers(_ enabled: Bool) {
         showsNoteLineNumbers = enabled
         storage.setValue(enabled, forKey: Keys.showsNoteLineNumbers)
+    }
+
+    /// Re-sanitized before being kept, so a caller handing back a layout with a duplicate or an
+    /// id this build has never heard of can't get it into `noteToolbarLayout` unfiltered.
+    public func setNoteToolbarLayout(_ layout: [NoteToolbarActionId]) {
+        let sanitized = NoteToolbarLayout.sanitize(rawIds: layout.map(\.rawValue))
+        noteToolbarLayout = sanitized
+        storage.setValue(sanitized.map(\.rawValue), forKey: Keys.noteToolbarLayout)
     }
 
     // MARK: - Expand preferences

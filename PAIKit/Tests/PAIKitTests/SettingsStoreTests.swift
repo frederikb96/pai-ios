@@ -45,6 +45,7 @@ final class SettingsStoreTests: XCTestCase {
             XCTAssertEqual(store.recordings, [])
             XCTAssertEqual(store.expandPreferences, [:])
             XCTAssertEqual(store.showsNoteLineNumbers, false)
+            XCTAssertEqual(store.noteToolbarLayout, NoteToolbarLayout.defaultLayout)
 
             // The toggles the web's own regression test singles out as the ones that used to
             // default to true (`settings.test.ts`) — every one of them must read false here too.
@@ -73,6 +74,34 @@ final class SettingsStoreTests: XCTestCase {
 
             let second = try Self.makeStore(storage: storage)
             XCTAssertEqual(second.showsNoteLineNumbers, true)
+        }
+    }
+
+    func testSetNoteToolbarLayoutPersistsAcrossStoreInstances() async throws {
+        try await MainActor.run {
+            let storage = SettingsInMemoryKeyValueStore()
+            let first = try Self.makeStore(storage: storage)
+            first.setNoteToolbarLayout([.link, .undo, .bold])
+
+            let second = try Self.makeStore(storage: storage)
+            XCTAssertEqual(second.noteToolbarLayout, [.link, .undo, .bold])
+        }
+    }
+
+    /// Simulates what a real fresh install never produces but a genuinely old or new app version
+    /// on the same device could: a stored layout naming an action this build has never heard of,
+    /// alongside ones it recognises. The key is `SettingsStore`'s own private storage key,
+    /// duplicated here as a literal because there is no other way to write behind the public API
+    /// — see `NoteToolbarLayoutTests` for the same guarantee tested directly against
+    /// `NoteToolbarLayout.sanitize(rawIds:)`, with no dependency on this string staying in sync.
+    func testAnUnrecognisedStoredActionIsDroppedRatherThanDiscardingTheWholeLayout() async throws {
+        try await MainActor.run {
+            let storage = SettingsInMemoryKeyValueStore()
+            storage.setData(
+                try? JSONEncoder().encode(["bold", "future-action", "quote"]), forKey: "noteToolbarLayout")
+
+            let store = try Self.makeStore(storage: storage)
+            XCTAssertEqual(store.noteToolbarLayout, [.bold, .quote])
         }
     }
 

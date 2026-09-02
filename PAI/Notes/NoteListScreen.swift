@@ -18,6 +18,7 @@ struct NoteListScreen: View {
     @State private var selectedTags: [String] = []
     @State private var mode: Mode = .filter
     @State private var showTagFilter = false
+    @State private var showToolbarSettings = false
 
     @State private var searchResults: [NoteSearchHit] = []
     @State private var searchTruncated = false
@@ -72,6 +73,12 @@ struct NoteListScreen: View {
                         }
                         Divider()
                         Button {
+                            showToolbarSettings = true
+                        } label: {
+                            Label("Formatting bar", systemImage: "keyboard")
+                        }
+                        .accessibilityIdentifier("open-note-toolbar-settings")
+                        Button {
                             environment.router.push(.noteContainers)
                         } label: {
                             Label("Containers", systemImage: "folder")
@@ -115,6 +122,9 @@ struct NoteListScreen: View {
                 } else {
                     await runSemanticSearch(trimmed)
                 }
+            }
+            .sheet(isPresented: $showToolbarSettings) {
+                NoteToolbarSettingsScreen()
             }
             .sheet(item: Binding(get: { actionsTargetId.map(NoteId.init) }, set: { actionsTargetId = $0?.value })) {
                 target in

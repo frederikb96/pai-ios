@@ -111,6 +111,7 @@ struct NoteEditorSurface: View {
                     }
                     MarkdownSourceTextView(
                         text: text, isFocused: isFocused && !isCovered, caret: caret, highlight: highlight,
+                        toolbarLayout: settings.noteToolbarLayout,
                         onChange: { edited($0) },
                         onFocus: { isFocused = true },
                         onAttach: { offset in beginAttachment(at: offset) },

@@ -59,6 +59,10 @@ struct MarkdownSourceTextView: UIViewRepresentable {
     /// What the in-note search is looking for. Every occurrence stays painted while it is set,
     /// which is what makes "find in note" usable without leaving the editor.
     let highlight: String?
+    /// Which actions the keyboard bar offers, and in which order — Settings'
+    /// `noteToolbarLayout` (spec row 6.5), read fresh on every update so a change made while this
+    /// editor is open reaches the already-built bar rather than only a freshly opened one.
+    let toolbarLayout: [NoteToolbarActionId]
 
     let onChange: (String) -> Void
     let onFocus: () -> Void
@@ -120,9 +124,13 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         // otherwise notice — the text has not changed and the width-gated check further down
         // only fires from a genuine layout pass, which merely flipping the toggle does not cause.
         let justGainedLineMetrics = context.coordinator.parent.onLineMetrics == nil && onLineMetrics != nil
+        let layoutChanged = context.coordinator.parent.toolbarLayout != toolbarLayout
         context.coordinator.parent = self
         if justGainedLineMetrics {
             context.coordinator.reportLineMetricsIfNeeded(view, forcing: true)
+        }
+        if layoutChanged {
+            context.coordinator.keyboardBar.setLayout(toolbarLayout)
         }
 
         // Only when it actually differs. Assigning `attributedText` resets the selection, so
@@ -231,6 +239,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         /// Built once and kept, because `inputAccessoryView` is read every time the view becomes
         /// first responder and a fresh bar per focus would flicker as the keyboard comes up.
         lazy var keyboardBar: NoteEditorKeyboardBar = NoteEditorKeyboardBar(
+            layout: parent.toolbarLayout,
             showsFormatting: !MarkdownFenceState.isInsideFence(text: parent.text, caretUtf16: 0)
         ) { [weak self] item in
             self?.handle(item)
