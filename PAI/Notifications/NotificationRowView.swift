@@ -114,9 +114,9 @@ struct NotificationRowView: View {
     private var kindIconColor: Color {
         guard notification.kind == .alert else { return PaiPalette.Semantic.textMuted }
         switch notification.alert?.severity {
-        case "critical", "error": PaiPalette.red500
-        case "warning": PaiPalette.amber500
-        default: PaiPalette.Semantic.textMuted
+        case "critical", "error": return PaiPalette.red500
+        case "warning": return PaiPalette.amber500
+        default: return PaiPalette.Semantic.textMuted
         }
     }
 
