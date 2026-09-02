@@ -8,13 +8,6 @@ import XCTest
 @MainActor
 final class SearchStateTests: XCTestCase {
 
-    private func hit(messageId: Int, cardIndex: Int = 0, blockIndex: Int = 0, location: Int = 0) -> TranscriptSearchHit
-    {
-        TranscriptSearchHit(
-            messageId: messageId, cardIndex: cardIndex, expandKey: nil, blockIndex: blockIndex,
-            range: NSRange(location: location, length: 1))
-    }
-
     func testOpenActivatesSearch() async {
         let state = TranscriptSearchState()
         state.open()
@@ -25,75 +18,177 @@ final class SearchStateTests: XCTestCase {
         let state = TranscriptSearchState()
         state.open()
         state.query = "needle"
-        state.setResults(hits: [hit(messageId: 1)], truncated: true, readerMessageId: nil)
-        state.isLoadingFullHistory = true
+        state.beginFind(instantMatchedIds: [1])
+        state.applyFindResult(total: 3, capped: true, serverMatchedIdsForKindMode: nil)
+        state.commitLanding(outerIndex: 0, messageId: 1, inner: (0, 1))
+        state.requestNext()
 
         state.close()
 
         XCTAssertFalse(state.isActive)
         XCTAssertEqual(state.query, "")
-        XCTAssertEqual(state.hits, [])
-        XCTAssertNil(state.activeHitIndex)
-        XCTAssertFalse(state.isLoadingFullHistory)
+        XCTAssertNil(state.kind)
+        XCTAssertFalse(state.loading)
+        XCTAssertNil(state.error)
+        XCTAssertEqual(state.total, 0)
+        XCTAssertFalse(state.capped)
+        XCTAssertNil(state.outerIndex)
+        XCTAssertNil(state.currentMessageId)
+        XCTAssertNil(state.inner)
+        XCTAssertTrue(state.matchedIds.isEmpty)
+        XCTAssertNil(state.consumePendingStep())
     }
 
-    // MARK: - Starting position: at or after the reader, else the last one before
+    // MARK: - Stepping requests
 
-    func testSetResultsStartsAtTheFirstHitAtOrAfterTheReaderPosition() async {
+    func testRequestNextIsConsumedOnceAndThenGone() async {
         let state = TranscriptSearchState()
-        let hits = [hit(messageId: 1), hit(messageId: 5), hit(messageId: 9)]
-        state.setResults(hits: hits, truncated: false, readerMessageId: 5)
-        XCTAssertEqual(state.activeHitIndex, 1)
-        XCTAssertEqual(state.currentHit?.messageId, 5)
+        state.requestNext()
+
+        XCTAssertEqual(state.consumePendingStep(), .next)
+        XCTAssertNil(state.consumePendingStep())
     }
 
-    /// The reader is past every hit — there is nothing "at or after" them, so search falls back
-    /// to the last hit before their position, matching the web's rule exactly.
-    func testSetResultsFallsBackToTheLastHitBeforeTheReaderWhenNoneIsAtOrAfter() async {
+    func testRequestPreviousOverridesAPreviouslyPendingNext() async {
         let state = TranscriptSearchState()
-        let hits = [hit(messageId: 1), hit(messageId: 2)]
-        state.setResults(hits: hits, truncated: false, readerMessageId: 100)
-        XCTAssertEqual(state.activeHitIndex, 1)
+        state.requestNext()
+        state.requestPrevious()
+
+        XCTAssertEqual(state.consumePendingStep(), .previous)
     }
 
-    func testSetResultsStartsAtTheFirstHitWhenNoReaderPositionIsKnown() async {
+    // MARK: - beginFind / applyFindResult
+
+    /// In text mode the instant client-side set already showing survives the server answer —
+    /// only a kind result replaces `matchedIds` outright, since there is no client-side instant
+    /// match for a kind at all.
+    func testApplyFindResultLeavesTextModeMatchedIdsAlone() async {
         let state = TranscriptSearchState()
-        let hits = [hit(messageId: 1), hit(messageId: 2)]
-        state.setResults(hits: hits, truncated: false, readerMessageId: nil)
-        XCTAssertEqual(state.activeHitIndex, 0)
+        state.query = "needle"
+        state.beginFind(instantMatchedIds: [7])
+
+        state.applyFindResult(total: 5, capped: false, serverMatchedIdsForKindMode: nil)
+
+        XCTAssertEqual(state.matchedIds, [7])
+        XCTAssertEqual(state.total, 5)
+        XCTAssertFalse(state.loading)
     }
 
-    func testSetResultsWithNoHitsLeavesNoActiveIndex() async {
+    func testApplyFindResultReplacesMatchedIdsInKindMode() async {
         let state = TranscriptSearchState()
-        state.setResults(hits: [], truncated: false, readerMessageId: 1)
-        XCTAssertNil(state.activeHitIndex)
-        XCTAssertNil(state.currentHit)
+        state.kind = .boundary
+        state.beginFind(instantMatchedIds: [])
+
+        state.applyFindResult(total: 2, capped: false, serverMatchedIdsForKindMode: [3, 9])
+
+        XCTAssertEqual(state.matchedIds, [3, 9])
     }
 
-    // MARK: - Stepping
+    func testClearResultsLeavesQueryAndKindAloneButResetsEverythingElse() async {
+        let state = TranscriptSearchState()
+        state.query = "needle"
+        state.beginFind(instantMatchedIds: [1])
+        state.applyFindResult(total: 3, capped: true, serverMatchedIdsForKindMode: nil)
+        state.commitLanding(outerIndex: 0, messageId: 1, inner: (0, 1))
+
+        state.clearResults()
+
+        XCTAssertEqual(state.query, "needle", "clearResults is not close() — an emptied query calls this on its own")
+        XCTAssertEqual(state.total, 0)
+        XCTAssertNil(state.outerIndex)
+        XCTAssertNil(state.currentMessageId)
+        XCTAssertTrue(state.matchedIds.isEmpty)
+    }
+
+    // MARK: - commitLanding / currentHit
+
+    func testCommitLandingSetsCurrentHit() async {
+        let state = TranscriptSearchState()
+        state.commitLanding(outerIndex: 2, messageId: 42, inner: (1, 3))
+
+        XCTAssertEqual(state.outerIndex, 2)
+        XCTAssertEqual(state.currentHit?.messageId, 42)
+        XCTAssertEqual(state.currentHit?.inner?.ordinal, 1)
+        XCTAssertEqual(state.currentHit?.inner?.count, 3)
+    }
+
+    /// A kind hit, or a text hit that resolved to zero occurrences in the loaded rendered text —
+    /// still a row-level landing, no inner counter.
+    func testCommitLandingWithNoInnerLeavesTheRowLevelLandingOnly() async {
+        let state = TranscriptSearchState()
+        state.commitLanding(outerIndex: 0, messageId: 42, inner: nil)
+
+        XCTAssertEqual(state.currentHit?.messageId, 42)
+        XCTAssertNil(state.currentHit?.inner)
+    }
+
+    func testStepInnerMovesTheOrdinalWithoutTouchingTheOuterPosition() async {
+        let state = TranscriptSearchState()
+        state.commitLanding(outerIndex: 0, messageId: 42, inner: (0, 3))
+
+        state.stepInner(to: 1)
+
+        XCTAssertEqual(state.outerIndex, 0)
+        XCTAssertEqual(state.currentMessageId, 42)
+        XCTAssertEqual(state.inner?.ordinal, 1)
+        XCTAssertEqual(state.inner?.count, 3)
+    }
+
+    // MARK: - Stepping decisions
+
+    func testNextStepsTheInnerOrdinalBeforeMovingTheOuterIndex() async {
+        let state = TranscriptSearchState()
+        state.query = "needle"
+        state.commitLanding(outerIndex: 0, messageId: 1, inner: (0, 2))
+
+        XCTAssertEqual(state.next(hitCount: 3), .innerOnly(ordinal: 1))
+    }
+
+    func testNextMovesTheOuterIndexOnceTheInnerOrdinalIsExhausted() async {
+        let state = TranscriptSearchState()
+        state.query = "needle"
+        state.commitLanding(outerIndex: 0, messageId: 1, inner: (1, 2))
+
+        XCTAssertEqual(state.next(hitCount: 3), .outerIndex(1))
+    }
+
+    /// A kind hit has no inner ordinal at all — every `next()` moves the outer index directly.
+    func testNextOnAKindHitAlwaysMovesTheOuterIndex() async {
+        let state = TranscriptSearchState()
+        state.kind = .boundary
+        state.commitLanding(outerIndex: 0, messageId: 1, inner: nil)
+
+        XCTAssertEqual(state.next(hitCount: 3), .outerIndex(1))
+    }
 
     func testNextWrapsFromTheLastHitBackToTheFirst() async {
         let state = TranscriptSearchState()
-        state.setResults(hits: [hit(messageId: 1), hit(messageId: 2)], truncated: false, readerMessageId: 2)
-        XCTAssertEqual(state.activeHitIndex, 1)
-        state.next()
-        XCTAssertEqual(state.activeHitIndex, 0)
+        state.query = "needle"
+        state.commitLanding(outerIndex: 1, messageId: 2, inner: nil)
+
+        XCTAssertEqual(state.next(hitCount: 2), .outerIndex(0))
+    }
+
+    func testPreviousStepsTheInnerOrdinalBeforeMovingTheOuterIndex() async {
+        let state = TranscriptSearchState()
+        state.query = "needle"
+        state.commitLanding(outerIndex: 0, messageId: 1, inner: (1, 2))
+
+        XCTAssertEqual(state.previous(hitCount: 3), .innerOnly(ordinal: 0))
     }
 
     func testPreviousWrapsFromTheFirstHitBackToTheLast() async {
         let state = TranscriptSearchState()
-        state.setResults(hits: [hit(messageId: 1), hit(messageId: 2)], truncated: false, readerMessageId: 1)
-        XCTAssertEqual(state.activeHitIndex, 0)
-        state.previous()
-        XCTAssertEqual(state.activeHitIndex, 1)
+        state.query = "needle"
+        state.commitLanding(outerIndex: 0, messageId: 1, inner: nil)
+
+        XCTAssertEqual(state.previous(hitCount: 2), .outerIndex(1))
     }
 
     func testSteppingWithNoHitsDoesNothing() async {
         let state = TranscriptSearchState()
-        state.next()
-        XCTAssertNil(state.activeHitIndex)
-        state.previous()
-        XCTAssertNil(state.activeHitIndex)
+        XCTAssertEqual(state.next(hitCount: 0), .none)
+        XCTAssertEqual(state.previous(hitCount: 0), .none)
     }
 
     // MARK: - Summary text
@@ -101,21 +196,29 @@ final class SearchStateTests: XCTestCase {
     func testResultsSummaryReportsPositionAndTotal() async {
         let state = TranscriptSearchState()
         state.query = "needle"
-        state.setResults(hits: [hit(messageId: 1), hit(messageId: 2)], truncated: false, readerMessageId: 1)
+        state.beginFind(instantMatchedIds: [])
+        state.applyFindResult(total: 2, capped: false, serverMatchedIdsForKindMode: nil)
+        state.commitLanding(outerIndex: 0, messageId: 1, inner: nil)
+
         XCTAssertEqual(state.resultsSummary, "1/2")
     }
 
-    func testResultsSummaryMarksATruncatedCountWithAPlus() async {
+    func testResultsSummaryMarksACappedCountWithAPlus() async {
         let state = TranscriptSearchState()
         state.query = "needle"
-        state.setResults(hits: [hit(messageId: 1)], truncated: true, readerMessageId: 1)
-        XCTAssertEqual(state.resultsSummary, "1/1+")
+        state.beginFind(instantMatchedIds: [])
+        state.applyFindResult(total: 5000, capped: true, serverMatchedIdsForKindMode: nil)
+        state.commitLanding(outerIndex: 0, messageId: 1, inner: nil)
+
+        XCTAssertEqual(state.resultsSummary, "1/5000+")
     }
 
     func testResultsSummaryReportsNoResultsForAQueryThatFoundNothing() async {
         let state = TranscriptSearchState()
         state.query = "needle"
-        state.setResults(hits: [], truncated: false, readerMessageId: nil)
+        state.beginFind(instantMatchedIds: [])
+        state.applyFindResult(total: 0, capped: false, serverMatchedIdsForKindMode: nil)
+
         XCTAssertEqual(state.resultsSummary, "No results")
     }
 
@@ -125,12 +228,12 @@ final class SearchStateTests: XCTestCase {
         XCTAssertNil(state.resultsSummary)
     }
 
-    /// While a full-history load is filling the window search cannot see yet, a stale "No
-    /// results" would misreport as a real answer nothing has actually searched yet.
-    func testResultsSummaryIsNilWhileLoadingFullHistory() async {
+    /// While a request is in flight, a stale "No results" would misreport as a real answer
+    /// nothing has actually searched yet.
+    func testResultsSummaryIsNilWhileLoading() async {
         let state = TranscriptSearchState()
         state.query = "needle"
-        state.isLoadingFullHistory = true
+        state.beginFind(instantMatchedIds: [])
         XCTAssertNil(state.resultsSummary)
     }
 }

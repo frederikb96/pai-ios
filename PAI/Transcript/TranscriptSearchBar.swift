@@ -8,10 +8,12 @@ import SwiftUI
 /// software keyboard is about to claim that space anyway.
 ///
 /// Mutates ``TranscriptSearchState`` directly rather than through closures — every action here
-/// (typing, stepping, closing) is a pure state change that type already owns, and
-/// `TranscriptCollectionViewController` observes the same shared instance to react: recomputing
-/// hits when the query changes, scrolling and painting when the current hit changes. Nothing here
-/// needs to know the collection view exists.
+/// (typing, picking a kind, stepping, closing) is a pure write that type already owns, and
+/// `TranscriptCollectionViewController` observes the same shared instance to react: running
+/// `find` when `query`/`kind` change, draining a stepping request, painting when the current hit
+/// changes. Nothing here needs to know the collection view exists — see that type's own doc
+/// comment for why a request/drain field, not a closure, is what carries an action needing the
+/// network across to it.
 struct TranscriptSearchBar: View {
     @Bindable var state: TranscriptSearchState
 
@@ -22,12 +24,21 @@ struct TranscriptSearchBar: View {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(PaiPalette.Semantic.textMuted)
-                TextField("Find in transcript", text: $state.query)
-                    .textFieldStyle(.plain)
-                    .focused($isFocused)
-                    .submitLabel(.search)
-                    .onSubmit { state.next() }
-                if state.isLoadingFullHistory {
+                TextField(
+                    state.kind.map { "Showing: \($0.label)" } ?? "Find in transcript", text: $state.query
+                )
+                .textFieldStyle(.plain)
+                .focused($isFocused)
+                .submitLabel(.search)
+                .onSubmit { state.requestNext() }
+                // Typing is always a return to text search — the two modes are mutually
+                // exclusive, and this is the more forgiving of the two ways out of kind mode
+                // (the picker itself is the other).
+                .onChange(of: state.query) { _, newValue in
+                    guard !newValue.isEmpty, state.kind != nil else { return }
+                    state.kind = nil
+                }
+                if state.loading {
                     ProgressView()
                         .controlSize(.small)
                 } else if let summary = state.resultsSummary {
@@ -41,21 +52,42 @@ struct TranscriptSearchBar: View {
             .padding(.vertical, 8)
             .background(PaiPalette.Semantic.raisedSurface, in: RoundedRectangle(cornerRadius: 10))
 
+            // Stepping through a KIND of message, not text — the same up/down/counter/close
+            // chrome below, reused rather than duplicated in a second bar. Compact on a phone,
+            // keyboard- and screen-reader-accessible for free — the native `<select>`'s own
+            // reasoning on the web, ported to the closest SwiftUI equivalent.
+            Menu {
+                Button("Search text") {
+                    state.kind = nil
+                    if state.query.isEmpty { state.clearResults() }
+                }
+                ForEach(MessageKind.allCases, id: \.self) { kind in
+                    Button(kind.label) {
+                        state.query = ""
+                        state.kind = kind
+                    }
+                }
+            } label: {
+                Image(systemName: "line.3.horizontal.decrease.circle")
+                    .foregroundStyle(state.kind == nil ? PaiPalette.Semantic.textMuted : PaiPalette.primary500)
+            }
+            .accessibilityIdentifier("transcript-search-kind-picker")
+
             HStack(spacing: 4) {
                 Button {
-                    state.previous()
+                    state.requestPrevious()
                 } label: {
                     Image(systemName: "chevron.up")
                 }
-                .disabled(state.hits.isEmpty)
+                .disabled(state.total == 0)
                 .accessibilityIdentifier("transcript-search-previous")
 
                 Button {
-                    state.next()
+                    state.requestNext()
                 } label: {
                     Image(systemName: "chevron.down")
                 }
-                .disabled(state.hits.isEmpty)
+                .disabled(state.total == 0)
                 .accessibilityIdentifier("transcript-search-next")
             }
             .font(.system(size: 16, weight: .semibold))
