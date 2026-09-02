@@ -785,4 +785,79 @@ public struct PaiApiClient: Sendable {
             body: try Self.jsonBody(Body(token: token, mutedChannels: mutedChannels.map(\.rawValue)))
         )
     }
+
+    // MARK: Alerts
+
+    private struct ClearAlertsResponse: Decodable {
+        let cleared: Int
+    }
+
+    /// Acknowledges specific alerts, freeing their key so the next occurrence raises fresh rather
+    /// than folding onto the old one. `ids` is always sent explicitly and never empty — the
+    /// backend reads an *absent* `ids` field as "clear every active alert", which is exactly the
+    /// destructive default this app's one caller (the notification centre's per-row Clear
+    /// button, row 5.27) must never trigger by accident.
+    @discardableResult
+    public func clearAlerts(ids: [String]) async throws -> Int {
+        struct Body: Encodable { let ids: [String] }
+        let response: ClearAlertsResponse = try await send(
+            path: "/api/alerts/clear", method: "POST", body: try Self.jsonBody(Body(ids: ids))
+        )
+        return response.cleared
+    }
+
+    // MARK: Notifications
+
+    /// The feed, newest first. `beforeId` walks further back for the next page — an opaque
+    /// cursor by id, like the rest of this file's paged endpoints, never an offset (rows can
+    /// arrive while paging).
+    public func getNotifications(
+        limit: Int? = nil, beforeId: String? = nil, kind: PaiNotificationKind? = nil
+    ) async throws -> NotificationsResponse {
+        var query: [URLQueryItem] = []
+        if let limit { query.append(URLQueryItem(name: "limit", value: String(limit))) }
+        if let beforeId { query.append(URLQueryItem(name: "before_id", value: beforeId)) }
+        if let kind { query.append(URLQueryItem(name: "kind", value: kind.rawValue)) }
+        return try await send(path: "/api/notifications", query: query)
+    }
+
+    /// What a badge renders from without opening the centre, and what self-heals it if a live
+    /// update was ever missed — see `pai_cloud.api`'s own doc comment on the route.
+    public func getNotificationsSummary() async throws -> NotificationSummary {
+        try await send(path: "/api/notifications/summary")
+    }
+
+    /// One notification, resolving its transcript anchor first if it was still pending — this is
+    /// the call a tapped push notification makes at tap time, since the payload only ever carries
+    /// the notification's own id (see `DeepLink.notification`'s doc comment).
+    public func getNotification(id: String) async throws -> PaiNotification {
+        try await send(path: "/api/notifications/\(id)")
+    }
+
+    private struct MarkNotificationsReadResponse: Decodable {
+        let marked: Int
+    }
+
+    /// Marks specific notifications read. Returns how many rows actually changed — fewer than
+    /// `ids.count` when some were already read, which is not an error.
+    @discardableResult
+    public func markNotificationsRead(ids: [String]) async throws -> Int {
+        struct Body: Encodable { let ids: [String] }
+        let response: MarkNotificationsReadResponse = try await send(
+            path: "/api/notifications/read", method: "POST", body: try Self.jsonBody(Body(ids: ids))
+        )
+        return response.marked
+    }
+
+    /// Marks every unread notification read. There is deliberately no way to mark one back
+    /// unread — the backend exposes no such mutation, matching a plain "I saw this" log rather
+    /// than a mailbox with per-message state to toggle.
+    @discardableResult
+    public func markAllNotificationsRead() async throws -> Int {
+        struct Body: Encodable { let all: Bool }
+        let response: MarkNotificationsReadResponse = try await send(
+            path: "/api/notifications/read", method: "POST", body: try Self.jsonBody(Body(all: true))
+        )
+        return response.marked
+    }
 }

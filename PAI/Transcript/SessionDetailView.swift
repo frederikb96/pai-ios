@@ -22,6 +22,10 @@ struct SessionDetailView: View {
     @State private var hasResolvedSession = false
 
     let sessionID: String
+    /// Where to jump once the transcript is open — set only when this screen was reached from a
+    /// notification (row 5.28). `nil` for an ordinary open, which restores the last-read position
+    /// exactly as before.
+    var initialJumpMessageID: Int? = nil
 
     var body: some View {
         Group {
@@ -30,7 +34,8 @@ struct SessionDetailView: View {
                     headerStrip
                     TranscriptCollectionView(
                         sessionID: sessionID, store: transcript, apiClient: connection.apiClient, settings: settings,
-                        requestFactory: connection.requestFactory, searchState: searchState
+                        requestFactory: connection.requestFactory, searchState: searchState,
+                        initialJumpMessageID: initialJumpMessageID
                     )
                     .overlay { TranscriptLoadState(sessionID: sessionID) }
                     .overlay(alignment: .top) { TranscriptOlderPageState(sessionID: sessionID) }

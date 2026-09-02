@@ -26,6 +26,14 @@ SHADOWED_WRAPPER = re.compile(r"^\s*(?:public |internal |private |fileprivate )?
 AMBIGUOUS_PAIR = re.compile(r"(?:width|x|dx): \.[A-Za-z]\w*, (?:height|y|dy): \.[A-Za-z]\w*")
 ISOLATED_STATIC = re.compile(r"^\s*(?:public |internal |private |fileprivate )?static (?:let|var) ([A-Za-z_]\w*)\b")
 DETACHED_TASK = re.compile(r"\bTask\.detached\b")
+#: A one-line `guard ... else { return ... }` — the shape that disqualifies a following `switch`
+#: from the compiler's implicit-return-expression inference, since that only applies when the
+#: `switch`/`if` is the *sole* statement of the enclosing body.
+GUARD_ELSE_RETURN = re.compile(r"^\s*guard\b.*\belse\s*\{\s*return\b")
+SWITCH_STATEMENT = re.compile(r"^\s*switch\b")
+#: A `case`/`default` whose body sits on the same line — the only shape this check can read
+#: without a parser, and also the shape every real instance of this bug has taken.
+CASE_SAME_LINE_BODY = re.compile(r"^\s*(?:case\b[^:]*|default)\s*:\s*(\S.*)$")
 #: `nonisolated(unsafe)` is a property qualifier, not a function opting out of actor isolation —
 #: the negative lookahead is what keeps it out of this match.
 NONISOLATED_FUNC = re.compile(r"\bnonisolated(?!\()\b.*\bfunc\b")
@@ -181,11 +189,61 @@ def nonisolated_uikit_access(lines: list[str]) -> list[tuple[int, str, str]]:
     return findings
 
 
+def switch_after_guard_missing_return(lines: list[str]) -> list[tuple[int, str, str]]:
+    """A `switch` right after a one-line `guard ... else { return ... }`, with a case whose
+    same-line body has no `return`.
+
+    `if`/`switch` as an expression only omits `return` when it is the *whole* body of the
+    function/property/closure it sits in — a preceding `guard` makes it the second statement, and
+    every case then needs an explicit `return` again. The error ("missing return in getter
+    expected to return '...'") is a plain type error, so neither `parse-swift.sh` (stops before
+    type checking) nor the package build (this shape lives only in the app target) can see it —
+    a Mac run is the first thing that does.
+
+    Narrow on purpose: it only reads a case whose body sits on the same line as the `case`, which
+    is the shape every real instance of this bug has taken here. A case whose body is indented
+    on the following line is not read at all, rather than risk misreading its indentation as a
+    return.
+    """
+    findings: list[tuple[int, str, str]] = []
+    for index, line in enumerate(lines):
+        if not GUARD_ELSE_RETURN.match(line):
+            continue
+        indent = len(line) - len(line.lstrip())
+        cursor = index + 1
+        while cursor < len(lines) and not lines[cursor].strip():
+            cursor += 1
+        if cursor >= len(lines):
+            continue
+        candidate = lines[cursor]
+        if (len(candidate) - len(candidate.lstrip())) != indent or not SWITCH_STATEMENT.match(candidate):
+            continue
+        for body_index in range(cursor + 1, len(lines)):
+            body = lines[body_index]
+            if not body.strip():
+                continue
+            # Strictly less than, not `<=`: a `case` label conventionally sits at the same
+            # indent as its `switch`, which in turn sits at the same indent as the `guard`
+            # above it — so `<=` would exit before ever reading a case.
+            if (len(body) - len(body.lstrip())) < indent:
+                break
+            match = CASE_SAME_LINE_BODY.match(body)
+            if match and not re.search(r"\b(?:return|break|continue|throw|fatalError)\b", match.group(1)):
+                findings.append((
+                    body_index + 1, body.strip(),
+                    "this switch follows a guard, so it is not the sole statement of its body — "
+                    "add 'return' (implicit-return switch expressions only apply when the switch "
+                    "is the whole body)",
+                ))
+    return findings
+
+
 def check(path: Path) -> list[tuple[int, str, str]]:
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     isolated = main_actor_line_numbers(lines)
     findings: list[tuple[int, str, str]] = detached_reads_of_isolated_statics(lines, isolated)
     findings.extend(nonisolated_uikit_access(lines))
+    findings.extend(switch_after_guard_missing_return(lines))
 
     for index, line in enumerate(lines):
         if STORED_STATIC_VAR.match(line) and index not in isolated and "nonisolated(unsafe)" not in line:

@@ -11,6 +11,7 @@ struct SessionListView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(SessionListStore.self) private var sessions
     @Environment(MachineStore.self) private var machines
+    @Environment(NotificationCenterStore.self) private var notifications
 
     /// The synced list (source A) has no loading state of its own in the store — it starts life
     /// already loaded via `loadInitialSessions()`. This tracks the one gap that leaves: the
@@ -73,6 +74,21 @@ struct SessionListView: View {
                 .accessibilityLabel("Search by meaning, not just text")
                 .accessibilityAddTraits(sessions.semanticMode ? [.isSelected] : [])
                 .accessibilityIdentifier("semantic-toggle")
+            }
+            // Fifth trailing item, at the toolbar's own limit (row 5.27 note 8) — nothing here
+            // moves into an overflow yet, since whether it actually crowds a real phone is a
+            // question only a Mac run's screenshot can answer.
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    environment.router.push(.notifications)
+                } label: {
+                    Image(systemName: notifications.unread > 0 ? "bell.badge" : "bell")
+                }
+                .accessibilityLabel(
+                    notifications.unread > 0
+                        ? "Notifications, \(notifications.unread) unread" : "Notifications"
+                )
+                .accessibilityIdentifier("open-notifications")
             }
         }
         .task {
