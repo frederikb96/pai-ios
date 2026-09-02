@@ -45,8 +45,27 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         XCTAssertEqual(first.name, "Bash")
         guard case .toolCall(let second) = cards[2].kind else { return XCTFail("expected the Read call third") }
         XCTAssertEqual(second.name, "Read")
-        guard case .assistantBubble(let text) = cards[3].kind else { return XCTFail("expected the reply last") }
+        guard case .assistantBubble(let text, let filePaths) = cards[3].kind else {
+            return XCTFail("expected the reply last")
+        }
         XCTAssertEqual(text, "Done.")
+        XCTAssertEqual(filePaths, [])
+    }
+
+    /// The marker line is never stripped from `text` — `filePaths` is purely additive, per
+    /// Freddy's own rule that a `pai-file:` chip renders below the message, not in place of it.
+    func testAssistantBubbleCarriesFilePathsAlongsideTheUnmodifiedText() {
+        let content = "Here's the screenshot.\n\npai-file: /tmp/shot.png"
+        let msg = message(type: .assistant, content: content)
+
+        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+
+        XCTAssertEqual(cards.count, 1)
+        guard case .assistantBubble(let text, let filePaths) = cards[0].kind else {
+            return XCTFail("expected an assistant bubble, got \(cards[0].kind)")
+        }
+        XCTAssertEqual(text, content)
+        XCTAssertEqual(filePaths, ["/tmp/shot.png"])
     }
 
     /// A tool call and its result never arrive on the same `Message` — they are two separate rows

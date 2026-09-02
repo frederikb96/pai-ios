@@ -234,11 +234,11 @@ struct RootView: View {
         case .noteContainers:
             NoteContainersScreen()
         case .notePreview(let id):
-            // Never reached through `replace(with:)` in real use (see `Route.notePreview`'s own
-            // doc comment — only the fixture screenshot workflow pushes this), so nothing here
-            // actually hits the bug the two cases above guard against. Identity forced anyway,
-            // for the same reason `.note` is: free, and it keeps every note-scoped destination
-            // consistent rather than leaving one exception someone has to remember.
+            // Reached by an ordinary `push`, from `NoteBodyView` and from the fixture screenshot
+            // workflow — never through `replace(with:)`, so this never hits the *same-depth*
+            // reuse the two cases above guard against. Identity forced anyway, for the same
+            // reason `.note` is: free, and it keeps every note-scoped destination consistent
+            // rather than leaving one exception someone has to remember.
             NoteEditorScreen(noteID: id, startsInPreview: true)
                 .id(id)
         case .notifications:

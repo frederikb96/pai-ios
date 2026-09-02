@@ -39,10 +39,11 @@ public enum Route: Hashable, Sendable {
     case note(id: String)
     /// The note containers screen — which directories on which machines are synced.
     case noteContainers
-    /// The same note, opened on its rendered page rather than its source. Reached only from the
-    /// fixture screenshot workflow: the preview is a toggle inside the editor and nothing else
-    /// navigates to it, but it is the screen whose *rendering* most needs photographing, and
-    /// nothing free can see it.
+    /// The same note, opened on its rendered page rather than its source. Reached by tapping a
+    /// wikilink inside another note's own rendered page (``NoteBodyView``) — staying in preview
+    /// there is the point, since reading is what that tap was doing — and by the fixture
+    /// screenshot workflow, for the same reason it always has been: the preview is otherwise only
+    /// a toggle inside the editor, and it is the screen whose *rendering* most needs photographing.
     case notePreview(id: String)
     /// The notification centre (row 5.27) — every alert transition and every agent push, as a
     /// persistent, filterable log.

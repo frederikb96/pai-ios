@@ -119,6 +119,38 @@ public enum MessageRouting {
         return attachmentPathRegex.firstMatch(in: token, range: range) != nil
     }
 
+    // MARK: - File markers
+
+    /// The VM paths on every `pai-file: /absolute/path` line in `content` — a marker an agent
+    /// writes, on its own line, to show Freddy a file it made on its own machine. Mirrors the
+    /// backend's `extract_file_markers` in `parser.py` and the web's `fileMarkers.ts`, so all
+    /// three agree on what counts as a marker; `_resolve_marker_path` in `api.py` is what
+    /// actually decides whether the file may be fetched at all.
+    ///
+    /// Deliberately does not touch `content` itself: per Freddy's own rule, a message is never
+    /// rewritten for this — whatever a caller shows for a returned path is an addition rendered
+    /// below the message, never a replacement for what the agent actually said. Order-preserving
+    /// and deduplicated, matching a line-anchored scan rather than a whole-string regex so a
+    /// marker followed by leading whitespace before its path (which the grammar excludes) can
+    /// never be mistaken for one.
+    public static func extractFilePaths(_ content: String) -> [String] {
+        let prefix = "pai-file: "
+        var seen: [String] = []
+        var seenSet: Set<String> = []
+        for line in content.split(separator: "\n", omittingEmptySubsequences: false) {
+            guard line.hasPrefix(prefix) else { continue }
+            let rest = line.dropFirst(prefix.count)
+            guard rest.first == "/" else { continue }
+            let afterSlash = rest.dropFirst()
+            guard let second = afterSlash.first, !second.isWhitespace else { continue }
+            let path = String(rest).trimmingCharacters(in: .whitespaces)
+            guard !path.isEmpty, !seenSet.contains(path) else { continue }
+            seenSet.insert(path)
+            seen.append(path)
+        }
+        return seen
+    }
+
     // MARK: - Expand-preference keys
 
     /// The nine tool families a card's expand key and its icon both switch on — kept as one

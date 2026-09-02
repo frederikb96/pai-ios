@@ -80,6 +80,19 @@ enum Wikilinks {
         }
         return out
     }
+
+    /// The inline markdown a non-embed wikilink becomes: a real link to the resolved note, or a
+    /// strikethrough span when its target isn't in the index. Shared by every renderer that turns
+    /// a wikilink into markdown text, so resolution can never drift between them.
+    static func resolvedMarkdown(for link: Wikilink, nameToId: [String: String]) -> String {
+        let display = escapeMarkdownText(link.alias ?? link.target)
+        let basename =
+            link.target.split(separator: "/", omittingEmptySubsequences: false).last.map(String.init) ?? link.target
+        if let resolvedId = nameToId[basename.lowercased()] {
+            return "[\(display)](\(noteLinkURL(id: resolvedId)))"
+        }
+        return "~~\(display)~~"
+    }
 }
 
 /// `[[target]]`, `[[target|alias]]`, `[[target#heading]]` and `![[target]]` in document order.
@@ -145,14 +158,7 @@ public func splitBodyForRender(_ body: String, nameToId: [String: String]) -> [N
             flushText()
             segments.append(.embed(target: link.target, alias: link.alias))
         } else {
-            let display = Wikilinks.escapeMarkdownText(link.alias ?? link.target)
-            let basename =
-                link.target.split(separator: "/", omittingEmptySubsequences: false).last.map(String.init) ?? link.target
-            if let resolvedId = nameToId[basename.lowercased()] {
-                textParts.append("[\(display)](\(noteLinkURL(id: resolvedId)))")
-            } else {
-                textParts.append("~~\(display)~~")
-            }
+            textParts.append(Wikilinks.resolvedMarkdown(for: link, nameToId: nameToId))
         }
         cursor = link.end
     }

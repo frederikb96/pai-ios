@@ -50,6 +50,13 @@ private func bubbleFill(light: Color, dark: Color, colorScheme: ColorScheme) -> 
 struct TranscriptRowContent: View {
     @Environment(\.colorScheme) private var colorScheme
     let message: Message
+    /// Threaded explicitly rather than read from `AppEnvironment` — a cell's `UIHostingConfiguration`
+    /// content is its own SwiftUI tree, rooted at the collection view, not a descendant of the
+    /// screen's own environment, so a value nothing here builds must be handed in like any other
+    /// property. Both come from the same place `apiClient` already does for every other transcript
+    /// network call (`TranscriptCollectionViewController`'s own stored properties).
+    let sessionID: String
+    let apiClient: PaiApiClient
     let isExpanded: (String) -> Bool
     let onToggleExpand: (String) -> Void
     /// Every search hit that belongs to this message — already filtered by the caller, which
@@ -73,6 +80,8 @@ struct TranscriptRowContent: View {
                     card: card,
                     isExpanded: card.expandKey.map(isExpanded) ?? true,
                     onToggle: card.expandKey.map { key in { onToggleExpand(key) } },
+                    sessionID: sessionID,
+                    apiClient: apiClient,
                     highlightsByBlockIndex: highlightsByBlockIndex(forCardIndex: cardIndex)
                 )
             }
@@ -134,6 +143,8 @@ struct TranscriptCardKindView: View {
     let card: TranscriptCardPlan
     let isExpanded: Bool
     let onToggle: (() -> Void)?
+    let sessionID: String
+    let apiClient: PaiApiClient
     var highlightsByBlockIndex: [Int: [TranscriptHighlightSpan]] = [:]
 
     var body: some View {
@@ -166,13 +177,17 @@ struct TranscriptCardKindView: View {
             }
 
         case .userBubble(let text, let attachmentPaths):
-            UserBubbleView(text: text, attachmentPaths: attachmentPaths, highlights: highlightsByBlockIndex[0] ?? [])
+            UserBubbleView(
+                text: text, attachmentPaths: attachmentPaths, sessionID: sessionID, apiClient: apiClient,
+                highlights: highlightsByBlockIndex[0] ?? [])
 
         case .relayedBubble(let text, let sender, let group):
             RelayedBubbleView(text: text, sender: sender, group: group, highlights: highlightsByBlockIndex[0] ?? [])
 
-        case .assistantBubble:
-            AssistantBubbleView(blocks: card.blocks, highlights: highlightsByBlockIndex)
+        case .assistantBubble(_, let filePaths):
+            AssistantBubbleView(
+                blocks: card.blocks, filePaths: filePaths, sessionID: sessionID, apiClient: apiClient,
+                highlights: highlightsByBlockIndex)
 
         case .agentMessage(let sender, _):
             CardChrome(icon: "bubble.left.and.bubble.right", label: sender, isExpanded: isExpanded, onToggle: onToggle)
@@ -401,6 +416,8 @@ struct UserBubbleView: View {
     @Environment(\.colorScheme) private var colorScheme
     let text: String
     let attachmentPaths: [String]
+    let sessionID: String
+    let apiClient: PaiApiClient
     var highlights: [TranscriptHighlightSpan] = []
 
     var body: some View {
@@ -414,11 +431,11 @@ struct UserBubbleView: View {
                         bubbleFill(light: PaiPalette.primary500, dark: PaiPalette.primary600, colorScheme: colorScheme),
                         in: .ownBubbleTail)
             }
+            // Freddy's own file, already known to him — no confirmation before it is fetched,
+            // unlike a `pai-file:` marker (see `AssistantBubbleView`).
             ForEach(attachmentPaths, id: \.self) { path in
-                Label((path as NSString).lastPathComponent, systemImage: "paperclip")
-                    .font(PaiTypography.caption.font)
-                    .foregroundStyle(PaiPalette.Semantic.textMuted)
-                    .frame(height: TranscriptRowMetrics.attachmentChipHeight)
+                SessionAttachmentChipView(
+                    sessionID: sessionID, apiClient: apiClient, path: path, requiresConfirmation: false)
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
@@ -469,15 +486,33 @@ struct RelayedBubbleView: View {
 /// a number that moves here and not there is a row drawn taller than the cell it was given.
 struct AssistantBubbleView: View {
     let blocks: [MarkdownBlock]
+    /// Every `pai-file:` marker path in this reply — the message itself is never rewritten to
+    /// remove the marker line, so `blocks` already renders it as ordinary text; these chips are
+    /// purely an addition below it, per Freddy's own rule (see `MessageRouting.extractFilePaths`).
+    let filePaths: [String]
+    let sessionID: String
+    let apiClient: PaiApiClient
     var highlights: [Int: [TranscriptHighlightSpan]] = [:]
 
     var body: some View {
-        MarkdownContentView(blocks: blocks, highlights: highlights)
-            .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding)
-            .padding(.vertical, TranscriptRowMetrics.bubbleVerticalPadding / 2)
-            .background(PaiPalette.Semantic.raisedSurface, in: .replyBubbleTail)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.trailing, TranscriptRowMetrics.bubbleGutter)
+        // `TranscriptRowLayout`'s `.assistantBubble` case mirrors this exact shape: the bubble
+        // first, one fixed-height chip per marker after it, same spacing constant as
+        // `UserBubbleView` uses for its own attachments — a number that moves in one and not the
+        // other is a row drawn taller than the cell it was given.
+        VStack(alignment: .leading, spacing: TranscriptRowMetrics.attachmentChipSpacing) {
+            MarkdownContentView(blocks: blocks, highlights: highlights)
+                .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding)
+                .padding(.vertical, TranscriptRowMetrics.bubbleVerticalPadding / 2)
+                .background(PaiPalette.Semantic.raisedSurface, in: .replyBubbleTail)
+            // An agent-offered file, never the reader's own — a non-image confirms before
+            // anything is fetched (see `SessionAttachmentChipView`).
+            ForEach(filePaths, id: \.self) { path in
+                SessionAttachmentChipView(
+                    sessionID: sessionID, apiClient: apiClient, path: path, requiresConfirmation: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.trailing, TranscriptRowMetrics.bubbleGutter)
     }
 }
 

@@ -176,6 +176,30 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         XCTAssertEqual(actual, expected)
     }
 
+    // MARK: - Assistant file markers
+
+    /// Mirrors the user-bubble attachment tests just above: a `pai-file:` marker becomes its own
+    /// fixed-height chip below the bubble, gapped the same way — but unlike a user attachment,
+    /// the marker LINE stays in the rendered text too, since the message is never rewritten for
+    /// this (`MessageRouting.extractFilePaths`), so the measured content includes it.
+    func testAssistantFileMarkersAddChipHeightsAndGapsBelowTheUnmodifiedBubble() {
+        let messageContent = "\(bubbleSensitiveText)\n\npai-file: /tmp/one.png\npai-file: /tmp/two.png"
+        let msg = message(type: .assistant, content: messageContent, timestamp: nil)
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        let actual = TranscriptRowLayout.height(
+            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
+            metrics: metrics)
+
+        let content = measuredContentHeight(
+            MarkdownParser.parse(messageContent), atWidth: 400 - 48 - 28, measurer: measurer, cache: cache)
+        // 10: the bubble's own vertical padding. 44: two 22pt chips. 12: two 6pt gaps (bubble →
+        // first chip, first chip → second).
+        let expected = content + 10 + 44 + 12
+        XCTAssertEqual(actual, expected)
+    }
+
     /// 20 is `CardChrome`'s own horizontal padding (`.padding(.horizontal, 10)`) doubled.
     func testAnExpandedToolCallAddsHeaderContentAndContentPadding() {
         let calls = [ToolCall(id: "1", name: "Bash", input: ["command": .string(cardSensitiveText)])]

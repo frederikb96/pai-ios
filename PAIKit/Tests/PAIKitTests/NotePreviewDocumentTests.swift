@@ -109,4 +109,52 @@ final class NotePreviewDocumentTests: XCTestCase {
         }
         XCTAssertEqual(text.plainText, "Heading")
     }
+
+    /// The exact shape that reached Freddy's own vault: a checklist item with an image pasted
+    /// directly below it, no blank line in between — Obsidian's lazy continuation would otherwise
+    /// fold the embed into the list item's own paragraph, where nothing downstream ever looks for
+    /// one, and it rendered as the literal placeholder text instead of an image.
+    func testEmbedImmediatelyAfterAListItemStillBecomesItsOwnEmbed() {
+        let body =
+            "- [x] item text\n![[attachments/Pasted image 1.png]]\nmore text\n![[attachments/Pasted image 2.png]]\n"
+        let document = NotePreviewDocument(body: body, nameToId: [:])
+
+        guard case .block(.list) = document.items[0].kind else {
+            return XCTFail("expected the checklist item as its own block, got \(document.items[0].kind)")
+        }
+        XCTAssertEqual(document.items[0].startLine, 1)
+
+        guard case .embed(let target1, _) = document.items[1].kind else {
+            return XCTFail("expected an embed, got \(document.items[1].kind)")
+        }
+        XCTAssertEqual(target1, "attachments/Pasted image 1.png")
+        XCTAssertEqual(document.items[1].startLine, 2)
+
+        guard case .block(.paragraph(let text)) = document.items[2].kind else {
+            return XCTFail("expected the continuation text as its own paragraph, got \(document.items[2].kind)")
+        }
+        XCTAssertEqual(text.plainText, "more text")
+        XCTAssertEqual(document.items[2].startLine, 3)
+
+        guard case .embed(let target2, _) = document.items[3].kind else {
+            return XCTFail("expected a second embed, got \(document.items[3].kind)")
+        }
+        XCTAssertEqual(target2, "attachments/Pasted image 2.png")
+        XCTAssertEqual(document.items[3].startLine, 4)
+    }
+
+    /// Several embeds on consecutive lines, with no blank line between them, would otherwise cmark
+    /// as one paragraph carrying every placeholder at once — each must still land as its own item.
+    func testConsecutiveEmbedsWithNoBlankLineEachBecomeTheirOwnItem() {
+        let body = "![[attachments/a.png]]\n![[attachments/b.png]]\n![[attachments/c.png]]\n"
+        let document = NotePreviewDocument(body: body, nameToId: [:])
+        XCTAssertEqual(document.items.count, 3)
+        for (index, expected) in ["attachments/a.png", "attachments/b.png", "attachments/c.png"].enumerated() {
+            guard case .embed(let target, _) = document.items[index].kind else {
+                return XCTFail("expected an embed at \(index), got \(document.items[index].kind)")
+            }
+            XCTAssertEqual(target, expected)
+            XCTAssertEqual(document.items[index].startLine, index + 1)
+        }
+    }
 }

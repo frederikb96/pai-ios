@@ -132,6 +132,31 @@ final class TranscriptMessageRoutingTests: XCTestCase {
         XCTAssertEqual(paths, [])
     }
 
+    // MARK: - File markers
+
+    func testFileMarkerPathIsFoundAndTheMarkerLineIsNeverRemoved() {
+        let content = "Here's the screenshot.\n\npai-file: /home/frederik/.tmp/shot.png"
+        XCTAssertEqual(MessageRouting.extractFilePaths(content), ["/home/frederik/.tmp/shot.png"])
+    }
+
+    func testMultipleMarkersAreFoundInOrderAndDeduplicated() {
+        let content = "pai-file: /tmp/a.png\npai-file: /tmp/b.png\npai-file: /tmp/a.png"
+        XCTAssertEqual(MessageRouting.extractFilePaths(content), ["/tmp/a.png", "/tmp/b.png"])
+    }
+
+    /// The grammar requires the path to start right at `/` with no leading whitespace before the
+    /// first real character — a line that merely mentions the marker text mid-sentence, or one
+    /// whose path is not absolute, must not match.
+    func testALineThatIsNotAWellFormedMarkerIsIgnored() {
+        XCTAssertEqual(MessageRouting.extractFilePaths("I sent a pai-file: earlier"), [])
+        XCTAssertEqual(MessageRouting.extractFilePaths("pai-file: relative/path.png"), [])
+        XCTAssertEqual(MessageRouting.extractFilePaths("pai-file: "), [])
+    }
+
+    func testNoMarkerAtAllReturnsAnEmptyList() {
+        XCTAssertEqual(MessageRouting.extractFilePaths("just an ordinary reply"), [])
+    }
+
     // MARK: - Expand keys
 
     func testToolExpandKeyFamiliesFollowTheSameOrderAsIconSelection() {

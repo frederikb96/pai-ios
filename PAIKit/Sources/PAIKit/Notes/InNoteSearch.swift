@@ -22,23 +22,31 @@ public struct NoteOccurrence: Equatable, Sendable, Identifiable {
 /// Every occurrence of `query` within `body` — a plain substring pass, matching how the whole
 /// vault's full-text search already works rather than introducing a second matching rule for one
 /// note. Swift port of `InNoteSearchPanel.tsx`'s `findOccurrences`.
+///
+/// Matches directly against `body` with `.caseInsensitive`, rather than lower-casing `body` and
+/// `query` into separate Character arrays first and treating a position in one as a position in
+/// the other. `String.lowercased()` is not guaranteed to preserve grapheme-cluster boundaries
+/// 1:1 with the original — a case fold can occasionally reshape a cluster — and once it doesn't,
+/// every match found after that point in a lower-cased haystack lands at the wrong offset in the
+/// original `bodyChars`, so its `context` snippet is sliced from unrelated text nowhere near the
+/// real match. Searching the original text directly makes that misalignment impossible rather
+/// than merely unlikely.
 public func findOccurrences(body: String, query: String) -> [NoteOccurrence] {
     let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !needle.isEmpty else { return [] }
-    let haystack = Array(body.lowercased())
-    let needleChars = Array(needle.lowercased())
-    guard !needleChars.isEmpty, needleChars.count <= haystack.count else { return [] }
+    let bodyChars = Array(body)
 
     var occurrences: [NoteOccurrence] = []
-    let bodyChars = Array(body)
-    var from = 0
-    while from <= haystack.count - needleChars.count {
-        guard let at = firstIndex(of: needleChars, in: haystack, from: from) else { break }
-        let start = max(0, at - noteSearchContextChars)
-        let end = min(bodyChars.count, at + needleChars.count + noteSearchContextChars)
-        occurrences.append(
-            NoteOccurrence(offset: at, length: needleChars.count, context: String(bodyChars[start..<end])))
-        from = at + needleChars.count
+    var searchStart = body.startIndex
+    while searchStart < body.endIndex,
+        let match = body.range(of: needle, options: .caseInsensitive, range: searchStart..<body.endIndex)
+    {
+        let offset = body.distance(from: body.startIndex, to: match.lowerBound)
+        let length = body.distance(from: match.lowerBound, to: match.upperBound)
+        let start = max(0, offset - noteSearchContextChars)
+        let end = min(bodyChars.count, offset + length + noteSearchContextChars)
+        occurrences.append(NoteOccurrence(offset: offset, length: length, context: String(bodyChars[start..<end])))
+        searchStart = match.upperBound
     }
     return occurrences
 }
@@ -57,12 +65,4 @@ public func highlightRanges(in text: String, query: String) -> [Range<String.Ind
         else { return nil }
         return start..<end
     }
-}
-
-private func firstIndex(of needle: [Character], in haystack: [Character], from: Int) -> Int? {
-    guard from <= haystack.count - needle.count else { return nil }
-    for i in from...(haystack.count - needle.count) {
-        if Array(haystack[i..<(i + needle.count)]) == needle { return i }
-    }
-    return nil
 }

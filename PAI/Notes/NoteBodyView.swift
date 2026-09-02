@@ -26,10 +26,6 @@ struct NoteBodyView: View {
     let highlight: String?
 
     @Environment(AppEnvironment.self) private var environment
-    /// The note a tapped `[[wikilink]]` points to, held until the confirm dialog answers — an
-    /// accidental tap must neither navigate nor lose the page currently being read, the same
-    /// guarantee ``NoteAttachmentEmbedView`` already gives a tapped attachment.
-    @State private var pendingNoteLink: String?
 
     init(
         body: String, nameToId: [String: String], containerId: String?,
@@ -50,7 +46,14 @@ struct NoteBodyView: View {
 
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: NotePreviewMetrics.blockSpacing) {
+                // Lazy, not `VStack`: a long note can carry dozens of embeds, and a plain `VStack`
+                // builds every row up front — each attachment's `.task` fires immediately on
+                // appearance (`NoteAttachmentEmbedView`'s own doc comment), so opening a note with
+                // many embeds fired that many concurrent fetches and image decodes at once before
+                // anything was even on screen. `LazyVStack` still registers every row's `.id(_:)`
+                // up front, so `proxy.scrollTo` below is unaffected — only building and appearing
+                // off-screen rows is deferred.
+                LazyVStack(alignment: .leading, spacing: NotePreviewMetrics.blockSpacing) {
                     ForEach(document.items) { item in
                         itemView(item, isCurrentTarget: item.id == currentItemIndex)
                             .id(item.id)
@@ -73,28 +76,10 @@ struct NoteBodyView: View {
             }
         }
         .background(PaiPalette.Notes.background)
-        .environment(
-            \.openURL,
-            OpenURLAction { url in
-                // An https link falls through to `.systemAction` and opens in the default
-                // browser — the system's own behaviour is already correct here and needs no
-                // confirmation, unlike a link to another note, which this page can act on itself.
-                guard case .note(let id)? = DeepLink.from(url: url) else { return .systemAction }
-                pendingNoteLink = id
-                return .handled
-            }
-        )
-        .confirmationDialog(
-            "Open this note?",
-            isPresented: Binding(get: { pendingNoteLink != nil }, set: { if !$0 { pendingNoteLink = nil } }),
-            titleVisibility: .visible
-        ) {
-            Button("Open") {
-                if let id = pendingNoteLink { environment.router.push(.note(id: id)) }
-                pendingNoteLink = nil
-            }
-            Button("Cancel", role: .cancel) { pendingNoteLink = nil }
-        }
+        // Pushed as `.notePreview`, not `.note`: a link tapped from this page is by definition
+        // read while previewing, and following it should land on the same rendered page rather
+        // than dropping into the target note's editor.
+        .confirmingExternalLinks(onNoteLink: { id in environment.router.push(.notePreview(id: id)) })
     }
 
     @ViewBuilder
@@ -312,11 +297,12 @@ struct NotePreviewTableView: View {
     }
 }
 
-/// An Obsidian embed (`![[attachments/foo.png]]`) rendered inline: an image renders in place;
-/// anything else is a tappable chip that confirms before handing the file to the system share
-/// sheet — a stray tap must not start a download on its own. Loads on appearance rather than
-/// deferring to a tap on the chip itself — a note body carries only its own handful of
-/// attachments, unlike a long chat transcript.
+/// An Obsidian embed (`![[attachments/foo.png]]`) rendered inline: an image renders in place and
+/// opens the shared ``FullScreenImageViewer`` on tap — the same interaction and the same viewer a
+/// session's own attachments use — and anything else is a tappable chip that confirms before
+/// handing the file to the system share sheet, so a stray tap can never start a download on its
+/// own. Loads on appearance rather than deferring to a tap on the chip itself — a note body
+/// carries only its own handful of attachments, unlike a long chat transcript.
 private struct NoteAttachmentEmbedView: View {
     let containerId: String
     let target: String
@@ -324,7 +310,8 @@ private struct NoteAttachmentEmbedView: View {
     @Environment(NotesStore.self) private var notes
     @State private var state: LoadState = .loading
     @State private var isConfirmingDownload = false
-    @State private var shareFile: NoteAttachmentShareFile?
+    @State private var shareFile: AttachmentShareFile?
+    @State private var fullScreenTarget: FullScreenImageTarget?
 
     private enum LoadState {
         case loading
@@ -338,11 +325,17 @@ private struct NoteAttachmentEmbedView: View {
             switch state {
             case .loaded(let data):
                 if isImage, let uiImage = UIImage(data: data) {
-                    Image(uiImage: uiImage)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxHeight: 320)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    Button {
+                        fullScreenTarget = FullScreenImageTarget(image: uiImage, filename: filename)
+                    } label: {
+                        Image(uiImage: uiImage)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxHeight: 320)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("View \(filename)")
                 } else {
                     Button {
                         isConfirmingDownload = true
@@ -396,40 +389,20 @@ private struct NoteAttachmentEmbedView: View {
             }
         }
         .sheet(item: $shareFile) { file in
-            NoteAttachmentShareSheet(activityItems: [file.url])
+            AttachmentShareSheet(activityItems: [file.url])
         }
+        .fullScreenImageViewer($fullScreenTarget)
     }
 
     private func prepareShare(_ data: Data) {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
-        // A failed write leaves `shareFile` unset — the confirmation simply produces nothing to
-        // share, which is a quieter failure than it deserves but not a wrong one, and this is a
-        // temp-directory write that has no real reason to fail.
-        guard (try? data.write(to: url, options: .atomic)) != nil else { return }
-        shareFile = NoteAttachmentShareFile(url: url)
+        shareFile = AttachmentSharing.stage(data, filename: filename)
     }
 
     private var filename: String {
-        target.split(separator: "/").last.map(String.init) ?? target
+        attachmentFilename(target)
     }
 
     private var isImage: Bool {
-        let ext = (filename as NSString).pathExtension.lowercased()
-        return ["jpg", "jpeg", "png", "gif", "webp", "heic"].contains(ext)
+        isImageAttachmentPath(target)
     }
-}
-
-private struct NoteAttachmentShareFile: Identifiable {
-    let url: URL
-    var id: String { url.path }
-}
-
-private struct NoteAttachmentShareSheet: UIViewControllerRepresentable {
-    let activityItems: [Any]
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
-    }
-
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }

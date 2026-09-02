@@ -19,38 +19,75 @@ public struct NotePreviewItem: Identifiable, Sendable {
 }
 
 /// A note body parsed once for a read-only page: wikilinks resolved the same way
-/// ``splitBodyForRender(_:nameToId:)`` resolves them for the editor's own quick-preview sheet, but
-/// kept as one line-addressable list of top-level items instead of merged text segments — the
-/// shape a jump from the outline or from in-note search needs to land on a specific block rather
-/// than only on the segment of text surrounding it.
+/// ``splitBodyForRender(_:nameToId:)`` resolves them, but kept as one line-addressable list of
+/// top-level items instead of merged text segments — the shape a jump from the outline or from
+/// in-note search needs to land on a specific block rather than only on the segment of text
+/// surrounding it.
 ///
-/// Each item is parsed independently from its own formatted source (`Markup/format()`) rather
-/// than by slicing the whole document's block list positionally against its child list — the two
-/// can disagree in length (an empty paragraph node produces no ``MarkdownBlock`` at all), and a
-/// positional zip would silently misalign every item after the gap rather than only the one that
-/// vanished.
+/// Built by splitting `body` at every embed the same way ``splitBodyForRender(_:nameToId:)``
+/// does — never inside a combined re-parse of the whole document — so an embed becomes its own
+/// item regardless of what markdown construct would otherwise have swallowed it: a list item it
+/// lazily continues with no blank line between them, or a run of several embeds on consecutive
+/// lines that would parse as one merged paragraph. Each surviving text segment is parsed on its
+/// own and contributes one item per top-level block in it, rather than by slicing the whole
+/// document's block list positionally against its child list — the two can disagree in length
+/// (an empty paragraph node produces no ``MarkdownBlock`` at all), and a positional zip would
+/// silently misalign every item after the gap rather than only the one that vanished.
 public struct NotePreviewDocument: Sendable {
     public let items: [NotePreviewItem]
 
     public init(body: String, nameToId: [String: String]) {
-        let (rewritten, embedByPlaceholder) = Self.rewrite(body, nameToId: nameToId)
-        let document = Document(parsing: rewritten, options: MarkdownParser.defaultOptions)
+        let links = findWikilinks(body)
+        let chars = Array(body)
 
         var built: [NotePreviewItem] = []
-        for child in document.children {
-            guard let block = MarkdownParser.parse(child.format(), options: MarkdownParser.defaultOptions).first
-            else { continue }
-            let startLine = child.range?.lowerBound.line ?? 1
-            if case .paragraph(let text) = block,
-                let embed = embedByPlaceholder[text.plainText.trimmingCharacters(in: .whitespaces)]
-            {
+        var textParts: [String] = []
+        var textStartLine = 1
+        var cursor = 0
+        var line = 1
+
+        func appendChunk(_ chunk: String) {
+            if textParts.isEmpty { textStartLine = line }
+            textParts.append(chunk)
+        }
+
+        func flushText() {
+            guard !textParts.isEmpty else { return }
+            let segment = textParts.joined()
+            textParts = []
+            guard !segment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            let document = Document(parsing: segment, options: MarkdownParser.defaultOptions)
+            for child in document.children {
+                guard let block = MarkdownParser.parse(child.format(), options: MarkdownParser.defaultOptions).first
+                else { continue }
+                let localLine = child.range?.lowerBound.line ?? 1
                 built.append(
-                    NotePreviewItem(
-                        id: built.count, kind: .embed(target: embed.target, alias: embed.alias), startLine: startLine))
-            } else {
-                built.append(NotePreviewItem(id: built.count, kind: .block(block), startLine: startLine))
+                    NotePreviewItem(id: built.count, kind: .block(block), startLine: textStartLine + localLine - 1))
             }
         }
+
+        for link in links {
+            if link.start > cursor {
+                let chunk = String(chars[cursor..<link.start])
+                appendChunk(chunk)
+                line += chunk.reduce(0) { $1 == "\n" ? $0 + 1 : $0 }
+            }
+            if link.isEmbed {
+                flushText()
+                built.append(
+                    NotePreviewItem(
+                        id: built.count, kind: .embed(target: link.target, alias: link.alias), startLine: line))
+            } else {
+                // A wikilink's own source text never contains a newline (the grammar excludes it),
+                // so it stays part of the segment currently accumulating rather than starting a
+                // new one, and `line` needs no adjustment for it.
+                appendChunk(Wikilinks.resolvedMarkdown(for: link, nameToId: nameToId))
+            }
+            cursor = link.end
+        }
+        if cursor < chars.count { appendChunk(String(chars[cursor...])) }
+        flushText()
+
         items = built
     }
 
@@ -66,47 +103,6 @@ public struct NotePreviewDocument: Sendable {
             result = index
         }
         return result
-    }
-
-    /// Replaces every wikilink in `body` in place — a resolved note link or a strikethrough for a
-    /// dead one, exactly as ``splitBodyForRender(_:nameToId:)`` does — except an embed, which
-    /// becomes a unique placeholder token instead of disappearing from the text stream. None of
-    /// the three replacements can contain a newline, so every surviving line keeps its own line
-    /// number and the source line ``Markup/range`` reports downstream still names the same
-    /// position in the original `body`.
-    private static func rewrite(
-        _ body: String, nameToId: [String: String]
-    ) -> (rewritten: String, embedByPlaceholder: [String: (target: String, alias: String?)]) {
-        let links = findWikilinks(body)
-        guard !links.isEmpty else { return (body, [:]) }
-
-        let chars = Array(body)
-        var rewritten = ""
-        rewritten.reserveCapacity(chars.count)
-        var embedByPlaceholder: [String: (target: String, alias: String?)] = [:]
-        var cursor = 0
-
-        for link in links {
-            if link.start > cursor { rewritten += String(chars[cursor..<link.start]) }
-            if link.isEmbed {
-                let placeholder = "\u{FFFC}note-embed-\(embedByPlaceholder.count)\u{FFFC}"
-                embedByPlaceholder[placeholder] = (link.target, link.alias)
-                rewritten += placeholder
-            } else {
-                let display = Wikilinks.escapeMarkdownText(link.alias ?? link.target)
-                let basename =
-                    link.target.split(separator: "/", omittingEmptySubsequences: false).last.map(String.init)
-                    ?? link.target
-                if let resolvedId = nameToId[basename.lowercased()] {
-                    rewritten += "[\(display)](\(noteLinkURL(id: resolvedId)))"
-                } else {
-                    rewritten += "~~\(display)~~"
-                }
-            }
-            cursor = link.end
-        }
-        if cursor < chars.count { rewritten += String(chars[cursor...]) }
-        return (rewritten, embedByPlaceholder)
     }
 }
 
