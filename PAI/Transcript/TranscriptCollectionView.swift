@@ -132,24 +132,35 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// Clears `highlightedMessageId` after its window — cancelled and restarted, never left to
     /// race a second jump.
     private var highlightClearTask: Task<Void, Never>?
-    /// How many older pages `jumpToInitialMessage(_:)` will page through before giving up —
-    /// bounded, per the design's own warning that a three-hour session is a lot of pages.
-    private static let maxJumpPages = 30
+    /// A deep link's own retry ladder (search-virtualization design) — the id may not be
+    /// ingested yet, arriving a moment after the link was generated. Matches the web's
+    /// `DEEP_LINK_RETRY_DELAYS_MS`.
+    private static let deepLinkRetryDelays: [Duration] = [
+        .seconds(1.5), .seconds(3), .seconds(6), .seconds(12), .seconds(24),
+    ]
 
     private lazy var jumpToLatestHostingController = UIHostingController(
         rootView: JumpToLatestButton(onTap: { [weak self] in self?.jumpToLatestTapped() }))
 
-    /// Debounced 90ms after the last keystroke, matching the web's own constant — see
-    /// `recomputeSearchHitsNow()`'s call site.
-    private static let searchDebounce: Duration = .milliseconds(90)
-    private var searchDebounceTask: Task<Void, Never>?
+    /// Debounced 250ms after the last keystroke, matching the web's own `SearchBar` constant —
+    /// longer than the client-only scan this replaced ever needed, since every fire now costs a
+    /// network round trip rather than a re-scan of the loaded window.
+    private static let findDebounce: Duration = .milliseconds(250)
+    private var findDebounceTask: Task<Void, Never>?
+    /// The server hit ids for the current query/kind — mirrors the web's `hitIdsRef`. Never in
+    /// `TranscriptSearchState` itself: this can run to thousands of ids, and that type is meant
+    /// to be lightweight UI state.
+    private var hitIds: [Int] = []
+    /// Supersedes every new `runFind()`/`landOn(index:direction:)` so a stale response can never
+    /// overwrite a newer one's state.
+    private var findToken = 0
     /// The reader's own position, captured once when a search opens — every result set this
     /// session computes starts from it, so typing a longer query does not silently re-anchor the
     /// start position to wherever the previous query happened to land.
     private var searchOpenedAtMessageId: Int?
     private var hasBegunCurrentSearchSession = false
     private var lastSearchedQuery: String?
-    private var lastNavigatedHit: TranscriptSearchHit?
+    private var lastSearchedKind: MessageKind?
 
     /// Where to jump once bootstrap has loaded — row 5.28. Consumed once: bootstrap reads it,
     /// pages backward if the message is not already in the loaded window, and clears it, so a
@@ -386,9 +397,16 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             return
         }
 
-        // Only ever seeds an EMPTY slot — a session revisited later in the same process already
-        // has a more current in-memory anchor than whatever the server held when this screen was
-        // constructed, and that must win.
+        fallBackToReadPosition()
+        connectStream(initialCursor: store.maxMessageId(for: sessionID))
+    }
+
+    /// The ordinary open's own target resolution (search-virtualization design: a deep link's
+    /// retry ladder degrades to this once exhausted, never to silently loading nothing). Only
+    /// ever seeds `lastAnchors` when it is an EMPTY slot — a session revisited later in the same
+    /// process already has a more current in-memory anchor than whatever the server held when
+    /// this screen was constructed, and that must win.
+    private func fallBackToReadPosition() {
         if Self.lastAnchors[sessionID] == nil, let seeded = TranscriptAnchor.fromPersisted(persistedReadPosition) {
             Self.lastAnchors[sessionID] = seeded
         }
@@ -396,55 +414,19 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         let target = TranscriptRestore.target(for: Self.lastAnchors[sessionID], loadedMessageIds: loadedIds)
         pendingInitialLoad = target
         recomputeRows(applying: .initialLoad(target))
-        connectStream(initialCursor: store.maxMessageId(for: sessionID))
     }
 
-    /// Pages backward until `targetID` is loaded (bounded by `maxJumpPages`), then jumps to it
-    /// with the same visual a search hit gets — see `jumpToRow(_:)`. Gives up silently if the
-    /// message never turns up: per the design, every "not resolvable" reason collapses to the
-    /// same behaviour, staying at the ordinary open rather than landing confidently on the wrong
-    /// place.
+    /// `locate`s the deep link's target with the retry ladder a deep link needs — the id may not
+    /// be ingested yet, arriving a moment after the link was generated — and rings the row once
+    /// it lands. Degrades to ``fallBackToReadPosition()`` once the ladder is exhausted, never to
+    /// silently loading nothing.
     private func jumpToInitialMessage(_ targetID: Int) async {
-        await loadUntilMessageIsLoaded(targetID)
-        recomputeRows(applying: .compensateFromTopVisibleRow)
-        guard rows.contains(where: { $0.id == targetID }) else { return }
-        jumpToRow(targetID)
-    }
-
-    private func loadUntilMessageIsLoaded(_ targetID: Int) async {
-        var iterations = 0
-        while iterations < Self.maxJumpPages {
-            let window = store.window(for: sessionID)
-            // The window is a contiguous suffix of the transcript (`TranscriptWindow`'s own doc
-            // comment), so once its oldest loaded id is at or before the target, the target is
-            // loaded too — no need to search for it directly.
-            if let oldest = window.oldestLoadedId, oldest <= targetID { return }
-            guard window.hasOlder, let oldestId = window.oldestLoadedId else { return }
-            do {
-                let entries = try await apiClient.getMessages(
-                    sessionId: sessionID, page: .before(id: oldestId, limit: TranscriptStore.olderPageLimit))
-                store.prependOlder(
-                    sessionId: sessionID, entries: entries, requestedLimit: TranscriptStore.olderPageLimit)
-            } catch {
-                return
-            }
-            iterations += 1
+        let loaded = await locate(targetID, retryLadder: Self.deepLinkRetryDelays)
+        guard loaded else {
+            fallBackToReadPosition()
+            return
         }
-    }
-
-    /// Scrolls to `messageId` and rings it — the notification deep link's counterpart to
-    /// `scrollToSearchHit(_:)`. No block-level offset here: unlike a search hit, which highlights
-    /// one text range inside a message, a deep link's target is the whole message, so landing on
-    /// the row's own top (minus the same 30%-from-top lead) is the honest position.
-    private func jumpToRow(_ messageId: Int) {
-        guard let rowTop = layout.offsetTop(forRowId: messageId) else { return }
-        let lead = collectionView.bounds.height * 0.3
-        let target = max(0, min(maxContentOffsetY(), CGFloat(rowTop) - lead))
-        collectionView.setContentOffset(CGPoint(x: 0, y: target), animated: true)
-        edgeFollow = EdgeFollowLatch(isPinned: false)
-        holdController.begin(.jump(messageId: messageId))
-        updateJumpToLatestVisibility()
-        beginDeepLinkHighlight(for: messageId)
+        revealRow(targetID, ringAsDeepLink: true)
     }
 
     /// Rings `messageId`'s card for a few seconds, or until the reader makes a deliberate gesture
@@ -542,6 +524,72 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         }
     }
 
+    // MARK: - Paging newer
+
+    /// Symmetric to ``loadOlder()`` — reached only once a `locate` has landed a window somewhere
+    /// other than the tail (search-virtualization design). Appending below never moves anything
+    /// a reader is looking at, unlike a prepend, so this needs no scroll compensation of its own;
+    /// `.stickToBottomIfPinned` already carries that reasoning for an ordinary SSE append.
+    private func loadNewer() {
+        guard !store.window(for: sessionID).loadingNewer else { return }
+        let window = store.window(for: sessionID)
+        guard window.hasNewer, let newestId = window.newestLoadedId else { return }
+        store.setLoadingNewer(sessionID, loading: true)
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let entries = try await self.apiClient.getMessages(
+                    sessionId: self.sessionID, page: .after(id: newestId, limit: TranscriptStore.olderPageLimit))
+                self.store.appendNewer(
+                    sessionId: self.sessionID, entries: entries, requestedLimit: TranscriptStore.olderPageLimit)
+                await self.catchUpOnPendingNewerIfSettled()
+                self.recomputeRows(applying: .stickToBottomIfPinned)
+            } catch {
+                self.store.setNewerError(
+                    self.sessionID, error: (error as? PaiError)?.userMessage ?? "Couldn't load newer messages")
+            }
+        }
+    }
+
+    /// The reason `loadNewer()` is not a mirror-image one-liner of `loadOlder()`: the page above
+    /// can come back short (settling `hasNewer` false) while a live message arrived via SSE in
+    /// the exact gap between that query being issued and this line running. SSE cannot have
+    /// appended it — `TranscriptStore.foldLiveEntries` holds it aside by id for precisely this
+    /// reason while the window is not at the tail — so without this one more fetch, it would be
+    /// silently lost from the window forever, with nothing left to notice.
+    private func catchUpOnPendingNewerIfSettled() async {
+        let settled = store.window(for: sessionID)
+        guard !settled.hasNewer else { return }
+        guard let highWaterMark = store.getPendingNewerHighWaterMark(sessionID), let newestId = settled.newestLoadedId,
+            highWaterMark > newestId
+        else {
+            // Whatever was held aside is now either in the window already or was never actually
+            // beyond it once this page's own results landed — either way, nothing is pending.
+            store.clearPendingNewer(sessionID)
+            return
+        }
+        store.setLoadingNewer(sessionID, loading: true)
+        do {
+            let entries = try await apiClient.getMessages(
+                sessionId: sessionID, page: .after(id: newestId, limit: TranscriptStore.olderPageLimit))
+            store.appendNewer(sessionId: sessionID, entries: entries, requestedLimit: TranscriptStore.olderPageLimit)
+        } catch {
+            // Best-effort: the pending set stays as a record that something is still missing,
+            // and the next `loadNewer()` (another sentinel trigger, or a jump to the latest)
+            // tries again.
+            return
+        }
+        store.clearPendingNewer(sessionID)
+    }
+
+    private func checkNewerPageTrigger() {
+        guard !store.window(for: sessionID).loadingNewer, store.window(for: sessionID).hasNewer else { return }
+        guard let lastVisible = collectionView.indexPathsForVisibleItems.map(\.item).max() else { return }
+        if lastVisible > rows.count - 1 - Self.olderPageTriggerRowMargin {
+            loadNewer()
+        }
+    }
+
     // MARK: - Row measurement
 
     private enum UpdateIntent {
@@ -557,13 +605,19 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         case initialLoad(TranscriptRestoreTarget)
     }
 
-    private func recomputeRows(applying intent: UpdateIntent) {
+    /// `onSettled` runs once the layout this call produces has actually landed — honoured only
+    /// by `.compensateFromTopVisibleRow`, which is the only intent `reveal(_:)` ever recomputes
+    /// under. That is what lets a locate-and-reveal expand a collapsed card and scroll to it
+    /// with no settle hold at all (design row 25's own note): the layout precomputes every
+    /// height synchronously, so this one completion, timed to the actual layout pass rather than
+    /// to when the call returns, is all a caller needs.
+    private func recomputeRows(applying intent: UpdateIntent, onSettled: (() -> Void)? = nil) {
         guard !isApplyingRows else {
             hasPendingRecompute = true
             Task { @MainActor [weak self] in
                 guard let self, self.hasPendingRecompute else { return }
                 self.hasPendingRecompute = false
-                self.recomputeRows(applying: intent)
+                self.recomputeRows(applying: intent, onSettled: onSettled)
             }
             return
         }
@@ -607,7 +661,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
 
         isApplyingRows = true
         defer { isApplyingRows = false }
-        apply(newRows, intent: intent)
+        apply(newRows, intent: intent, onSettled: onSettled)
     }
 
     private func expandResolver(forMessageId messageId: Int) -> (String) -> Bool {
@@ -625,14 +679,32 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         recomputeRows(applying: .compensateFromTopVisibleRow)
     }
 
-    // MARK: - Search
+    // MARK: - Search: find / locate / reveal / mark
 
-    /// Every hit that belongs to `messageId`, for ``TranscriptRowContent``'s own highlight
-    /// grouping — `nil` currentHit is fine, `TranscriptSearchHit` equality alone decides which one
-    /// (if any) is current.
+    /// Every occurrence of the current query inside `messageId`'s own rendered text, computed
+    /// on demand from whatever is already loaded — never a precomputed array over the whole
+    /// window, which is exactly the cost this design avoids. `TranscriptSearchIndex` still does
+    /// the counting; only its SCOPE changed, from "the whole loaded window" to "one message at a
+    /// time". Empty whenever there is no needle (kind mode has none to paint — matching the
+    /// web's own `useSearchHighlight`, which clears rather than paints when `needle` is empty) or
+    /// the message is not one `matchedIds` already says matches.
     private func searchHighlights(forMessageId messageId: Int) -> [TranscriptSearchHit] {
-        guard searchState.isActive, !searchState.hits.isEmpty else { return [] }
-        return searchState.hits.filter { $0.messageId == messageId }
+        guard searchState.isActive, !searchState.query.isEmpty, searchState.matchedIds.contains(messageId),
+            let message = store.messages[sessionID]?.first(where: { $0.id == messageId })
+        else { return [] }
+        return TranscriptSearchIndex.hits(in: [message], query: searchState.query).hits
+    }
+
+    /// Which of `hits` (already scoped to one message by ``searchHighlights(forMessageId:)``) is
+    /// the current one, by ordinal — never by re-deriving "current" from anything else, since the
+    /// ordinal `searchState.inner` already holds is the single source of truth for it.
+    private func currentSearchHit(forMessageId messageId: Int, among hits: [TranscriptSearchHit])
+        -> TranscriptSearchHit?
+    {
+        guard messageId == searchState.currentMessageId, let ordinal = searchState.inner?.ordinal,
+            hits.indices.contains(ordinal)
+        else { return nil }
+        return hits[ordinal]
     }
 
     /// Recursive `withObservationTracking` registration — the standard way to react to an
@@ -643,7 +715,8 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         withObservationTracking {
             _ = searchState.isActive
             _ = searchState.query
-            _ = searchState.activeHitIndex
+            _ = searchState.kind
+            _ = searchState.pendingStep
         } onChange: { [weak self] in
             Task { @MainActor in
                 self?.handleSearchStateChange()
@@ -655,93 +728,253 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     private func handleSearchStateChange() {
         if searchState.isActive, !hasBegunCurrentSearchSession {
             hasBegunCurrentSearchSession = true
-            beginSearchSession()
+            searchOpenedAtMessageId = topVisibleRowId()
         } else if !searchState.isActive, hasBegunCurrentSearchSession {
             hasBegunCurrentSearchSession = false
             lastSearchedQuery = nil
-            lastNavigatedHit = nil
-            searchDebounceTask?.cancel()
+            lastSearchedKind = nil
+            findDebounceTask?.cancel()
+            hitIds = []
             clearSearchHighlighting()
         }
 
-        if searchState.query != lastSearchedQuery {
-            scheduleSearchRecompute()
+        if searchState.query != lastSearchedQuery || searchState.kind != lastSearchedKind {
+            scheduleFind()
         }
 
-        if searchState.currentHit != lastNavigatedHit {
-            lastNavigatedHit = searchState.currentHit
-            navigateToCurrentHit()
-        }
-    }
-
-    /// A bounded window triggers a full-history load before searching, so a hit outside the
-    /// currently loaded pages is never silently invisible to it.
-    private func beginSearchSession() {
-        searchOpenedAtMessageId = topVisibleRowId()
-        guard store.window(for: sessionID).hasOlder else { return }
-        searchState.isLoadingFullHistory = true
-        Task { [weak self] in
-            await self?.loadFullHistory()
-            guard let self else { return }
-            self.searchState.isLoadingFullHistory = false
-            self.recomputeSearchHitsNow()
+        if let step = searchState.consumePendingStep() {
+            Task { [weak self] in await self?.performStep(step) }
         }
     }
 
-    private func loadFullHistory() async {
-        while store.window(for: sessionID).hasOlder {
-            guard let oldestId = store.window(for: sessionID).oldestLoadedId else { break }
-            do {
-                let entries = try await apiClient.getMessages(
-                    sessionId: sessionID, page: .before(id: oldestId, limit: TranscriptStore.olderPageLimit))
-                store.prependOlder(
-                    sessionId: sessionID, entries: entries, requestedLimit: TranscriptStore.olderPageLimit)
-            } catch {
-                // Whatever a full-history load already fetched before failing is still worth
-                // searching — better a search over a partial history than one that never runs.
-                break
+    private func scheduleFind() {
+        lastSearchedQuery = searchState.query
+        lastSearchedKind = searchState.kind
+        findDebounceTask?.cancel()
+        findDebounceTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.findDebounce)
+            guard !Task.isCancelled else { return }
+            await self?.runFind()
+        }
+    }
+
+    /// `find`: asks the server for every id matching the query/kind, then lands on the first hit
+    /// at or after where the reader is (search-virtualization design) — never a long journey to
+    /// the oldest hit, the same convention the client-only version always used.
+    private func runFind() async {
+        let query = searchState.query
+        let kind = searchState.kind
+        findToken += 1
+        let token = findToken
+
+        // Instant highlight: whatever is already loaded and matches, painted the moment the
+        // request is sent rather than once it answers. Kind mode has no client-side equivalent —
+        // there is no needle to scan the loaded window for.
+        let instant: Set<Int> =
+            query.isEmpty
+            ? []
+            : Set(
+                TranscriptSearchIndex.hits(
+                    in: TranscriptStore.displayMessages(store.messages[sessionID] ?? []), query: query
+                )
+                .hits.map(\.messageId))
+        searchState.beginFind(instantMatchedIds: instant)
+        reconfigureVisibleCells()
+
+        guard !query.isEmpty || kind != nil else {
+            hitIds = []
+            searchState.clearResults()
+            reconfigureVisibleCells()
+            return
+        }
+
+        do {
+            let result = try await apiClient.findMessages(
+                sessionId: sessionID, q: query.isEmpty ? nil : query, kind: kind?.rawValue,
+                limit: TranscriptSearchIndex.maxHits)
+            guard token == findToken else { return }  // a newer query/kind superseded this one
+            hitIds = result.messageIds
+            searchState.applyFindResult(
+                total: result.total, capped: result.capped,
+                serverMatchedIdsForKindMode: query.isEmpty ? result.messageIds : nil)
+            reconfigureVisibleCells()
+            guard !result.messageIds.isEmpty else { return }
+            var startIndex = 0
+            if let openedAt = searchOpenedAtMessageId {
+                if let forward = result.messageIds.firstIndex(where: { $0 >= openedAt }) {
+                    startIndex = forward
+                } else {
+                    startIndex = result.messageIds.count - 1
+                }
+            }
+            await landOn(index: startIndex, direction: .forward)
+        } catch {
+            guard token == findToken else { return }
+            searchState.setError((error as? PaiError)?.userMessage ?? "Search failed")
+        }
+    }
+
+    private enum StepDirection { case forward, backward }
+
+    /// Lands on `hitIds[index]`: `locate`s it, counts its occurrences in the loaded, rendered
+    /// text, reveals, and commits the new position.
+    private func landOn(index: Int, direction: StepDirection) async {
+        guard hitIds.indices.contains(index) else { return }
+        let messageId = hitIds[index]
+        let token = findToken
+        let loaded = await locate(messageId)
+        guard token == findToken else { return }  // a newer step/search superseded this one
+        guard loaded else {
+            // A hit the server listed a moment ago is now gone (a reingest) — dropped rather
+            // than retried, since a server-derived hit's own contract is "not here" means
+            // "gone", not "not yet". Left where it was; the next explicit step tries its
+            // neighbour.
+            return
+        }
+
+        let query = searchState.query
+        if !query.isEmpty, let message = store.messages[sessionID]?.first(where: { $0.id == messageId }) {
+            let hits = TranscriptSearchIndex.hits(in: [message], query: query).hits
+            if !hits.isEmpty {
+                let ordinal = direction == .backward ? hits.count - 1 : 0
+                searchState.commitLanding(outerIndex: index, messageId: messageId, inner: (ordinal, hits.count))
+                await revealHit(hits[ordinal])
+                return
             }
         }
-        recomputeRows(applying: .compensateFromTopVisibleRow)
+        // A kind hit, or a text hit that counted to zero here (the term sat in a field the
+        // client does not render) — still a row-level landing, no inner counter.
+        searchState.commitLanding(outerIndex: index, messageId: messageId, inner: nil)
+        revealRow(messageId, ringAsDeepLink: false)
     }
 
-    private func scheduleSearchRecompute() {
-        lastSearchedQuery = searchState.query
-        searchDebounceTask?.cancel()
-        searchDebounceTask = Task { [weak self] in
-            try? await Task.sleep(for: Self.searchDebounce)
-            guard !Task.isCancelled else { return }
-            self?.recomputeSearchHitsNow()
-        }
-    }
-
-    private func recomputeSearchHitsNow() {
-        guard !searchState.isLoadingFullHistory else { return }
-        let query = searchState.query
-        guard !query.isEmpty else {
-            searchState.setResults(hits: [], truncated: false, readerMessageId: nil)
+    /// The inner ordinal steps first; the outer cursor only advances once it runs out, wrapping
+    /// around the hit list the same way the stepping chevrons always have — the decision itself
+    /// is `TranscriptSearchState`'s own pure function, this only ever executes it.
+    private func performStep(_ step: TranscriptSearchState.PendingStep) async {
+        let decision =
+            step == .next ? searchState.next(hitCount: hitIds.count) : searchState.previous(hitCount: hitIds.count)
+        switch decision {
+        case .none:
             return
+        case .innerOnly(let ordinal):
+            searchState.stepInner(to: ordinal)
+            guard let messageId = searchState.currentMessageId,
+                let message = store.messages[sessionID]?.first(where: { $0.id == messageId })
+            else { return }
+            let hits = TranscriptSearchIndex.hits(in: [message], query: searchState.query).hits
+            guard hits.indices.contains(ordinal) else { return }
+            await revealHit(hits[ordinal])
+        case .outerIndex(let index):
+            await landOn(index: index, direction: step == .next ? .forward : .backward)
         }
-        let messages = TranscriptStore.displayMessages(store.messages[sessionID] ?? [])
-        let (hits, truncated) = TranscriptSearchIndex.hits(in: messages, query: query)
-        searchState.setResults(hits: hits, truncated: truncated, readerMessageId: searchOpenedAtMessageId)
     }
 
-    /// Opens the hit's card if it is collapsed, scrolls to it, and begins the matching hold.
-    /// Opening a collapsed card changes the row's height, which has to go through the same delta
-    /// compensation a prepend does before the scroll target below is computed, or it lands
-    /// against a height already stale.
-    private func navigateToCurrentHit() {
-        guard searchState.isActive, let hit = searchState.currentHit else {
-            clearSearchHighlighting()
-            return
+    /// `locate`'s own two stages: already-loaded is a no-op, else fetch `around_id` and merge
+    /// into the window when the page overlaps or abuts it, replace the window outright when it
+    /// doesn't (search-virtualization design — "the around page, and merge-or-replace").
+    /// `retryLadder` turns a 404 from "the row is gone, give up" into "not ingested yet, try
+    /// again" — a deep link's own contract; a server-derived hit never passes one, since a 404
+    /// there means it vanished under a reingest.
+    private func locate(_ messageId: Int, retryLadder: [Duration] = []) async -> Bool {
+        if isLoaded(messageId) { return true }
+
+        for attempt in 0...retryLadder.count {
+            switch try? await apiClient.messages(
+                around: messageId, limit: TranscriptStore.olderPageLimit, sessionId: sessionID)
+            {
+            case .ok(let entries):
+                guard !entries.isEmpty else { return false }
+                mergeOrReplaceWindow(entries: entries, aroundId: messageId)
+                await settleRows()
+                return isLoaded(messageId)
+            case .notFound, nil:
+                guard attempt < retryLadder.count else { return false }
+                try? await Task.sleep(for: retryLadder[attempt])
+            }
         }
+        return false
+    }
+
+    private func isLoaded(_ messageId: Int) -> Bool {
+        store.messages[sessionID]?.contains { $0.id == messageId } ?? false
+    }
+
+    private func mergeOrReplaceWindow(entries: [Message], aroundId: Int) {
+        guard let pageMin = entries.map(\.id).min(), let pageMax = entries.map(\.id).max() else { return }
+        let win = store.window(for: sessionID)
+        if TranscriptStore.overlapsOrAbuts(win, pageMin: pageMin, pageMax: pageMax) {
+            store.mergeWindow(
+                sessionId: sessionID, entries: entries, aroundId: aroundId, limit: TranscriptStore.olderPageLimit)
+        } else {
+            store.replaceWindow(
+                sessionId: sessionID, entries: entries, aroundId: aroundId, limit: TranscriptStore.olderPageLimit)
+        }
+    }
+
+    /// Recomputes rows and waits for the layout it produces to actually land, rather than
+    /// returning as soon as the call is made — `reveal`'s whole "no settle hold" claim (design
+    /// row 25's own note) depends on the caller seeing FRESH `rows`/`layout` the instant this
+    /// returns, not a moment later on some other run-loop turn.
+    private func settleRows() async {
+        guard measurementWidth() > 0 else { return }
+        await withCheckedContinuation { continuation in
+            recomputeRows(applying: .compensateFromTopVisibleRow) { continuation.resume() }
+        }
+    }
+
+    /// Opens the hit's card if it is collapsed FIRST, and only scrolls once that settles — the
+    /// ordering that makes "no settle hold" true at all: nothing changes height after the
+    /// landing frame, because nothing can. Then reads the live viewport's own 30%-lead at the
+    /// moment of the scroll itself, never a value computed earlier — a keyboard or safe-area
+    /// change in between is what used to land it wrong.
+    private func revealHit(_ hit: TranscriptSearchHit) async {
         if let key = hit.expandKey, !expandResolver(forMessageId: hit.messageId)(key) {
             expandOverrides["\(hit.messageId)#\(key)"] = true
-            recomputeRows(applying: .compensateFromTopVisibleRow)
+            await settleRows()
         }
-        scrollToSearchHit(hit)
+        let width = measurementWidth()
+        guard width > 0, let index = rows.firstIndex(where: { $0.id == hit.messageId }) else { return }
+        let environment = MeasurementEnvironment(
+            sizeCategoryToken: traitCollection.preferredContentSizeCategory.rawValue)
+        let metrics = MessageLayoutMetrics(blockSpacing: TranscriptContentMetrics.blockSpacing)
+        let blockOffset =
+            TranscriptRowLayout.blockOffset(
+                cardIndex: hit.cardIndex, blockIndex: hit.blockIndex, for: rows[index].message, width: width,
+                environment: environment, isExpanded: expandResolver(forMessageId: hit.messageId), measurer: measurer,
+                cache: cache, metrics: metrics) ?? 0
+        scrollToTarget(messageId: hit.messageId, blockOffset: blockOffset)
         reconfigureVisibleCells()
+    }
+
+    /// Lands on the row's own top (minus the 30%-from-top lead) — the honest position for a
+    /// target with no specific text occurrence: a kind hit, or a deep link, whose target is the
+    /// whole message rather than one range inside it. `ringAsDeepLink` draws the deep-link ring
+    /// instead of a search highlight, matching which caller this is.
+    private func revealRow(_ messageId: Int, ringAsDeepLink: Bool) {
+        scrollToTarget(messageId: messageId, blockOffset: 0)
+        if ringAsDeepLink {
+            beginDeepLinkHighlight(for: messageId)
+        } else {
+            reconfigureVisibleCells()
+        }
+    }
+
+    /// A row can run to thousands of points, so scrolling only to its top would not bring a hit
+    /// deep inside it on screen. Lands a third of the way down the viewport rather than flush at
+    /// the top, leaving room to read what comes before it (the web's own `SEARCH_ROW_LEAD`).
+    ///
+    /// No settle hold: the layout precomputes every row height synchronously before this ever
+    /// runs, so this one write lands exactly, PROVIDED the caller already settled any height
+    /// change (`revealHit`'s own expand-first step) and this reads the viewport live, which is
+    /// exactly what it does.
+    private func scrollToTarget(messageId: Int, blockOffset: Double) {
+        guard let rowTop = layout.offsetTop(forRowId: messageId) else { return }
+        let lead = collectionView.bounds.height * 0.3
+        let target = max(0, min(maxContentOffsetY(), CGFloat(rowTop + blockOffset) - lead))
+        collectionView.setContentOffset(CGPoint(x: 0, y: target), animated: true)
+        edgeFollow = EdgeFollowLatch(isPinned: false)
+        updateJumpToLatestVisibility()
     }
 
     private func clearSearchHighlighting() {
@@ -757,39 +990,9 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         if !visible.isEmpty { collectionView.reconfigureItems(at: visible) }
     }
 
-    /// A row can run to thousands of points, so scrolling only to its top would not bring a hit
-    /// deep inside it on screen. `TranscriptRowLayout.blockOffset` gives the exact point within
-    /// the row without needing character-level access to the text a cell draws — see that
-    /// function's own doc comment. Lands the hit a third of the way down the viewport rather than
-    /// flush at the top, leaving room to read what comes before it (the web's own `SEARCH_ROW_LEAD`).
-    private func scrollToSearchHit(_ hit: TranscriptSearchHit) {
-        guard let index = rows.firstIndex(where: { $0.id == hit.messageId }),
-            let rowTop = layout.offsetTop(forRowId: hit.messageId)
-        else { return }
-
-        let width = measurementWidth()
-        guard width > 0 else { return }
-        let environment = MeasurementEnvironment(
-            sizeCategoryToken: traitCollection.preferredContentSizeCategory.rawValue)
-        let metrics = MessageLayoutMetrics(blockSpacing: TranscriptContentMetrics.blockSpacing)
-        let blockOffset =
-            TranscriptRowLayout.blockOffset(
-                cardIndex: hit.cardIndex, blockIndex: hit.blockIndex, for: rows[index].message, width: width,
-                environment: environment, isExpanded: expandResolver(forMessageId: hit.messageId), measurer: measurer,
-                cache: cache, metrics: metrics) ?? 0
-
-        let lead = collectionView.bounds.height * 0.3
-        let target = max(0, min(maxContentOffsetY(), CGFloat(rowTop + blockOffset) - lead))
-        collectionView.setContentOffset(CGPoint(x: 0, y: target), animated: true)
-
-        edgeFollow = EdgeFollowLatch(isPinned: false)
-        holdController.begin(.jump(messageId: hit.messageId))
-        updateJumpToLatestVisibility()
-    }
-
     // MARK: - Applying a new row list
 
-    private func apply(_ newRows: [TranscriptRow], intent: UpdateIntent) {
+    private func apply(_ newRows: [TranscriptRow], intent: UpdateIntent, onSettled: (() -> Void)? = nil) {
         let oldIds = rows.map(\.id)
         let newIds = newRows.map(\.id)
         let delta = RowDelta.compute(old: oldIds, new: newIds)
@@ -834,6 +1037,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             }
             applyDelta(delta, newRows: newRows, oldCount: oldIds.count) { [weak self] in
                 self?.reassertHoldIfNeeded()
+                onSettled?()
             }
 
         case .stickToBottomIfPinned:
@@ -1096,6 +1300,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         edgeFollow.recordDistanceFromBottom(Double(distance))
         updateJumpToLatestVisibility()
         checkOlderPageTrigger()
+        checkNewerPageTrigger()
         if holdController.isActive {
             holdController.extend()
         }
@@ -1133,14 +1338,15 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         // controller (and everything it owns, including the SSE connection) alive indefinitely.
         cell.contentConfiguration = UIHostingConfiguration { [weak self] in
             if let self {
+                let highlights = self.searchHighlights(forMessageId: messageId)
                 TranscriptRowContent(
                     message: row.message,
                     sessionID: self.sessionID,
                     apiClient: self.apiClient,
                     isExpanded: self.expandResolver(forMessageId: messageId),
                     onToggleExpand: { [weak self] key in self?.toggleExpand(messageId: messageId, key: key) },
-                    highlights: self.searchHighlights(forMessageId: messageId),
-                    currentHit: self.searchState.currentHit,
+                    highlights: highlights,
+                    currentHit: self.currentSearchHit(forMessageId: messageId, among: highlights),
                     isDeepLinkTarget: messageId == self.highlightedMessageId
                 )
                 // Faded, at the same 0.6 the web uses, so a message still on its way is

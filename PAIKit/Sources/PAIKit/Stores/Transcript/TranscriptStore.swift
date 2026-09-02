@@ -219,6 +219,17 @@ public final class TranscriptStore {
         return (hasOlder: beforeCount == (limit + 1) / 2, hasNewer: afterCount == limit / 2)
     }
 
+    /// Whether an `around_id` page overlaps or abuts the currently loaded window — `locate`'s own
+    /// merge-or-replace decision (search-virtualization design: "the around page, and
+    /// merge-or-replace"). True for anything that would leave the window a single contiguous
+    /// range once folded in — the caller's cue to `mergeWindow` rather than `replaceWindow`,
+    /// which would otherwise discard perfectly good context for a page that landed right next to
+    /// it. An empty or never-loaded window overlaps nothing, since there is nothing to abut.
+    public static func overlapsOrAbuts(_ window: TranscriptWindow, pageMin: Int, pageMax: Int) -> Bool {
+        guard let oldest = window.oldestLoadedId, let newest = window.newestLoadedId else { return false }
+        return pageMin <= newest + 1 && pageMax >= oldest - 1
+    }
+
     // MARK: - Newer edge
 
     public func setLoadingNewer(_ sessionId: String, loading: Bool) {

@@ -392,4 +392,28 @@ final class TranscriptStoreTests: XCTestCase {
         XCTAssertEqual(store.messages["s1"]?.map(\.id), [900])
         XCTAssertFalse(store.window(for: "s1").hasNewer, "a tail reload is at the tail by definition")
     }
+
+    // MARK: - locate's merge-or-replace decision
+
+    func testOverlapsOrAbutsIsTrueWhenThePageTouchesTheNewerEdge() async {
+        let window = TranscriptWindow(oldestLoadedId: 5, newestLoadedId: 10)
+        // Abuts exactly — the page's own lowest id is one past the window's newest.
+        XCTAssertTrue(TranscriptStore.overlapsOrAbuts(window, pageMin: 11, pageMax: 15))
+    }
+
+    func testOverlapsOrAbutsIsTrueWhenThePageTouchesTheOlderEdge() async {
+        let window = TranscriptWindow(oldestLoadedId: 5, newestLoadedId: 10)
+        XCTAssertTrue(TranscriptStore.overlapsOrAbuts(window, pageMin: 1, pageMax: 4))
+    }
+
+    func testOverlapsOrAbutsIsFalseForAPageWithAGapOnBothSides() async {
+        let window = TranscriptWindow(oldestLoadedId: 5, newestLoadedId: 10)
+        XCTAssertFalse(TranscriptStore.overlapsOrAbuts(window, pageMin: 100, pageMax: 105))
+    }
+
+    /// A never-loaded window overlaps nothing — there is nothing to abut, so the caller replaces
+    /// rather than trying to merge into an empty range.
+    func testOverlapsOrAbutsIsFalseForAnEmptyWindow() async {
+        XCTAssertFalse(TranscriptStore.overlapsOrAbuts(.empty, pageMin: 1, pageMax: 5))
+    }
 }
