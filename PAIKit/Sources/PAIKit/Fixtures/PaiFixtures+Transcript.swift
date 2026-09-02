@@ -342,7 +342,7 @@ extension PaiFixtures {
 
           { "id": 9052, "session_id": "305df4d3-1554-4fc3-be04-39a354a9e619", "type": "assistant", "subtype": null,
             "timestamp": "2026-08-29T09:41:55Z",
-            "content": "Reconciled the fixtures against the live contract — done.",
+            "content": "Reconciled the fixtures against the live contract — done.\n\npai-file: /home/frederik/.tmp/reconcile-diff.png",
             "thinking": null, "tool_calls": null, "tool_result": null, "hook_summary": null,
             "tokens": { "input_tokens": 1204, "output_tokens": 312, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 18344,
                         "cache_creation": { "ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 0 } },
