@@ -131,17 +131,22 @@ public final class TranscriptSearchState {
         matchedIds = []
     }
 
-    /// `find` answered. `serverMatchedIds` replaces `matchedIds` outright in kind mode (there is
-    /// no client-side instant match for a kind, only for text) — in text mode the instant
-    /// client-side set already showing is left alone, matching the web's own
-    /// `matchedIds: query ? s.matchedIds : new Set(result.message_ids)`.
-    public func applyFindResult(total: Int, capped: Bool, serverMatchedIdsForKindMode: [Int]?) {
+    /// `find` answered — `serverMatchedIds` always replaces `matchedIds` outright, in text mode
+    /// as much as in kind mode. The instant client-side set `beginFind` painted is only ever a
+    /// preview of what is loaded at the moment the request was SENT; `locate` can land the reader
+    /// on a message that was not part of that set (a jump into unloaded history), and the server's
+    /// list is a designed superset of the client's own notion of a match (search-virtualization
+    /// design, "matching: server recall, client precision") — so replacing rather than keeping the
+    /// stale preview can only ever ADD ids a real jump might need, never drop one the highlighter
+    /// still needs. Leaving the preview in place for text mode was a real bug (proved live on the
+    /// web this ported from): the landed row would silently paint no highlight at all — not even
+    /// the "current hit" ring iOS has no separate mechanism for, since it derives from this same
+    /// set — whenever the jump reached a message that was not already loaded when `find` fired.
+    public func applyFindResult(total: Int, capped: Bool, serverMatchedIds: [Int]) {
         loading = false
         self.total = total
         self.capped = capped
-        if let serverMatchedIdsForKindMode {
-            matchedIds = Set(serverMatchedIdsForKindMode)
-        }
+        matchedIds = Set(serverMatchedIds)
     }
 
     public func setError(_ message: String) {

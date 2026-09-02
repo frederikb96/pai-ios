@@ -838,9 +838,9 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                 limit: TranscriptSearchIndex.maxHits)
             guard token == findToken else { return }  // a newer query/kind superseded this one
             hitIds = result.messageIds
-            searchState.applyFindResult(
-                total: result.total, capped: result.capped,
-                serverMatchedIdsForKindMode: query.isEmpty ? result.messageIds : nil)
+            // Always the server's list, text mode included — see `applyFindResult`'s own doc
+            // comment for why keeping the pre-fetch instant preview here was a real bug.
+            searchState.applyFindResult(total: result.total, capped: result.capped, serverMatchedIds: result.messageIds)
             reconfigureVisibleCells()
             guard !result.messageIds.isEmpty else { return }
             var startIndex = 0

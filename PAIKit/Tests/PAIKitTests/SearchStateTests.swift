@@ -19,7 +19,7 @@ final class SearchStateTests: XCTestCase {
         state.open()
         state.query = "needle"
         state.beginFind(instantMatchedIds: [1])
-        state.applyFindResult(total: 3, capped: true, serverMatchedIdsForKindMode: nil)
+        state.applyFindResult(total: 3, capped: true, serverMatchedIds: [1])
         state.commitLanding(outerIndex: 0, messageId: 1, inner: (0, 1))
         state.requestNext()
 
@@ -59,17 +59,19 @@ final class SearchStateTests: XCTestCase {
 
     // MARK: - beginFind / applyFindResult
 
-    /// In text mode the instant client-side set already showing survives the server answer —
-    /// only a kind result replaces `matchedIds` outright, since there is no client-side instant
-    /// match for a kind at all.
-    func testApplyFindResultLeavesTextModeMatchedIdsAlone() async {
+    /// The instant client-side set `beginFind` painted is only a preview of what was loaded when
+    /// the request was SENT — once the server answers, its list must win outright, even in text
+    /// mode, or a `locate` that jumps to a message the preview never saw (unloaded at request
+    /// time) leaves that message permanently unmatched with no way back in. Leaving the preview in
+    /// place here was the actual bug, proved live on the web this ported from.
+    func testApplyFindResultReplacesMatchedIdsInTextModeToo() async {
         let state = TranscriptSearchState()
         state.query = "needle"
         state.beginFind(instantMatchedIds: [7])
 
-        state.applyFindResult(total: 5, capped: false, serverMatchedIdsForKindMode: nil)
+        state.applyFindResult(total: 5, capped: false, serverMatchedIds: [2, 9])
 
-        XCTAssertEqual(state.matchedIds, [7])
+        XCTAssertEqual(state.matchedIds, [2, 9], "the server's list must win outright, not the pre-fetch preview")
         XCTAssertEqual(state.total, 5)
         XCTAssertFalse(state.loading)
     }
@@ -79,7 +81,7 @@ final class SearchStateTests: XCTestCase {
         state.kind = .boundary
         state.beginFind(instantMatchedIds: [])
 
-        state.applyFindResult(total: 2, capped: false, serverMatchedIdsForKindMode: [3, 9])
+        state.applyFindResult(total: 2, capped: false, serverMatchedIds: [3, 9])
 
         XCTAssertEqual(state.matchedIds, [3, 9])
     }
@@ -88,7 +90,7 @@ final class SearchStateTests: XCTestCase {
         let state = TranscriptSearchState()
         state.query = "needle"
         state.beginFind(instantMatchedIds: [1])
-        state.applyFindResult(total: 3, capped: true, serverMatchedIdsForKindMode: nil)
+        state.applyFindResult(total: 3, capped: true, serverMatchedIds: [1])
         state.commitLanding(outerIndex: 0, messageId: 1, inner: (0, 1))
 
         state.clearResults()
@@ -197,7 +199,7 @@ final class SearchStateTests: XCTestCase {
         let state = TranscriptSearchState()
         state.query = "needle"
         state.beginFind(instantMatchedIds: [])
-        state.applyFindResult(total: 2, capped: false, serverMatchedIdsForKindMode: nil)
+        state.applyFindResult(total: 2, capped: false, serverMatchedIds: [])
         state.commitLanding(outerIndex: 0, messageId: 1, inner: nil)
 
         XCTAssertEqual(state.resultsSummary, "1/2")
@@ -207,7 +209,7 @@ final class SearchStateTests: XCTestCase {
         let state = TranscriptSearchState()
         state.query = "needle"
         state.beginFind(instantMatchedIds: [])
-        state.applyFindResult(total: 5000, capped: true, serverMatchedIdsForKindMode: nil)
+        state.applyFindResult(total: 5000, capped: true, serverMatchedIds: [])
         state.commitLanding(outerIndex: 0, messageId: 1, inner: nil)
 
         XCTAssertEqual(state.resultsSummary, "1/5000+")
@@ -217,7 +219,7 @@ final class SearchStateTests: XCTestCase {
         let state = TranscriptSearchState()
         state.query = "needle"
         state.beginFind(instantMatchedIds: [])
-        state.applyFindResult(total: 0, capped: false, serverMatchedIdsForKindMode: nil)
+        state.applyFindResult(total: 0, capped: false, serverMatchedIds: [])
 
         XCTAssertEqual(state.resultsSummary, "No results")
     }
