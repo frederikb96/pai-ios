@@ -18,20 +18,29 @@ public struct Draft: Codable, Sendable, Equatable, Identifiable {
     public let text: String
     public let sessionType: String?
     public let workingDir: String?
+    /// The `claude --model` alias this draft's session will launch with — only meaningful on the
+    /// `"new"` draft, alongside `sessionType`/`workingDir`. `nil` lets Claude Code pick the
+    /// plan's own default rather than naming one. The picker that sets this is not built here yet.
+    public let model: String?
     public let updatedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case key, text
         case sessionType = "session_type"
         case workingDir = "working_dir"
+        case model
         case updatedAt = "updated_at"
     }
 
-    public init(key: String, text: String, sessionType: String?, workingDir: String?, updatedAt: String?) {
+    public init(
+        key: String, text: String, sessionType: String?, workingDir: String?, model: String? = nil,
+        updatedAt: String?
+    ) {
         self.key = key
         self.text = text
         self.sessionType = sessionType
         self.workingDir = workingDir
+        self.model = model
         self.updatedAt = updatedAt
     }
 }
