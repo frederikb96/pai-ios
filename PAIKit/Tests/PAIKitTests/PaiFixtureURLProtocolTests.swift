@@ -34,6 +34,14 @@ final class PaiFixtureURLProtocolTests: XCTestCase {
         XCTAssertEqual(body(match), PaiFixtures.claudeAuthHealthy)
     }
 
+    /// `/api/notes/config` is three path segments, same as `/api/notes/{id}` — table order is
+    /// what keeps this the config fixture rather than a note whose id is "config".
+    func testNotesConfigRouteIsNotReadAsANoteID() {
+        let match = PaiFixtureURLProtocol.route(method: "GET", path: "/api/notes/config")
+        XCTAssertEqual(match.status, 200)
+        XCTAssertEqual(body(match), PaiFixtures.notesConfig)
+    }
+
     func testSessionScopedRouteMatchesAnyID() {
         let first = PaiFixtureURLProtocol.route(method: "GET", path: "/api/session/one/messages")
         let second = PaiFixtureURLProtocol.route(method: "GET", path: "/api/session/305df4d3/messages")

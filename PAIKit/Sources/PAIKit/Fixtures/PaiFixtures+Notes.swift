@@ -60,6 +60,10 @@ extension PaiFixtures {
         ]}
         """#
 
+    public static let notesConfig = #"""
+        {"undo_window_seconds":15}
+        """#
+
     public static let noteContainers = #"""
         {"containers":[
           {"id":"c1","agent_slug":"vm","path":"/home/frederik/pai-notes","name":"PAI","enabled":true,"is_default":true,"state":"active","paused_reason":null,"last_scan_at_ms":1756598000000,"last_error":null,"note_count":159,"breaker":null,"created_at":"2026-07-04T11:02:00.000001+00:00","updated_at":"2026-08-31T01:47:00.000001+00:00","skipped":[],"recent":["Engram","Wikilink"]},

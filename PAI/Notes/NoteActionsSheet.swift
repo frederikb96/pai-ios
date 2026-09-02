@@ -74,7 +74,7 @@ struct NoteActionsSheet: View {
                         toasts.show(
                             "Note deleted",
                             action: .init(label: "Undo") { [notes] in Task { await notes.undelete(id: noteId) } },
-                            lifetimeNanos: 15_000_000_000
+                            lifetimeNanos: notes.undoWindowNanos
                         )
                     }
                 })

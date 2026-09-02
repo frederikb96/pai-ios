@@ -147,10 +147,12 @@
             ) { PaiFixtures.data(PaiFixtures.notificationDetail) },
             exact("POST", "/api/alerts/clear") { PaiFixtures.alertsCleared },
             sessionScoped("GET", suffix: "/messages") { PaiFixtures.transcript },
-            // The notes half. Order matters here and only here: `/api/notes/containers` would
-            // otherwise be read as a note whose id is "containers".
+            // The notes half. Order matters here and only here: `/api/notes/containers` and
+            // `/api/notes/config` would otherwise be read as a note whose id is "containers" or
+            // "config".
             exact("GET", "/api/notes") { PaiFixtures.notesIndex },
             exact("GET", "/api/notes/containers") { PaiFixtures.noteContainers },
+            exact("GET", "/api/notes/config") { PaiFixtures.notesConfig },
             noteScoped("GET", suffix: "/attachments") { PaiFixtures.noteAttachments },
             noteScoped("GET", suffix: "/links") { PaiFixtures.noteLinkGraph },
             noteScoped("GET", suffix: "/revisions") { PaiFixtures.noteRevisions },

@@ -26,6 +26,10 @@ extension PaiApiClient {
 
     // MARK: Notes
 
+    public func getNotesConfig() async throws -> NotesConfig {
+        try await send(path: "/api/notes/config")
+    }
+
     /// The whole index, metadata only. The web loads it eagerly and filters client-side rather
     /// than paging, because a vault is small enough and every filter is then instant; this
     /// mirrors that, which is why the default limit is the route's own maximum page rather than
