@@ -12,10 +12,19 @@
 	     mechanism is what Xcode's own Background Modes capability writes, and whether the build
 	     setting form reaches an array-valued key is exactly the kind of thing that fails silently
 	     and looks like an OS restriction. The Mac workflow asserts this survives into the built
-	     app, alongside a generated key, so a merge that dropped either one fails the build. -->
+	     app, alongside a generated key, so a merge that dropped either one fails the build.
+
+	     `remote-notification` is the second mode here, for an entirely different reason: it is
+	     what lets a silent (content-available) push wake the app at all — Apple drops one
+	     outright for an app that never declared this. Without it a backgrounded phone's badge
+	     and delivered notifications simply never correct themselves when read elsewhere, which
+	     reads as the read-sync push not working rather than as a missing declaration. Unlike
+	     `audio`, this grants no continuous background execution — only a brief wake window when
+	     a push actually arrives — so it needs no audit of what else runs in the background. -->
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>remote-notification</string>
 	</array>
 
 	<!-- `pai://session/<id>` and `pai://note/<id>`, so a Shortcuts action or a widget can open

@@ -80,13 +80,16 @@ jobs:
           grep -q '"audio"' /tmp/built-info.txt \
             || { echo '::error::UIBackgroundModes is missing "audio" — recording will not survive backgrounding'; \
                  cat /tmp/built-info.txt; exit 1; }
+          grep -q '"remote-notification"' /tmp/built-info.txt \
+            || { echo '::error::UIBackgroundModes is missing "remote-notification" — a silent push never wakes the app, which reads as the read-sync push not working rather than as a missing declaration'; \
+                 cat /tmp/built-info.txt; exit 1; }
           grep -q 'NSMicrophoneUsageDescription' /tmp/built-info.txt \
             || { echo '::error::the generated Info.plist keys were not merged in'; \
                  cat /tmp/built-info.txt; exit 1; }
           grep -q '"pai"' /tmp/built-info.txt \
             || { echo '::error::the pai:// URL scheme is missing — every note shortcut opens nothing'; \
                  cat /tmp/built-info.txt; exit 1; }
-          echo 'background mode, URL scheme and generated keys all present'
+          echo 'background modes, URL scheme and generated keys all present'
 
       # Runs after the app build on purpose. This step compiles the whole package on a macOS host,
       # which is the only place the UIKit-guarded files compile at all — so it fails for reasons

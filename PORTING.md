@@ -53,9 +53,25 @@ Needs `PAI/` because: the stream client, the badge mirror (`RootView`'s existing
 here can drive a real `UNUserNotificationCenter`, hold a real socket across a background/foreground
 cycle, or watch the springboard badge and the notification shade actually update. Also unverified:
 whether the reconnect-on-foreground timing feels prompt in practice, since only a device shows
-that. Correcting the badge and the shade while the app is backgrounded and untouched has a
-separate, permanent ceiling this cannot close regardless of device verification: nothing sends a
-silent push to wake the app for it (`push.py` only ever sends an alert push).
+that.
+
+### Verify: a backgrounded phone wakes on a silent read-sync push — pai-cloud anchor: `push.send_silent_read_sync_push`
+Needs `PAI/` because: the whole point of `application(_:didReceiveRemoteNotification:
+fetchCompletionHandler:)` is running while nothing is on screen and nothing is being simulated —
+`UIBackgroundModes` declaring `remote-notification` (`Config/Info.plist`), the delegate method
+itself, and Apple's own throttling and coalescing of background notifications are none of them
+things a simulator run or a unit test can exercise. Best-effort by Apple's own design: delivery is
+never guaranteed, and a force-quit app never receives it at all — see `push.py`'s own doc comment
+for the ceiling this cannot close regardless of device verification.
+
+### Verify: a shortcut to a different note tears down stale editor state — pai-cloud anchor: none, iOS-only
+Needs `PAI/` because: the fix pins the note destination's identity to the note id
+(`RootView.destination(for:)`'s `.id(id)` on `.note`/`.notePreview`), the same fix and the same
+`NavigationStack` bug as the session one above. Reasoned rather than watched: unlike the
+transcript, `MarkdownSourceTextView.updateUIView` genuinely applies a changed `text`, so the note
+body was never at risk here — what this actually guards is `NoteEditorScreen`'s own screen-level
+`@State` (`titleText`, `isTitleFocused` above all), which a reused destination would otherwise
+carry over from the note just left.
 
 ### Verify: the formatting-bar settings screen — pai-cloud anchor: `web/src/apps/notes/settings/ToolbarSettings.tsx`
 Needs `PAI/` because: the two-section enable/reorder screen (`NoteToolbarSettingsScreen`), drag

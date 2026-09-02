@@ -130,6 +130,12 @@ struct RootView: View {
                     // still reporting notifications as on, which is the worst way to fail.
                     await PushRegistrar.registerForRemoteNotificationsIfAuthorized(store: connection.push)
                     await connection.push.registerWithBackendIfNeeded()
+                    // Where a silent read-sync push (row 24.5/24.7) actually reaches app code —
+                    // `PushRegistrar.application(_:didReceiveRemoteNotification:fetchCompletionHandler:)`
+                    // has no environment of its own to read `connection.notifications` from, since
+                    // it can fire before this screen — or any screen — is on top. Set once here,
+                    // the same way `PushRegistrar.store` is, and for the same reason.
+                    PushRegistrar.notificationsStore = connection.notifications
                 }
                 .environment(\.terminalStreamClientFactory) { sessionID, callbacks in
                     PaiTerminalStreamClient(
@@ -210,11 +216,31 @@ struct RootView: View {
         case .notes:
             NoteListScreen()
         case .note(let id):
+            // Same reasoning and the same fix as `.session` above — `Router.openNote(id:)` is the
+            // one path that replaces a `.note(id:)` destination for a *different* note at the same
+            // stack depth (`replace(with: [.notes, .note(id: id)])`), reached from a deep link or a
+            // home-screen shortcut. `MarkdownSourceTextView`'s own `updateUIView` is not a no-op —
+            // unlike the transcript's, it genuinely detects and applies a changed `text` — so a
+            // reused destination would still end up showing the right note body. What it would not
+            // recover on its own is `NoteEditorScreen`'s own screen-level `@State`: `titleText` and
+            // `isTitleFocused` in particular, which a reused identity carries over from the note
+            // just left. The concrete failure that opens: mid-edit on note A's title when a
+            // shortcut switches to note B, `.onChange(of: title)` skips updating `titleText` because
+            // `isTitleFocused` is still (stalely) true, and the next commit renames note B using
+            // note A's half-typed title. `.id(id)` removes the whole class rather than patching
+            // that one field.
             NoteEditorScreen(noteID: id)
+                .id(id)
         case .noteContainers:
             NoteContainersScreen()
         case .notePreview(let id):
+            // Never reached through `replace(with:)` in real use (see `Route.notePreview`'s own
+            // doc comment — only the fixture screenshot workflow pushes this), so nothing here
+            // actually hits the bug the two cases above guard against. Identity forced anyway,
+            // for the same reason `.note` is: free, and it keeps every note-scoped destination
+            // consistent rather than leaving one exception someone has to remember.
             NoteEditorScreen(noteID: id, startsInPreview: true)
+                .id(id)
         case .notifications:
             NotificationCenterScreen()
         case .recordings:

@@ -135,20 +135,10 @@ final class PushRegistrar: NSObject, UIApplicationDelegate, UNUserNotificationCe
 
     /// Sweeps the system's currently-delivered notification banners against the account's own
     /// read state, removing whichever ones a read change elsewhere has already caught up with
-    /// (row 24.7). `RootView` calls this on every foreground and every live `read` event —
-    /// nothing else can run this code while the app is not actually in front of the reader, since
-    /// there is no way to reach `UNUserNotificationCenter` from outside a running process; see
-    /// `PaiNotificationStreamClient`'s own doc comment for why that ceiling exists at all and
-    /// cannot be worked around from here.
-    ///
-    /// The one thing this genuinely cannot do: correct a delivered banner, or the springboard
-    /// badge, while the app is suspended in the background and nobody has foregrounded it since.
-    /// That would need a silent (`content-available`) push from the backend to wake the app long
-    /// enough to run this, which nothing here sends today — `push.py` only ever sends an alert
-    /// push, never a silent one. Until that exists, a read change made elsewhere while this
-    /// device sits untouched in someone's pocket stays visible in the shade until the next time
-    /// they actually pick the phone up, which is also the point `pollNotificationSummary()`'s own
-    /// self-heal already covers for the badge count alone.
+    /// (row 24.7). Called from every place this app can actually run code: `RootView` on every
+    /// foreground and every live `read` event, and — the case this alone could not reach —
+    /// `application(_:didReceiveRemoteNotification:fetchCompletionHandler:)` below, when a
+    /// silent push wakes a backgrounded app specifically to run this.
     static func reconcileDeliveredNotifications(against store: NotificationCenterStore) async {
         let delivered = await UNUserNotificationCenter.current().deliveredNotifications()
         let ids = delivered.compactMap { $0.request.content.userInfo[DeepLink.notificationIDKey] as? String }
@@ -157,5 +147,48 @@ final class PushRegistrar: NSObject, UIApplicationDelegate, UNUserNotificationCe
         let idsToClear = NotificationDeliveryReconciliation.idsToClear(deliveredIDs: ids, readStatus: status)
         guard !idsToClear.isEmpty else { return }
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: idsToClear)
+    }
+
+    /// Set once the app has a connection, the same way `store` above is — what the handler below
+    /// has to reach, since a silent push can wake the app before any screen, and therefore any
+    /// `@Environment`, exists to read `connection.notifications` from. `weak` for the same reason
+    /// `store` is: this must never be the thing keeping a signed-out session's store alive.
+    static weak var notificationsStore: NotificationCenterStore?
+
+    /// A silent (`content-available`) push (`pai_cloud.push.send_silent_read_sync_push`) — the
+    /// one payload shape that can reach this app while it is fully backgrounded, specifically to
+    /// let it correct itself (row 24.5/24.7's backgrounded half). Reads the true unread count
+    /// fresh rather than trusting anything the push itself carried — a silent push's own `aps`
+    /// dictionary is deliberately empty of everything but `content-available` (Apple's contract
+    /// for this push type forbids a badge riding along), so there is nothing to trust here even
+    /// if there were.
+    ///
+    /// Sets the badge directly rather than through `NotificationCenterStore.unread` and
+    /// `RootView`'s own `.onChange` mirror of it: that chain depends on SwiftUI's observation
+    /// machinery reacting while nothing is actively rendering a frame, which is not a guarantee
+    /// worth spending Apple's 30-second execution budget betting on. `UIBackgroundModes` must
+    /// declare `remote-notification` (`Config/Info.plist`) or this is never called at all — the
+    /// silent push simply never arrives, which reads as a backend problem rather than a missing
+    /// capability declaration.
+    ///
+    /// `.noData` when there is nowhere to apply the result (no connection yet) or nothing changed
+    /// worth reporting; `.newData` once the sweep has actually run. iOS uses this to judge whether
+    /// waking the app was worthwhile, which feeds back into how much it trusts future wake-ups for
+    /// this app — see Apple's own throttling note on background notifications.
+    func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        guard let store = Self.notificationsStore else {
+            completionHandler(.noData)
+            return
+        }
+        Task {
+            await store.refreshSummary()
+            try? await UNUserNotificationCenter.current().setBadgeCount(store.unread)
+            await Self.reconcileDeliveredNotifications(against: store)
+            completionHandler(.newData)
+        }
     }
 }
