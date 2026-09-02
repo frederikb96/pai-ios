@@ -462,6 +462,14 @@ public struct DeleteResponse: Codable, Sendable, Equatable {
     }
 }
 
+public struct ReadPositionAck: Codable, Sendable, Equatable {
+    public let ok: Bool
+
+    public init(ok: Bool) {
+        self.ok = ok
+    }
+}
+
 public struct AnswerBlockerResponse: Codable, Sendable, Equatable {
     public enum Status: String, Codable, Sendable, Equatable {
         case ok

@@ -109,9 +109,19 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     private var pendingInitialLoad: TranscriptRestoreTarget?
     /// Every session's last recorded read position, kept only for the life of the process — the
     /// view controller itself is recreated on every navigation into a session, so an instance
-    /// property alone would forget it on every return. An app relaunch always opens at the live
-    /// edge, which is why this is held in memory rather than persisted.
+    /// property alone would forget it on every return. Seeded once per session, on this
+    /// process's first visit, from `persistedReadPosition` — see `bootstrap()`.
     private static var lastAnchors: [String: TranscriptAnchor] = [:]
+    /// What the server last had for this session, from `Session.readPosition*` — read once, in
+    /// `bootstrap()`, to seed `lastAnchors` the first time this process visits this session.
+    /// `nil` both when there has never been a recorded position and when the session was not yet
+    /// loaded at the moment this screen was constructed (a cold deep link); either way the
+    /// restore falls back to the bottom, same as it already does for an anchor the LRU evicted.
+    private let persistedReadPosition: PersistedReadPosition?
+    /// Debounces `putReadPosition` the same 2s the web does (`READ_POSITION_SAVE_DEBOUNCE_MS`) —
+    /// one request per burst of scrolling, not one per frame.
+    private var readPositionSaveTask: Task<Void, Never>?
+    private var backgroundObserver: NSObjectProtocol?
 
     /// The row currently wearing the deep-link ring, if any — see `beginDeepLinkHighlight(for:)`.
     private var highlightedMessageId: Int?
@@ -149,7 +159,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     init(
         sessionID: String, store: TranscriptStore, apiClient: PaiApiClient, settings: SettingsStore,
         requestFactory: PaiRequestFactory, searchState: TranscriptSearchState, initialJumpMessageID: Int? = nil,
-        jumpRequests: TranscriptJumpRequests
+        jumpRequests: TranscriptJumpRequests, persistedReadPosition: PersistedReadPosition? = nil
     ) {
         self.sessionID = sessionID
         self.store = store
@@ -159,6 +169,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         self.searchState = searchState
         self.initialJumpMessageID = initialJumpMessageID
         self.jumpRequests = jumpRequests
+        self.persistedReadPosition = persistedReadPosition
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -168,10 +179,27 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     deinit {
         bootstrapTask?.cancel()
         highlightClearTask?.cancel()
+        readPositionSaveTask?.cancel()
+        if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
         // `deinit` is nonisolated and `disconnect()` is not. Copy the reference out so the hop
         // captures the client rather than `self`, which is already being deallocated.
         let client = sseClient
         Task { @MainActor in client?.disconnect() }
+        // This controller is recreated on every navigation into a session (`Route.session`'s own
+        // doc comment), so `deinit` is exactly the moment the web's own per-session cleanup
+        // effect flushes on — leaving these screens, not only quitting the app. `apiClient` and
+        // `sessionID` are plain `let`s, safe to read synchronously here same as `sseClient` above;
+        // `lastRecordedAnchor` is a value type, so capturing it costs nothing racy either.
+        if let anchor = lastRecordedAnchor {
+            let client = apiClient
+            let sessionID = sessionID
+            let payload = TranscriptAnchor.readPositionPayload(for: anchor)
+            Task {
+                try? await client.putReadPosition(
+                    sessionId: sessionID, messageId: payload.messageId, offsetPx: payload.offsetPx,
+                    atBottom: payload.atBottom)
+            }
+        }
     }
 
     override func viewDidLoad() {
@@ -222,6 +250,14 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         observeSearchState()
         observePendingBubbles()
         observeJumpRequests()
+        // The debounce below never elapses on its own once the app stops running frames — same
+        // reasoning as the web's `visibilitychange`/`pagehide` flush, the closest UIKit
+        // equivalent to a tab actually closing.
+        backgroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.flushReadPositionSaveNow() }
+        }
     }
 
     /// Rows arrive here through this controller's own SSE handling, so a send tracked by the
@@ -341,6 +377,12 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             return
         }
 
+        // Only ever seeds an EMPTY slot — a session revisited later in the same process already
+        // has a more current in-memory anchor than whatever the server held when this screen was
+        // constructed, and that must win.
+        if Self.lastAnchors[sessionID] == nil, let seeded = TranscriptAnchor.fromPersisted(persistedReadPosition) {
+            Self.lastAnchors[sessionID] = seeded
+        }
         let loadedIds = TranscriptStore.displayMessages(store.messages[sessionID] ?? []).map(\.id)
         let target = TranscriptRestore.target(for: Self.lastAnchors[sessionID], loadedMessageIds: loadedIds)
         pendingInitialLoad = target
@@ -1004,6 +1046,34 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         lastRecordedAnchor = anchor
         // Kept beyond this instance's own lifetime — see `lastAnchors`'s doc comment.
         Self.lastAnchors[sessionID] = anchor
+        scheduleReadPositionSave()
+    }
+
+    /// One request per burst of scrolling rather than one per frame — restarted on every new
+    /// anchor, same shape as the web's `scheduleReadPositionSave`.
+    private func scheduleReadPositionSave() {
+        readPositionSaveTask?.cancel()
+        readPositionSaveTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            self?.flushReadPositionSaveNow()
+        }
+    }
+
+    /// Sends whatever is pending right now rather than waiting out the debounce — for the app
+    /// backgrounding, or this controller being torn down, where the window might never otherwise
+    /// elapse. Best-effort: the in-memory anchor and the next successful save stay the source of
+    /// truth for this device: a lost write only costs a relaunch landing one scroll behind.
+    private func flushReadPositionSaveNow() {
+        readPositionSaveTask?.cancel()
+        readPositionSaveTask = nil
+        guard let anchor = lastRecordedAnchor else { return }
+        let payload = TranscriptAnchor.readPositionPayload(for: anchor)
+        Task {
+            try? await apiClient.putReadPosition(
+                sessionId: sessionID, messageId: payload.messageId, offsetPx: payload.offsetPx,
+                atBottom: payload.atBottom)
+        }
     }
 
     // MARK: - UIScrollViewDelegate (via UICollectionViewDelegate)
@@ -1095,12 +1165,15 @@ struct TranscriptCollectionView: UIViewControllerRepresentable {
     /// Reaches this screen for a push notification's jump while it is already on top — see
     /// `TranscriptJumpRequests`'s own doc comment for why `initialJumpMessageID` alone cannot.
     let jumpRequests: TranscriptJumpRequests
+    /// What the server last held for this session's read position — `nil` when there is none, or
+    /// when the caller does not know yet (a cold deep link, before `ensureSessionLoaded` returns).
+    var persistedReadPosition: PersistedReadPosition? = nil
 
     func makeUIViewController(context: Context) -> TranscriptCollectionViewController {
         TranscriptCollectionViewController(
             sessionID: sessionID, store: store, apiClient: apiClient, settings: settings,
             requestFactory: requestFactory, searchState: searchState, initialJumpMessageID: initialJumpMessageID,
-            jumpRequests: jumpRequests
+            jumpRequests: jumpRequests, persistedReadPosition: persistedReadPosition
         )
     }
 

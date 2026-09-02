@@ -139,6 +139,33 @@ final class PaiApiClientTests: XCTestCase {
         XCTAssertTrue(body.contains(#""idle_timeout_minutes":null"#), body)
     }
 
+    /// `message_id`/`offset_px` are `nil` together on the wire when `atBottom` is true — the same
+    /// explicit-null hazard `setIdleTimeout` guards against, and the same fix.
+    func testPutReadPositionAtBottomSendsExplicitNullsRatherThanOmittingTheKeys() async throws {
+        stubJSON(#"{"ok":true}"#)
+        let client = try makeClient()
+        _ = try await client.putReadPosition(sessionId: "s1", messageId: nil, offsetPx: nil, atBottom: true)
+
+        XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.httpMethod, "PUT")
+        let path = PaiStubURLProtocol.capturedRequest?.url?.path ?? ""
+        XCTAssertTrue(path.hasSuffix("/api/session/s1/read-position"), path)
+        let body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains(#""message_id":null"#), body)
+        XCTAssertTrue(body.contains(#""offset_px":null"#), body)
+        XCTAssertTrue(body.contains(#""at_bottom":true"#), body)
+    }
+
+    func testPutReadPositionAwayFromBottomSendsTheMessageAndOffset() async throws {
+        stubJSON(#"{"ok":true}"#)
+        let client = try makeClient()
+        _ = try await client.putReadPosition(sessionId: "s1", messageId: 42, offsetPx: 88, atBottom: false)
+
+        let body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains(#""message_id":42"#), body)
+        XCTAssertTrue(body.contains(#""offset_px":88"#), body)
+        XCTAssertTrue(body.contains(#""at_bottom":false"#), body)
+    }
+
     func testResumeSessionAcceptsEveryRecognizedStatus() async throws {
         let client = try makeClient()
         for status in ["resumed", "already_running", "refused"] {

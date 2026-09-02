@@ -480,6 +480,39 @@ public struct PaiApiClient: Sendable {
         )
     }
 
+    /// Persists where Freddy stopped reading this session's transcript — debounced client-side,
+    /// see `TranscriptAnchor.readPositionPayload(for:)`. `messageId`/`offsetPx` are `nil`
+    /// together when `atBottom` is true: the reader is caught up, nothing to pin a message at.
+    @discardableResult
+    public func putReadPosition(
+        sessionId: String, messageId: Int?, offsetPx: Int?, atBottom: Bool
+    ) async throws -> ReadPositionAck {
+        struct Body: Encodable {
+            let messageId: Int?
+            let offsetPx: Int?
+            let atBottom: Bool
+            enum CodingKeys: String, CodingKey {
+                case messageId = "message_id"
+                case offsetPx = "offset_px"
+                case atBottom = "at_bottom"
+            }
+            // Matches `setIdleTimeout`'s own `Body`: `nil` is a real value the server distinguishes
+            // from an omitted key, so the synthesized `encodeIfPresent` for an `Optional` property
+            // would silently drop it instead of sending `null`.
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(messageId, forKey: .messageId)
+                try container.encode(offsetPx, forKey: .offsetPx)
+                try container.encode(atBottom, forKey: .atBottom)
+            }
+        }
+        return try await send(
+            path: "/api/session/\(sessionId)/read-position",
+            method: "PUT",
+            body: try Self.jsonBody(Body(messageId: messageId, offsetPx: offsetPx, atBottom: atBottom))
+        )
+    }
+
     // MARK: Drafts
 
     public func getDrafts() async throws -> [Draft] {

@@ -100,3 +100,27 @@ compares old and new `toolbarLayout` on every call and calls `keyboardBar.setLay
 differ, so correctness does not depend on when SwiftUI next processes an off-screen
 `UIViewRepresentable`, but only a device shows whether that happens promptly or is deferred until
 the screen is visible again.
+
+### Notes: the read-position payload has no `hasNewer` gate — pai-cloud anchor: `web/src/hooks/useTranscriptScroll.ts`'s `readPositionPayload`
+The web's payload additionally suppresses `atLiveEdge` when the loaded window's own newest message
+is not the session's newest — a partial window's bottom is not the end of the conversation,
+whatever the geometry says. This app has no such concept: nothing here tracks whether a loaded
+window can fail to reach the tail, so `TranscriptAnchor.readPositionPayload(for:)` decides
+`atBottom` from `atLiveEdge` alone. Not wrong today — this app always loads to the tail on
+bootstrap and pages backward, never forward-with-a-gap — but the day something here gains that
+concept (a search jump that never catches back up to live, for instance), this payload function
+needs the same gate the web already has.
+
+### Verify: the read position actually restores across a relaunch — pai-cloud anchor: `PUT /api/session/{id}/read-position`
+Needs `PAI/` because: the debounce (`scheduleReadPositionSave`/`flushReadPositionSaveNow`), the
+background-flush (`UIApplication.didEnterBackgroundNotification`) and the deinit-flush (this
+controller is recreated on every navigation into a session, so leaving is exactly when the web's
+own per-session cleanup effect fires) are none of them exercisable without a real app lifecycle —
+only the payload math and the seeding logic (`TranscriptAnchor.fromPersisted`) are unit-tested.
+Also unwatched: whether 2s is a comfortable debounce on a real device, and whether backgrounding
+mid-scroll actually reaches the network before the OS suspends the app. Seeding itself has a known,
+accepted gap for a cold deep link — `SessionDetailView` reads `currentSession` synchronously when
+constructing the transcript screen, so a session not yet in `SessionListStore`'s cache at that
+instant seeds nothing and falls back to the bottom, same as an anchor the in-memory LRU evicted
+would. The ordinary open-from-the-list path never hits this, since the tapped row's `Session` is
+already cached with its read position by the time it is tapped.

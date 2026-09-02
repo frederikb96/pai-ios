@@ -35,7 +35,12 @@ struct SessionDetailView: View {
                     TranscriptCollectionView(
                         sessionID: sessionID, store: transcript, apiClient: connection.apiClient, settings: settings,
                         requestFactory: connection.requestFactory, searchState: searchState,
-                        initialJumpMessageID: initialJumpMessageID, jumpRequests: connection.transcriptJumps
+                        initialJumpMessageID: initialJumpMessageID, jumpRequests: connection.transcriptJumps,
+                        persistedReadPosition: currentSession.map {
+                            PersistedReadPosition(
+                                messageId: $0.readPositionMessageId, offsetPx: $0.readPositionOffsetPx,
+                                atBottom: $0.readPositionAtBottom ?? false)
+                        }
                     )
                     .overlay { TranscriptLoadState(sessionID: sessionID) }
                     .overlay(alignment: .top) { TranscriptOlderPageState(sessionID: sessionID) }
