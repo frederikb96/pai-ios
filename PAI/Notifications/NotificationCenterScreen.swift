@@ -148,10 +148,14 @@ struct NotificationCenterScreen: View {
             // No session to open — it was deleted since the notification was raised. Marking it
             // read is still the right outcome; there is nowhere further to send the reader.
             guard let sessionId = notification.sessionId else { return }
+            // `resolvedAnchorMessageID` re-fetches when this row's own anchor is still nil,
+            // rather than trusting whatever the list fetch happened to return — see its doc
+            // comment for why that is the common case, not an edge case.
+            let messageID = await store.resolvedAnchorMessageID(for: notification.id)
             // Pushed, not replaced: the centre is already on the stack, so this alone gives Back
             // the "return to the list at the position it was left" behaviour row 5.27 asks for —
             // no extra bookkeeping needed the way a cold push (`RootView`) does need.
-            environment.router.push(.session(id: sessionId, messageID: notification.anchor?.messageId))
+            environment.router.push(.session(id: sessionId, messageID: messageID))
         case .alert:
             expandedAlertID = (expandedAlertID == notification.id) ? nil : notification.id
         }

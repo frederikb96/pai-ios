@@ -241,6 +241,59 @@ final class NotificationCenterStoreTests: XCTestCase {
         XCTAssertTrue(store.rows.isEmpty)
     }
 
+    /// A row's anchor is often still null at tap time -- resolution is lazy-on-read on the
+    /// server, so the list fetch that populated `rows` frequently ran before the transcript
+    /// message was even ingested. A row that already carries one needs no round trip.
+    func testResolvedAnchorMessageIDReturnsTheLoadedRowsAnchorWithoutFetching() async {
+        let api = FakeNotificationCenterApi()
+        await api.setListResult(
+            .success(
+                NotificationsResponse(
+                    unread: 0, hasMore: false,
+                    notifications: [makeNotification(id: "1", anchor: PaiNotificationAnchor(messageId: 42))])))
+        let store = NotificationCenterStore(api: api)
+        await store.loadInitialNotifications()
+
+        let messageId = await store.resolvedAnchorMessageID(for: "1")
+
+        XCTAssertEqual(messageId, 42)
+        let calls = await api.getNotificationCalls
+        XCTAssertTrue(calls.isEmpty)
+    }
+
+    /// The common case: the loaded row's anchor is still null, so this re-fetches the
+    /// notification fresh, which is what triggers the server's own lazy resolution.
+    func testResolvedAnchorMessageIDRefetchesWhenTheLoadedRowHasNoAnchorYet() async {
+        let api = FakeNotificationCenterApi()
+        await api.setListResult(
+            .success(NotificationsResponse(unread: 0, hasMore: false, notifications: [makeNotification(id: "1")])))
+        await api.setGetNotificationResult(
+            .success(makeNotification(id: "1", anchor: PaiNotificationAnchor(messageId: 99))))
+        let store = NotificationCenterStore(api: api)
+        await store.loadInitialNotifications()
+
+        let messageId = await store.resolvedAnchorMessageID(for: "1")
+
+        XCTAssertEqual(messageId, 99)
+        let calls = await api.getNotificationCalls
+        XCTAssertEqual(calls, ["1"])
+    }
+
+    /// Still unresolved after the re-fetch (or the row is gone) -- `nil`, the same "land at the
+    /// normal restored position, no jump" degrade the web's own `?n=` fallback settles on.
+    func testResolvedAnchorMessageIDIsNilWhenStillUnresolved() async {
+        let api = FakeNotificationCenterApi()
+        await api.setListResult(
+            .success(NotificationsResponse(unread: 0, hasMore: false, notifications: [makeNotification(id: "1")])))
+        await api.setGetNotificationResult(.success(makeNotification(id: "1")))
+        let store = NotificationCenterStore(api: api)
+        await store.loadInitialNotifications()
+
+        let messageId = await store.resolvedAnchorMessageID(for: "1")
+
+        XCTAssertNil(messageId)
+    }
+
     func testFocusIsConsumedOnce() {
         let api = FakeNotificationCenterApi()
         let store = NotificationCenterStore(api: api)

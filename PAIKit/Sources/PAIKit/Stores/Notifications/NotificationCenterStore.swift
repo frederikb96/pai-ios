@@ -178,6 +178,21 @@ public final class NotificationCenterStore {
         return pendingFocusID
     }
 
+    /// The message a session row should jump to and highlight, re-fetching `id` fresh when the
+    /// loaded row's anchor is still `nil`. Resolution is lazy-on-read on the server, so the list
+    /// fetch that populated `rows` frequently ran before the transcript message it is about was
+    /// even ingested -- the common case, not an edge case. Mirrors the web's own `?n=` fallback
+    /// and `RootView.resolveAndOpenNotification`'s cold-push resolve, both of which already
+    /// re-fetch for exactly this reason; a tap inside the centre used to be the one path that
+    /// didn't.
+    public func resolvedAnchorMessageID(for id: String) async -> Int? {
+        if let cached = rows.first(where: { $0.id == id })?.anchor?.messageId {
+            return cached
+        }
+        guard let notification = try? await api.getNotification(id: id) else { return nil }
+        return notification.anchor?.messageId
+    }
+
     /// Fetches `id` on its own and prepends it to `rows` if it is not already loaded — what
     /// makes a focused row from an old push visible at all when it falls outside the first page,
     /// mirroring the web's own splice-in (`NotificationsApp.tsx`'s `expandedAlertId` effect).
