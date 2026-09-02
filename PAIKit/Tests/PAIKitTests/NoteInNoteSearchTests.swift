@@ -54,4 +54,26 @@ final class NoteInNoteSearchTests: XCTestCase {
     func testNoOccurrenceWhenQueryIsAbsent() {
         XCTAssertTrue(findOccurrences(body: "nothing relevant here", query: "zzz").isEmpty)
     }
+
+    /// The invariant a search result exists to uphold: every returned `context` actually contains
+    /// the query it was found for. Regression for a preview snippet sliced at the wrong position —
+    /// `offset` was found in a separately lower-cased Character array and then reused directly as
+    /// an index into the original, unlowered one, which is only safe if the two arrays have
+    /// identical length and identical grapheme boundaries at every position; `String.lowercased()`
+    /// gives no such guarantee. Run over a body with many occurrences, embeds, wikilinks and
+    /// non-ASCII text — the shape of a real long note — rather than one clean hit, since a
+    /// misalignment earlier in the body only shows up in occurrences found after it.
+    func testEveryContextContainsTheQueryItWasFoundFor() {
+        var body = ""
+        for i in 0..<40 {
+            body += "Line \(i) has a test in it, with a wikilink ![[attachments/Bericht über Tests \(i).png]].\n"
+        }
+        let occurrences = findOccurrences(body: body, query: "test")
+        XCTAssertGreaterThan(occurrences.count, 40, "expected both 'test' and 'Tests' to match case-insensitively")
+        for occ in occurrences {
+            XCTAssertTrue(
+                occ.context.lowercased().contains("test"),
+                "context '\(occ.context)' for offset \(occ.offset) does not contain the match")
+        }
+    }
 }
