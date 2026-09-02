@@ -37,7 +37,15 @@ struct NotificationCenterScreen: View {
                 guard !hasLoadedInitialNotifications else { return }
                 await store.loadInitialNotifications()
                 hasLoadedInitialNotifications = true
-                expandPendingFocusIfAny()
+                await expandPendingFocusIfAny()
+            }
+            // A push tapped while the centre is already on top never runs the `.task` above
+            // again — that only fires once, on first mount — so without this the new
+            // `pendingFocusID` sits unconsumed until the screen is torn down and rebuilt, and
+            // then expands whatever was still pending rather than nothing.
+            .onChange(of: store.pendingFocusID) { _, focusID in
+                guard focusID != nil else { return }
+                Task { await expandPendingFocusIfAny() }
             }
     }
 
@@ -150,9 +158,7 @@ struct NotificationCenterScreen: View {
     }
 
     private func clearAlert(_ notification: PaiNotification) async {
-        guard let alertId = notification.alert?.id, let client = environment.connection?.apiClient else { return }
-        _ = try? await client.clearAlerts(ids: [alertId])
-        await store.loadInitialNotifications()
+        await store.clearAlert(notification.id)
     }
 
     /// A push notification or an in-app tap can ask the centre to land on one row the moment it
@@ -160,8 +166,13 @@ struct NotificationCenterScreen: View {
     /// notification is resolved straight to its session and never routes through this screen at
     /// all — see `RootView.resolveAndOpenNotification`), so this only ever expands, never
     /// navigates again.
-    private func expandPendingFocusIfAny() {
+    ///
+    /// `ensureLoaded` splices the row in if it fell outside the loaded page — an old alert, most
+    /// likely — so it is expandable at all rather than silently un-expandable because it was
+    /// never fetched.
+    private func expandPendingFocusIfAny() async {
         guard let focusID = store.consumePendingFocus() else { return }
+        await store.ensureLoaded(id: focusID)
         expandedAlertID = focusID
     }
 
