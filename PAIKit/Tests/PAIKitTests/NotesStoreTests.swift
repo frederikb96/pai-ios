@@ -19,6 +19,13 @@ private final class FakeNotesApi: NotesApiClient, @unchecked Sendable {
     var getNoteLinksResult: NoteLinkGraph = NoteLinkGraph(outgoing: [], backlinks: [], extractionSkipped: false)
     var getNotesResult: [NoteSummary] = []
     var getNoteResult: NoteDetail?
+    var getNotesConfigResult: NotesConfig = NotesConfig(undoWindowSeconds: 15)
+    var getNotesConfigError: (any Error)?
+
+    func getNotesConfig() async throws -> NotesConfig {
+        if let getNotesConfigError { throw getNotesConfigError }
+        return getNotesConfigResult
+    }
 
     /// Off by default, so every ordinary test's `getNote` answers immediately. A test driving the
     /// load-vs-save race turns this on and holds the call open with a continuation instead of a
@@ -161,6 +168,34 @@ final class NotesStoreTests: XCTestCase {
         XCTAssertEqual(
             api.createNoteCalls.last?.name, "Untitled",
             "a row already marked pendingDelete must not count as a name still in use")
+    }
+
+    /// The one place the undo window is defined is the backend's own config route — `refresh()`
+    /// fetches it alongside the index rather than the store carrying its own copy.
+    func testRefreshAdoptsTheUndoWindowThePlatformPublishes() async {
+        let api = FakeNotesApi()
+        api.getNotesConfigResult = NotesConfig(undoWindowSeconds: 5)
+        let store = NotesStore(api: api)
+        XCTAssertEqual(store.undoWindowNanos, NotesStore.fallbackUndoWindowNanos)
+
+        await store.refresh()
+
+        XCTAssertEqual(store.undoWindowNanos, 5_000_000_000)
+    }
+
+    /// A failed config fetch must never leave the window on a stale, possibly-too-long value —
+    /// it stays on the short, safe fallback instead, and the failure does not surface as the
+    /// note list's own load error (that error is about the index, not this).
+    func testAFailedConfigFetchStaysOnTheSafeFallback() async {
+        struct Boom: Error {}
+        let api = FakeNotesApi()
+        api.getNotesConfigError = Boom()
+        let store = NotesStore(api: api)
+
+        await store.refresh()
+
+        XCTAssertEqual(store.undoWindowNanos, NotesStore.fallbackUndoWindowNanos)
+        XCTAssertNil(store.loadError)
     }
 
     /// The taken-name scan for a CONTAINER-LESS create is scoped to the other container-less

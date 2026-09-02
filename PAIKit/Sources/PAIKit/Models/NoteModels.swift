@@ -576,3 +576,20 @@ extension NoteSemanticHit: Decodable {
         noteId = try metadata.decode(String.self, forKey: .noteId)
     }
 }
+
+/// `GET /api/notes/config` — values a client would otherwise have to hardcode, published so
+/// there is exactly one of them rather than a copy per client that can silently drift apart.
+public struct NotesConfig: Codable, Sendable, Equatable {
+    /// How long a delete's undo toast stays offered before the backend finalizes it — a value
+    /// above what the backend actually finalizes at is what turns a press of Undo into a 404
+    /// against a note that is already gone.
+    public let undoWindowSeconds: Int
+
+    enum CodingKeys: String, CodingKey {
+        case undoWindowSeconds = "undo_window_seconds"
+    }
+
+    public init(undoWindowSeconds: Int) {
+        self.undoWindowSeconds = undoWindowSeconds
+    }
+}

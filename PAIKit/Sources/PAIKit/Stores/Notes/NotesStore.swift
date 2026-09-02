@@ -3,6 +3,7 @@ import Observation
 
 /// The narrow slice of `PaiApiClient` this store needs.
 public protocol NotesApiClient: Sendable {
+    func getNotesConfig() async throws -> NotesConfig
     func getNotes(containerId: String?, favourite: Bool?, limit: Int, offset: Int) async throws -> [NoteSummary]
     func getNote(id: String) async throws -> NoteDetail
     func patchNote(
@@ -83,6 +84,18 @@ public final class NotesStore {
     public private(set) var loadError: String?
     public private(set) var isLoading = false
 
+    /// Used only until `GET /api/notes/config` answers (``refresh()`` fetches it alongside the
+    /// index), and picked to be safely SHORT rather than a guess at the real number: the
+    /// backend's own finalize delay is always the undo window plus a margin, so sitting on a
+    /// value below the real window merely hides the undo action a little early — harmless —
+    /// while a value above it is what lets a press of Undo 404 against a note the backend
+    /// already finalized.
+    public static let fallbackUndoWindowNanos: UInt64 = 5_000_000_000
+    /// How long a delete's undo toast should stay offered — see
+    /// ``fallbackUndoWindowNanos``'s own doc comment for why a not-yet-loaded or failed fetch
+    /// never leaves this above that short, safe default.
+    public private(set) var undoWindowNanos: UInt64 = NotesStore.fallbackUndoWindowNanos
+
     // MARK: Open notes
 
     /// The last content read from the server, per note id. What a save is conditional against.
@@ -135,11 +148,18 @@ public final class NotesStore {
     public func refresh() async {
         isLoading = true
         defer { isLoading = false }
+        // Concurrent with the index fetch, and deliberately silent on failure (`try?`) — a
+        // stale or unreachable config must never surface as an error banner over the note list;
+        // it just leaves `undoWindowNanos` on its short, safe fallback.
+        async let configFetch = try? api.getNotesConfig()
         do {
             notes = try await api.getNotes(containerId: nil, favourite: nil, limit: 500, offset: 0)
             loadError = nil
         } catch {
             loadError = (error as? PaiError)?.userMessage ?? "Could not load notes"
+        }
+        if let config = await configFetch {
+            undoWindowNanos = UInt64(max(0, config.undoWindowSeconds)) * 1_000_000_000
         }
     }
 

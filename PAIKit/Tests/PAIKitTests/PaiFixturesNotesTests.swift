@@ -59,6 +59,11 @@ final class PaiFixturesNotesTests: XCTestCase {
         XCTAssertGreaterThan(longest, 90)
     }
 
+    func testTheConfigFixtureDecodes() throws {
+        let config = try decode(NotesConfig.self, PaiFixtures.notesConfig)
+        XCTAssertGreaterThan(config.undoWindowSeconds, 0)
+    }
+
     func testTheContainersScreenHasSomethingToShow() throws {
         let page = try decode(ContainersPage.self, PaiFixtures.noteContainers)
         XCTAssertEqual(page.containers.count, 2)
