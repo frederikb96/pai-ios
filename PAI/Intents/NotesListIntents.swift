@@ -41,6 +41,10 @@ struct CreateNoteIntent: AppIntent {
         guard let created = try? await client.createNote(name: name) else {
             throw CreateNoteIntentError.createFailed
         }
+        // Same one-shot signal the note list's own "+" button sends — see
+        // `NoteCreationFocus`'s doc comment. A note created by a shortcut deserves the same
+        // focused, fully-selected title as one created by tapping the button in-app.
+        NoteCreationFocus.shared.markCreated(id: created.id)
         DeepLinkInbox.shared.receive(.note(id: created.id))
         return .result()
     }

@@ -38,11 +38,32 @@ struct NoteEditorSurface: View {
     let onChange: (String) -> Void
 
     @Environment(NotesStore.self) private var notes
+    @Environment(SettingsStore.self) private var settings
     @Environment(ToastCenter.self) private var toasts
 
     @State private var isFocused = false
     @State private var caret: CaretRequest?
     @State private var caretToken = 0
+    /// Where the page's `ScrollView` sits. Written continuously from ``onScrollGeometryChange``
+    /// below, and read back once on ``onAppear`` to command a jump — `ScrollPosition`'s own
+    /// `x`/`y` go `nil` the moment the reader scrolls by hand, so it is a one-shot "go here", not
+    /// a live readout, and ``lastOffsetY`` is what actually remembers the position.
+    ///
+    /// Kept as this view's own `@State` rather than in a cross-screen store keyed by note id: a
+    /// plain SwiftUI `ScrollView` loses its offset when covered and revealed again on a
+    /// `NavigationStack` — the underlying `UIScrollView` can be torn down and rebuilt even though
+    /// this view's own state survives the round trip — and this binding is the first-party
+    /// mechanism for carrying a position across exactly that. A raw point rather than an anchored
+    /// id: nothing above the reader can change height while this note is off screen, unlike the
+    /// feed the ``scrolling`` skill warns against pixel offsets for, so "the exact position it
+    /// was left" is literally what a raw offset captures here.
+    @State private var scrollPosition = ScrollPosition()
+    /// The live vertical offset, updated on every scroll — this is what survives being covered
+    /// and revealed, and what ``scrollPosition`` is set from on reappearance.
+    @State private var lastOffsetY: CGFloat = 0
+    /// Fed by `MarkdownSourceTextView.onLineMetrics` — see that property's own doc comment for
+    /// why it stops computing entirely, rather than merely not drawing, while the gutter is off.
+    @State private var lineMetrics = NoteLineMetrics.empty
     /// What this view last handed upwards. Compared against an incoming `text` to tell "the note
     /// reloaded from the server" from "this is our own edit coming back", which must not disturb
     /// the caret.
@@ -80,13 +101,24 @@ struct NoteEditorSurface: View {
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 0) {
-                MarkdownSourceTextView(
-                    text: text, isFocused: isFocused && !isCovered, caret: caret, highlight: highlight,
-                    onChange: { edited($0) },
-                    onFocus: { isFocused = true },
-                    onAttach: { offset in beginAttachment(at: offset) }
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
+                // The gutter is an ordinary sibling here, not a synced overlay — see
+                // `NoteLineNumberGutter`'s own doc comment for why that is enough to keep it in
+                // lockstep with the text view as this whole page scrolls, with no offset
+                // observation of its own.
+                HStack(alignment: .top, spacing: 0) {
+                    if settings.showsNoteLineNumbers {
+                        NoteLineNumberGutter(metrics: lineMetrics)
+                    }
+                    MarkdownSourceTextView(
+                        text: text, isFocused: isFocused && !isCovered, caret: caret, highlight: highlight,
+                        onChange: { edited($0) },
+                        onFocus: { isFocused = true },
+                        onAttach: { offset in beginAttachment(at: offset) },
+                        onPasteImages: { offset, images in pasteImages(images, at: offset) },
+                        onLineMetrics: settings.showsNoteLineNumbers ? { lineMetrics = $0 } : nil
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
                 // Tapping under the note puts the caret at its end, which is what a page of text
                 // does. Sized rather than painted behind the stack: a background is exactly as
                 // tall as the content, so the empty space this exists to catch is the one place
@@ -99,6 +131,10 @@ struct NoteEditorSurface: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
         }
+        .scrollPosition($scrollPosition)
+        .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.y }) { _, newValue in
+            lastOffsetY = newValue
+        }
         .background(PaiPalette.Notes.background)
         .overlay(alignment: .top) {
             if isUploading {
@@ -107,6 +143,14 @@ struct NoteEditorSurface: View {
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
                     .padding(.top, 8)
             }
+        }
+        // Restores the position this note was left at, across being covered by a pushed screen
+        // and revealed again by Back — see ``lastOffsetY``'s own doc comment for why a plain
+        // `ScrollView` needs this at all. A fresh note has never scrolled, so this is a no-op the
+        // first time a note is opened.
+        .onAppear {
+            guard lastOffsetY > 0 else { return }
+            scrollPosition = ScrollPosition(x: 0, y: lastOffsetY)
         }
         .onChange(of: revision) { adoptIfChangedElsewhere() }
         .onChange(of: jump) { _, request in goTo(request) }
@@ -162,6 +206,23 @@ struct NoteEditorSurface: View {
         }
         attachmentOffset = offset
         isChoosingAttachment = true
+    }
+
+    /// A paste that carried an image — the same paste path the session composer already offers,
+    /// through `MarkdownSourceTextView/onPasteImages`'s own doc comment on why. `AttachmentCompression`
+    /// is the composer's own re-encode (HEIC included), reused rather than duplicated; the actual
+    /// upload is `upload(_:)` below, unchanged from what the paperclip already drives — a paste is
+    /// simply another way to arrive at the same offset `beginAttachment(at:)` captures from a tap.
+    private func pasteImages(_ images: [PastedImage], at offset: Int) {
+        guard notes.detail(for: noteID)?.containerId != nil else {
+            toasts.show("This note has no container, so there is nowhere to put a file", kind: .error)
+            return
+        }
+        attachmentOffset = offset
+        let staged = images.map {
+            AttachmentCompression.stage(data: $0.data, filename: $0.filename, mimeType: $0.mimeType)
+        }
+        Task { await upload(staged) }
     }
 
     /// Uploads what was picked and writes an embed for each file at the caret.

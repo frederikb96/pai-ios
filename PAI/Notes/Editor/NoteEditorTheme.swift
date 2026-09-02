@@ -51,9 +51,16 @@ enum NoteEditorTheme {
     // MARK: Painting
 
     /// Build the attributed string a text view shows for the whole note.
-    static func attributedText(for source: String, highlight: String? = nil) -> NSAttributedString {
+    ///
+    /// `showsHangingIndent` gates the one pass that is not always-on — the gutter and the
+    /// wrap indent are one visual feature behind one settings toggle (spec row 16's own
+    /// "BLOCK" framing), so a reader who has not turned the gutter on gets no extra
+    /// measurement work either.
+    static func attributedText(
+        for source: String, highlight: String? = nil, showsHangingIndent: Bool = false
+    ) -> NSAttributedString {
         let attributed = NSMutableAttributedString(string: source)
-        paint(attributed, highlight: highlight)
+        paint(attributed, highlight: highlight, showsHangingIndent: showsHangingIndent)
         return attributed
     }
 
@@ -64,13 +71,13 @@ enum NoteEditorTheme {
     /// `MarkdownSourceTextView.Coordinator.scheduleRepaint`). Replacing the string instead would
     /// record a wholesale edit that Undo then reverts as one, which for an editor is worse than
     /// no highlighting at all.
-    static func repaint(_ storage: NSTextStorage, highlight: String? = nil) {
+    static func repaint(_ storage: NSTextStorage, highlight: String? = nil, showsHangingIndent: Bool = false) {
         storage.beginEditing()
-        paint(storage, highlight: highlight)
+        paint(storage, highlight: highlight, showsHangingIndent: showsHangingIndent)
         storage.endEditing()
     }
 
-    private static func paint(_ attributed: NSMutableAttributedString, highlight: String?) {
+    private static func paint(_ attributed: NSMutableAttributedString, highlight: String?, showsHangingIndent: Bool) {
         let source = attributed.string
         let full = NSRange(location: 0, length: attributed.length)
         // Set, not add: the previous pass's attributes have to go, or a character that stops being
@@ -78,6 +85,25 @@ enum NoteEditorTheme {
         // block or a table lays out inside the same text view as everything else, rather than in
         // its own non-wrapping region; only `.codeBlockContent` below still marks code out visually.
         attributed.setAttributes([.font: bodyFont, .foregroundColor: text], range: full)
+
+        // A wrapped list item's continuation lines align under the item's own text rather than
+        // restarting at the margin — Obsidian's own behaviour, and native TextKit's own way to
+        // get it: `headIndent` is resolved during layout using the real, proportional font
+        // metrics, so there is no separate pixel-measurement pass to keep in step with the font.
+        if showsHangingIndent {
+            for indent in MarkdownHangingIndent.indents(for: source) {
+                let range = NSRange(location: indent.location, length: indent.length)
+                guard range.upperBound <= attributed.length else { continue }
+                let markerRange = NSRange(location: indent.location, length: indent.markerWidth)
+                guard markerRange.upperBound <= attributed.length else { continue }
+                // The real marker text, not a placeholder — a run of digits and a run of spaces
+                // are not the same width in a proportional font, and neither is a tab.
+                let marker = (source as NSString).substring(with: markerRange)
+                let style = NSMutableParagraphStyle()
+                style.headIndent = (marker as NSString).size(withAttributes: [.font: bodyFont]).width
+                attributed.addAttribute(.paragraphStyle, value: style, range: range)
+            }
+        }
 
         // Block styles come first and inline styles second, in the order the scanner emitted
         // them, so bold inside a heading lands on top of the heading rather than replacing it.

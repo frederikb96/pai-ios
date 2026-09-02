@@ -134,10 +134,14 @@ public enum MarkdownSourceHighlighter {
 
         // MARK: Lines
 
+        /// `isNewline` rather than `== "\n"` — see ``MarkdownLineSyntax/splitKeepingTerminators(_:)``,
+        /// the other independent scanner that made the same mistake. Swift clusters a `\r\n` pair
+        /// into one `Character`, equal to neither bare terminator, so comparing against the
+        /// literal leaves a CRLF-terminated note as one unbroken line here too.
         func lineRanges() -> [Range<Int>] {
             var ranges: [Range<Int>] = []
             var start = 0
-            for index in characters.indices where characters[index] == "\n" {
+            for index in characters.indices where characters[index].isNewline {
                 ranges.append(start..<(index + 1))
                 start = index + 1
             }
@@ -219,7 +223,7 @@ public enum MarkdownSourceHighlighter {
 
         func trimmedTrailingNewline(_ range: Range<Int>) -> Range<Int> {
             var end = range.upperBound
-            while end > range.lowerBound, characters[end - 1] == "\n" || characters[end - 1] == "\r" {
+            while end > range.lowerBound, characters[end - 1].isNewline {
                 end -= 1
             }
             return range.lowerBound..<end

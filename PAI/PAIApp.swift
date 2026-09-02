@@ -108,6 +108,19 @@ struct PAIApp: App {
                 }
             }
 
+            // Spec row 16.2's own ask, answered as a number rather than a guess: how long a
+            // debounced repaint takes on this note, with the gutter and hanging indent on versus
+            // off — the exact cost the toggle can add to every keystroke's catch-up pass.
+            router.register("POST", "/markdown/note-editor-timing") { request in
+                let source = String(decoding: request.body, as: UTF8.self)
+                let width = request.query["width"].flatMap(Double.init) ?? 350
+                return DispatchQueue.main.sync {
+                    MainActor.assumeIsolated {
+                        DebugNoteEditorTiming.measure(source: source, width: width)
+                    }
+                }
+            }
+
             router.register("GET", "/logs") { request in
                 let level = request.query["level"].flatMap(DebugLogBuffer.Level.init(rawValue:)) ?? .debug
                 let limit = request.query["limit"].flatMap(Int.init) ?? 100
@@ -188,6 +201,73 @@ struct PAIApp: App {
                     width: width, blockCount: blocks.count, kinds: blocks.map(DebugRoutes.kind(of:)),
                     measuredHeight: measuredHeight, renderedHeight: Double(renderedHeight),
                     delta: measuredHeight - Double(renderedHeight)))
+        }
+    }
+
+    /// Backs `POST /markdown/note-editor-timing`. Calls `NoteEditorTheme.repaint` and
+    /// `MarkdownSourceTextView.lineMetrics(for:)` directly — the exact functions a keystroke's
+    /// debounced catch-up pass calls — against a real, offscreen `UITextView` built the same way
+    /// `MarkdownSourceTextView.makeUIView` builds its own, so the numbers this reports are what a
+    /// device actually spends, not an estimate of it.
+    enum DebugNoteEditorTiming {
+        struct Report: Encodable {
+            let noteUtf16Length: Int
+            let lineCount: Int
+            let width: Double
+            /// A debounced repaint with the gutter and hanging indent off — today's baseline.
+            let repaintMsBaseline: Double
+            /// The same repaint with both on — what spec row 16.2 asks to see measured rather
+            /// than assumed.
+            let repaintMsWithLineNumbers: Double
+            /// The gutter's own added geometry read, on top of the repaint above — piggybacked
+            /// on the same debounce in the live editor, reported separately here so the two
+            /// costs this feature adds are each visible on their own.
+            let lineMetricsMs: Double
+        }
+
+        @MainActor
+        static func measure(source: String, width: Double) -> DebugRouter.Response {
+            let lineCount = source.reduce(into: 1) { count, character in
+                if character.isNewline { count += 1 }
+            }
+
+            func offscreenTextView(showsHangingIndent: Bool) -> UITextView {
+                let view = UITextView(usingTextLayoutManager: false)
+                view.textContainerInset = UIEdgeInsets(
+                    top: MarkdownSourceTextView.verticalInset, left: 0,
+                    bottom: MarkdownSourceTextView.verticalInset, right: 0)
+                view.textContainer.lineFragmentPadding = 0
+                view.textContainer.widthTracksTextView = true
+                view.isScrollEnabled = false
+                view.frame = CGRect(x: 0, y: 0, width: width, height: 100)
+                view.attributedText = NoteEditorTheme.attributedText(
+                    for: source, highlight: nil, showsHangingIndent: showsHangingIndent)
+                return view
+            }
+
+            let baseline = offscreenTextView(showsHangingIndent: false)
+            let baselineStart = DispatchTime.now()
+            NoteEditorTheme.repaint(baseline.textStorage, highlight: nil, showsHangingIndent: false)
+            let repaintMsBaseline = millisecondsSince(baselineStart)
+
+            let withGutter = offscreenTextView(showsHangingIndent: true)
+            let withGutterStart = DispatchTime.now()
+            NoteEditorTheme.repaint(withGutter.textStorage, highlight: nil, showsHangingIndent: true)
+            let repaintMsWithLineNumbers = millisecondsSince(withGutterStart)
+
+            let lineMetricsStart = DispatchTime.now()
+            _ = MarkdownSourceTextView.lineMetrics(for: withGutter)
+            let lineMetricsMs = millisecondsSince(lineMetricsStart)
+
+            return .encoding(
+                Report(
+                    noteUtf16Length: source.utf16.count, lineCount: lineCount, width: width,
+                    repaintMsBaseline: repaintMsBaseline, repaintMsWithLineNumbers: repaintMsWithLineNumbers,
+                    lineMetricsMs: lineMetricsMs))
+        }
+
+        private static func millisecondsSince(_ start: DispatchTime) -> Double {
+            Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000
         }
     }
 

@@ -23,4 +23,27 @@ public enum NoteNaming {
         while used.contains(normalizeForNoteSearch("\(root) \(suffix)")) { suffix += 1 }
         return "\(root) \(suffix)"
     }
+
+    /// Whether `name` already belongs to some other note in `containerId` — a fast, local
+    /// preview of what the server's own rename check will say, compared the same
+    /// case- and diacritic-insensitive way ``freeName(base:taken:)`` is.
+    ///
+    /// Not the rule: the server holds the real vault and is free to disagree (another device
+    /// wrote a colliding name a moment ago), so a caller must still send the rename and read
+    /// its answer rather than trusting this to gate the request. This exists only to paint a
+    /// field invalid before that round trip, not to replace it.
+    public static func collides(
+        name: String, containerId: String?, excluding noteID: String, among notes: [NoteSummary]
+    )
+        -> Bool
+    {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let target = normalizeForNoteSearch(trimmed)
+        return notes.contains { note in
+            note.id != noteID && !note.pendingDelete
+                && (containerId == nil || note.containerId == containerId)
+                && normalizeForNoteSearch(note.name) == target
+        }
+    }
 }

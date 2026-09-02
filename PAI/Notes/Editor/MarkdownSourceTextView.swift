@@ -18,6 +18,24 @@ struct CaretRequest: Equatable {
     var settlesAtTopThird: Bool = false
 }
 
+/// One source line's number and the y-offset, in the text view's own coordinate space, where its
+/// first visual row begins — a line-number gutter's only input. A wrapped line contributes
+/// several visual rows but only one of these: the gutter draws a number beside the first row of
+/// its logical line and nothing beside the rest, matching Obsidian's own gutter.
+struct NoteLineMetric: Equatable {
+    let lineNumber: Int
+    let y: CGFloat
+}
+
+/// Every logical line's metric for the current layout, plus the text view's own measured content
+/// height — what a gutter, drawn as an ordinary sibling in the page's `ScrollView` rather than a
+/// synced overlay, sizes itself to so its numbers land at the same height as the lines beside it.
+struct NoteLineMetrics: Equatable {
+    static let empty = NoteLineMetrics(lines: [], contentHeight: 0)
+    let lines: [NoteLineMetric]
+    let contentHeight: CGFloat
+}
+
 /// The note's whole markdown source, in one wrapping, editable text view.
 ///
 /// Fenced code and tables lay out inside this same view rather than in their own non-wrapping,
@@ -27,6 +45,11 @@ struct CaretRequest: Equatable {
 /// Backspace and Undo simply UIKit's own behaviour, with no seam anywhere for this editor to get
 /// wrong.
 struct MarkdownSourceTextView: UIViewRepresentable {
+
+    /// The top and bottom padding TextKit lays the whole note out inside — one source of truth
+    /// for both the text view itself and the line-number gutter drawn beside it, which has to
+    /// start its first number at exactly this same offset to land beside the first line.
+    static let verticalInset: CGFloat = 6
 
     let text: String
     let isFocused: Bool
@@ -43,6 +66,15 @@ struct MarkdownSourceTextView: UIViewRepresentable {
     /// has to end up. Captured at the tap because presenting a picker takes the keyboard away, and
     /// with it the selection.
     let onAttach: (Int) -> Void
+    /// A pasted image, landing wherever the caret was at the moment of the paste — the same
+    /// `PastedImage` shape and the same `PasteAwareTextView` the session composer already pastes
+    /// images through, reused rather than reimplemented (see that type's own doc comment for why
+    /// a plain `UITextView` needs it at all: `Paste` only appears when the pasteboard holds text).
+    let onPasteImages: (Int, [PastedImage]) -> Void
+    /// Where the line-number gutter is fed from, when it is showing. `nil` while the gutter is
+    /// off, which skips the geometry read entirely rather than computing metrics nobody draws —
+    /// the cheapest way to guarantee the toggle costs nothing when it is off.
+    let onLineMetrics: ((NoteLineMetrics) -> Void)?
 
     func makeUIView(context: Context) -> UITextView {
         // TextKit 1, explicitly. The editor repaints after every keystroke, and the only way to do
@@ -51,10 +83,15 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         // one wholesale edit and which drops the selection. `textStorage` is TextKit 1's API, and
         // merely touching it on a TextKit 2 view silently falls back anyway; asking for it up
         // front makes that a decision rather than a side effect.
-        let view = UITextView(usingTextLayoutManager: false)
+        let view = PasteAwareTextView(usingTextLayoutManager: false)
+        view.onPasteImages = { [weak view] images in
+            guard let view else { return }
+            context.coordinator.handlePaste(images, at: view.selectedRange.location)
+        }
         view.delegate = context.coordinator
         view.backgroundColor = .clear
-        view.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
+        view.textContainerInset = UIEdgeInsets(
+            top: Self.verticalInset, left: 0, bottom: Self.verticalInset, right: 0)
         view.textContainer.lineFragmentPadding = 0
         view.tintColor = NoteEditorTheme.accent
         view.inputAccessoryView = context.coordinator.keyboardBar
@@ -71,28 +108,44 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         view.isScrollEnabled = false
         view.textContainer.widthTracksTextView = true
 
-        view.attributedText = NoteEditorTheme.attributedText(for: text, highlight: highlight)
+        view.attributedText = NoteEditorTheme.attributedText(
+            for: text, highlight: highlight, showsHangingIndent: onLineMetrics != nil)
         context.coordinator.paintedHighlight = highlight
         return view
     }
 
     func updateUIView(_ view: UITextView, context: Context) {
+        // Read before `parent` is overwritten below: the gutter toggling on is exactly the
+        // moment `onLineMetrics` goes from nil to real, and nothing else about this update would
+        // otherwise notice — the text has not changed and the width-gated check further down
+        // only fires from a genuine layout pass, which merely flipping the toggle does not cause.
+        let justGainedLineMetrics = context.coordinator.parent.onLineMetrics == nil && onLineMetrics != nil
         context.coordinator.parent = self
+        if justGainedLineMetrics {
+            context.coordinator.reportLineMetricsIfNeeded(view, forcing: true)
+        }
 
         // Only when it actually differs. Assigning `attributedText` resets the selection, so
         // doing it on every update would drag the caret to the end on every keystroke — the
         // single most obvious way an editor feels broken.
         if view.text != text {
             let selected = view.selectedRange
-            view.attributedText = NoteEditorTheme.attributedText(for: text, highlight: highlight)
+            view.attributedText = NoteEditorTheme.attributedText(
+                for: text, highlight: highlight, showsHangingIndent: onLineMetrics != nil)
             view.selectedRange = NSRange(
                 location: min(selected.location, view.text.utf16.count), length: 0)
             context.coordinator.paintedHighlight = highlight
+            // Forced rather than left to the width-gated check below: the text changed here, at
+            // whatever width the view already has, so the cached width would wrongly read as
+            // "nothing to do" and leave the gutter numbered for the text this view no longer
+            // shows — a fresh read, a restored revision, a conflict resolved in the vault's
+            // favour, all take this branch and all change what a line number even refers to.
+            context.coordinator.reportLineMetricsIfNeeded(view, forcing: true)
         } else if context.coordinator.paintedHighlight != highlight {
             // The text is unchanged and only what is being searched for moved, so the string must
             // not be reassigned — restyling the storage in place leaves the caret and the undo
             // stack alone.
-            NoteEditorTheme.repaint(view.textStorage, highlight: highlight)
+            NoteEditorTheme.repaint(view.textStorage, highlight: highlight, showsHangingIndent: onLineMetrics != nil)
             context.coordinator.paintedHighlight = highlight
         }
 
@@ -131,6 +184,42 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         Coordinator(parent: self)
     }
 
+    /// One metric per logical (source) line, read off layout TextKit has already computed rather
+    /// than run as a pass of its own — see this type's own doc comment for why that is cheap
+    /// here specifically. A visual row is the first row of its logical line when the glyph range
+    /// it covers starts at the very beginning of the document or immediately after a line
+    /// terminator; `0x0A`/`0x0D` cover a lone `\n`, a lone old-Mac `\r`, and a `\r\n` pair alike —
+    /// TextKit treats `\r\n` as a single terminator, so only the `\n` half of the pair is ever the
+    /// character immediately before a real line start.
+    static func lineMetrics(for textView: UITextView) -> NoteLineMetrics {
+        let layoutManager = textView.layoutManager
+        let source = textView.textStorage.string as NSString
+        layoutManager.ensureLayout(for: textView.textContainer)
+
+        var lines: [NoteLineMetric] = []
+        var lineNumber = 1
+        var contentHeight: CGFloat = 0
+        let glyphCount = layoutManager.numberOfGlyphs
+
+        guard glyphCount > 0 else {
+            return NoteLineMetrics(lines: [NoteLineMetric(lineNumber: 1, y: 0)], contentHeight: 0)
+        }
+
+        layoutManager.enumerateLineFragments(forGlyphRange: NSRange(location: 0, length: glyphCount)) {
+            rect, _, _, glyphRange, _ in
+            let charIndex = layoutManager.characterIndexForGlyph(at: glyphRange.location)
+            let isFirstRowOfLine =
+                charIndex == 0 || source.character(at: charIndex - 1) == 0x0A
+                || source.character(at: charIndex - 1) == 0x0D
+            if isFirstRowOfLine {
+                lines.append(NoteLineMetric(lineNumber: lineNumber, y: rect.minY))
+                lineNumber += 1
+            }
+            contentHeight = max(contentHeight, rect.maxY)
+        }
+        return NoteLineMetrics(lines: lines, contentHeight: contentHeight)
+    }
+
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: MarkdownSourceTextView
         /// The last caret request actually applied — see ``CaretRequest``.
@@ -158,8 +247,24 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         private var repaintWorkItem: DispatchWorkItem?
         private static let repaintDebounce: TimeInterval = 0.12
 
+        /// The width line metrics were last computed for — see ``reportLineMetricsIfNeeded(_:)``.
+        /// `nil` means never: the initial computation and a width change (rotation, a sidebar)
+        /// both go through the same guard, and ordinary typing — which changes height, not width
+        /// — is deliberately excluded from it, so the gutter never adds a fourth per-keystroke
+        /// geometry read on top of the debounced one below.
+        private var lastMetricsWidth: CGFloat?
+
         init(parent: MarkdownSourceTextView) {
             self.parent = parent
+        }
+
+        /// Routed through the coordinator rather than captured directly at `makeUIView` time, the
+        /// same reason every other callback here goes through `parent` — a closure captured once,
+        /// when the view is first created, would keep calling whatever `onPasteImages` this view
+        /// was built with, silently missing any prop change since. `parent` is kept current by
+        /// `updateUIView`, so reading it here always calls the caller's latest closure.
+        func handlePaste(_ images: [PastedImage], at offset: Int) {
+            parent.onPasteImages(offset, images)
         }
 
         func textViewDidChange(_ textView: UITextView) {
@@ -172,15 +277,50 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         /// Coalesces the highlighter pass onto a short idle gap instead of running it after every
         /// character. The text itself is never held up — UIKit already painted the raw keystroke
         /// before this delegate callback runs; only the *styling* catches up a beat later.
+        ///
+        /// Line metrics for the gutter piggyback on this same debounce rather than getting a pass
+        /// of their own — enumerating the fragments TextKit already laid out for the repaint above
+        /// is a cheap geometry read, not a second expensive one.
         private func scheduleRepaint(_ textView: UITextView) {
             repaintWorkItem?.cancel()
             let highlight = parent.highlight
+            let onLineMetrics = parent.onLineMetrics
             let work = DispatchWorkItem { [weak textView] in
                 guard let textView, textView.window != nil else { return }
-                NoteEditorTheme.repaint(textView.textStorage, highlight: highlight)
+                NoteEditorTheme.repaint(
+                    textView.textStorage, highlight: highlight, showsHangingIndent: onLineMetrics != nil)
+                if let onLineMetrics {
+                    onLineMetrics(MarkdownSourceTextView.lineMetrics(for: textView))
+                }
             }
             repaintWorkItem = work
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.repaintDebounce, execute: work)
+        }
+
+        /// Computes line metrics outside the typing path — the initial layout, and any later
+        /// width change (rotation, the sidebar opening). `scrollViewDidLayoutSubviews` fires on
+        /// every layout pass, typing included, so the width check is what keeps this from running
+        /// on every keystroke: typing changes the text view's height, laid out one dimension at a
+        /// time by `sizeThatFits`, but never its width.
+        ///
+        /// `forcing` bypasses the width cache for a text change at an unchanged width — see the
+        /// `updateUIView` call site's own comment for why that path cannot rely on this check.
+        /// Either way, a still-zero width (the very first layout pass, before SwiftUI has sized
+        /// this view at all) is skipped rather than measured: `ensureLayout` against no width
+        /// produces a layout nobody will read, and the next real layout pass reports it correctly
+        /// once the cache — left untouched here — still reads as "never computed."
+        func reportLineMetricsIfNeeded(_ textView: UITextView, forcing: Bool = false) {
+            guard let onLineMetrics = parent.onLineMetrics else { return }
+            guard textView.bounds.width > 0 else { return }
+            guard forcing || textView.bounds.width != lastMetricsWidth else { return }
+            lastMetricsWidth = textView.bounds.width
+            onLineMetrics(MarkdownSourceTextView.lineMetrics(for: textView))
+        }
+
+        func scrollViewDidLayoutSubviews(_ scrollView: UIScrollView) {
+            guard let textView = scrollView as? UITextView else { return }
+            self.textView = textView
+            reportLineMetricsIfNeeded(textView)
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {

@@ -227,6 +227,34 @@ jobs:
               "http://127.0.0.1:8765/markdown/measure?width=360" \
               -o "artifacts/measure-$m.json" || true
           done
+
+          # Spec row 16.2's own ask, on this device rather than reasoned about: how much a
+          # debounced repaint costs with the note-editor gutter and hanging indent on, against
+          # the same note with them off. A large note — dozens of list items long enough to wrap,
+          # the shape that exercises the hanging indent — not a short one nothing would notice.
+          python3 -c "
+          lines = []
+          for section in range(1, 40):
+              lines.append(f'## Section {section}')
+              lines.append('')
+              for i in range(1, 8):
+                  lines.append(
+                      f'- item {section}.{i} with enough prose in it to wrap across more than one '
+                      'visual line on a phone width, which is the shape that exercises the hanging '
+                      'indent this measures rather than a short bullet that never wraps at all')
+              lines.append('')
+              lines.append(
+                  'Ordinary prose between the lists, several sentences long, so the note is not '
+                  'entirely list markup and reads like something written over weeks of real use '
+                  'rather than a synthetic worst case built only to be slow.')
+              lines.append('')
+          open('/tmp/large-note.md', 'w').write('\n'.join(lines))
+          "
+          wc -c /tmp/large-note.md
+          curl -sS --max-time 15 --data-binary "@/tmp/large-note.md" \
+            "http://127.0.0.1:8765/markdown/note-editor-timing?width=350" \
+            -o artifacts/note-editor-timing.json || true
+          cat artifacts/note-editor-timing.json || true
           xcrun simctl terminate "$udid" "$bundle" || true
 
           names=$(python3 -c "import json; print('\n'.join(json.load(open('artifacts/screens.json'))['screens']))")
