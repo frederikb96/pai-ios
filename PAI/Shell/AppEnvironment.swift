@@ -144,6 +144,16 @@ final class AppEnvironment {
         // Built ahead of the literal rather than inside it: the recorder needs both of these, and
         // a struct literal cannot refer to fields it is still building.
         let settingsStore = SettingsStore(apiClient: client, storage: defaults)
+        #if DEBUG
+            // Recordings have no REST route for `PaiFixtureURLProtocol` to answer — they are
+            // client-side only, so fixture mode has to seed `SettingsStore` directly. Without
+            // this the picker's "Recovered" row is built, tested and never once drawn, even in
+            // CI, since nothing else ever exercises `RecordingReconciliation`'s output.
+            if PaiFixtureLaunch.isEnabled() {
+                settingsStore.saveRecording(PaiFixtures.recordingOrdinary)
+                settingsStore.saveRecording(PaiFixtures.recordingRecovered)
+            }
+        #endif
         let draftStore = DraftStore(api: client)
         let toasts = ToastCenter()
 

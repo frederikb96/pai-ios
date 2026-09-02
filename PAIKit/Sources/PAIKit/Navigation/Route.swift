@@ -40,6 +40,13 @@ public enum Route: Hashable, Sendable {
     /// navigates to it, but it is the screen whose *rendering* most needs photographing, and
     /// nothing free can see it.
     case notePreview(id: String)
+    /// Past Recordings. Reached only from the fixture screenshot workflow, the same way
+    /// `.createSession` is: real usage presents `RecordingsSheet` from the composer's plus-icon,
+    /// never by pushing a route, so `RootView` reproduces that sheet presentation here rather
+    /// than pushing the view directly. Without this the picker's "Recovered" row is never drawn
+    /// anywhere free — no route means the screenshot workflow can never reach it at all,
+    /// regardless of whether the list underneath has anything in it.
+    case recordings
 }
 
 extension Route {
@@ -52,7 +59,7 @@ extension Route {
     /// hardcoding it, so a new screen becomes photographable without a CI file edit.
     public static let namedScreens: [String] = [
         "session", "terminal", "settings", "createSession", "subagents", "notes", "note", "noteContainers",
-        "notePreview",
+        "notePreview", "recordings",
     ]
 
     /// Parses a launch-argument screen name into a route. `sessionID` fills in every
@@ -76,6 +83,7 @@ extension Route {
         case "note": return .note(id: noteID)
         case "noteContainers": return .noteContainers
         case "notePreview": return .notePreview(id: noteID)
+        case "recordings": return .recordings
         default: return nil
         }
     }
@@ -182,7 +190,8 @@ public final class Router {
             switch route {
             case .session(let id): return id
             case .terminal(let sessionID): return sessionID
-            case .settings, .createSession, .subagents, .notes, .note, .noteContainers, .notePreview: continue
+            case .settings, .createSession, .subagents, .notes, .note, .noteContainers, .notePreview, .recordings:
+                continue
             }
         }
         return nil
@@ -194,7 +203,8 @@ public final class Router {
         for route in path.reversed() {
             switch route {
             case .note(let id), .notePreview(let id): return id
-            case .session, .terminal, .settings, .createSession, .subagents, .notes, .noteContainers: continue
+            case .session, .terminal, .settings, .createSession, .subagents, .notes, .noteContainers, .recordings:
+                continue
             }
         }
         return nil
