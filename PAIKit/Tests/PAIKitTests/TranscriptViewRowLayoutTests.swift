@@ -335,6 +335,24 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         XCTAssertEqual(actual, expected)
     }
 
+    /// An attachment-only resend (no text at all) draws no bubble and no "Resent" label — mirrors
+    /// `testAttachmentsWithNoTextAddOnlyChipHeightsAndTheGapsBetweenThem` above, and matches the
+    /// web's own `{text && (…)}` wrapping the whole labelled bubble.
+    func testResentUserBubbleWithNoTextAddsOnlyChipHeightsAndNoLabelChrome() {
+        let msg = message(
+            type: .user, subtype: "resent",
+            content: ".claude/attachments/a/one.png .claude/attachments/a/two.png", timestamp: nil)
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        let actual = TranscriptRowLayout.height(
+            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
+            metrics: metrics)
+
+        // Two 22pt chips, one 6pt gap between them — no bubble, no label, no bubble padding.
+        XCTAssertEqual(actual, 2 * 22 + 6)
+    }
+
     /// Attachments on a resend gap after the labelled bubble the same way an ordinary user
     /// message's chips do — the label is always present, so the extra gap applies once more,
     /// between the bubble and the first chip.

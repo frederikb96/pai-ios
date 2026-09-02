@@ -481,11 +481,12 @@ struct RelayedBubbleView: View {
 }
 
 /// The second copy of a prompt Freddy sent, resent after an interrupt cut off the first — his own
-/// bubble, kept subdued (a faded fill, matching neither the full-strength send nor a system card)
-/// with a small "Resent" label above it, the same shape ``RelayedBubbleView`` uses for its own
-/// sender pill. `TranscriptRowLayout`'s `.resentUserBubble` case mirrors this exactly: label and
-/// bubble always drawn together, chips after — a number that moves here and not there is a row
-/// drawn taller than the cell it was given.
+/// bubble at 70% opacity (mirroring the web's `bg-primary-500/70`), with a small "Resent" pill
+/// above the text carrying the same rotate glyph the web draws (`RotateCcw`, matched here by
+/// `arrow.counterclockwise`). The pill only exists when there is text to caption, same as the
+/// web's own `{text && (…)}` — an attachment-only resend draws exactly like a plain attachment-only
+/// send, with no bubble or label at all. `TranscriptRowLayout`'s `.resentUserBubble` case mirrors
+/// this precisely: a number that moves here and not there is a row drawn taller than its cell.
 struct ResentBubbleView: View {
     @Environment(\.colorScheme) private var colorScheme
     let text: String
@@ -496,23 +497,34 @@ struct ResentBubbleView: View {
 
     var body: some View {
         VStack(alignment: .trailing, spacing: TranscriptRowMetrics.attachmentChipSpacing) {
-            VStack(alignment: .trailing, spacing: TranscriptRowMetrics.bubbleLabelSpacing) {
-                Text("Resent")
-                    .font(PaiTypography.captionEmphasized.font)
-                    .foregroundStyle(.white.opacity(0.85))
-                    .frame(height: TranscriptRowMetrics.bubbleLabelLineHeight, alignment: .trailing)
-                if !text.isEmpty {
+            if !text.isEmpty {
+                VStack(alignment: .trailing, spacing: TranscriptRowMetrics.bubbleLabelSpacing) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("Resent")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundStyle(.white.opacity(0.9))
+                    .padding(.horizontal, 6)
+                    // Pinned to the label's own line height rather than letting the pill's
+                    // padding add to it — the pill is purely a horizontal decoration, so the
+                    // vertical budget `TranscriptRowLayout` already reserves for a bubble's label
+                    // line never has to change to fit it.
+                    .frame(height: TranscriptRowMetrics.bubbleLabelLineHeight)
+                    .background(Color.white.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+
                     TranscriptTextHighlighting.plainText(text, font: PaiTypography.body.font, highlights: highlights)
                         .foregroundStyle(.white)
                 }
+                .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding)
+                .padding(.vertical, TranscriptRowMetrics.bubbleVerticalPadding / 2)
+                .background(
+                    bubbleFill(light: PaiPalette.primary500, dark: PaiPalette.primary600, colorScheme: colorScheme)
+                        .opacity(0.7),
+                    in: .ownBubbleTail
+                )
             }
-            .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding)
-            .padding(.vertical, TranscriptRowMetrics.bubbleVerticalPadding / 2)
-            .background(
-                bubbleFill(light: PaiPalette.primary500, dark: PaiPalette.primary600, colorScheme: colorScheme)
-                    .opacity(0.6),
-                in: .ownBubbleTail
-            )
             ForEach(attachmentPaths, id: \.self) { path in
                 SessionAttachmentChipView(
                     sessionID: sessionID, apiClient: apiClient, path: path, requiresConfirmation: false)

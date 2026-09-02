@@ -244,13 +244,13 @@ public enum TranscriptRowLayout {
             return (text.isEmpty ? 0 : content) + labelChrome + TranscriptRowMetrics.bubbleVerticalPadding
 
         case .resentUserBubble(let text, let attachmentPaths):
-            // The label and text always share one bubble, same as `.relayedBubble` — the "Resent"
-            // affordance is what identifies the row even when a resend carried no text at all
-            // (an attachment-only resend). Chips after it, outside the bubble, same as
-            // `.userBubble`.
-            let bubbleHeight = (text.isEmpty ? 0 : content) + labelChrome + TranscriptRowMetrics.bubbleVerticalPadding
+            // Mirrors `.userBubble` exactly, not `.relayedBubble`: the label+bubble only exist
+            // when there's text to caption (the web's own `{text && (…)}`), so an attachment-only
+            // resend draws exactly like a plain attachment-only send — no bubble, no label.
+            let hasText = !text.isEmpty
+            let bubbleHeight = hasText ? content + labelChrome + TranscriptRowMetrics.bubbleVerticalPadding : 0
             let chips = Double(attachmentPaths.count) * TranscriptRowMetrics.attachmentChipHeight
-            let childCount = 1 + attachmentPaths.count
+            let childCount = (hasText ? 1 : 0) + attachmentPaths.count
             let gaps = childCount > 1 ? Double(childCount - 1) * TranscriptRowMetrics.attachmentChipSpacing : 0
             return bubbleHeight + chips + gaps
 
