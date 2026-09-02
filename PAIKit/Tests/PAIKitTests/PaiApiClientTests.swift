@@ -170,6 +170,27 @@ final class PaiApiClientTests: XCTestCase {
         XCTAssertTrue(body.contains(#""purpose":"batch""#), body)
     }
 
+    /// The wire contract the terminal's Return key depends on: `literal: true` has to reach the
+    /// backend under exactly that field name, or a line break silently becomes a submit with
+    /// nothing to notice it client-side.
+    func testSendTerminalInputEncodesLiteralTrueWhenRequested() async throws {
+        stubJSON("{}")
+        let client = try makeClient()
+        try await client.sendTerminalInput(sessionId: "s1", data: "\r", literal: true)
+
+        let body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains(#""literal":true"#), body)
+    }
+
+    func testSendTerminalInputDefaultsLiteralToFalse() async throws {
+        stubJSON("{}")
+        let client = try makeClient()
+        try await client.sendTerminalInput(sessionId: "s1", data: "x")
+
+        let body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains(#""literal":false"#), body)
+    }
+
     func testBodylessPostSendsNoContentTypeAndNoBody() async throws {
         stubJSON(#"{"status":"cancelled"}"#)
         let client = try makeClient()

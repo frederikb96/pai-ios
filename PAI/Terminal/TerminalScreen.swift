@@ -2,7 +2,7 @@ import Foundation
 import PAIKit
 import SwiftUI
 
-/// A session's terminal, read-only.
+/// A session's terminal — the escape hatch for whatever the session API cannot express.
 ///
 /// The pane is fixed at 200 columns (`TerminalPaneGeometry`) with no resize endpoint, so a phone
 /// cannot make it fit — horizontal scroll is the honest answer rather than reflowing. Every frame
@@ -10,10 +10,12 @@ import SwiftUI
 /// than 50 lines on screen at once: small enough that rendering every row plainly is correct, and
 /// none of the virtualization a longer list would need applies here.
 ///
-/// Interactive input is deferred — the web relies on a hardware keyboard for PageUp/PageDown/
-/// Ctrl-C, which a phone has none of, and nobody has built the on-screen key row that would
-/// replace it. Paging through what the agent has already captured is still a request the app can
-/// make without a keyboard (`POST .../terminal/scroll`), so the toolbar offers that.
+/// Paging through what the agent has already captured is a request the app can make without a
+/// keyboard (`POST .../terminal/scroll`), so the status bar offers that regardless of whether the
+/// input field below is focused. Typing, the arrows, Escape and a Control modifier all go through
+/// `TerminalInputField` — see its own doc comment for why the field is visible rather than a
+/// hidden keyboard-summoning trick, and `TerminalKeyBytes` for the byte sequences each of these
+/// sends. No backend change was needed for any of it: `terminal/input` already takes raw bytes.
 struct TerminalScreen: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.colorScheme) private var colorScheme
@@ -25,6 +27,10 @@ struct TerminalScreen: View {
     @State private var isConnected = false
     @State private var activity = StreamActivity()
     @State private var client: PaiTerminalStreamClient?
+    /// Not auto-focused on open — this is a screen someone reaches deliberately when something
+    /// has gone wrong, not a composer waiting for text, and popping the keyboard up over half the
+    /// pane the instant it appears would cover the very thing they came to read.
+    @State private var isInputFocused = false
 
     /// The backend pings every `SSE_PING_INTERVAL` (15s, `pai_cloud/api.py`, shared by the
     /// transcript and terminal generators) purely to keep the connection alive, so a healthy
@@ -44,6 +50,8 @@ struct TerminalScreen: View {
                     statusBar
                     Divider()
                     paneView
+                    Divider()
+                    inputField
                 }
             }
         }
@@ -196,6 +204,27 @@ struct TerminalScreen: View {
 
     private func backgroundColor(for style: TerminalStyle) -> Color {
         style.background.map(TerminalColorMapping.resolve) ?? .clear
+    }
+
+    // MARK: - Input
+
+    private var inputField: some View {
+        TerminalInputField(
+            isFocused: isInputFocused,
+            onSendRaw: { sendRawInput($0) },
+            onSendLineBreak: { sendRawInput(TerminalKeyBytes.submit, literal: true) },
+            onSubmit: { sendRawInput(TerminalKeyBytes.submit) },
+            onFocus: { isInputFocused = true }
+        )
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
+    private func sendRawInput(_ data: String, literal: Bool = false) {
+        guard let apiClient = environment.connection?.apiClient else { return }
+        Task {
+            try? await apiClient.sendTerminalInput(sessionId: sessionID, data: data, literal: literal)
+        }
     }
 
     // MARK: - Streaming

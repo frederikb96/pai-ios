@@ -299,18 +299,12 @@ actor FakeSessionActionsApi: SessionActionsApiClient {
     private(set) var setTitleLockedCalls: [(sessionId: String, locked: Bool)] = []
     private(set) var closeCalls: [String] = []
     private(set) var setIdleTimeoutCalls: [(sessionId: String, minutes: Int?)] = []
-    private(set) var switchProjectCalls: [(sessionId: String, projectId: String)] = []
-    private(set) var switchPhaseCalls: [(sessionId: String, phaseId: String)] = []
     private(set) var exportCalls: [(sessionId: String, since: String?)] = []
-    private(set) var listProjectsCalls: [(query: String?, limit: Int?, offset: Int?)] = []
-    private(set) var listPhasesCalls: [(projectId: String?, query: String?, limit: Int?, offset: Int?)] = []
 
     var sessionResult: Result<Session, PaiError> = .success(SessionFixture.make())
     var closeResult: Result<CloseResponse, PaiError> = .success(CloseResponse(status: .closed, detail: nil))
     var exportResult: Result<PaiExportResult, PaiError> = .success(
         PaiExportResult(data: Data(), filename: "export.json"))
-    var projectsResult: Result<MemoryProjectsPage, PaiError> = .success(MemoryProjectsPage(total: 0, projects: []))
-    var phasesResult: Result<MemoryPhasesPage, PaiError> = .success(MemoryPhasesPage(phases: []))
 
     func renameSession(sessionId: String, title: String) async throws -> Session {
         renameCalls.append((sessionId, title))
@@ -332,31 +326,9 @@ actor FakeSessionActionsApi: SessionActionsApiClient {
         return try unwrap(sessionResult)
     }
 
-    func switchSessionProject(sessionId: String, projectId: String) async throws -> Session {
-        switchProjectCalls.append((sessionId, projectId))
-        return try unwrap(sessionResult)
-    }
-
-    func switchSessionPhase(sessionId: String, phaseId: String) async throws -> Session {
-        switchPhaseCalls.append((sessionId, phaseId))
-        return try unwrap(sessionResult)
-    }
-
     func exportSession(sessionId: String, since: String?) async throws -> PaiExportResult {
         exportCalls.append((sessionId, since))
         return try unwrap(exportResult)
-    }
-
-    func listMemoryProjects(query: String?, limit: Int?, offset: Int?) async throws -> MemoryProjectsPage {
-        listProjectsCalls.append((query, limit, offset))
-        return try unwrap(projectsResult)
-    }
-
-    func listMemoryPhases(projectId: String?, query: String?, limit: Int?, offset: Int?) async throws
-        -> MemoryPhasesPage
-    {
-        listPhasesCalls.append((projectId, query, limit, offset))
-        return try unwrap(phasesResult)
     }
 
     private func unwrap<T>(_ result: Result<T, PaiError>) throws -> T {
