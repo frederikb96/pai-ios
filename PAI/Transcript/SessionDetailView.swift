@@ -35,7 +35,7 @@ struct SessionDetailView: View {
                     TranscriptCollectionView(
                         sessionID: sessionID, store: transcript, apiClient: connection.apiClient, settings: settings,
                         requestFactory: connection.requestFactory, searchState: searchState,
-                        initialJumpMessageID: initialJumpMessageID
+                        initialJumpMessageID: initialJumpMessageID, jumpRequests: connection.transcriptJumps
                     )
                     .overlay { TranscriptLoadState(sessionID: sessionID) }
                     .overlay(alignment: .top) { TranscriptOlderPageState(sessionID: sessionID) }

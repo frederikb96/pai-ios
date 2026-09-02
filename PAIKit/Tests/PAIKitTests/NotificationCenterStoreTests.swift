@@ -8,13 +8,19 @@ private actor FakeNotificationCenterApi: NotificationCenterApiClient {
     var summaryResult: Result<NotificationSummary, PaiError> = .success(NotificationSummary(unread: 0, latestId: nil))
     var markReadResult: Result<Int, PaiError> = .success(1)
     var markAllReadResult: Result<Int, PaiError> = .success(0)
+    var getNotificationResult: Result<PaiNotification, PaiError> = .failure(.transport("not configured"))
+    var clearAlertsResult: Result<Int, PaiError> = .success(1)
 
     private(set) var listCalls: [(limit: Int?, beforeId: String?, kind: PaiNotificationKind?)] = []
     private(set) var markReadCalls: [[String]] = []
     private(set) var markAllReadCallCount = 0
+    private(set) var getNotificationCalls: [String] = []
+    private(set) var clearAlertsCalls: [[String]] = []
 
     func setListResult(_ result: Result<NotificationsResponse, PaiError>) { listResult = result }
     func setMarkReadResult(_ result: Result<Int, PaiError>) { markReadResult = result }
+    func setGetNotificationResult(_ result: Result<PaiNotification, PaiError>) { getNotificationResult = result }
+    func setClearAlertsResult(_ result: Result<Int, PaiError>) { clearAlertsResult = result }
 
     func getNotifications(
         limit: Int?, beforeId: String?, kind: PaiNotificationKind?
@@ -46,6 +52,23 @@ private actor FakeNotificationCenterApi: NotificationCenterApiClient {
     func markAllNotificationsRead() async throws -> Int {
         markAllReadCallCount += 1
         switch markAllReadResult {
+        case let .success(count): return count
+        case let .failure(error): throw error
+        }
+    }
+
+    func getNotification(id: String) async throws -> PaiNotification {
+        getNotificationCalls.append(id)
+        switch getNotificationResult {
+        case let .success(notification): return notification
+        case let .failure(error): throw error
+        }
+    }
+
+    @discardableResult
+    func clearAlerts(ids: [String]) async throws -> Int {
+        clearAlertsCalls.append(ids)
+        switch clearAlertsResult {
         case let .success(count): return count
         case let .failure(error): throw error
         }
@@ -225,5 +248,103 @@ final class NotificationCenterStoreTests: XCTestCase {
 
         XCTAssertEqual(store.consumePendingFocus(), "n1")
         XCTAssertNil(store.consumePendingFocus())
+    }
+
+    /// An old alert outside the loaded page has to be fetched on its own and spliced in before
+    /// it can ever be expanded — this is what makes that possible.
+    func testEnsureLoadedFetchesAndPrependsARowNotAlreadyPresent() async {
+        let api = FakeNotificationCenterApi()
+        await api.setGetNotificationResult(.success(makeNotification(id: "old", kind: .alert)))
+        let store = NotificationCenterStore(api: api)
+        await store.loadInitialNotifications()
+
+        await store.ensureLoaded(id: "old")
+
+        XCTAssertEqual(store.rows.map(\.id), ["old"])
+        let calls = await api.getNotificationCalls
+        XCTAssertEqual(calls, ["old"])
+    }
+
+    /// A row already loaded needs no fetch — the whole point of checking first, since fetching
+    /// on every focus would be a redundant round trip for the ordinary case.
+    func testEnsureLoadedIsANoOpWhenTheRowIsAlreadyPresent() async {
+        let api = FakeNotificationCenterApi()
+        await api.setListResult(
+            .success(NotificationsResponse(unread: 0, hasMore: false, notifications: [makeNotification(id: "1")])))
+        let store = NotificationCenterStore(api: api)
+        await store.loadInitialNotifications()
+
+        await store.ensureLoaded(id: "1")
+
+        XCTAssertEqual(store.rows.map(\.id), ["1"])
+        let calls = await api.getNotificationCalls
+        XCTAssertTrue(calls.isEmpty)
+    }
+
+    /// The row itself stays — it is a historical record regardless of whether the alert it
+    /// describes is still active — only `active` flips, in place.
+    func testClearAlertPatchesTheRowInPlaceRatherThanReloading() async {
+        let api = FakeNotificationCenterApi()
+        let alert = PaiNotificationAlert(
+            id: "a1", key: "disk", severity: "warning", source: "vm", transition: "raised", active: true)
+        await api.setListResult(
+            .success(
+                NotificationsResponse(
+                    unread: 0, hasMore: false, notifications: [makeNotification(id: "1", kind: .alert, alert: alert)]))
+        )
+        let store = NotificationCenterStore(api: api)
+        await store.loadInitialNotifications()
+
+        let cleared = await store.clearAlert("1")
+
+        XCTAssertTrue(cleared)
+        XCTAssertEqual(store.rows.first?.alert?.active, false)
+        XCTAssertEqual(store.rows.first?.alert?.id, "a1", "the alert id itself is untouched by the patch")
+        let calls = await api.clearAlertsCalls
+        XCTAssertEqual(calls, [["a1"]])
+        // No second `getNotifications` call beyond the initial load — a reload would have made
+        // one, and this is exactly the reload this method exists to avoid.
+        let listCalls = await api.listCalls
+        XCTAssertEqual(listCalls.count, 1)
+    }
+
+    func testClearAlertLeavesTheRowUntouchedOnFailure() async {
+        let api = FakeNotificationCenterApi()
+        let alert = PaiNotificationAlert(
+            id: "a1", key: "disk", severity: "warning", source: "vm", transition: "raised", active: true)
+        await api.setListResult(
+            .success(
+                NotificationsResponse(
+                    unread: 0, hasMore: false, notifications: [makeNotification(id: "1", kind: .alert, alert: alert)]))
+        )
+        await api.setClearAlertsResult(.failure(.transport("offline")))
+        let store = NotificationCenterStore(api: api)
+        await store.loadInitialNotifications()
+
+        let cleared = await store.clearAlert("1")
+
+        XCTAssertFalse(cleared)
+        XCTAssertEqual(store.rows.first?.alert?.active, true)
+    }
+
+    /// A row with no `alert.id` (the alert itself has since been purged) has nothing to clear —
+    /// the guard rather than a call that would fail anyway.
+    func testClearAlertOnARowWithNoAlertIdDoesNothing() async {
+        let api = FakeNotificationCenterApi()
+        let alert = PaiNotificationAlert(
+            id: nil, key: "disk", severity: "warning", source: "vm", transition: "raised", active: false)
+        await api.setListResult(
+            .success(
+                NotificationsResponse(
+                    unread: 0, hasMore: false, notifications: [makeNotification(id: "1", kind: .alert, alert: alert)]))
+        )
+        let store = NotificationCenterStore(api: api)
+        await store.loadInitialNotifications()
+
+        let cleared = await store.clearAlert("1")
+
+        XCTAssertFalse(cleared)
+        let calls = await api.clearAlertsCalls
+        XCTAssertTrue(calls.isEmpty)
     }
 }

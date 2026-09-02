@@ -19,6 +19,14 @@ struct RootView: View {
             .preferredColorScheme(colorScheme)
             .task(id: environment.connection == nil) {
                 await environment.loadStartupState()
+                // Set once, unconditionally, rather than left to the `.onChange` below — that
+                // only fires on an actual change, so a badge APNs set while the app was
+                // backgrounded and then cleared elsewhere (the web, another device) never gets a
+                // change to react to here: the launch value and the freshly fetched true value
+                // are both zero, and a badge stuck showing a stale count survives indefinitely.
+                if let unread = environment.connection?.notifications.unread {
+                    try? await UNUserNotificationCenter.current().setBadgeCount(unread)
+                }
                 // Concurrent, not sequential: `pollMachines()` never returns on its own (it loops
                 // until the task is cancelled), so chaining a second poll after it would simply
                 // never run.
@@ -120,7 +128,7 @@ struct RootView: View {
                 // push actually arrives, not when a swipe or a mark-all-read changes the count
                 // from inside the running app.
                 .onChange(of: connection.notifications.unread) { _, unread in
-                    UNUserNotificationCenter.current().setBadgeCount(unread)
+                    Task { try? await UNUserNotificationCenter.current().setBadgeCount(unread) }
                 }
             } else {
                 // `ready` without a connection should be unreachable; showing sign-in is the only
@@ -204,7 +212,20 @@ struct RootView: View {
                 environment.router.replace(with: [.notifications])
                 return
             }
-            environment.router.replace(with: [.session(id: sessionId, messageID: notification.anchor?.messageId)])
+            // `Route.==` ignores `messageID` (deliberately — see its own doc comment), so
+            // replacing an already-open `.session(id: sessionId)` with one that only differs by
+            // `messageID` is invisible to `NavigationStack`: the destination is never rebuilt,
+            // and `initialJumpMessageID` — the only thing that ever reads it — is a construction
+            // parameter nothing re-delivers to a screen already on top. `TranscriptJumpRequests`
+            // is the side channel that reaches it anyway, for exactly this case; the ordinary
+            // "open the session at a message" case below is unaffected and unchanged.
+            if environment.router.openSessionID == sessionId {
+                if let messageID = notification.anchor?.messageId {
+                    connection.transcriptJumps.request(sessionID: sessionId, messageID: messageID)
+                }
+            } else {
+                environment.router.replace(with: [.session(id: sessionId, messageID: notification.anchor?.messageId)])
+            }
         }
     }
 

@@ -37,9 +37,11 @@ public protocol NotificationCenterApiClient: Sendable {
     func getNotifications(
         limit: Int?, beforeId: String?, kind: PaiNotificationKind?
     ) async throws -> NotificationsResponse
+    func getNotification(id: String) async throws -> PaiNotification
     func getNotificationsSummary() async throws -> NotificationSummary
     @discardableResult func markNotificationsRead(ids: [String]) async throws -> Int
     @discardableResult func markAllNotificationsRead() async throws -> Int
+    @discardableResult func clearAlerts(ids: [String]) async throws -> Int
 }
 
 extension PaiApiClient: NotificationCenterApiClient {}
@@ -174,6 +176,42 @@ public final class NotificationCenterStore {
     public func consumePendingFocus() -> String? {
         defer { pendingFocusID = nil }
         return pendingFocusID
+    }
+
+    /// Fetches `id` on its own and prepends it to `rows` if it is not already loaded — what
+    /// makes a focused row from an old push visible at all when it falls outside the first page,
+    /// mirroring the web's own splice-in (`NotificationsApp.tsx`'s `expandedAlertId` effect).
+    /// Prepending rather than inserting at its true chronological position is deliberate, not a
+    /// shortcut: it is what puts the row near the top of the list without any scroll-to-focus
+    /// machinery, the same reason the web never built one either. A no-op, not an error, if the
+    /// row is gone or already present.
+    public func ensureLoaded(id: String) async {
+        guard !rows.contains(where: { $0.id == id }) else { return }
+        guard let notification = try? await api.getNotification(id: id) else { return }
+        rows.insert(notification, at: 0)
+    }
+
+    /// Marks one alert's transition inactive, in place — the row itself stays, since it is a
+    /// historical record regardless of whether the alert is still active (see
+    /// `PaiNotificationAlert.id`'s own doc comment), only `active` flips. Mirrors the web's own
+    /// patch (`NotificationsApp.tsx`'s `handleClear`) rather than a full reload, which would
+    /// discard scroll position and every page loaded past the first. Returns whether the clear
+    /// actually reached the backend, so the caller can leave the button visible on failure.
+    @discardableResult
+    public func clearAlert(_ id: String) async -> Bool {
+        guard let index = rows.firstIndex(where: { $0.id == id }), let alert = rows[index].alert,
+            let alertId = alert.id
+        else { return false }
+        guard (try? await api.clearAlerts(ids: [alertId])) != nil else { return false }
+        let row = rows[index]
+        rows[index] = PaiNotification(
+            id: row.id, kind: row.kind, title: row.title, body: row.body, createdAt: row.createdAt,
+            readAt: row.readAt, sessionId: row.sessionId, sessionTitle: row.sessionTitle, anchor: row.anchor,
+            alert: PaiNotificationAlert(
+                id: alert.id, key: alert.key, severity: alert.severity, source: alert.source,
+                transition: alert.transition, active: false)
+        )
+        return true
     }
 
     private func setReadAtNow(at index: Int) {
