@@ -138,12 +138,14 @@ public final class PaiNotificationStreamClient {
             // No terminal status on this stream (see this type's own doc comment), so the only
             // two reasons to stop reconnecting are the ones `PaiSseClient` already names: a
             // deliberate cancel, or an explicit `disconnect()`.
-            if PaiSseClient.shouldReconnectAfterStreamEnded(cancelled: Task.isCancelled, terminal: false, stopped: stopped)
+            if PaiSseClient.shouldReconnectAfterStreamEnded(
+                cancelled: Task.isCancelled, terminal: false, stopped: stopped)
             {
                 handleDisconnect()
             }
         } catch {
-            if PaiSseClient.shouldReconnectAfterStreamEnded(cancelled: Task.isCancelled, terminal: false, stopped: stopped)
+            if PaiSseClient.shouldReconnectAfterStreamEnded(
+                cancelled: Task.isCancelled, terminal: false, stopped: stopped)
             {
                 handleDisconnect()
             }
