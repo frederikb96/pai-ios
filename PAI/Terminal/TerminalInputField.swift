@@ -20,6 +20,10 @@ struct TerminalInputField: UIViewRepresentable {
     /// just tapped into.
     let isFocused: Bool
     let onSendRaw: (String) -> Void
+    /// The soft keyboard's own Return — a line break in the pane's prompt, not a submit. Separate
+    /// from `onSendRaw` because it needs the `literal` flag on the request, which `TerminalScreen`
+    /// owns; the field itself knows nothing about that route's shape.
+    let onSendLineBreak: () -> Void
     /// A real, submitting Enter, sent when the bar's own Enter button is tapped — separate from
     /// `onSendRaw` because pressing it also clears the field, matching a submitted line ending.
     let onSubmit: () -> Void
@@ -84,7 +88,7 @@ struct TerminalInputField: UIViewRepresentable {
         /// field asks this instead, so the soft keyboard's Return key is intercepted here rather
         /// than as a `"\n"` case below, which would simply never fire.
         func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-            parent.onSendRaw(TerminalKeyBytes.paneNewline)
+            parent.onSendLineBreak()
             return false
         }
 

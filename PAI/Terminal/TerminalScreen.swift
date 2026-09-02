@@ -212,6 +212,7 @@ struct TerminalScreen: View {
         TerminalInputField(
             isFocused: isInputFocused,
             onSendRaw: { sendRawInput($0) },
+            onSendLineBreak: { sendRawInput(TerminalKeyBytes.submit, literal: true) },
             onSubmit: { sendRawInput(TerminalKeyBytes.submit) },
             onFocus: { isInputFocused = true }
         )
@@ -219,10 +220,10 @@ struct TerminalScreen: View {
         .padding(.vertical, 6)
     }
 
-    private func sendRawInput(_ data: String) {
+    private func sendRawInput(_ data: String, literal: Bool = false) {
         guard let apiClient = environment.connection?.apiClient else { return }
         Task {
-            try? await apiClient.sendTerminalInput(sessionId: sessionID, data: data)
+            try? await apiClient.sendTerminalInput(sessionId: sessionID, data: data, literal: literal)
         }
     }
 

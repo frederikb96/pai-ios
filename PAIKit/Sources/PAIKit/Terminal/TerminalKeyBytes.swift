@@ -19,8 +19,18 @@ public enum TerminalKeyBytes {
 
     public static let escape = "\u{1b}"
 
-    /// A real submitting Enter — a bare `\r` already submits today, on both clients, through the
-    /// existing route; nothing here needs a leading escape or any other decoration.
+    /// The Enter byte, `\r` — used two ways, and it is the same byte both times. A synthesized
+    /// Enter keypress and a literal carriage return deliver an identical byte to the program on
+    /// the other end; what tells the pane's prompt "submit" from "insert a line break" is purely
+    /// whether this arrives in its own read or alongside other input, not anything about the byte
+    /// itself. The action bar's own Enter/Send sends this alone, with no flag, and submits.
+    ///
+    /// The soft keyboard's own Return sends the identical byte through `sendTerminalInput`'s
+    /// `literal` flag instead, right after whatever character was just typed — this field forwards
+    /// every keystroke the moment it happens, so by the time Return fires there is nothing left to
+    /// bundle it with in one call; it relies on landing close enough behind the character that
+    /// preceded it to read as the same input rather than a bare Enter arriving alone. 🚨 That
+    /// reliance is unverified against a live pane at the time this shipped.
     public static let submit = "\r"
 
     /// One backspace/delete keystroke, sent once per character removed from the local field so a
@@ -38,20 +48,4 @@ public enum TerminalKeyBytes {
         guard let chord = Unicode.Scalar(scalar.value - 64) else { return nil }
         return String(Character(chord))
     }
-
-    /// A line break inside the pane's own prompt, without submitting — what the soft keyboard's
-    /// Return key sends, as opposed to ``submit``.
-    ///
-    /// Not a bare `\n`: `agent/src/tmux.ts`'s `type()` splits on every `\r`/`\n` it sees, from
-    /// either client, and turns each one into a separately synthesized `tmux send-keys Enter` —
-    /// a submit, not a literal newline — regardless of what surrounds it in the payload. A literal
-    /// backslash immediately before the break is Claude Code's own documented multi-line-input
-    /// shortcut, and reaches `tmux.type()` as the identical byte pattern a person typing `\<Enter>`
-    /// would produce.
-    ///
-    /// 🚨 Unverified against a live pane at the time this shipped — this exact byte sequence
-    /// still needs a live test against a real session before it can be trusted. Kept as one
-    /// named constant rather than inlined at each call site, so confirming or correcting it is
-    /// a one-line change.
-    public static let paneNewline = "\\\n"
 }

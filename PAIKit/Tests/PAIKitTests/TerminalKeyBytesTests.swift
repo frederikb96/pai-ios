@@ -14,14 +14,6 @@ final class TerminalKeyBytesTests: XCTestCase {
         }
     }
 
-    /// The one invariant this whole feature depends on: a real submit and a newline that must
-    /// NOT submit can never be the same bytes, or the pane could not tell them apart either.
-    func testSubmitAndPaneNewlineAreDifferentPayloads() {
-        XCTAssertNotEqual(
-            TerminalKeyBytes.submit, TerminalKeyBytes.paneNewline,
-            "submit and the non-submitting newline must never collapse to the same bytes")
-    }
-
     func testControlChordIsCaseInsensitiveAndMatchesTheClassicAsciiTable() {
         let upper = TerminalKeyBytes.controlChord(for: "B")
         let lower = TerminalKeyBytes.controlChord(for: "b")

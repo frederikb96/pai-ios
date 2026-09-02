@@ -679,12 +679,19 @@ public struct PaiApiClient: Sendable {
     }
 
     /// Raw key data from the terminal view's input handler: plain characters, control sequences.
-    public func sendTerminalInput(sessionId: String, data: String) async throws {
-        struct Body: Encodable { let data: String }
+    ///
+    /// `literal` is what tells the pane's own prompt a line break from a submit — a synthesized
+    /// Enter keypress and a literal carriage return deliver the identical byte to the program on
+    /// the other end, so the distinction is purely whether it arrives bundled with other input or
+    /// alone in its own read. Omitted or `false` is today's behaviour exactly: a bare `\r` submits.
+    /// `true` is for the soft keyboard's own Return, which needs the opposite — a line break, not
+    /// a submit — see `TerminalKeyBytes.submit`'s own doc comment for the full mechanism.
+    public func sendTerminalInput(sessionId: String, data: String, literal: Bool = false) async throws {
+        struct Body: Encodable { let data: String; let literal: Bool }
         try await sendDiscardingResponse(
             path: "/api/session/\(sessionId)/terminal/input",
             method: "POST",
-            body: try Self.jsonBody(Body(data: data))
+            body: try Self.jsonBody(Body(data: data, literal: literal))
         )
     }
 
