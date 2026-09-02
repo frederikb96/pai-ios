@@ -28,13 +28,16 @@ extension TranscriptAnchor {
     /// nothing to pin a message at, since a stale id from a moment ago is worse than none — the
     /// reader has moved on from it.
     ///
-    /// The web additionally gates this on whether the loaded window's own newest message is the
-    /// session's newest (`hasNewer`) — a concept this app does not have yet (row 5.30's own note).
-    /// Until it does, `atLiveEdge` alone decides `atBottom` here, same as it already decides
-    /// everything else this anchor drives.
-    public static func readPositionPayload(for anchor: TranscriptAnchor) -> (
+    /// `hasNewer` is the loaded window's own flag (`TranscriptWindow.hasNewer`), read live by the
+    /// caller rather than threaded through earlier — the debounce this feeds can fire well after
+    /// the scroll that scheduled it, by which time the window's own `hasNewer` may have changed.
+    /// While it is true, `atLiveEdge` cannot be trusted to mean "caught up": the bottom of a
+    /// non-tail window is not the end of the conversation, whatever the geometry said when the
+    /// anchor was recorded.
+    public static func readPositionPayload(for anchor: TranscriptAnchor, hasNewer: Bool) -> (
         messageId: Int?, offsetPx: Int?, atBottom: Bool
     ) {
+        if hasNewer { return (anchor.messageId, Int(anchor.offset.rounded()), false) }
         if anchor.atLiveEdge { return (nil, nil, true) }
         return (anchor.messageId, Int(anchor.offset.rounded()), false)
     }

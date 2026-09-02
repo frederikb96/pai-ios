@@ -191,14 +191,19 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         Task { @MainActor in client?.disconnect() }
         // This controller is recreated on every navigation into a session (`Route.session`'s own
         // doc comment), so `deinit` is exactly the moment the web's own per-session cleanup
-        // effect flushes on — leaving these screens, not only quitting the app. `apiClient` and
-        // `sessionID` are plain `let`s, safe to read synchronously here same as `sseClient` above;
-        // `lastRecordedAnchor` is a value type, so capturing it costs nothing racy either.
+        // effect flushes on — leaving these screens, not only quitting the app. `apiClient`,
+        // `sessionID` and `store` are plain `let`s, safe to read synchronously here same as
+        // `sseClient` above (a reference, not a call into its `@MainActor` isolation); reading
+        // `store.window(for:)` itself is a call and has to hop, same as `sseClient?.disconnect()`
+        // does — done inside the `Task` below rather than out here, so `hasNewer` is read live
+        // rather than a moment stale.
         if let anchor = lastRecordedAnchor {
             let client = apiClient
             let sessionID = sessionID
-            let payload = TranscriptAnchor.readPositionPayload(for: anchor)
-            Task {
+            let store = store
+            Task { @MainActor in
+                let payload = TranscriptAnchor.readPositionPayload(
+                    for: anchor, hasNewer: store.window(for: sessionID).hasNewer)
                 try? await client.putReadPosition(
                     sessionId: sessionID, messageId: payload.messageId, offsetPx: payload.offsetPx,
                     atBottom: payload.atBottom)
@@ -1072,7 +1077,10 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         readPositionSaveTask?.cancel()
         readPositionSaveTask = nil
         guard let anchor = lastRecordedAnchor else { return }
-        let payload = TranscriptAnchor.readPositionPayload(for: anchor)
+        // Read live, not from whatever `hasNewer` was when the anchor was recorded — this can
+        // fire well after that scroll, and `loadNewer`'s catch-up can have settled the flag in
+        // between.
+        let payload = TranscriptAnchor.readPositionPayload(for: anchor, hasNewer: store.window(for: sessionID).hasNewer)
         Task {
             try? await apiClient.putReadPosition(
                 sessionId: sessionID, messageId: payload.messageId, offsetPx: payload.offsetPx,

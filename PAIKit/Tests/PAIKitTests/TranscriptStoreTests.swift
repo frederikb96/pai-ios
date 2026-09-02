@@ -271,4 +271,125 @@ final class TranscriptStoreTests: XCTestCase {
 
         XCTAssertEqual(displayed.map(\.id), [2, 3, 4])
     }
+
+    // MARK: - Newer edge
+
+    func testBootstrapIsAtTheTailByDefinitionSoHasNewerIsAlwaysFalse() async {
+        let store = TranscriptStore()
+        store.applyBootstrap(sessionId: "s1", entries: [message(id: 1), message(id: 2)], requestedLimit: 300)
+
+        let win = store.window(for: "s1")
+        XCTAssertFalse(win.hasNewer)
+        XCTAssertEqual(win.newestLoadedId, 2)
+    }
+
+    func testAppendNewerHasNewerOnlyWhenTheFullPageCameBack() async {
+        let store = TranscriptStore()
+        store.applyBootstrap(sessionId: "s1", entries: [message(id: 1)], requestedLimit: 300)
+
+        store.appendNewer(sessionId: "s1", entries: (2...151).map { message(id: $0) }, requestedLimit: 150)
+        XCTAssertTrue(store.window(for: "s1").hasNewer)
+        XCTAssertEqual(store.window(for: "s1").newestLoadedId, 151)
+
+        store.appendNewer(sessionId: "s1", entries: (152...200).map { message(id: $0) }, requestedLimit: 150)
+        XCTAssertFalse(store.window(for: "s1").hasNewer, "a short page settles the flag false")
+    }
+
+    /// SSE entries that arrive while the window is not at the tail must not open a gap — held
+    /// aside by id instead of merged, and folded back in only once `loadNewer`'s catch-up
+    /// actually reaches them (the collection view's own job, not this store's).
+    /// An `around_id` page with `limit: 4` straddling id 10 (`ceil(4/2)=2` at-or-before, so
+    /// `[9, 10]`, and `floor(4/2)=2` strictly after, so `[11, 12]`) settles `hasNewer` true —
+    /// both halves came back full.
+    private func nonTailWindowFixture(store: TranscriptStore) {
+        store.replaceWindow(
+            sessionId: "s1", entries: [message(id: 9), message(id: 10), message(id: 11), message(id: 12)],
+            aroundId: 10, limit: 4
+        )
+    }
+
+    func testLiveEntriesAreHeldAsidePendingWhileTheWindowIsNotAtTheTail() async {
+        let store = TranscriptStore()
+        nonTailWindowFixture(store: store)
+        XCTAssertTrue(store.window(for: "s1").hasNewer)
+
+        store.applySseBatch(sessionId: "s1", event: SseBatchEvent(entries: [message(id: 13)], sessionTokens: nil))
+
+        XCTAssertNil(store.messages["s1"]?.first { $0.id == 13 }, "held aside, not merged")
+        XCTAssertEqual(store.getPendingNewerHighWaterMark("s1"), 13)
+    }
+
+    /// A redelivered id already inside the window — an SSE reconnect replaying a batch — is
+    /// neither merged again nor counted toward the pending set.
+    func testLiveEntriesAlreadyInsideTheWindowAreNotCountedAsPending() async {
+        let store = TranscriptStore()
+        nonTailWindowFixture(store: store)
+
+        store.applySseBatch(sessionId: "s1", event: SseBatchEvent(entries: [message(id: 11)], sessionTokens: nil))
+
+        XCTAssertNil(store.getPendingNewerHighWaterMark("s1"))
+    }
+
+    /// Once the window IS at the tail, live entries merge exactly as they always did — the
+    /// gating only ever applies to a non-tail window.
+    func testLiveEntriesMergeNormallyOnceTheWindowIsAtTheTail() async {
+        let store = TranscriptStore()
+        store.applyBootstrap(sessionId: "s1", entries: [message(id: 1)], requestedLimit: 300)
+
+        store.applySseBatch(sessionId: "s1", event: SseBatchEvent(entries: [message(id: 2)], sessionTokens: nil))
+
+        XCTAssertEqual(store.messages["s1"]?.map(\.id), [1, 2])
+        XCTAssertNil(store.getPendingNewerHighWaterMark("s1"))
+    }
+
+    func testClearPendingNewerDropsTheHeldAsideSet() async {
+        let store = TranscriptStore()
+        nonTailWindowFixture(store: store)
+        store.applySseBatch(sessionId: "s1", event: SseBatchEvent(entries: [message(id: 13)], sessionTokens: nil))
+        XCTAssertEqual(store.getPendingNewerCount("s1"), 1)
+
+        store.clearPendingNewer("s1")
+
+        XCTAssertEqual(store.getPendingNewerCount("s1"), 0)
+    }
+
+    /// `mergeWindow` merges into the existing window rather than discarding it, and only updates
+    /// the edge(s) the page actually reached past.
+    func testMergeWindowFoldsAPageTouchingTheLoadedWindow() async {
+        let store = TranscriptStore()
+        store.applyBootstrap(sessionId: "s1", entries: [message(id: 5), message(id: 6)], requestedLimit: 300)
+
+        // A page around 6 that reaches to 8 — extends the newer edge, leaves the older one alone.
+        store.mergeWindow(
+            sessionId: "s1", entries: [message(id: 6), message(id: 7), message(id: 8)], aroundId: 6, limit: 4)
+
+        let win = store.window(for: "s1")
+        XCTAssertEqual(store.messages["s1"]?.map(\.id), [5, 6, 7, 8])
+        XCTAssertEqual(win.oldestLoadedId, 5, "the older edge was never touched by this page")
+        XCTAssertEqual(win.newestLoadedId, 8)
+    }
+
+    /// `replaceWindow` discards whatever was loaded before it — a jump far enough that keeping
+    /// the old context would produce a sparse, gapped list.
+    func testReplaceWindowDiscardsTheOldWindowEntirely() async {
+        let store = TranscriptStore()
+        store.applyBootstrap(sessionId: "s1", entries: [message(id: 1), message(id: 2)], requestedLimit: 300)
+
+        store.replaceWindow(sessionId: "s1", entries: [message(id: 500)], aroundId: 500, limit: 150)
+
+        XCTAssertEqual(store.messages["s1"]?.map(\.id), [500])
+        XCTAssertEqual(store.window(for: "s1").oldestLoadedId, 500)
+    }
+
+    /// `resetToTail` is jump-to-latest's own primitive — also a replace, for the same reason:
+    /// merging a tail page into a window that could be anywhere would produce a gapped list.
+    func testResetToTailReplacesRatherThanMerges() async {
+        let store = TranscriptStore()
+        store.replaceWindow(sessionId: "s1", entries: [message(id: 5)], aroundId: 5, limit: 150)
+
+        store.resetToTail(sessionId: "s1", entries: [message(id: 900)], requestedLimit: 300)
+
+        XCTAssertEqual(store.messages["s1"]?.map(\.id), [900])
+        XCTAssertFalse(store.window(for: "s1").hasNewer, "a tail reload is at the tail by definition")
+    }
 }

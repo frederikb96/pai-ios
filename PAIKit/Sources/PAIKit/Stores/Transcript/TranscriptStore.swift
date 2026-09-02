@@ -25,6 +25,12 @@ public final class TranscriptStore {
 
     public internal(set) var messages: [String: [Message]] = [:]
     public internal(set) var windows: [String: TranscriptWindow] = [:]
+    /// Ids observed via SSE while a session's window is not at the tail (`window.hasNewer`) —
+    /// appending them would open a gap between the loaded window and the new message, so they
+    /// are held here by id instead. Only used for the "new below" count and to detect the race
+    /// `loadNewer`'s catch-up step closes; never merged into `messages` directly — see
+    /// `foldLiveEntries`.
+    public internal(set) var pendingNewerIds: [String: Set<Int>] = [:]
     /// The last-observed context-window figure, per session. Keyed rather than a single scalar
     /// so switching to a session that has not reported one yet can never show a different
     /// session's number — a reader falls back to the session's own persisted token count
@@ -107,8 +113,17 @@ public final class TranscriptStore {
             bootstrapping: false,
             bootstrapError: nil,
             loadingOlder: false,
-            olderError: nil
+            olderError: nil,
+            // A tail bootstrap is at the tail by definition — always the true newest, never a
+            // reason to hold live appends back.
+            newestLoadedId: Self.newestId(nil, entries: entries),
+            hasNewer: false,
+            loadingNewer: false,
+            newerError: nil
         )
+        // A fresh bootstrap re-establishes the window from scratch, so any ids held pending from
+        // a PREVIOUS window's non-tail state describe a load that no longer exists.
+        pendingNewerIds.removeValue(forKey: sessionId)
         evictOldSessions()
         reconcilePending(sessionId)
     }
@@ -151,6 +166,28 @@ public final class TranscriptStore {
         messages[sessionId] = Self.merged(existing, with: entries)
     }
 
+    /// Folds newly-arrived (SSE) entries into the store: merged into the loaded window when it
+    /// already reaches the tail, or held aside by id in `pendingNewerIds` when it does not —
+    /// appending past a non-tail window's edge would open a gap between what is loaded and what
+    /// just arrived. Only entries actually beyond `newestLoadedId` count as held aside; a
+    /// redelivered id already inside the window (an SSE reconnect replaying a batch) is neither
+    /// merged again (`merge` already dedupes) nor counted toward the pending set.
+    ///
+    /// `loadNewer`'s own catch-up step is what folds a held-aside id back in for real, once
+    /// paging genuinely reaches it — see `TranscriptStore+Streaming.swift`'s callers.
+    func foldLiveEntries(sessionId: String, entries: [Message]) {
+        let win = window(for: sessionId)
+        if win.hasNewer, let boundary = win.newestLoadedId {
+            let beyond = entries.filter { $0.id > boundary }
+            guard !beyond.isEmpty else { return }
+            var set = pendingNewerIds[sessionId] ?? []
+            for m in beyond { set.insert(m.id) }
+            pendingNewerIds[sessionId] = set
+            return
+        }
+        merge(entries, into: sessionId)
+    }
+
     static func merged(_ existing: [Message], with entries: [Message]) -> [Message] {
         guard !entries.isEmpty else { return existing }
         let existingIds = Set(existing.map(\.id))
@@ -163,6 +200,135 @@ public final class TranscriptStore {
         guard let batchMin = entries.map(\.id).min() else { return current }
         guard let current else { return batchMin }
         return Swift.min(current, batchMin)
+    }
+
+    static func newestId(_ current: Int?, entries: [Message]) -> Int? {
+        guard let batchMax = entries.map(\.id).max() else { return current }
+        guard let current else { return batchMax }
+        return Swift.max(current, batchMax)
+    }
+
+    /// Whether each half of an `around_id` page came back full — the backend splits the request
+    /// into `ceil(limit/2)` at-or-before `aroundId` and `floor(limit/2)` strictly after it, so a
+    /// half short of its own request size is the same "no more this direction" signal
+    /// `hasOlder`/`hasNewer` already read from a single-direction page, computed for both sides
+    /// from one fetch instead of a second round trip to settle the other edge.
+    static func halfFullFlags(_ entries: [Message], aroundId: Int, limit: Int) -> (hasOlder: Bool, hasNewer: Bool) {
+        let beforeCount = entries.filter { $0.id <= aroundId }.count
+        let afterCount = entries.filter { $0.id > aroundId }.count
+        return (hasOlder: beforeCount == (limit + 1) / 2, hasNewer: afterCount == limit / 2)
+    }
+
+    // MARK: - Newer edge
+
+    public func setLoadingNewer(_ sessionId: String, loading: Bool) {
+        var win = window(for: sessionId)
+        win.loadingNewer = loading
+        if loading { win.newerError = nil }
+        windows[sessionId] = win
+    }
+
+    public func setNewerError(_ sessionId: String, error: String?) {
+        var win = window(for: sessionId)
+        win.loadingNewer = false
+        win.newerError = error
+        windows[sessionId] = win
+    }
+
+    /// Appending below never moves anything a reader is looking at, unlike `prependOlder`'s older
+    /// content — no scroll compensation is bound up in this action, the same way none is in the
+    /// caller that requests this page.
+    public func appendNewer(sessionId: String, entries: [Message], requestedLimit: Int) {
+        merge(entries, into: sessionId)
+        var win = window(for: sessionId)
+        win.newestLoadedId = Self.newestId(win.newestLoadedId, entries: entries)
+        win.hasNewer = entries.count == requestedLimit
+        win.loadingNewer = false
+        win.newerError = nil
+        windows[sessionId] = win
+    }
+
+    public func getPendingNewerCount(_ sessionId: String) -> Int {
+        pendingNewerIds[sessionId]?.count ?? 0
+    }
+
+    public func getPendingNewerHighWaterMark(_ sessionId: String) -> Int? {
+        pendingNewerIds[sessionId]?.max()
+    }
+
+    public func clearPendingNewer(_ sessionId: String) {
+        pendingNewerIds.removeValue(forKey: sessionId)
+    }
+
+    /// `locate`'s merge path: `entries` overlaps or abuts the already-loaded window, so they fold
+    /// into one contiguous range rather than replacing it. Only the edge(s) this page actually
+    /// reaches past get a new `hasOlder`/`hasNewer` reading — a side the page never touches is
+    /// left exactly as it already was, the same one-direction-at-a-time discipline
+    /// `prependOlder`/`appendNewer` each already keep.
+    public func mergeWindow(sessionId: String, entries: [Message], aroundId: Int, limit: Int) {
+        guard !entries.isEmpty else { return }
+        let win = window(for: sessionId)
+        merge(entries, into: sessionId)
+
+        let ids = entries.map(\.id)
+        let pageMin = ids.min()!
+        let pageMax = ids.max()!
+        let flags = Self.halfFullFlags(entries, aroundId: aroundId, limit: limit)
+        let extendsOlder = win.oldestLoadedId == nil || pageMin < win.oldestLoadedId!
+        let extendsNewer = win.newestLoadedId == nil || pageMax > win.newestLoadedId!
+
+        var newWin = win
+        newWin.oldestLoadedId = Self.oldestId(win.oldestLoadedId, entries: entries)
+        newWin.newestLoadedId = Self.newestId(win.newestLoadedId, entries: entries)
+        newWin.hasOlder = extendsOlder ? flags.hasOlder : win.hasOlder
+        newWin.hasNewer = extendsNewer ? flags.hasNewer : win.hasNewer
+        windows[sessionId] = newWin
+    }
+
+    /// `locate`'s replace path: `entries` sits nowhere near the already-loaded window, so it
+    /// discards that window outright rather than producing a sparse, gapped list. A fresh window
+    /// from scratch, same reasoning as `applyBootstrap`: anything held pending in
+    /// `pendingNewerIds` describes a load that no longer exists.
+    public func replaceWindow(sessionId: String, entries: [Message], aroundId: Int, limit: Int) {
+        let sorted = entries.sorted { $0.id < $1.id }
+        messages[sessionId] = sorted
+        let flags = Self.halfFullFlags(entries, aroundId: aroundId, limit: limit)
+        windows[sessionId] = TranscriptWindow(
+            oldestLoadedId: Self.oldestId(nil, entries: entries),
+            hasOlder: flags.hasOlder,
+            bootstrapped: true,
+            bootstrapping: false,
+            bootstrapError: nil,
+            loadingOlder: false,
+            olderError: nil,
+            newestLoadedId: Self.newestId(nil, entries: entries),
+            hasNewer: flags.hasNewer,
+            loadingNewer: false,
+            newerError: nil
+        )
+        pendingNewerIds.removeValue(forKey: sessionId)
+    }
+
+    /// Jump-to-latest's own primitive: a REPLACE, not `applyBootstrap`'s merge — the window
+    /// before this can be anywhere in the transcript, and merging a tail page into a distant one
+    /// would produce exactly the sparse, gapped list the design rules out.
+    public func resetToTail(sessionId: String, entries: [Message], requestedLimit: Int) {
+        let sorted = entries.sorted { $0.id < $1.id }
+        messages[sessionId] = sorted
+        windows[sessionId] = TranscriptWindow(
+            oldestLoadedId: Self.oldestId(nil, entries: entries),
+            hasOlder: entries.count == requestedLimit,
+            bootstrapped: true,
+            bootstrapping: false,
+            bootstrapError: nil,
+            loadingOlder: false,
+            olderError: nil,
+            newestLoadedId: Self.newestId(nil, entries: entries),
+            hasNewer: false,
+            loadingNewer: false,
+            newerError: nil
+        )
+        pendingNewerIds.removeValue(forKey: sessionId)
     }
 
     // MARK: - LRU
@@ -196,6 +362,7 @@ public final class TranscriptStore {
             sseActivity.removeValue(forKey: oldest)
             isProcessing.removeValue(forKey: oldest)
             liveStatus.removeValue(forKey: oldest)
+            pendingNewerIds.removeValue(forKey: oldest)
         }
     }
 

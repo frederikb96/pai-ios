@@ -35,7 +35,7 @@ final class TranscriptAnchorTests: XCTestCase {
     /// has moved on from it.
     func testReadPositionPayloadAtLiveEdgeSendsNoMessageAndAtBottomTrue() {
         let anchor = TranscriptAnchor(messageId: 7, offset: 12.9, atLiveEdge: true)
-        let payload = TranscriptAnchor.readPositionPayload(for: anchor)
+        let payload = TranscriptAnchor.readPositionPayload(for: anchor, hasNewer: false)
         XCTAssertNil(payload.messageId)
         XCTAssertNil(payload.offsetPx)
         XCTAssertTrue(payload.atBottom)
@@ -43,7 +43,18 @@ final class TranscriptAnchorTests: XCTestCase {
 
     func testReadPositionPayloadAwayFromTheEdgeRoundsTheOffsetAndSendsAtBottomFalse() {
         let anchor = TranscriptAnchor(messageId: 7, offset: 12.6, atLiveEdge: false)
-        let payload = TranscriptAnchor.readPositionPayload(for: anchor)
+        let payload = TranscriptAnchor.readPositionPayload(for: anchor, hasNewer: false)
+        XCTAssertEqual(payload.messageId, 7)
+        XCTAssertEqual(payload.offsetPx, 13)
+        XCTAssertFalse(payload.atBottom)
+    }
+
+    /// The bottom of a non-tail window is not the end of the conversation, whatever the
+    /// geometry says — `hasNewer` overrides `atLiveEdge` even when the anchor itself was
+    /// recorded as pinned to this window's own (non-tail) bottom.
+    func testReadPositionPayloadWithNewerUnloadedNeverReportsAtBottomEvenIfLiveEdge() {
+        let anchor = TranscriptAnchor(messageId: 7, offset: 12.6, atLiveEdge: true)
+        let payload = TranscriptAnchor.readPositionPayload(for: anchor, hasNewer: true)
         XCTAssertEqual(payload.messageId, 7)
         XCTAssertEqual(payload.offsetPx, 13)
         XCTAssertFalse(payload.atBottom)

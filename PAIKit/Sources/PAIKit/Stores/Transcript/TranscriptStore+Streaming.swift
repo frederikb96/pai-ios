@@ -7,7 +7,7 @@ extension TranscriptStore {
 
     public func applySseInit(sessionId: String, event: SseInitEvent) {
         touch(sessionId)
-        merge(event.entries, into: sessionId)
+        foldLiveEntries(sessionId: sessionId, entries: event.entries)
         evictOldSessions()
         if let tokens = event.sessionTokens { sessionTokens[sessionId] = tokens }
         reconcilePending(sessionId)
@@ -15,7 +15,9 @@ extension TranscriptStore {
 
     public func applySseBatch(sessionId: String, event: SseBatchEvent) {
         touch(sessionId)
-        merge(event.entries, into: sessionId)
+        // Held aside rather than appended while the window is not at the tail — see
+        // `foldLiveEntries`'s own doc comment.
+        foldLiveEntries(sessionId: sessionId, entries: event.entries)
         evictOldSessions()
         if let tokens = event.sessionTokens { sessionTokens[sessionId] = tokens }
         reconcilePending(sessionId)
