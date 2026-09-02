@@ -39,7 +39,7 @@ final class PushRegistrar: NSObject, UIApplicationDelegate, UNUserNotificationCe
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound]
+        [.banner, .list, .sound, .badge]
     }
 
     /// A tapped notification.
