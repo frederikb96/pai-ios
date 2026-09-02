@@ -38,6 +38,14 @@ it, so a presented sheet could not take focus. Both directions are now handled a
 its coverage down. What is unconfirmed is whether keystrokes were reaching the note body during the
 fault — neither confirmed nor ruled out, and only a device can say.
 
+### Verify: a push for a different session tears down the old transcript — pai-cloud anchor: none, iOS-only
+Needs `PAI/` because: the fix pins the session destination's identity to the session id
+(`RootView.destination(for:)`'s `.id(id)`) so `NavigationStack` cannot reuse the old destination
+in place — reasoned from a documented `NavigationStack` bug (path replaced wholesale with a
+same-length array whose values differ, Apple Feedback FB18336684) and from
+`TranscriptCollectionView`'s `updateUIViewController` being a deliberate no-op, never watched fail
+and pass on a real device.
+
 ### Verify: the notification badge and delivered banners clear on a live read change — pai-cloud anchor: `GET /api/notifications/stream`'s `read` event
 Needs `PAI/` because: the stream client, the badge mirror (`RootView`'s existing
 `.onChange(of: connection.notifications.unread)`) and the delivered-notification sweep

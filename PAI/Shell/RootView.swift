@@ -181,7 +181,24 @@ struct RootView: View {
     private func destination(for route: Route) -> some View {
         switch route {
         case .session(let id, let messageID):
+            // Explicit identity, keyed on the session id alone (never `messageID` — see
+            // `Route.session`'s own doc comment on why that stays out of equality). Without this,
+            // `Router.replace(with:)` swapping a `.session(id: "A")` destination for a
+            // `.session(id: "B")` one at the same stack depth can leave `NavigationStack` treating
+            // it as the same destination updated in place rather than a new one pushed — a
+            // documented `NavigationStack` bug when a path is replaced wholesale with a
+            // same-length array whose values differ (Apple Feedback FB18336684). `SessionDetailView`
+            // itself would still pick up the new title from its `sessionID` property either way,
+            // since that part is plain SwiftUI state; what does not recover on its own is
+            // `TranscriptCollectionView`'s `UIViewControllerRepresentable`, whose
+            // `updateUIViewController` is deliberately a no-op (the controller is meant to be torn
+            // down and rebuilt on every navigation into a session, never reconfigured for a new
+            // one) — so a reused destination left session A's transcript view controller mounted
+            // under session B's title. Forcing the identity here makes SwiftUI discard the whole
+            // subtree and rebuild it, restoring "recreated on every navigation into a session" for
+            // this path the same as an ordinary push already gets it for free.
             SessionDetailView(sessionID: id, initialJumpMessageID: messageID)
+                .id(id)
         case .terminal(let sessionID):
             TerminalScreen(sessionID: sessionID)
         case .settings:
