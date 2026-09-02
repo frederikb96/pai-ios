@@ -130,6 +130,12 @@ struct RootView: View {
                     // still reporting notifications as on, which is the worst way to fail.
                     await PushRegistrar.registerForRemoteNotificationsIfAuthorized(store: connection.push)
                     await connection.push.registerWithBackendIfNeeded()
+                    // Where a silent read-sync push (row 24.5/24.7) actually reaches app code —
+                    // `PushRegistrar.application(_:didReceiveRemoteNotification:fetchCompletionHandler:)`
+                    // has no environment of its own to read `connection.notifications` from, since
+                    // it can fire before this screen — or any screen — is on top. Set once here,
+                    // the same way `PushRegistrar.store` is, and for the same reason.
+                    PushRegistrar.notificationsStore = connection.notifications
                 }
                 .environment(\.terminalStreamClientFactory) { sessionID, callbacks in
                     PaiTerminalStreamClient(
