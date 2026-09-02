@@ -25,7 +25,7 @@ struct RootView: View {
                 // change to react to here: the launch value and the freshly fetched true value
                 // are both zero, and a badge stuck showing a stale count survives indefinitely.
                 if let unread = environment.connection?.notifications.unread {
-                    UNUserNotificationCenter.current().setBadgeCount(unread)
+                    try? await UNUserNotificationCenter.current().setBadgeCount(unread)
                 }
                 // Concurrent, not sequential: `pollMachines()` never returns on its own (it loops
                 // until the task is cancelled), so chaining a second poll after it would simply
@@ -128,7 +128,7 @@ struct RootView: View {
                 // push actually arrives, not when a swipe or a mark-all-read changes the count
                 // from inside the running app.
                 .onChange(of: connection.notifications.unread) { _, unread in
-                    UNUserNotificationCenter.current().setBadgeCount(unread)
+                    Task { try? await UNUserNotificationCenter.current().setBadgeCount(unread) }
                 }
             } else {
                 // `ready` without a connection should be unreachable; showing sign-in is the only
