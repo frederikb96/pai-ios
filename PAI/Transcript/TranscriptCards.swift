@@ -543,13 +543,27 @@ struct CommandCardView: View {
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.leading, TranscriptRowMetrics.bubbleGutter)
         } else {
+            // Still Freddy's own message, just with nothing to show for its arguments — the
+            // trailing, primary-coloured identity every other bubble of his gets, not the
+            // left-aligned muted chrome a system row draws. Height stays `cardHeaderHeight`
+            // unchanged (`TranscriptRowLayout.height(of:)`'s own `.command` case): the padding
+            // added here is well under that budget for a single caption-sized line, so the row
+            // this card measures for is the row it draws.
             HStack(spacing: 6) {
                 Image(systemName: "chevron.left.forwardslash.chevron.right")
                 Text(name)
             }
             .font(PaiTypography.captionEmphasized.font)
-            .foregroundStyle(PaiPalette.Semantic.textMuted)
-            .frame(height: TranscriptRowMetrics.cardHeaderHeight, alignment: .leading)
+            .foregroundStyle(.white)
+            .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding / 2)
+            .padding(.vertical, 4)
+            .background(
+                bubbleFill(light: PaiPalette.primary500, dark: PaiPalette.primary600, colorScheme: colorScheme),
+                in: .ownBubbleTail
+            )
+            .frame(height: TranscriptRowMetrics.cardHeaderHeight, alignment: .trailing)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.leading, TranscriptRowMetrics.bubbleGutter)
         }
     }
 }
