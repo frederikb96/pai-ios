@@ -48,6 +48,7 @@ private func bubbleFill(light: Color, dark: Color, colorScheme: ColorScheme) -> 
 /// trailing timestamp — the exact same decomposition `TranscriptRowLayout` measured, so a row
 /// never renders taller or shorter than the height its cell was given.
 struct TranscriptRowContent: View {
+    @Environment(\.colorScheme) private var colorScheme
     let message: Message
     let isExpanded: (String) -> Bool
     let onToggleExpand: (String) -> Void
@@ -88,7 +89,15 @@ struct TranscriptRowContent: View {
         .overlay {
             if isDeepLinkTarget {
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(PaiPalette.primary500, lineWidth: 2)
+                    // Matches the web's `ring-yellow-400 dark:ring-yellow-500` — the same ring
+                    // its own `MessageBubble.tsx` comment says a search current-match and a deep
+                    // link "should not [visually] differ", one token apart only so each can
+                    // toggle independently. `primary500` here was a genuine colour mismatch, not
+                    // a missing token: the web's ring is yellow, not blue.
+                    .stroke(
+                        bubbleFill(light: PaiPalette.yellow400, dark: PaiPalette.yellow500, colorScheme: colorScheme),
+                        lineWidth: 2
+                    )
                     .padding(-6)
             }
         }
