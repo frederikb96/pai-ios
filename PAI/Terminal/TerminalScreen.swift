@@ -211,9 +211,9 @@ struct TerminalScreen: View {
     private var inputField: some View {
         TerminalInputField(
             isFocused: isInputFocused,
-            onSendRaw: { sendRawInput($0) },
-            onSendLineBreak: { sendRawInput(TerminalKeyBytes.submit, literal: true) },
-            onSubmit: { sendRawInput(TerminalKeyBytes.submit) },
+            onSendImmediate: { sendRawInput($0) },
+            onSendLineBreak: { draft in sendRawInput(draft + TerminalKeyBytes.submit, literal: true) },
+            onSubmit: { draft in sendRawInput(draft + TerminalKeyBytes.submit) },
             onFocus: { isInputFocused = true }
         )
         .padding(.horizontal, 12)
