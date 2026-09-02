@@ -189,10 +189,14 @@ private struct SubagentRow: View {
 
             Spacer(minLength: 8)
 
-            // Only shown when actually known: a `nil` means the spawn inherited its model, not
-            // that it ran on a default.
-            let trailing = [session.subagentModel, SessionTimeFormat.text(for: session.lastActivityAt)]
-                .compactMap { $0 }.joined(separator: " · ")
+            // Model only shown when actually known: a `nil` means the spawn inherited one, not
+            // that it ran on a default. Tokens only shown once the agent has spent any, matching
+            // the sidebar's own `sessionTokens > 0` guard and `SubagentPanel.tsx`'s row.
+            let trailing = [
+                session.subagentModel, SessionTimeFormat.text(for: session.lastActivityAt),
+                session.sessionTokens > 0 ? SessionListFormat.formatTokens(session.sessionTokens) : nil,
+            ]
+            .compactMap { $0 }.joined(separator: " · ")
             if !trailing.isEmpty {
                 Text(trailing)
                     .font(PaiTypography.caption.font)
