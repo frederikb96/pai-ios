@@ -23,6 +23,10 @@ public struct TranscriptCardPlan: Equatable, Sendable {
         /// `group` is only ever set when `origin == "agent"` — the view needs nothing else to
         /// decide whether to show the "sender · group" pill.
         case relayedBubble(text: String, sender: String, group: String?)
+        /// The second copy of a prompt Freddy sent, resent after an interrupt cut off the first
+        /// (`subtype: "resent"`) — his own bubble, subdued, with a small label above it saying
+        /// why it is there.
+        case resentUserBubble(text: String, attachmentPaths: [String])
         /// `filePaths` is every `pai-file:` marker in `text` — `text` itself is the message's
         /// full, untouched content, marker lines included; see
         /// ``MessageRouting/extractFilePaths(_:)``.
@@ -141,6 +145,16 @@ public enum TranscriptRowPlan {
             return [
                 TranscriptCardPlan(
                     kind: .relayedBubble(text: text, sender: sender, group: group),
+                    expandKey: nil,
+                    isExpanded: true,
+                    blocks: text.isEmpty ? [] : [paragraph(text)]
+                )
+            ]
+
+        case .resentUser(let text, let attachmentPaths):
+            return [
+                TranscriptCardPlan(
+                    kind: .resentUserBubble(text: text, attachmentPaths: attachmentPaths),
                     expandKey: nil,
                     isExpanded: true,
                     blocks: text.isEmpty ? [] : [paragraph(text)]

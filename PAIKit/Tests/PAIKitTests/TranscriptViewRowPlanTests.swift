@@ -152,6 +152,36 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         XCTAssertNil(group)
     }
 
+    /// The complaint this route exists to fix: a resend must render as Freddy's own bubble, never
+    /// a generic system card captioned with his own words.
+    func testAResentMessageProducesAResentUserBubbleNotAGenericSystemCard() {
+        let msg = message(type: .user, subtype: "resent", content: "let's try that again")
+
+        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+
+        XCTAssertEqual(cards.count, 1)
+        guard case .resentUserBubble(let text, let attachmentPaths) = cards[0].kind else {
+            return XCTFail("expected a resentUserBubble card, got \(cards[0].kind)")
+        }
+        XCTAssertEqual(text, "let's try that again")
+        XCTAssertEqual(attachmentPaths, [])
+    }
+
+    /// Attachments on a resend are extracted the same way an ordinary user message's are — an
+    /// interrupted send can carry them too.
+    func testAResentMessageWithAttachmentsExtractsThemLikeAnOrdinaryUserMessage() {
+        let msg = message(
+            type: .user, subtype: "resent", content: "here\n\n.claude/attachments/s1/a.png")
+
+        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+
+        guard case .resentUserBubble(let text, let attachmentPaths) = cards[0].kind else {
+            return XCTFail("expected a resentUserBubble card")
+        }
+        XCTAssertEqual(text, "here")
+        XCTAssertEqual(attachmentPaths, [".claude/attachments/s1/a.png"])
+    }
+
     // MARK: - Hook rows read from hookSummary, never from content
 
     /// `content` is `null` on a hook row — the card draws from `hookSummary` instead. A card that

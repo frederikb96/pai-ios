@@ -41,6 +41,14 @@ struct TranscriptSearchBar: View {
                 if state.loading {
                     ProgressView()
                         .controlSize(.small)
+                } else if let error = state.error {
+                    // A failed request must never read as "No results" — `resultsSummary` would
+                    // say exactly that (`total` stays 0), the single most misleading thing a
+                    // search box can show. Checked ahead of it for that reason.
+                    Text(error)
+                        .font(PaiTypography.caption.font)
+                        .foregroundStyle(PaiPalette.Semantic.errorText)
+                        .accessibilityIdentifier("transcript-search-error")
                 } else if let summary = state.resultsSummary {
                     Text(summary)
                         .font(PaiTypography.caption.font)

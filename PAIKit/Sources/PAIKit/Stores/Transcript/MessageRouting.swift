@@ -32,6 +32,12 @@ public enum MessageRouting {
         /// plumbing, because that is what it is — someone said it, just not into this session.
         /// Falling through to a system card would file a real instruction under machinery.
         case relayedUser
+        /// The second copy of a prompt Freddy sent, resent after an interrupt cut off the first
+        /// (`subtype: "resent"`). Both copies are real; neither is redundant — it renders as his
+        /// own bubble, visually subdued, with a small affordance saying why it is there, never as
+        /// system chrome captioned with his own words. Carries pre-extracted attachment paths,
+        /// same as ``user(text:attachmentPaths:)``.
+        case resentUser(text: String, attachmentPaths: [String])
         /// A slash command or skill invocation, already in the clean `"{name}\n\n{args}"` shape.
         case command
         /// Any other `type == "user"` subtype, and a `command` row whose content is still the
@@ -69,6 +75,10 @@ public enum MessageRouting {
 
         case .user where message.subtype == "pai_message":
             return .relayedUser
+
+        case .user where message.subtype == "resent":
+            let extracted = extractAttachmentPaths(message.content ?? "")
+            return .resentUser(text: extracted.text, attachmentPaths: extracted.paths)
 
         case .user where message.subtype == "command":
             return MessageDisplay.isUnparsedCommandXml(message.content ?? "")

@@ -184,6 +184,11 @@ struct TranscriptCardKindView: View {
         case .relayedBubble(let text, let sender, let group):
             RelayedBubbleView(text: text, sender: sender, group: group, highlights: highlightsByBlockIndex[0] ?? [])
 
+        case .resentUserBubble(let text, let attachmentPaths):
+            ResentBubbleView(
+                text: text, attachmentPaths: attachmentPaths, sessionID: sessionID, apiClient: apiClient,
+                highlights: highlightsByBlockIndex[0] ?? [])
+
         case .assistantBubble(_, let filePaths):
             AssistantBubbleView(
                 blocks: card.blocks, filePaths: filePaths, sessionID: sessionID, apiClient: apiClient,
@@ -470,6 +475,49 @@ struct RelayedBubbleView: View {
             bubbleFill(light: PaiPalette.relay500, dark: PaiPalette.relay600, colorScheme: colorScheme),
             in: .ownBubbleTail
         )
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.leading, TranscriptRowMetrics.bubbleGutter)
+    }
+}
+
+/// The second copy of a prompt Freddy sent, resent after an interrupt cut off the first — his own
+/// bubble, kept subdued (a faded fill, matching neither the full-strength send nor a system card)
+/// with a small "Resent" label above it, the same shape ``RelayedBubbleView`` uses for its own
+/// sender pill. `TranscriptRowLayout`'s `.resentUserBubble` case mirrors this exactly: label and
+/// bubble always drawn together, chips after — a number that moves here and not there is a row
+/// drawn taller than the cell it was given.
+struct ResentBubbleView: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let text: String
+    let attachmentPaths: [String]
+    let sessionID: String
+    let apiClient: PaiApiClient
+    var highlights: [TranscriptHighlightSpan] = []
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: TranscriptRowMetrics.attachmentChipSpacing) {
+            VStack(alignment: .trailing, spacing: TranscriptRowMetrics.bubbleLabelSpacing) {
+                Text("Resent")
+                    .font(PaiTypography.captionEmphasized.font)
+                    .foregroundStyle(.white.opacity(0.85))
+                    .frame(height: TranscriptRowMetrics.bubbleLabelLineHeight, alignment: .trailing)
+                if !text.isEmpty {
+                    TranscriptTextHighlighting.plainText(text, font: PaiTypography.body.font, highlights: highlights)
+                        .foregroundStyle(.white)
+                }
+            }
+            .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding)
+            .padding(.vertical, TranscriptRowMetrics.bubbleVerticalPadding / 2)
+            .background(
+                bubbleFill(light: PaiPalette.primary500, dark: PaiPalette.primary600, colorScheme: colorScheme)
+                    .opacity(0.6),
+                in: .ownBubbleTail
+            )
+            ForEach(attachmentPaths, id: \.self) { path in
+                SessionAttachmentChipView(
+                    sessionID: sessionID, apiClient: apiClient, path: path, requiresConfirmation: false)
+            }
+        }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.leading, TranscriptRowMetrics.bubbleGutter)
     }

@@ -81,6 +81,17 @@ final class TranscriptMessageRoutingTests: XCTestCase {
         XCTAssertEqual(route, .systemFallback(subtype: "command", content: "<command-name>review</command-name>"))
     }
 
+    /// The exact complaint this route exists to fix: a resend must never draw as system chrome
+    /// captioned with Freddy's own words. `resent` sits between `pai_message` and `command` in
+    /// the branch order and must not fall through to the generic system fallback like every
+    /// other unrecognised user subtype does just below.
+    func testResentSubtypeRoutesToResentUserAndExtractsAttachments() {
+        let content = "let's try again\n\n.claude/attachments/sess1/a.png"
+        let route = MessageRouting.route(for: message(type: .user, subtype: "resent", content: content))
+        XCTAssertEqual(
+            route, .resentUser(text: "let's try again", attachmentPaths: [".claude/attachments/sess1/a.png"]))
+    }
+
     func testAnyOtherUserSubtypeRoutesToSystemFallback() {
         let route = MessageRouting.route(
             for: message(type: .user, subtype: "compact", content: "Conversation compacted"))

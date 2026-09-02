@@ -7,8 +7,17 @@ import UIKit
 /// `EdgeFollowLatch.isAtLiveEdge`'s own doc comment names as its reason for being a stateless
 /// check ("safe to compute … for whether to show a jump-to-bottom control"). Hosted as SwiftUI,
 /// matching every other button in the app, rather than a bare `UIButton`.
+///
+/// Reads `store`/`sessionID` directly rather than taking a count parameter — `TranscriptStore` is
+/// `@Observable`, so this view's own body re-renders on every change to
+/// `pendingNewerIds[sessionID]` the same way any other SwiftUI reader of it would, with no manual
+/// `rootView` reassignment needed from the controller.
 private struct JumpToLatestButton: View {
+    let store: TranscriptStore
+    let sessionID: String
     let onTap: () -> Void
+
+    private var pendingCount: Int { store.getPendingNewerCount(sessionID) }
 
     var body: some View {
         Button(action: onTap) {
@@ -19,8 +28,23 @@ private struct JumpToLatestButton: View {
                 .background(PaiPalette.primary500)
                 .clipShape(Circle())
                 .shadow(radius: 3)
+                .overlay(alignment: .topTrailing) {
+                    // "N new" (web's `ChatView.tsx` jump-to-latest badge) — the count of live
+                    // messages held aside in `pendingNewerIds` while the window is not at the
+                    // tail, otherwise invisible (row 4's own finding: built, tested, and shown
+                    // nowhere).
+                    if pendingCount > 0 {
+                        Text(pendingCount > 99 ? "99+" : "\(pendingCount)")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(PaiPalette.red500, in: Capsule())
+                            .offset(x: 8, y: -8)
+                    }
+                }
         }
-        .accessibilityLabel("Jump to latest")
+        .accessibilityLabel(pendingCount > 0 ? "Jump to latest, \(pendingCount) new" : "Jump to latest")
         .accessibilityIdentifier("transcript-jump-to-latest")
     }
 }
@@ -140,12 +164,18 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     ]
 
     private lazy var jumpToLatestHostingController = UIHostingController(
-        rootView: JumpToLatestButton(onTap: { [weak self] in self?.jumpToLatestTapped() }))
+        rootView: JumpToLatestButton(
+            store: store, sessionID: sessionID, onTap: { [weak self] in self?.jumpToLatestTapped() }))
 
     /// Debounced 250ms after the last keystroke, matching the web's own `SearchBar` constant —
     /// longer than the client-only scan this replaced ever needed, since every fire now costs a
     /// network round trip rather than a re-scan of the loaded window.
     private static let findDebounce: Duration = .milliseconds(250)
+    /// `pg_trgm`'s own floor — a shorter token gets no help from the index and falls back to a
+    /// sequential scan on the server, measured at up to ~1s on a large session. A text query
+    /// below this never even reaches the server; a kind pick has no floor, since it never touches
+    /// `pg_trgm` at all.
+    private static let minQueryLength = 3
     private var findDebounceTask: Task<Void, Never>?
     /// The server hit ids for the current query/kind — mirrors the web's `hitIdsRef`. Never in
     /// `TranscriptSearchState` itself: this can run to thousands of ids, and that type is meant
@@ -736,6 +766,10 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             findDebounceTask?.cancel()
             hitIds = []
             clearSearchHighlighting()
+            // Supersedes any `runFind`/`landOn` still in flight — mirrors the web's own `clear()`
+            // bumping `tokenRef`. Without this, a find that resolves after Done is tapped still
+            // passes its token check and drives a `locate` + scroll on a closed search bar.
+            findToken += 1
         }
 
         if searchState.query != lastSearchedQuery || searchState.kind != lastSearchedKind {
@@ -751,6 +785,16 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         lastSearchedQuery = searchState.query
         lastSearchedKind = searchState.kind
         findDebounceTask?.cancel()
+        let query = searchState.query
+        guard query.isEmpty || query.count >= Self.minQueryLength || searchState.kind != nil else {
+            // Below the trigram floor — no recall the index could have served anyway, so this
+            // never reaches the server. Same "nothing to search" outcome `runFind()` gives an
+            // empty query, without paying for the round trip.
+            hitIds = []
+            searchState.clearResults()
+            reconfigureVisibleCells()
+            return
+        }
         findDebounceTask = Task { [weak self] in
             try? await Task.sleep(for: Self.findDebounce)
             guard !Task.isCancelled else { return }
@@ -1231,15 +1275,45 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// not driven by `edgeFollow.isPinned` — a reader who scrolled up and drifted back close to the
     /// bottom without landing inside the latch's narrower re-pin threshold should still see the
     /// control disappear, since visually they are back at the edge.
+    ///
+    /// `|| hasNewer` on top of the geometry check (search-virtualization design, "a non-tail
+    /// window has three obligations") — a window not at the true tail can sit at the bottom of
+    /// what it has *loaded* while nowhere near the bottom of the conversation, and the geometry
+    /// alone cannot tell the two apart.
     private func updateJumpToLatestVisibility() {
         let distance = maxContentOffsetY() - collectionView.contentOffset.y
-        jumpToLatestHostingController.view.isHidden = EdgeFollowLatch.isAtLiveEdge(distanceFromBottom: Double(distance))
+        let atLiveEdge = EdgeFollowLatch.isAtLiveEdge(distanceFromBottom: Double(distance))
+        jumpToLatestHostingController.view.isHidden = atLiveEdge && !store.window(for: sessionID).hasNewer
     }
 
+    /// Reaches the true tail, not merely the bottom of whatever is loaded — `scrollToBottom` alone
+    /// only does the latter, which after a `locate` into old history is not the end of the
+    /// conversation (search-virtualization design's own note on `resetToTail`). Only pays for the
+    /// reload when the window is not already at the tail; otherwise this is the cheap, no-network
+    /// scroll it always was.
     private func jumpToLatestTapped() {
         edgeFollow = EdgeFollowLatch(isPinned: true)
         holdController.release()
-        scrollToBottom(animated: true)
+        guard store.window(for: sessionID).hasNewer else {
+            scrollToBottom(animated: true)
+            return
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let entries = try await self.apiClient.getMessages(
+                    sessionId: self.sessionID, page: .tail(limit: TranscriptStore.tailLimit))
+                guard self.edgeFollow.isPinned else { return }  // a scroll away superseded this jump
+                self.store.resetToTail(
+                    sessionId: self.sessionID, entries: entries, requestedLimit: TranscriptStore.tailLimit)
+                await self.settleRows()
+                self.scrollToBottom(animated: true)
+                self.updateJumpToLatestVisibility()
+            } catch {
+                // Best-effort, matching the web's own `jumpToLatest` — the control stays visible
+                // and the reader can press it again.
+            }
+        }
     }
 
     private func maxContentOffsetY() -> CGFloat {

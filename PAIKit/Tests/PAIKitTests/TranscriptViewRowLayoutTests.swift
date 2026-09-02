@@ -314,4 +314,49 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         let expected = content + 16 + 4 + 10 + 8 + 16
         XCTAssertEqual(actual, expected)
     }
+
+    /// The resend affordance draws its "Resent" label line above the body text unconditionally,
+    /// the same label chrome a relayed prompt's own bubble carries — the mirror shape of
+    /// `testRelayedBubbleAddsItsOwnLabelLine` just above.
+    func testResentUserBubbleAddsItsOwnLabelLine() {
+        let msg = message(type: .user, subtype: "resent", content: bubbleSensitiveText)
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        let actual = TranscriptRowLayout.height(
+            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
+            metrics: metrics)
+
+        let content = measuredContentHeight(
+            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 48 - 28,
+            measurer: measurer,
+            cache: cache)
+        let expected = content + 16 + 4 + 10 + 8 + 16
+        XCTAssertEqual(actual, expected)
+    }
+
+    /// Attachments on a resend gap after the labelled bubble the same way an ordinary user
+    /// message's chips do — the label is always present, so the extra gap applies once more,
+    /// between the bubble and the first chip.
+    func testResentUserBubbleWithAttachmentsGapsAfterTheLabelledBubble() {
+        let msg = message(
+            type: .user, subtype: "resent",
+            content: "\(bubbleSensitiveText)\n\n.claude/attachments/a/one.png .claude/attachments/a/two.png",
+            timestamp: nil)
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        let actual = TranscriptRowLayout.height(
+            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
+            metrics: metrics)
+
+        let content = measuredContentHeight(
+            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 48 - 28,
+            measurer: measurer,
+            cache: cache)
+        // content + label chrome (16 + 4) + bubble padding (10), then two 22pt chips and two 6pt
+        // gaps (bubble → first chip, first chip → second).
+        let expected = (content + 16 + 4 + 10) + 44 + 12
+        XCTAssertEqual(actual, expected)
+    }
 }

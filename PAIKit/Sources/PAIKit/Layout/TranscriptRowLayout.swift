@@ -188,7 +188,7 @@ public enum TranscriptRowLayout {
             return TranscriptRowMetrics.bubbleVerticalPadding / 2
         case .assistantBubble:
             return TranscriptRowMetrics.bubbleVerticalPadding / 2
-        case .relayedBubble, .command:
+        case .relayedBubble, .command, .resentUserBubble:
             let labelChrome = TranscriptRowMetrics.bubbleLabelLineHeight + TranscriptRowMetrics.bubbleLabelSpacing
             return labelChrome + TranscriptRowMetrics.bubbleVerticalPadding / 2
         case .thinking, .toolCall, .toolResult, .agentMessage, .system, .legacyCommandOutput:
@@ -201,7 +201,7 @@ public enum TranscriptRowLayout {
     /// view lays out can never be computed from two different widths.
     private static func contentWidth(for kind: TranscriptCardPlan.Kind, cellWidth: Double) -> Double {
         switch kind {
-        case .userBubble, .relayedBubble, .command, .assistantBubble:
+        case .userBubble, .relayedBubble, .command, .assistantBubble, .resentUserBubble:
             return max(
                 0, cellWidth - TranscriptRowMetrics.bubbleGutter - 2 * TranscriptRowMetrics.bubbleHorizontalPadding)
         case .thinking, .toolCall, .toolResult, .agentMessage, .system, .legacyCommandOutput:
@@ -242,6 +242,17 @@ public enum TranscriptRowLayout {
 
         case .relayedBubble(let text, _, _):
             return (text.isEmpty ? 0 : content) + labelChrome + TranscriptRowMetrics.bubbleVerticalPadding
+
+        case .resentUserBubble(let text, let attachmentPaths):
+            // The label and text always share one bubble, same as `.relayedBubble` — the "Resent"
+            // affordance is what identifies the row even when a resend carried no text at all
+            // (an attachment-only resend). Chips after it, outside the bubble, same as
+            // `.userBubble`.
+            let bubbleHeight = (text.isEmpty ? 0 : content) + labelChrome + TranscriptRowMetrics.bubbleVerticalPadding
+            let chips = Double(attachmentPaths.count) * TranscriptRowMetrics.attachmentChipHeight
+            let childCount = 1 + attachmentPaths.count
+            let gaps = childCount > 1 ? Double(childCount - 1) * TranscriptRowMetrics.attachmentChipSpacing : 0
+            return bubbleHeight + chips + gaps
 
         case .assistantBubble(let text, let filePaths):
             // Mirrors `.userBubble` just above: the markdown bubble first (which still measures
