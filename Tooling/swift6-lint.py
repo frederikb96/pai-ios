@@ -238,12 +238,67 @@ def switch_after_guard_missing_return(lines: list[str]) -> list[tuple[int, str, 
     return findings
 
 
+#: An `NSObjectProtocol?` stored property — the token `NotificationCenter.addObserver` hands
+#: back, and the shape every real instance of this bug has taken here.
+OBSERVER_TOKEN_PROPERTY = re.compile(r"\bvar\s+([A-Za-z_]\w*)\s*:\s*NSObjectProtocol\?")
+DEINIT_OPEN = re.compile(r"^\s*deinit\s*\{")
+
+
+def unmarked_observer_token_read_in_deinit(
+    lines: list[str], isolated: set[int]
+) -> list[tuple[int, str, str]]:
+    """An `NSObjectProtocol?` observer token read inside `deinit` without `nonisolated(unsafe)`.
+
+    `NSObjectProtocol` is not `Sendable`, so a `deinit` on a main-actor-isolated type — always
+    nonisolated itself, even though the class around it is `@MainActor` — cannot read a stored
+    property of that type at all: "cannot access property '...' with a non-Sendable type '(any
+    NSObjectProtocol)?' from nonisolated deinit". Neither `parse-swift.sh` nor the package build
+    can see this (Sendable checking is part of full type checking, and this shape lives only in
+    the app target), so a Mac run is the first thing that does. `VoiceRecorderController`'s own
+    observer tokens already carry the fix this checks for — `nonisolated(unsafe)`, safe here
+    because the property is written once on the main actor during setup and read once at
+    deallocation, when nothing else holds a reference.
+
+    Gated on `main_actor_line_numbers`: a plain, non-isolated class (`MicrophoneCapture`, which
+    is `@unchecked Sendable` and explicitly not `@MainActor`) has no isolation boundary for its
+    own `deinit` to cross, so the same read there is not an error — flagging it anyway is exactly
+    the false positive that makes a check like this stop being trusted.
+
+    Single-file and textual: it does not follow a token into a helper `deinit` calls, only one
+    read directly in the `deinit` body itself.
+    """
+    findings: list[tuple[int, str, str]] = []
+    unmarked = {
+        match.group(1) for line in lines
+        if (match := OBSERVER_TOKEN_PROPERTY.search(line)) and "nonisolated(unsafe)" not in line
+    }
+    if not unmarked:
+        return findings
+    for index, line in enumerate(lines):
+        if not DEINIT_OPEN.match(line) or index not in isolated:
+            continue
+        indent = len(line) - len(line.lstrip())
+        for cursor in range(index + 1, len(lines)):
+            body = lines[cursor]
+            if body.strip() and (len(body) - len(body.lstrip())) <= indent:
+                break
+            for name in unmarked:
+                if re.search(rf"\b{re.escape(name)}\b", body):
+                    findings.append((
+                        cursor + 1, body.strip(),
+                        f"'{name}' is an unmarked 'NSObjectProtocol?' read from nonisolated "
+                        "deinit — declare it 'private nonisolated(unsafe) var' instead",
+                    ))
+    return findings
+
+
 def check(path: Path) -> list[tuple[int, str, str]]:
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     isolated = main_actor_line_numbers(lines)
     findings: list[tuple[int, str, str]] = detached_reads_of_isolated_statics(lines, isolated)
     findings.extend(nonisolated_uikit_access(lines))
     findings.extend(switch_after_guard_missing_return(lines))
+    findings.extend(unmarked_observer_token_read_in_deinit(lines, isolated))
 
     for index, line in enumerate(lines):
         if STORED_STATIC_VAR.match(line) and index not in isolated and "nonisolated(unsafe)" not in line:

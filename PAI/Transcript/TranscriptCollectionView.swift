@@ -121,7 +121,11 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// Debounces `putReadPosition` the same 2s the web does (`READ_POSITION_SAVE_DEBOUNCE_MS`) —
     /// one request per burst of scrolling, not one per frame.
     private var readPositionSaveTask: Task<Void, Never>?
-    private var backgroundObserver: NSObjectProtocol?
+    /// `nonisolated(unsafe)` so `deinit` — which is nonisolated — can unregister it, same
+    /// discipline as `VoiceRecorderController`'s own observer tokens: written once on the main
+    /// actor during setup and read once at deallocation, when nothing else holds a reference, so
+    /// there is no concurrent access for the isolation to protect.
+    private nonisolated(unsafe) var backgroundObserver: NSObjectProtocol?
 
     /// The row currently wearing the deep-link ring, if any — see `beginDeepLinkHighlight(for:)`.
     private var highlightedMessageId: Int?
