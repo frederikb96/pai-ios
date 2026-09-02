@@ -127,13 +127,13 @@ extension PaiFixtures {
           "title": "PAI iOS fixtures",
           "title_locked": true,
           "initial_message": "Build the canned fixture corpus for the screenshot run.",
-          "pending_message": null,
           "session_tokens": 84213,
           "activity_counts": { "agents": 2, "tasks": 1 },
           "claude_session_id": "20da6f97-8766-4c18-816f-75b5690aca4a",
           "idle_timeout_minutes": null,
           "effective_idle_timeout_minutes": 480,
           "cse_id": "cse_ddf94be720b8",
+          "transcript_path": "305df4d3-1554-4fc3-be04-39a354a9e619.jsonl",
           "created_at": "2026-08-29T06:12:03Z",
           "updated_at": "2026-08-29T09:41:55Z",
           "last_activity_at": "2026-08-29T09:41:55Z",
@@ -142,6 +142,9 @@ extension PaiFixtures {
           "kind": "conversation",
           "remote_control": true,
           "discovered": false,
+          "source_missing": false,
+          "git_branch": "kai/ios-fixtures",
+          "claude_version": "2.1.3",
           "project_id": "2b5a5769-a83c-4542-adf1-6ce737d9fc79",
           "phase_id": "e60ab7f0-8a07-4928-a07c-3cbb175a7de0",
           "project_name": "PAIiOS"
@@ -149,8 +152,7 @@ extension PaiFixtures {
         """#
 
     /// `blocked` on `vm`, a numbered menu with three options — the blocker case the app has to
-    /// let Freddy answer without opening the terminal. `pending_message` shows a reply typed
-    /// while still blocked, queued rather than sent.
+    /// let Freddy answer without opening the terminal.
     public static let sessionBlockedChoice: String = #"""
         {
           "id": "aed4e04d-5a7c-48ee-b3a0-2805ce4e08cc",
@@ -170,7 +172,6 @@ extension PaiFixtures {
           "title": "Renovate cleanup",
           "title_locked": false,
           "initial_message": "Clear the backlog of Renovate PRs on kubernetes-hetzner-talos.",
-          "pending_message": "Also check whether option 3 needs a fresh branch off current main.",
           "session_tokens": 51902,
           "claude_session_id": "0067e3fb-5fac-430d-8608-fe605ef301cb",
           "idle_timeout_minutes": 240,

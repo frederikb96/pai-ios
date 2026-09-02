@@ -119,11 +119,11 @@ final class PaiModelsTests: XCTestCase {
             """
             [
               {"id":"s1","session_type":"claude","status":"active","state":null,"blocker":null,
-               "title":null,"title_locked":null,"initial_message":null,"pending_message":null,
+               "title":null,"title_locked":null,"initial_message":null,
                "session_tokens":0,"claude_session_id":null,"cse_id":null,"created_at":null,
                "updated_at":null,"last_activity_at":null,"working_dir":null},
               {"id":"s2","session_type":"claude","status":"archived","state":null,"blocker":null,
-               "title":null,"title_locked":null,"initial_message":null,"pending_message":null,
+               "title":null,"title_locked":null,"initial_message":null,
                "session_tokens":0,"claude_session_id":null,"cse_id":null,"created_at":null,
                "updated_at":null,"last_activity_at":null,"working_dir":null}
             ]
@@ -151,11 +151,11 @@ final class PaiModelsTests: XCTestCase {
             """
             [
               {"id":"s1","session_type":"claude","status":"active","state":"ready","blocker":null,
-               "title":null,"title_locked":null,"initial_message":null,"pending_message":null,
+               "title":null,"title_locked":null,"initial_message":null,
                "session_tokens":0,"claude_session_id":null,"cse_id":null,"created_at":null,
                "updated_at":null,"last_activity_at":null,"working_dir":null},
               {"id":"s2","session_type":"claude","status":"active","state":"orchestrating","blocker":null,
-               "title":null,"title_locked":null,"initial_message":null,"pending_message":null,
+               "title":null,"title_locked":null,"initial_message":null,
                "session_tokens":0,"claude_session_id":null,"cse_id":null,"created_at":null,
                "updated_at":null,"last_activity_at":null,"working_dir":null}
             ]
@@ -200,7 +200,7 @@ final class PaiModelsTests: XCTestCase {
             """
             {"id":"s1","session_type":"claude","status":"active","state":"ready","blocker":null,
              "working":true,"title":"t","title_locked":true,"initial_message":null,
-             "pending_message":null,"session_tokens":0,"claude_session_id":null,
+             "session_tokens":0,"claude_session_id":null,
              "idle_timeout_minutes":30,"effective_idle_timeout_minutes":30,"cse_id":null,
              "created_at":null,"updated_at":null,"last_activity_at":null,"working_dir":null,
              "agent":"laptop","kind":"subagent","parent_session_id":"parent-1",
@@ -274,7 +274,7 @@ final class PaiModelsTests: XCTestCase {
             """
             {"id":"s1","session_type":"claude","status":"active","state":null,"blocker":null,
              "working":null,"title":"Found me","title_locked":null,"initial_message":null,
-             "pending_message":null,"session_tokens":0,"claude_session_id":null,
+             "session_tokens":0,"claude_session_id":null,
              "idle_timeout_minutes":null,"effective_idle_timeout_minutes":null,"cse_id":null,
              "created_at":null,"updated_at":null,"last_activity_at":null,"working_dir":null,
              "agent":null,"kind":null,"parent_session_id":null,"subagent_name":null,
@@ -298,7 +298,7 @@ final class PaiModelsTests: XCTestCase {
             """
             {"id":"s1","session_type":"claude","status":"active","state":null,"blocker":null,
              "working":null,"title":null,"title_locked":null,"initial_message":null,
-             "pending_message":null,"session_tokens":0,"claude_session_id":null,
+             "session_tokens":0,"claude_session_id":null,
              "idle_timeout_minutes":null,"effective_idle_timeout_minutes":null,"cse_id":null,
              "created_at":null,"updated_at":null,"last_activity_at":null,"working_dir":null,
              "agent":null,"kind":null,"parent_session_id":null,"subagent_name":null,
@@ -318,7 +318,7 @@ final class PaiModelsTests: XCTestCase {
             {"status":"resumed",
              "session":{"id":"s1","session_type":"claude","status":"active","state":"ready",
               "blocker":null,"working":null,"title":null,"title_locked":null,
-              "initial_message":null,"pending_message":null,"session_tokens":0,
+              "initial_message":null,"session_tokens":0,
               "claude_session_id":null,"idle_timeout_minutes":null,
               "effective_idle_timeout_minutes":null,"cse_id":null,"created_at":null,
               "updated_at":null,"last_activity_at":null,"working_dir":null,"agent":null,

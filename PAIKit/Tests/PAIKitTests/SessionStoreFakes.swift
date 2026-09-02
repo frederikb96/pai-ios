@@ -374,7 +374,6 @@ enum SessionFixture {
             title: title,
             titleLocked: nil,
             initialMessage: initialMessage,
-            pendingMessage: nil,
             sessionTokens: sessionTokens,
             claudeSessionId: claudeSessionId,
             idleTimeoutMinutes: nil,
