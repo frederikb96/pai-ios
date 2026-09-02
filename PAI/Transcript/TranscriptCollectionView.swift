@@ -1063,6 +1063,12 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                 // legible but visibly not yet part of the conversation. Opacity only — it
                 // must not change the row's geometry, which was measured for a full bubble.
                 .opacity(row.message.isPendingBubble ? 0.6 : 1)
+                // An https link in a message gets the same accidental-tap guard notes already
+                // have — a touchscreen tap can land on one without meaning to. No `onNoteLink`:
+                // a transcript message is not known to carry an in-app note deep link, so one
+                // falls through to `.systemAction` exactly as it did before this row asked for
+                // anything at all.
+                .confirmingExternalLinks()
             } else {
                 EmptyView()
             }

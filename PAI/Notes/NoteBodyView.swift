@@ -26,10 +26,6 @@ struct NoteBodyView: View {
     let highlight: String?
 
     @Environment(AppEnvironment.self) private var environment
-    /// The note a tapped `[[wikilink]]` points to, held until the confirm dialog answers — an
-    /// accidental tap must neither navigate nor lose the page currently being read, the same
-    /// guarantee ``NoteAttachmentEmbedView`` already gives a tapped attachment.
-    @State private var pendingNoteLink: String?
 
     init(
         body: String, nameToId: [String: String], containerId: String?,
@@ -50,7 +46,14 @@ struct NoteBodyView: View {
 
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: NotePreviewMetrics.blockSpacing) {
+                // Lazy, not `VStack`: a long note can carry dozens of embeds, and a plain `VStack`
+                // builds every row up front — each attachment's `.task` fires immediately on
+                // appearance (`NoteAttachmentEmbedView`'s own doc comment), so opening a note with
+                // many embeds fired that many concurrent fetches and image decodes at once before
+                // anything was even on screen. `LazyVStack` still registers every row's `.id(_:)`
+                // up front, so `proxy.scrollTo` below is unaffected — only building and appearing
+                // off-screen rows is deferred.
+                LazyVStack(alignment: .leading, spacing: NotePreviewMetrics.blockSpacing) {
                     ForEach(document.items) { item in
                         itemView(item, isCurrentTarget: item.id == currentItemIndex)
                             .id(item.id)
@@ -73,28 +76,10 @@ struct NoteBodyView: View {
             }
         }
         .background(PaiPalette.Notes.background)
-        .environment(
-            \.openURL,
-            OpenURLAction { url in
-                // An https link falls through to `.systemAction` and opens in the default
-                // browser — the system's own behaviour is already correct here and needs no
-                // confirmation, unlike a link to another note, which this page can act on itself.
-                guard case .note(let id)? = DeepLink.from(url: url) else { return .systemAction }
-                pendingNoteLink = id
-                return .handled
-            }
-        )
-        .confirmationDialog(
-            "Open this note?",
-            isPresented: Binding(get: { pendingNoteLink != nil }, set: { if !$0 { pendingNoteLink = nil } }),
-            titleVisibility: .visible
-        ) {
-            Button("Open") {
-                if let id = pendingNoteLink { environment.router.push(.note(id: id)) }
-                pendingNoteLink = nil
-            }
-            Button("Cancel", role: .cancel) { pendingNoteLink = nil }
-        }
+        // Pushed as `.notePreview`, not `.note`: a link tapped from this page is by definition
+        // read while previewing, and following it should land on the same rendered page rather
+        // than dropping into the target note's editor.
+        .confirmingExternalLinks(onNoteLink: { id in environment.router.push(.notePreview(id: id)) })
     }
 
     @ViewBuilder
