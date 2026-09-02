@@ -37,3 +37,14 @@ Needs `PAI/` because: the editor's text view only ever granted first responder a
 it, so a presented sheet could not take focus. Both directions are now handled and the sheet passes
 its coverage down. What is unconfirmed is whether keystrokes were reaching the note body during the
 fault — neither confirmed nor ruled out, and only a device can say.
+
+### Verify: the notification badge and delivered banners clear on a live read change — pai-cloud anchor: `GET /api/notifications/stream`'s `read` event
+Needs `PAI/` because: the stream client, the badge mirror (`RootView`'s existing
+`.onChange(of: connection.notifications.unread)`) and the delivered-notification sweep
+(`PushRegistrar.reconcileDeliveredNotifications`) are each unit-tested on their own, but nothing
+here can drive a real `UNUserNotificationCenter`, hold a real socket across a background/foreground
+cycle, or watch the springboard badge and the notification shade actually update. Also unverified:
+whether the reconnect-on-foreground timing feels prompt in practice, since only a device shows
+that. Correcting the badge and the shade while the app is backgrounded and untouched has a
+separate, permanent ceiling this cannot close regardless of device verification: nothing sends a
+silent push to wake the app for it (`push.py` only ever sends an alert push).

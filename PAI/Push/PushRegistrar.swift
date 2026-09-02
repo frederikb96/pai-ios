@@ -132,4 +132,30 @@ final class PushRegistrar: NSObject, UIApplicationDelegate, UNUserNotificationCe
     ) {
         Self.store?.recordRegistrationFailure(error.localizedDescription)
     }
+
+    /// Sweeps the system's currently-delivered notification banners against the account's own
+    /// read state, removing whichever ones a read change elsewhere has already caught up with
+    /// (row 24.7). `RootView` calls this on every foreground and every live `read` event —
+    /// nothing else can run this code while the app is not actually in front of the reader, since
+    /// there is no way to reach `UNUserNotificationCenter` from outside a running process; see
+    /// `PaiNotificationStreamClient`'s own doc comment for why that ceiling exists at all and
+    /// cannot be worked around from here.
+    ///
+    /// The one thing this genuinely cannot do: correct a delivered banner, or the springboard
+    /// badge, while the app is suspended in the background and nobody has foregrounded it since.
+    /// That would need a silent (`content-available`) push from the backend to wake the app long
+    /// enough to run this, which nothing here sends today — `push.py` only ever sends an alert
+    /// push, never a silent one. Until that exists, a read change made elsewhere while this
+    /// device sits untouched in someone's pocket stays visible in the shade until the next time
+    /// they actually pick the phone up, which is also the point `pollNotificationSummary()`'s own
+    /// self-heal already covers for the badge count alone.
+    static func reconcileDeliveredNotifications(against store: NotificationCenterStore) async {
+        let delivered = await UNUserNotificationCenter.current().deliveredNotifications()
+        let ids = delivered.compactMap { $0.request.content.userInfo[DeepLink.notificationIDKey] as? String }
+        guard !ids.isEmpty else { return }
+        let status = await store.readStatus(forIDs: ids)
+        let idsToClear = NotificationDeliveryReconciliation.idsToClear(deliveredIDs: ids, readStatus: status)
+        guard !idsToClear.isEmpty else { return }
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: idsToClear)
+    }
 }

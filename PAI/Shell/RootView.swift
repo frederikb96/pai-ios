@@ -8,6 +8,14 @@ struct RootView: View {
     /// Whatever `CrashReporter` captured before this launch, if any — read once on appear rather
     /// than continuously, since nothing after launch can change what already happened before it.
     @State private var pendingCrash: CrashRecord?
+    @Environment(\.scenePhase) private var scenePhase
+    /// The account-wide notification stream (row 24.5) — live only while the phone is actually
+    /// in front of the reader. Rebuilt on every foreground rather than reused across a
+    /// background/foreground cycle: `PaiNotificationStreamClient.disconnect()` is a one-shot stop
+    /// for the whole instance, matching `PaiSseClient`'s own lifetime, so "resume" here means a
+    /// fresh client the same way opening a session again builds a fresh `PaiSseClient` rather
+    /// than un-stopping the old one.
+    @State private var notificationStream: PaiNotificationStreamClient?
 
     /// The parked deep link, if one is waiting. Read through the observable inbox rather than
     /// polled, so a notification tapped while the app is already open navigates immediately
@@ -26,6 +34,13 @@ struct RootView: View {
                 // are both zero, and a badge stuck showing a stale count survives indefinitely.
                 if let unread = environment.connection?.notifications.unread {
                     try? await UNUserNotificationCenter.current().setBadgeCount(unread)
+                }
+                // The delivered-notification half of the same self-heal (row 24.7): a banner
+                // read from elsewhere while this app was not running yet has no earlier moment
+                // to have been cleared at.
+                if let connection = environment.connection {
+                    await PushRegistrar.reconcileDeliveredNotifications(against: connection.notifications)
+                    connectNotificationStream(connection)
                 }
                 // Concurrent, not sequential: `pollMachines()` never returns on its own (it loops
                 // until the task is cancelled), so chaining a second poll after it would simply
@@ -130,6 +145,30 @@ struct RootView: View {
                 .onChange(of: connection.notifications.unread) { _, unread in
                     Task { try? await UNUserNotificationCenter.current().setBadgeCount(unread) }
                 }
+                // The stream is only ever worth holding open while this screen is actually in
+                // front of the reader — see `notificationStream`'s own doc comment for why
+                // backgrounding tears it down rather than merely pausing it, and why the
+                // foreground side rebuilds rather than resumes. `.inactive` (a brief transitional
+                // state — the app switcher, an interruption) is deliberately not a disconnect
+                // trigger: treating it as one would thrash the connection on every such transition
+                // with no benefit, since the process keeps running throughout.
+                .onChange(of: scenePhase) { _, phase in
+                    switch phase {
+                    case .active:
+                        connectNotificationStream(connection)
+                        Task {
+                            await connection.notifications.refreshSummary()
+                            await PushRegistrar.reconcileDeliveredNotifications(against: connection.notifications)
+                        }
+                    case .background:
+                        notificationStream?.disconnect()
+                        notificationStream = nil
+                    case .inactive:
+                        break
+                    @unknown default:
+                        break
+                    }
+                }
             } else {
                 // `ready` without a connection should be unreachable; showing sign-in is the only
                 // state a user can act on, and a blank screen is the alternative.
@@ -227,6 +266,37 @@ struct RootView: View {
                 environment.router.replace(with: [.session(id: sessionId, messageID: notification.anchor?.messageId)])
             }
         }
+    }
+
+    /// Builds and connects a fresh notification stream client, replacing whatever was there —
+    /// safe to call more than once for the same reason `PushRegistrar.registerForRemoteNotificationsIfAuthorized`
+    /// is: idempotent bookkeeping rather than a user-facing action. `onRead` is where rows 24.5
+    /// and 24.7 actually meet — a read event both corrects the badge count immediately (through
+    /// `applyLiveUnread`, which `.onChange(of: connection.notifications.unread)` above already
+    /// mirrors into the springboard) and sweeps whatever delivered banners that same change just
+    /// caught up with. `onNotification` only ever updates the count: the row itself is not
+    /// injected into `NotificationCenterStore.rows`, since nothing reads that list outside the
+    /// centre screen, which reloads its own page on entry regardless.
+    private func connectNotificationStream(_ connection: AppEnvironment.Connection) {
+        let store = connection.notifications
+        let client = PaiNotificationStreamClient(
+            requestFactory: connection.requestFactory,
+            callbacks: PaiNotificationStreamClient.Callbacks(
+                onNotification: { [weak store] event in
+                    store?.applyLiveUnread(event.unread)
+                },
+                onRead: { [weak store] event in
+                    store?.applyLiveUnread(event.unread)
+                    guard let store else { return }
+                    Task { await PushRegistrar.reconcileDeliveredNotifications(against: store) }
+                },
+                onActivity: {},
+                onConnected: {},
+                onDisconnected: {}
+            )
+        )
+        notificationStream = client
+        client.connect()
     }
 
     /// `nil` is "follow the system", which is what an absent override means to SwiftUI too.
