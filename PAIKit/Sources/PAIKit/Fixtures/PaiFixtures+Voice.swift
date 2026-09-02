@@ -197,4 +197,45 @@ extension PaiFixtures {
     public static let recordings: String = #"""
         [\#(recordingClean), \#(recordingDegraded)]
         """#
+
+    // MARK: - Seeding the recordings picker for fixture mode
+    //
+    // `RecordingMeta` is client-side only, so there is no route for `PaiFixtureURLProtocol` to
+    // answer — the JSON strings above are reference documentation for the shape, never decoded
+    // into this app's model (their field names don't even match it: `"timestamp"` above,
+    // `timestampMs` on the model). Real, typed values instead, for the one caller
+    // (`AppEnvironment.connect()`, fixture mode only) that seeds `SettingsStore.recordings`
+    // directly so the picker has something to render at all.
+
+    /// An ordinary take, silence-terminated — everything a normal capture records.
+    public static let recordingOrdinary = RecordingMeta(
+        timestampMs: 1_798_610_000_000,
+        durationMs: 8420,
+        sampleRate: 16000,
+        rawSampleRate: 16000,
+        mic: MicDiagnostics(
+            label: "AirPods Pro", trackSampleRate: 16000, contextSampleRate: 48000, channelCount: 1,
+            echoCancellation: true, noiseSuppression: true, autoGainControl: true, userAgent: "fixture-agent/1.0"),
+        rawStored: true,
+        endedBy: .silence,
+        silence: SilenceMeta(enabled: true, threshold: 0.02, durationMs: 1500, triggered: true),
+        stt: SttMeta(model: "scribe_v2_realtime", language: "en", vadSilenceSecs: 1.5, vadThreshold: 0.4),
+        transcript: "stt-rec: check whether the terminal frame shape matches what the backend sends",
+        levels: LevelStats(peak: 0.71, rms: 0.18, clippedSamples: 0, totalSamples: 134720),
+        narrowband: false,
+        startup: RecordingStartup(captureMs: 210, socketMs: 1780),
+        mutedMs: 0
+    )
+
+    /// What `RecordingReconciliation.metadata(for:)` actually produces for a crash-orphaned take
+    /// — only what a bare WAV header on disk can tell it, nothing this app never learned about
+    /// the capture. Deliberately sparse rather than filled in to match `recordingOrdinary`: a
+    /// richer fixture would draw a row real recovery never produces.
+    public static let recordingRecovered = RecordingMeta(
+        timestampMs: 1_798_600_500_000,
+        durationMs: 5310,
+        sampleRate: 16000,
+        rawStored: true,
+        endedBy: .crashed
+    )
 }

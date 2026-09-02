@@ -36,7 +36,7 @@ struct CreateNoteIntent: AppIntent {
         guard let client = await AppEnvironment.standaloneClient() else {
             throw CreateNoteIntentError.notSignedIn
         }
-        let taken = (try? await client.getNotes())?.map(\.name) ?? []
+        let taken = (try? await client.getNotes())?.filter { $0.containerId == nil }.map(\.name) ?? []
         let name = NoteNaming.freeName(base: NoteNaming.untitled, taken: taken)
         guard let created = try? await client.createNote(name: name) else {
             throw CreateNoteIntentError.createFailed

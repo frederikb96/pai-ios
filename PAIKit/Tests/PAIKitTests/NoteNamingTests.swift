@@ -58,11 +58,27 @@ final class NoteNamingTests: XCTestCase {
         XCTAssertTrue(NoteNaming.collides(name: "Groceries", containerId: "c1", excluding: "b", among: notes))
     }
 
-    /// The same case- and diacritic-folding `freeName` uses — the backend is a case-insensitive
-    /// filesystem, so `groceries` and `Groceries` are the same file to it.
+    /// Case-insensitive only, matching the backend's own `name_key` (`lower(name)`) — a note
+    /// name becomes a filename in a synced folder, and most filesystems fold case there.
     func testCollisionFoldsCase() {
         let notes = [note(id: "a", name: "Groceries")]
         XCTAssertTrue(NoteNaming.collides(name: "groceries", containerId: "c1", excluding: "b", among: notes))
+    }
+
+    /// Unlike `freeName` (a client-only naming nicety) and search's own
+    /// `normalizeForNoteSearch`, the collision check does NOT fold diacritics — the backend's
+    /// `name_key` doesn't either, and a real collision has to match what the server will
+    /// actually reject.
+    func testCollisionDoesNotFoldDiacritics() {
+        let notes = [note(id: "a", name: "Müller")]
+        XCTAssertFalse(NoteNaming.collides(name: "Muller", containerId: "c1", excluding: "b", among: notes))
+    }
+
+    /// v1 has no uniqueness on a note's name outside a container — a container-less note has no
+    /// collision domain at all, never a match against every container's notes.
+    func testAContainerLessNoteNeverCollides() {
+        let notes = [note(id: "a", name: "Groceries", containerId: "c1")]
+        XCTAssertFalse(NoteNaming.collides(name: "Groceries", containerId: nil, excluding: "b", among: notes))
     }
 
     /// A soft-deleted row is still in the index but is no longer using its name.

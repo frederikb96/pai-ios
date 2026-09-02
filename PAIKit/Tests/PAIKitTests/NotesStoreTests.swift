@@ -123,9 +123,11 @@ private final class FakeNotesApi: NotesApiClient, @unchecked Sendable {
 }
 
 private enum NoteFixture {
-    static func summary(id: String, name: String = "Note", pendingDelete: Bool = false) -> NoteSummary {
+    static func summary(
+        id: String, name: String = "Note", containerId: String? = nil, pendingDelete: Bool = false
+    ) -> NoteSummary {
         NoteSummary(
-            id: id, name: name, summary: nil, containerId: nil, favourite: false, tags: [],
+            id: id, name: name, summary: nil, containerId: containerId, favourite: false, tags: [],
             updatedAtMs: 0, pendingDelete: pendingDelete)
     }
 
@@ -194,6 +196,24 @@ final class NotesStoreTests: XCTestCase {
 
         XCTAssertEqual(store.undoWindowNanos, NotesStore.fallbackUndoWindowNanos)
         XCTAssertNil(store.loadError)
+    }
+
+    /// The taken-name scan for a CONTAINER-LESS create is scoped to the other container-less
+    /// notes — never the whole index. A note sharing the base name inside some container has no
+    /// bearing on a fresh top-level note; matching against it anyway would give the new note a
+    /// number after it for no reason.
+    func testCreateNoteWithNoContainerIsNotBumpedByANoteInsideAContainer() async {
+        let api = FakeNotesApi()
+        api.createNoteResult = NoteFixture.detail(id: "n2", name: "Untitled")
+        api.getNotesResult = [NoteFixture.summary(id: "n1", name: "Untitled", containerId: "c1")]
+        let store = NotesStore(api: api)
+        await store.refresh()
+
+        _ = await store.createNote(name: "Untitled")
+
+        XCTAssertEqual(
+            api.createNoteCalls.last?.name, "Untitled",
+            "a same-named note inside a container has no bearing on a fresh top-level note's free name")
     }
 
     func testCreateNoteInsertsAtFrontOfIndex() async {
