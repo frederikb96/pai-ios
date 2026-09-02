@@ -169,7 +169,7 @@ public final class NotesStore {
     public func createNote(name: String, containerId: String? = nil) async -> NoteSummary? {
         let free = NoteNaming.freeName(
             base: name,
-            taken: notes.filter { !$0.pendingDelete && (containerId == nil || $0.containerId == containerId) }
+            taken: notes.filter { !$0.pendingDelete && $0.containerId == containerId }
                 .map(\.name))
         do {
             let created = try await api.createNote(name: free, summary: nil, body: nil, containerId: containerId)

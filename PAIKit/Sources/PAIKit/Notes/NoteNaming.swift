@@ -25,8 +25,16 @@ public enum NoteNaming {
     }
 
     /// Whether `name` already belongs to some other note in `containerId` — a fast, local
-    /// preview of what the server's own rename check will say, compared the same
-    /// case- and diacritic-insensitive way ``freeName(base:taken:)`` is.
+    /// preview of what the server's own rename check will say. Mirrors the backend's own rule
+    /// (`repository.find_note_in_container`, `notes_service.find_rename_collision`) exactly,
+    /// not a separate rule invented client-side: case-INSENSITIVE only — matched the way the
+    /// backend's generated `name_key` column does (`lower(name)`), never diacritic-folded the
+    /// way search's own `normalizeForNoteSearch` is, since a note name becomes a filename in a
+    /// synced folder and most filesystems fold case but keep `Müller` and `Muller` distinct.
+    /// Excludes a note pending delete — its name is free to reuse immediately, not held hostage
+    /// by the undo window. A container-less note has NO collision domain at all (v1 has no
+    /// uniqueness on a note's name outside a container), so `containerId == nil` is always
+    /// `false` here too, never a match against every container.
     ///
     /// Not the rule: the server holds the real vault and is free to disagree (another device
     /// wrote a colliding name a moment ago), so a caller must still send the rename and read
@@ -37,13 +45,14 @@ public enum NoteNaming {
     )
         -> Bool
     {
+        guard let containerId else { return false }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
-        let target = normalizeForNoteSearch(trimmed)
+        let target = trimmed.lowercased()
         return notes.contains { note in
             note.id != noteID && !note.pendingDelete
-                && (containerId == nil || note.containerId == containerId)
-                && normalizeForNoteSearch(note.name) == target
+                && note.containerId == containerId
+                && note.name.lowercased() == target
         }
     }
 }
