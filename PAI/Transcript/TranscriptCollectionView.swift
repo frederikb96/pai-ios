@@ -141,10 +141,15 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// pages backward if the message is not already in the loaded window, and clears it, so a
     /// later reconnect or width change never re-triggers the jump.
     private var initialJumpMessageID: Int?
+    /// A later jump request for this exact session, while this controller is already alive — see
+    /// `TranscriptJumpRequests`'s own doc comment. `observeJumpRequests()` subscribes to it once,
+    /// in `viewDidLoad`, independent of anything SwiftUI decides about the wrapping view.
+    private let jumpRequests: TranscriptJumpRequests
 
     init(
         sessionID: String, store: TranscriptStore, apiClient: PaiApiClient, settings: SettingsStore,
-        requestFactory: PaiRequestFactory, searchState: TranscriptSearchState, initialJumpMessageID: Int? = nil
+        requestFactory: PaiRequestFactory, searchState: TranscriptSearchState, initialJumpMessageID: Int? = nil,
+        jumpRequests: TranscriptJumpRequests
     ) {
         self.sessionID = sessionID
         self.store = store
@@ -153,6 +158,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         self.requestFactory = requestFactory
         self.searchState = searchState
         self.initialJumpMessageID = initialJumpMessageID
+        self.jumpRequests = jumpRequests
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -215,6 +221,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         bootstrapTask = Task { [weak self] in await self?.bootstrap() }
         observeSearchState()
         observePendingBubbles()
+        observeJumpRequests()
     }
 
     /// Rows arrive here through this controller's own SSE handling, so a send tracked by the
@@ -229,6 +236,24 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                 guard let self else { return }
                 self.recomputeRows(applying: .stickToBottomIfPinned)
                 self.observePendingBubbles()
+            }
+        }
+    }
+
+    /// A tapped push notification for this exact session, arriving while this controller is
+    /// already alive — see `TranscriptJumpRequests`'s own doc comment for why `Route` cannot
+    /// deliver this on its own. Reuses `jumpToInitialMessage(_:)`: the stream is already
+    /// connected by the time this fires, so nothing bootstrap-specific is needed.
+    private func observeJumpRequests() {
+        withObservationTracking {
+            _ = jumpRequests.pendingMessageID(for: sessionID)
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                if let messageID = self.jumpRequests.consume(sessionID: self.sessionID) {
+                    await self.jumpToInitialMessage(messageID)
+                }
+                self.observeJumpRequests()
             }
         }
     }
@@ -1059,11 +1084,15 @@ struct TranscriptCollectionView: UIViewControllerRepresentable {
     let searchState: TranscriptSearchState
     /// Where to jump once the transcript is open — row 5.28. `nil` for an ordinary open.
     var initialJumpMessageID: Int? = nil
+    /// Reaches this screen for a push notification's jump while it is already on top — see
+    /// `TranscriptJumpRequests`'s own doc comment for why `initialJumpMessageID` alone cannot.
+    let jumpRequests: TranscriptJumpRequests
 
     func makeUIViewController(context: Context) -> TranscriptCollectionViewController {
         TranscriptCollectionViewController(
             sessionID: sessionID, store: store, apiClient: apiClient, settings: settings,
-            requestFactory: requestFactory, searchState: searchState, initialJumpMessageID: initialJumpMessageID
+            requestFactory: requestFactory, searchState: searchState, initialJumpMessageID: initialJumpMessageID,
+            jumpRequests: jumpRequests
         )
     }
 

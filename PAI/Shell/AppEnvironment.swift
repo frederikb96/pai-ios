@@ -79,6 +79,11 @@ final class AppEnvironment {
         /// since the unread count drives a badge visible from the session list's toolbar and the
         /// springboard, neither of which is that screen.
         let notifications: NotificationCenterStore
+        /// Reaches a transcript screen that is already on top for a session a push just arrived
+        /// for — see `TranscriptJumpRequests`'s own doc comment for why `Route` alone cannot.
+        /// App-wide rather than per-screen so `RootView`, which has no `TranscriptCollectionView`
+        /// of its own, can still reach whichever one is alive.
+        let transcriptJumps: TranscriptJumpRequests
     }
 
     private static let backendURLKey = "backendURL"
@@ -189,7 +194,8 @@ final class AppEnvironment {
             staging: StagedAttachmentStore(),
             voice: VoiceRecorderController(
                 apiClient: client, settingsStore: settingsStore, drafts: draftStore, toasts: toasts),
-            notifications: NotificationCenterStore(api: client)
+            notifications: NotificationCenterStore(api: client),
+            transcriptJumps: TranscriptJumpRequests()
         )
         lastAuthFailure = nil
         router.gate = .ready
@@ -266,6 +272,13 @@ final class AppEnvironment {
     /// own `aps.badge` already covers the count while the app is not running at all.
     func pollNotificationSummary() async {
         guard let connection else { return }
+        // Refreshed immediately rather than only after the first sleep — otherwise the bell
+        // reads whatever it started at (zero, on a fresh install) for the first 30 seconds of
+        // every run this loop starts on its own, which is exactly the half-minute someone opens
+        // the app to check it. `loadStartupState()` already primes this once at launch, but this
+        // loop is what runs it again after a background suspension with no launch of its own to
+        // prime it — it should not depend on that separate call to be correct standalone.
+        await connection.notifications.refreshSummary()
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(30))
             guard !Task.isCancelled else { return }
