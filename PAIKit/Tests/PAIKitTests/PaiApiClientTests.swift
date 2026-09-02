@@ -166,6 +166,86 @@ final class PaiApiClientTests: XCTestCase {
         XCTAssertTrue(body.contains(#""at_bottom":false"#), body)
     }
 
+    // MARK: - messages(around:limit:sessionId:) / findMessages
+
+    func testMessagesAroundSendsAroundIdAndLimit() async throws {
+        stubJSON("[]")
+        let client = try makeClient()
+        _ = try await client.messages(around: 42, limit: 150, sessionId: "s1")
+
+        let query = PaiStubURLProtocol.capturedRequest?.url?.query ?? ""
+        XCTAssertTrue(query.contains("around_id=42"), query)
+        XCTAssertTrue(query.contains("limit=150"), query)
+    }
+
+    func testMessagesAroundDecodesTheMessagesOnSuccess() async throws {
+        stubJSON(#"[{"id":1,"session_id":"s1","type":"user"}]"#)
+        let client = try makeClient()
+        let result = try await client.messages(around: 1, sessionId: "s1")
+
+        guard case .ok(let messages) = result else { return XCTFail("expected .ok, got \(result)") }
+        XCTAssertEqual(messages.map(\.id), [1])
+    }
+
+    /// The one discriminated outcome `locate` depends on to tell "not ingested yet" from "gone
+    /// under a reingest" apart — see `messages(around:limit:sessionId:)`'s own doc comment.
+    func testMessagesAroundReturnsNotFoundOnA404RatherThanThrowing() async throws {
+        stubJSON(#"{"detail":"No message 999 in this session"}"#, statusCode: 404)
+        let client = try makeClient()
+        let result = try await client.messages(around: 999, sessionId: "s1")
+
+        XCTAssertEqual(result, .notFound)
+    }
+
+    /// Any OTHER non-2xx status still throws normally — a 404 is the one carved-out outcome, not
+    /// a general "swallow every error" shape.
+    func testMessagesAroundStillThrowsOnAServerError() async throws {
+        stubJSON(#"{"detail":"boom"}"#, statusCode: 500)
+        let client = try makeClient()
+        do {
+            _ = try await client.messages(around: 1, sessionId: "s1")
+            XCTFail("expected a throw")
+        } catch {
+            // Any throw is correct here; the point is it does not return `.notFound`.
+        }
+    }
+
+    func testFindMessagesSendsQNotKind() async throws {
+        stubJSON(#"{"message_ids":[1,2],"total":2,"as_of_id":9,"capped":false}"#)
+        let client = try makeClient()
+        let result = try await client.findMessages(sessionId: "s1", q: "hello", limit: 5000)
+
+        let query = PaiStubURLProtocol.capturedRequest?.url?.query ?? ""
+        XCTAssertTrue(query.contains("q=hello"), query)
+        XCTAssertFalse(query.contains("kind="), query)
+        XCTAssertEqual(result.messageIds, [1, 2])
+        XCTAssertEqual(result.total, 2)
+        XCTAssertEqual(result.asOfId, 9)
+        XCTAssertFalse(result.capped)
+    }
+
+    func testFindMessagesSendsKindNotQ() async throws {
+        stubJSON(#"{"message_ids":[],"total":0,"as_of_id":null,"capped":false}"#)
+        let client = try makeClient()
+        _ = try await client.findMessages(sessionId: "s1", kind: "boundary")
+
+        let query = PaiStubURLProtocol.capturedRequest?.url?.query ?? ""
+        XCTAssertTrue(query.contains("kind=boundary"), query)
+        XCTAssertFalse(query.contains("q="), query)
+    }
+
+    /// `afterId` is the live-tail catch-up call's own parameter — must reach the wire as
+    /// `after_id`, the same name `getMessages`' own mode uses, not confused with `around_id`.
+    func testFindMessagesSendsAfterIdForCatchUp() async throws {
+        stubJSON(#"{"message_ids":[],"total":0,"as_of_id":null,"capped":false}"#)
+        let client = try makeClient()
+        _ = try await client.findMessages(sessionId: "s1", q: "x", afterId: 100)
+
+        let query = PaiStubURLProtocol.capturedRequest?.url?.query ?? ""
+        XCTAssertTrue(query.contains("after_id=100"), query)
+        XCTAssertFalse(query.contains("around_id"), query)
+    }
+
     func testResumeSessionAcceptsEveryRecognizedStatus() async throws {
         let client = try makeClient()
         for status in ["resumed", "already_running", "refused"] {

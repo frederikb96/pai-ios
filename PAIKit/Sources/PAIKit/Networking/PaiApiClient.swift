@@ -114,6 +114,15 @@ public enum PaiAttachmentResult: Sendable {
     case error(PaiError)
 }
 
+/// `messages(around:limit:sessionId:)`'s own discriminated result — see that method's doc
+/// comment for why a 404 there is a distinct outcome rather than a thrown `PaiError`. Unlike
+/// `PaiAttachmentResult`, any OTHER non-2xx status still throws normally (via
+/// `sendPassingThrough`'s own `checkStatus` fallback), so there is no third `.error` case here.
+public enum MessagesAroundResult: Sendable, Equatable {
+    case ok(messages: [Message])
+    case notFound
+}
+
 // MARK: - PaiApiClient
 
 /// Swift port of `pai-cloud/web/src/api/client.ts`. One `send()` chokepoint mirrors the web
@@ -360,6 +369,44 @@ public struct PaiApiClient: Sendable {
             if let limit { query.append(URLQueryItem(name: "limit", value: String(limit))) }
         }
         return try await send(path: "/api/session/\(sessionId)/messages", query: query)
+    }
+
+    /// A page straddling `aroundId` — `ceil(limit/2)` at-or-before it, `floor(limit/2)` after.
+    /// Its own method rather than a fourth `MessagesPage` case: unlike the other three, this one
+    /// can legitimately 404 when `aroundId` names no message in this session, and `locate` has to
+    /// tell that apart from any other failure — a deep link's 404 means "not ingested yet, keep
+    /// retrying", a server-derived hit's means "the row is gone, drop it". Same
+    /// discriminated-result shape `getAttachment` already uses for the same reason.
+    public func messages(around aroundId: Int, limit: Int? = nil, sessionId: String) async throws
+        -> MessagesAroundResult
+    {
+        var query: [URLQueryItem] = [URLQueryItem(name: "around_id", value: String(aroundId))]
+        if let limit { query.append(URLQueryItem(name: "limit", value: String(limit))) }
+        let (statusCode, data) = try await sendPassingThrough(
+            path: "/api/session/\(sessionId)/messages", method: "GET", query: query, body: nil,
+            contentType: nil, passthrough: [404]
+        )
+        if statusCode == 404 { return .notFound }
+        do {
+            return .ok(messages: try JSONDecoder().decode([Message].self, from: data))
+        } catch {
+            throw PaiError.decoding("\(error)")
+        }
+    }
+
+    /// Ids of every message matching a text or kind predicate — server recall, client precision
+    /// (search-virtualization design, decision 1). Exactly one of `q`/`kind`; `afterId` is the
+    /// live-tail catch-up call, scoping `total` to ids past the snapshot a session's search
+    /// already has.
+    public func findMessages(
+        sessionId: String, q: String? = nil, kind: String? = nil, afterId: Int? = nil, limit: Int? = nil
+    ) async throws -> MessageFindResult {
+        var query: [URLQueryItem] = []
+        if let q { query.append(URLQueryItem(name: "q", value: q)) }
+        if let kind { query.append(URLQueryItem(name: "kind", value: kind)) }
+        if let afterId { query.append(URLQueryItem(name: "after_id", value: String(afterId))) }
+        if let limit { query.append(URLQueryItem(name: "limit", value: String(limit))) }
+        return try await send(path: "/api/session/\(sessionId)/messages/find", query: query)
     }
 
     /// Send a message. Omitting `sessionId` **creates** the session — one path serves both the

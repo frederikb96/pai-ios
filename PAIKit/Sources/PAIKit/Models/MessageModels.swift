@@ -254,3 +254,27 @@ public struct Message: Codable, Sendable, Equatable, Identifiable {
         self.createdAt = createdAt
     }
 }
+
+/// `GET /api/session/{id}/messages/find`'s answer — ids of every message matching a text or kind
+/// predicate, an exact total, and a snapshot boundary for the live-tail catch-up call. Never the
+/// messages themselves: this route only ever locates, `messages(around:limit:)` fetches.
+public struct MessageFindResult: Codable, Sendable, Equatable {
+    public let messageIds: [Int]
+    public let total: Int
+    public let asOfId: Int?
+    public let capped: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case messageIds = "message_ids"
+        case total
+        case asOfId = "as_of_id"
+        case capped
+    }
+
+    public init(messageIds: [Int], total: Int, asOfId: Int?, capped: Bool) {
+        self.messageIds = messageIds
+        self.total = total
+        self.asOfId = asOfId
+        self.capped = capped
+    }
+}
