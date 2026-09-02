@@ -47,6 +47,13 @@ public enum Route: Hashable, Sendable {
     /// The notification centre (row 5.27) — every alert transition and every agent push, as a
     /// persistent, filterable log.
     case notifications
+    /// Past Recordings. Reached only from the fixture screenshot workflow, the same way
+    /// `.createSession` is: real usage presents `RecordingsSheet` from the composer's plus-icon,
+    /// never by pushing a route, so `RootView` reproduces that sheet presentation here rather
+    /// than pushing the view directly. Without this the picker's "Recovered" row is never drawn
+    /// anywhere free — no route means the screenshot workflow can never reach it at all,
+    /// regardless of whether the list underneath has anything in it.
+    case recordings
 
     /// Ignores `session`'s `messageID` — see that case's doc comment. Everything else is a plain
     /// per-case comparison, same as the synthesized version this replaces.
@@ -62,6 +69,7 @@ public enum Route: Hashable, Sendable {
         case (.noteContainers, .noteContainers): return true
         case (.notePreview(let a), .notePreview(let b)): return a == b
         case (.notifications, .notifications): return true
+        case (.recordings, .recordings): return true
         default: return false
         }
     }
@@ -95,6 +103,8 @@ public enum Route: Hashable, Sendable {
             hasher.combine(id)
         case .notifications:
             hasher.combine(9)
+        case .recordings:
+            hasher.combine(10)
         }
     }
 }
@@ -109,7 +119,7 @@ extension Route {
     /// hardcoding it, so a new screen becomes photographable without a CI file edit.
     public static let namedScreens: [String] = [
         "session", "terminal", "settings", "createSession", "subagents", "notes", "note", "noteContainers",
-        "notePreview", "notifications",
+        "notePreview", "notifications", "recordings",
     ]
 
     /// Parses a launch-argument screen name into a route. `sessionID` fills in every
@@ -134,6 +144,7 @@ extension Route {
         case "noteContainers": return .noteContainers
         case "notePreview": return .notePreview(id: noteID)
         case "notifications": return .notifications
+        case "recordings": return .recordings
         default: return nil
         }
     }
@@ -241,7 +252,7 @@ public final class Router {
             case .session(let id, _): return id
             case .terminal(let sessionID): return sessionID
             case .settings, .createSession, .subagents, .notes, .note, .noteContainers, .notePreview,
-                .notifications:
+                .notifications, .recordings:
                 continue
             }
         }
@@ -255,7 +266,7 @@ public final class Router {
             switch route {
             case .note(let id), .notePreview(let id): return id
             case .session, .terminal, .settings, .createSession, .subagents, .notes, .noteContainers,
-                .notifications:
+                .notifications, .recordings:
                 continue
             }
         }

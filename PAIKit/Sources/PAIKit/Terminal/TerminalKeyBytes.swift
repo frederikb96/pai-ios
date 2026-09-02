@@ -5,8 +5,8 @@ public enum TerminalArrowDirection: Equatable, Sendable {
     case up, down, left, right
 }
 
-/// The raw VT100 byte sequences the action bar and the terminal's own keystroke forwarding send
-/// through `sendTerminalInput`'s raw-bytes route — no backend change needed for any of these.
+/// The raw VT100 byte sequences the action bar's immediate keys and the field's buffered draft
+/// send through `sendTerminalInput`'s raw-bytes route — no backend change needed for any of these.
 public enum TerminalKeyBytes {
     public static func arrow(_ direction: TerminalArrowDirection) -> String {
         switch direction {
@@ -23,20 +23,16 @@ public enum TerminalKeyBytes {
     /// Enter keypress and a literal carriage return deliver an identical byte to the program on
     /// the other end; what tells the pane's prompt "submit" from "insert a line break" is purely
     /// whether this arrives in its own read or alongside other input, not anything about the byte
-    /// itself. The action bar's own Enter/Send sends this alone, with no flag, and submits.
+    /// itself. The field buffers its draft locally rather than forwarding it live, so both uses
+    /// below send the whole draft in one request, this byte appended:
     ///
-    /// The soft keyboard's own Return sends the identical byte through `sendTerminalInput`'s
-    /// `literal` flag instead, right after whatever character was just typed — this field forwards
-    /// every keystroke the moment it happens, so by the time Return fires there is nothing left to
-    /// bundle it with in one call; it relies on landing close enough behind the character that
-    /// preceded it to read as the same input rather than a bare Enter arriving alone. 🚨 That
-    /// reliance is unverified against a live pane at the time this shipped.
+    /// The action bar's own Enter/Send appends this with no `literal` flag — `sendTerminalInput`'s
+    /// ordinary route already splits on a trailing `\r` and synthesizes a real Enter after typing
+    /// the rest, the same as a person typing a line and then pressing Enter. The soft keyboard's
+    /// own Return appends the identical byte through the `literal` flag instead, which sends the
+    /// whole payload as one unsplit write — the same-chunk arrival is what reads as a line break
+    /// rather than a submit.
     public static let submit = "\r"
-
-    /// One backspace/delete keystroke, sent once per character removed from the local field so a
-    /// selection-delete or a fast multi-character backspace reaches the pane as the same number
-    /// of keystrokes a person typing them one at a time would have sent.
-    public static let delete = "\u{7f}"
 
     /// A control chord for a single letter — `nil` for anything that is not an ASCII letter, since
     /// the classic `letter - 64` chord table only ever covers A–Z. Case-insensitive: Control-B and

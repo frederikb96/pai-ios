@@ -29,6 +29,10 @@ final class RouteNamedTests: XCTestCase {
         XCTAssertEqual(Route.named("createSession", sessionID: "anything"), .createSession)
     }
 
+    func testNamedRecordingsIgnoresTheSessionID() {
+        XCTAssertEqual(Route.named("recordings", sessionID: "anything"), .recordings)
+    }
+
     func testUnrecognisedNameParsesToNil() {
         XCTAssertNil(Route.named("not-a-real-screen", sessionID: "s1"))
     }

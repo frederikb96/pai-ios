@@ -153,6 +153,8 @@ struct RootView: View {
             NoteEditorScreen(noteID: id, startsInPreview: true)
         case .notifications:
             NotificationCenterScreen()
+        case .recordings:
+            RecordingsRouteScreen()
         }
     }
 
@@ -240,6 +242,32 @@ private struct CreateSessionRouteScreen: View {
         Color.clear
             .sheet(isPresented: $isPresented) {
                 CreateSessionView()
+            }
+            .onChange(of: isPresented) { _, presented in
+                guard !presented else { return }
+                environment.router.pop()
+            }
+    }
+}
+
+/// What `.recordings` pushes to — reproduces the sheet the composer's plus-icon actually
+/// presents, since `RecordingsSheet` has no screen of its own to navigate to. See
+/// `Route.recordings`'s doc comment for why this route exists at all; shaped exactly like
+/// `CreateSessionRouteScreen` above, for the same reason.
+private struct RecordingsRouteScreen: View {
+    @Environment(AppEnvironment.self) private var environment
+    @State private var isPresented = true
+
+    var body: some View {
+        Color.clear
+            .sheet(isPresented: $isPresented) {
+                if let voice = environment.connection?.voice {
+                    RecordingsSheet(
+                        controller: voice,
+                        onInsertTranscript: { _ in },
+                        onAttach: { _ in }
+                    )
+                }
             }
             .onChange(of: isPresented) { _, presented in
                 guard !presented else { return }

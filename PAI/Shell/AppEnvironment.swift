@@ -148,6 +148,25 @@ final class AppEnvironment {
         // Built ahead of the literal rather than inside it: the recorder needs both of these, and
         // a struct literal cannot refer to fields it is still building.
         let settingsStore = SettingsStore(apiClient: client, storage: defaults)
+        #if DEBUG
+            // Recordings have no REST route for `PaiFixtureURLProtocol` to answer — they are
+            // client-side only, so fixture mode has to seed `SettingsStore` directly. Without
+            // this the picker's "Recovered" row is built, tested and never once drawn, even in
+            // CI, since nothing else ever exercises `RecordingReconciliation`'s output.
+            //
+            // Guarded by id rather than seeded unconditionally: `connect()` runs on every launch,
+            // and the screenshot workflow relaunches the app once per named screen against the
+            // same simulator, so an unconditional `saveRecording` re-added both fixtures on every
+            // launch — a real bug caught only by looking at the screenshot rather than trusting
+            // that the row drew at all, exactly as it duplicated into a wall of "Recovered" rows.
+            if PaiFixtureLaunch.isEnabled() {
+                let alreadySeeded = Set(settingsStore.recordings.map(\.id))
+                for recording in [PaiFixtures.recordingOrdinary, PaiFixtures.recordingRecovered]
+                where !alreadySeeded.contains(recording.id) {
+                    settingsStore.saveRecording(recording)
+                }
+            }
+        #endif
         let draftStore = DraftStore(api: client)
         let toasts = ToastCenter()
 
