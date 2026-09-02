@@ -181,7 +181,6 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// subagent, keeps the plain per-row lock the VM's own naming respects.
     public let titleLocked: Bool?
     public let initialMessage: String?
-    public let pendingMessage: String?
     public let sessionTokens: Int
     /// Claude's own conversation uuid — what `claude --resume` takes.
     public let claudeSessionId: String?
@@ -192,6 +191,9 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     public let effectiveIdleTimeoutMinutes: Int?
     /// Remote Control's session id. Nil until the session has registered with it.
     public let cseId: String?
+    /// Path (relative to the agent's own project directory) of the transcript file this session
+    /// reads from and resumes into — `nil` until the session has one.
+    public let transcriptPath: String?
     public let createdAt: String?
     public let updatedAt: String?
     public let lastActivityAt: String?
@@ -236,6 +238,15 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     public let remoteControl: Bool?
     /// True for a session PAI never launched — found by the transcript watcher.
     public let discovered: Bool?
+    /// Set once the agent finds a transcript file this session depends on missing from disk —
+    /// never cleared by deletion, since nothing here is ever deleted, but never rendered as if
+    /// the file still existed either. A later re-announcement of the same file clears it.
+    public let sourceMissing: Bool?
+    /// The git branch this session's working directory was on, read from the transcript's own
+    /// metadata by the agent's file scanner. `nil` until a line reporting one has been seen.
+    public let gitBranch: String?
+    /// The Claude Code version that wrote this transcript, from the same scan.
+    public let claudeVersion: String?
     /// The memory-system project/phase this conversation belongs to — `nil` until a hook, a
     /// rename, or a switch has placed it. A conversation's name IS its current phase's name.
     public let projectId: String?
@@ -252,12 +263,12 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         case status, state, blocker, working, title
         case titleLocked = "title_locked"
         case initialMessage = "initial_message"
-        case pendingMessage = "pending_message"
         case sessionTokens = "session_tokens"
         case claudeSessionId = "claude_session_id"
         case idleTimeoutMinutes = "idle_timeout_minutes"
         case effectiveIdleTimeoutMinutes = "effective_idle_timeout_minutes"
         case cseId = "cse_id"
+        case transcriptPath = "transcript_path"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case lastActivityAt = "last_activity_at"
@@ -273,6 +284,9 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         case readPositionAtBottom = "read_position_at_bottom"
         case remoteControl = "remote_control"
         case discovered
+        case sourceMissing = "source_missing"
+        case gitBranch = "git_branch"
+        case claudeVersion = "claude_version"
         case projectId = "project_id"
         case phaseId = "phase_id"
         case projectName = "project_name"
@@ -289,12 +303,12 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         title: String?,
         titleLocked: Bool?,
         initialMessage: String?,
-        pendingMessage: String?,
         sessionTokens: Int,
         claudeSessionId: String?,
         idleTimeoutMinutes: Int?,
         effectiveIdleTimeoutMinutes: Int?,
         cseId: String?,
+        transcriptPath: String? = nil,
         createdAt: String?,
         updatedAt: String?,
         lastActivityAt: String?,
@@ -311,6 +325,9 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         readPositionAtBottom: Bool? = nil,
         remoteControl: Bool?,
         discovered: Bool?,
+        sourceMissing: Bool? = nil,
+        gitBranch: String? = nil,
+        claudeVersion: String? = nil,
         projectId: String?,
         phaseId: String?,
         projectName: String?,
@@ -325,12 +342,12 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.title = title
         self.titleLocked = titleLocked
         self.initialMessage = initialMessage
-        self.pendingMessage = pendingMessage
         self.sessionTokens = sessionTokens
         self.claudeSessionId = claudeSessionId
         self.idleTimeoutMinutes = idleTimeoutMinutes
         self.effectiveIdleTimeoutMinutes = effectiveIdleTimeoutMinutes
         self.cseId = cseId
+        self.transcriptPath = transcriptPath
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.lastActivityAt = lastActivityAt
@@ -347,6 +364,9 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.readPositionAtBottom = readPositionAtBottom
         self.remoteControl = remoteControl
         self.discovered = discovered
+        self.sourceMissing = sourceMissing
+        self.gitBranch = gitBranch
+        self.claudeVersion = claudeVersion
         self.projectId = projectId
         self.phaseId = phaseId
         self.projectName = projectName
@@ -361,14 +381,16 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     ) -> Session {
         Session(
             id: id, sessionType: sessionType, status: status, state: state, blocker: blocker, working: working,
-            title: title, titleLocked: titleLocked, initialMessage: initialMessage, pendingMessage: pendingMessage,
+            title: title, titleLocked: titleLocked, initialMessage: initialMessage,
             sessionTokens: sessionTokens, claudeSessionId: claudeSessionId, idleTimeoutMinutes: idleTimeoutMinutes,
-            effectiveIdleTimeoutMinutes: effectiveIdleTimeoutMinutes, cseId: cseId, createdAt: createdAt,
+            effectiveIdleTimeoutMinutes: effectiveIdleTimeoutMinutes, cseId: cseId, transcriptPath: transcriptPath,
+            createdAt: createdAt,
             updatedAt: updatedAt, lastActivityAt: lastActivityAt, workingDir: workingDir, agent: agent, kind: kind,
             parentSessionId: parentSessionId, subagentName: subagentName, subagentType: subagentType,
             subagentDescription: subagentDescription, subagentModel: subagentModel,
             readPositionMessageId: readPositionMessageId, readPositionOffsetPx: readPositionOffsetPx,
             readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
+            sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
             projectId: projectId, phaseId: phaseId, projectName: projectName, activityCounts: activityCounts
         )
     }

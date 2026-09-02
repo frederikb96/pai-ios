@@ -147,7 +147,6 @@ public final class CreateSessionStore {
                 title: nil,
                 titleLocked: nil,
                 initialMessage: message,
-                pendingMessage: nil,
                 sessionTokens: 0,
                 claudeSessionId: nil,
                 idleTimeoutMinutes: nil,
