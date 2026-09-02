@@ -128,6 +128,39 @@ public final class NotificationCenterStore {
         unread = summary.unread
     }
 
+    /// What `PaiNotificationStreamClient`'s `notification` and `read` events both apply — the
+    /// live counterpart to `refreshSummary()`, for whichever session is actually watching the
+    /// stream (see that client's own doc comment for why that is foreground-only). Never touches
+    /// `rows`, same as `refreshSummary()`: a `read` event in particular names no row at all (see
+    /// `SseNotificationReadEvent`'s doc comment), so there is nothing else here to apply.
+    public func applyLiveUnread(_ value: Int) {
+        unread = value
+    }
+
+    /// Confirmed read state for a fixed set of ids, fetched independently of `rows`/paging and
+    /// mutating neither — this exists only to answer "is this one still worth showing in the
+    /// system's notification shade", never to feed the screen's own list. An id this fetch
+    /// cannot confirm (a failed request) is simply absent from the result, so a caller reconciling
+    /// the shade against it leaves that banner alone rather than guessing at a notification whose
+    /// current state it does not actually know.
+    public func readStatus(forIDs ids: [String]) async -> [String: Bool] {
+        guard !ids.isEmpty else { return [:] }
+        let api = self.api
+        return await withTaskGroup(of: (String, Bool?).self) { group in
+            for id in ids {
+                group.addTask {
+                    guard let notification = try? await api.getNotification(id: id) else { return (id, nil) }
+                    return (id, !notification.isUnread)
+                }
+            }
+            var result: [String: Bool] = [:]
+            for await (id, isRead) in group where isRead != nil {
+                result[id] = isRead
+            }
+            return result
+        }
+    }
+
     /// Marks one row read — the swipe action, and what a tap does before navigating. Optimistic
     /// and reverted on failure when the row is loaded locally; when it is not (a cold push tap
     /// resolves and opens a session directly, without ever visiting the centre — see

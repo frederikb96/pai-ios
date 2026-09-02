@@ -115,6 +115,30 @@ public struct SseProcessingEvent: Codable, Sendable, Equatable {
     }
 }
 
+/// `GET /api/notifications/stream`'s `notification` event — a new row plus the account's
+/// freshly-counted unread total, ridden alongside so a client already showing the row (a push
+/// banner, an open centre) never has to make a second request just to keep its badge in step.
+public struct SseNotificationEvent: Codable, Sendable, Equatable {
+    public let notification: PaiNotification
+    public let unread: Int
+
+    public init(notification: PaiNotification, unread: Int) {
+        self.notification = notification
+        self.unread = unread
+    }
+}
+
+/// The same stream's `read` event — deliberately carries no row: a read change never touches
+/// anything a client does not already hold, only the unread total moves. See
+/// `PaiNotificationStreamClient`'s doc comment for who consumes this and why.
+public struct SseNotificationReadEvent: Codable, Sendable, Equatable {
+    public let unread: Int
+
+    public init(unread: Int) {
+        self.unread = unread
+    }
+}
+
 /// Documented for parity with `types.ts`; the terminal stream itself decodes frames loosely
 /// (see `PaiTerminalStreamClient`) rather than through this type, because a malformed or
 /// non-JSON frame body is a normal case there, not a decode failure.

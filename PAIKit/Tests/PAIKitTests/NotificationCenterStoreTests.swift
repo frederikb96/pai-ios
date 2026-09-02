@@ -10,6 +10,10 @@ private actor FakeNotificationCenterApi: NotificationCenterApiClient {
     var markAllReadResult: Result<Int, PaiError> = .success(0)
     var getNotificationResult: Result<PaiNotification, PaiError> = .failure(.transport("not configured"))
     var clearAlertsResult: Result<Int, PaiError> = .success(1)
+    /// Per-id overrides for `getNotification`, checked before the single shared
+    /// `getNotificationResult` above — what `readStatus(forIDs:)`'s tests need to prove a
+    /// heterogeneous batch (some read, some not, one failed) resolves each id independently.
+    var getNotificationResultsById: [String: Result<PaiNotification, PaiError>] = [:]
 
     private(set) var listCalls: [(limit: Int?, beforeId: String?, kind: PaiNotificationKind?)] = []
     private(set) var markReadCalls: [[String]] = []
@@ -20,6 +24,9 @@ private actor FakeNotificationCenterApi: NotificationCenterApiClient {
     func setListResult(_ result: Result<NotificationsResponse, PaiError>) { listResult = result }
     func setMarkReadResult(_ result: Result<Int, PaiError>) { markReadResult = result }
     func setGetNotificationResult(_ result: Result<PaiNotification, PaiError>) { getNotificationResult = result }
+    func setGetNotificationResult(_ result: Result<PaiNotification, PaiError>, forId id: String) {
+        getNotificationResultsById[id] = result
+    }
     func setClearAlertsResult(_ result: Result<Int, PaiError>) { clearAlertsResult = result }
 
     func getNotifications(
@@ -59,7 +66,7 @@ private actor FakeNotificationCenterApi: NotificationCenterApiClient {
 
     func getNotification(id: String) async throws -> PaiNotification {
         getNotificationCalls.append(id)
-        switch getNotificationResult {
+        switch getNotificationResultsById[id] ?? getNotificationResult {
         case let .success(notification): return notification
         case let .failure(error): throw error
         }
@@ -398,6 +405,50 @@ final class NotificationCenterStoreTests: XCTestCase {
 
         XCTAssertFalse(cleared)
         let calls = await api.clearAlertsCalls
+        XCTAssertTrue(calls.isEmpty)
+    }
+
+    /// What `PaiNotificationStreamClient`'s live events apply — a plain count set, with `rows`
+    /// left exactly as loaded.
+    func testApplyLiveUnreadSetsTheCountWithoutTouchingRows() async {
+        let api = FakeNotificationCenterApi()
+        await api.setListResult(
+            .success(NotificationsResponse(unread: 1, hasMore: false, notifications: [makeNotification(id: "1")])))
+        let store = NotificationCenterStore(api: api)
+        await store.loadInitialNotifications()
+
+        store.applyLiveUnread(4)
+
+        XCTAssertEqual(store.unread, 4)
+        XCTAssertEqual(store.rows.map(\.id), ["1"])
+    }
+
+    /// A heterogeneous batch — one confirmed read, one confirmed still unread, one the fetch
+    /// failed for — resolves each id independently, and the failed one is simply absent rather
+    /// than defaulted either way.
+    func testReadStatusReturnsConfirmedStateAndOmitsFailures() async {
+        let api = FakeNotificationCenterApi()
+        await api.setGetNotificationResult(
+            .success(makeNotification(id: "read1", readAt: "2026-01-01T00:00:00Z")), forId: "read1")
+        await api.setGetNotificationResult(.success(makeNotification(id: "unread1")), forId: "unread1")
+        await api.setGetNotificationResult(.failure(.transport("offline")), forId: "fail1")
+        let store = NotificationCenterStore(api: api)
+
+        let status = await store.readStatus(forIDs: ["read1", "unread1", "fail1"])
+
+        XCTAssertEqual(status, ["read1": true, "unread1": false])
+    }
+
+    /// An empty request makes no calls at all — the common case, since most delivered
+    /// notifications are already accounted for.
+    func testReadStatusWithNoIDsMakesNoCalls() async {
+        let api = FakeNotificationCenterApi()
+        let store = NotificationCenterStore(api: api)
+
+        let status = await store.readStatus(forIDs: [])
+
+        XCTAssertTrue(status.isEmpty)
+        let calls = await api.getNotificationCalls
         XCTAssertTrue(calls.isEmpty)
     }
 }
