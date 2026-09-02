@@ -23,7 +23,10 @@ public struct TranscriptCardPlan: Equatable, Sendable {
         /// `group` is only ever set when `origin == "agent"` — the view needs nothing else to
         /// decide whether to show the "sender · group" pill.
         case relayedBubble(text: String, sender: String, group: String?)
-        case assistantBubble(text: String)
+        /// `filePaths` is every `pai-file:` marker in `text` — `text` itself is the message's
+        /// full, untouched content, marker lines included; see
+        /// ``MessageRouting/extractFilePaths(_:)``.
+        case assistantBubble(text: String, filePaths: [String])
         case agentMessage(sender: String, body: String)
         case command(name: String, args: String?)
         case system(subtype: String?, content: String?, hookSummary: HookSummary?)
@@ -181,7 +184,8 @@ public enum TranscriptRowPlan {
         if let content = message.content, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             cards.append(
                 TranscriptCardPlan(
-                    kind: .assistantBubble(text: content), expandKey: nil, isExpanded: true,
+                    kind: .assistantBubble(text: content, filePaths: MessageRouting.extractFilePaths(content)),
+                    expandKey: nil, isExpanded: true,
                     blocks: MarkdownParser.parse(content)))
         }
 

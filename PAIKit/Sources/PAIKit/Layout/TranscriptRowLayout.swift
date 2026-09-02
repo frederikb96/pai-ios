@@ -243,8 +243,17 @@ public enum TranscriptRowLayout {
         case .relayedBubble(let text, _, _):
             return (text.isEmpty ? 0 : content) + labelChrome + TranscriptRowMetrics.bubbleVerticalPadding
 
-        case .assistantBubble:
-            return content + TranscriptRowMetrics.bubbleVerticalPadding
+        case .assistantBubble(let text, let filePaths):
+            // Mirrors `.userBubble` just above: the markdown bubble first (which still measures
+            // the `pai-file:` marker line as ordinary text, since the message is never rewritten
+            // for this), one fixed-height chip per marker after it.
+            let hasText = !text.isEmpty
+            let textHeight = hasText ? content + TranscriptRowMetrics.bubbleVerticalPadding : 0
+            let chips = Double(filePaths.count) * TranscriptRowMetrics.attachmentChipHeight
+            let childCount = (hasText ? 1 : 0) + filePaths.count
+            let gaps =
+                childCount > 1 ? Double(childCount - 1) * TranscriptRowMetrics.attachmentChipSpacing : 0
+            return textHeight + chips + gaps
 
         case .command(_, let args):
             // No arguments degrades to a compact, non-interactive line with no header chrome at

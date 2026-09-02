@@ -1053,6 +1053,8 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             if let self {
                 TranscriptRowContent(
                     message: row.message,
+                    sessionID: self.sessionID,
+                    apiClient: self.apiClient,
                     isExpanded: self.expandResolver(forMessageId: messageId),
                     onToggleExpand: { [weak self] key in self?.toggleExpand(messageId: messageId, key: key) },
                     highlights: self.searchHighlights(forMessageId: messageId),

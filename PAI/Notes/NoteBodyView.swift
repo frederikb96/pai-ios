@@ -297,11 +297,12 @@ struct NotePreviewTableView: View {
     }
 }
 
-/// An Obsidian embed (`![[attachments/foo.png]]`) rendered inline: an image renders in place;
-/// anything else is a tappable chip that confirms before handing the file to the system share
-/// sheet — a stray tap must not start a download on its own. Loads on appearance rather than
-/// deferring to a tap on the chip itself — a note body carries only its own handful of
-/// attachments, unlike a long chat transcript.
+/// An Obsidian embed (`![[attachments/foo.png]]`) rendered inline: an image renders in place and
+/// opens the shared ``FullScreenImageViewer`` on tap — the same interaction and the same viewer a
+/// session's own attachments use — and anything else is a tappable chip that confirms before
+/// handing the file to the system share sheet, so a stray tap can never start a download on its
+/// own. Loads on appearance rather than deferring to a tap on the chip itself — a note body
+/// carries only its own handful of attachments, unlike a long chat transcript.
 private struct NoteAttachmentEmbedView: View {
     let containerId: String
     let target: String
@@ -309,7 +310,8 @@ private struct NoteAttachmentEmbedView: View {
     @Environment(NotesStore.self) private var notes
     @State private var state: LoadState = .loading
     @State private var isConfirmingDownload = false
-    @State private var shareFile: NoteAttachmentShareFile?
+    @State private var shareFile: AttachmentShareFile?
+    @State private var fullScreenTarget: FullScreenImageTarget?
 
     private enum LoadState {
         case loading
@@ -323,11 +325,17 @@ private struct NoteAttachmentEmbedView: View {
             switch state {
             case .loaded(let data):
                 if isImage, let uiImage = UIImage(data: data) {
-                    Image(uiImage: uiImage)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxHeight: 320)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    Button {
+                        fullScreenTarget = FullScreenImageTarget(image: uiImage, filename: filename)
+                    } label: {
+                        Image(uiImage: uiImage)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxHeight: 320)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("View \(filename)")
                 } else {
                     Button {
                         isConfirmingDownload = true
@@ -381,40 +389,20 @@ private struct NoteAttachmentEmbedView: View {
             }
         }
         .sheet(item: $shareFile) { file in
-            NoteAttachmentShareSheet(activityItems: [file.url])
+            AttachmentShareSheet(activityItems: [file.url])
         }
+        .fullScreenImageViewer($fullScreenTarget)
     }
 
     private func prepareShare(_ data: Data) {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
-        // A failed write leaves `shareFile` unset — the confirmation simply produces nothing to
-        // share, which is a quieter failure than it deserves but not a wrong one, and this is a
-        // temp-directory write that has no real reason to fail.
-        guard (try? data.write(to: url, options: .atomic)) != nil else { return }
-        shareFile = NoteAttachmentShareFile(url: url)
+        shareFile = AttachmentSharing.stage(data, filename: filename)
     }
 
     private var filename: String {
-        target.split(separator: "/").last.map(String.init) ?? target
+        attachmentFilename(target)
     }
 
     private var isImage: Bool {
-        let ext = (filename as NSString).pathExtension.lowercased()
-        return ["jpg", "jpeg", "png", "gif", "webp", "heic"].contains(ext)
+        isImageAttachmentPath(target)
     }
-}
-
-private struct NoteAttachmentShareFile: Identifiable {
-    let url: URL
-    var id: String { url.path }
-}
-
-private struct NoteAttachmentShareSheet: UIViewControllerRepresentable {
-    let activityItems: [Any]
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
-    }
-
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
