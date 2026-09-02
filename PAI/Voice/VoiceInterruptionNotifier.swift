@@ -41,6 +41,10 @@ enum VoiceInterruptionNotifier {
         case .connectionLost: "It lost its connection and could not reconnect."
         case .error: "It stopped because of a server error."
         case .user, .silence: "It stopped."
+        // Never actually reaches here: reconciliation runs at startup, long after the process
+        // that could have posted a notification is gone. Handled rather than defaulted so this
+        // switch keeps failing to compile if `RecordingEndReason` grows another real case.
+        case .crashed: "It was recovered after the app stopped unexpectedly."
         }
     }
 }

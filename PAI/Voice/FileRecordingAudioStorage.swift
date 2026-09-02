@@ -18,6 +18,18 @@ struct FileRecordingAudioStorage: RecordingAudioStorage {
             )) ?? fileManager.temporaryDirectory
         directory = base.appendingPathComponent("Recordings", isDirectory: true)
         try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        // A deliberate answer, not an accidental default: unlike a note or a draft, a recording
+        // has no server copy at all (`RecordingAudioLibrary`'s own doc comment — "past recordings
+        // are strictly client-local"), so device backup is the only redundancy this data ever
+        // gets. For exactly Freddy's stated fear — losing an hour of dictation to a crash or a
+        // dead phone — an iCloud/iTunes backup restoring these files is a second safety net, not
+        // a leak to plug. Left included on purpose; see `StagedAttachmentStore` for the matching
+        // decision on staged attachments, which answers the same question the same way.
+        var resource = URLResourceValues()
+        resource.isExcludedFromBackup = false
+        var mutableDirectory = directory
+        try? mutableDirectory.setResourceValues(resource)
     }
 
     func save(id: String, raw: Data?, sent: Data) async throws {
@@ -55,5 +67,41 @@ struct FileRecordingAudioStorage: RecordingAudioStorage {
     /// already did for the non-streaming path.
     func removeRaw(id: String) {
         try? FileManager.default.removeItem(at: rawURL(id: id))
+    }
+
+    // MARK: - Startup reconciliation
+    //
+    // Nothing above this point ever looks at what is actually in `directory` — every other
+    // method reaches a file by an id it already has. This is the one place that goes looking,
+    // for `VoiceRecorderController.reconcileOrphanedRecordings()`.
+
+    /// Every take id with sent audio on disk, parsed straight out of filenames —
+    /// `RecordingMeta.id(forTimestampMs:)` is what named them, so this is the exact inverse.
+    func idsOnDisk() -> Set<String> {
+        guard
+            let entries = try? FileManager.default.contentsOfDirectory(
+                at: directory, includingPropertiesForKeys: nil)
+        else { return [] }
+        let suffix = "-sent.wav"
+        var ids = Set<String>()
+        for url in entries {
+            let name = url.lastPathComponent
+            guard name.hasSuffix(suffix) else { continue }
+            ids.insert(String(name.dropLast(suffix.count)))
+        }
+        return ids
+    }
+
+    func hasRaw(id: String) -> Bool {
+        FileManager.default.fileExists(atPath: rawURL(id: id).path)
+    }
+
+    /// Reads only the 44-byte header rather than `load(id:)`'s whole-file read — a reconciliation
+    /// pass may be looking at an hour of audio, and every byte past the header is unneeded here.
+    func sentHeader(id: String) -> (sampleRate: Int, dataSize: UInt32)? {
+        guard let handle = try? FileHandle(forReadingFrom: sentURL(id: id)) else { return nil }
+        defer { try? handle.close() }
+        guard let bytes = try? handle.read(upToCount: WavHeaderReader.headerByteCount) else { return nil }
+        return WavHeaderReader.parse(bytes)
     }
 }

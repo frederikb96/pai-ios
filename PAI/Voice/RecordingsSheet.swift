@@ -141,6 +141,11 @@ private struct RecordingRow: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
+                if meta.endedBy == .crashed {
+                    Text("Recovered")
+                        .font(PaiTypography.caption.font)
+                        .foregroundStyle(PaiPalette.Semantic.warningText)
+                }
                 Text(headline)
                     .font(PaiTypography.bodyEmphasized.font)
                 if let micLine {

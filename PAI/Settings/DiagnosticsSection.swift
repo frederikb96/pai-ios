@@ -89,6 +89,11 @@ private struct RecordingRow: View {
                 Text(durationLabel)
                     .font(PaiTypography.caption.font)
                     .foregroundStyle(PaiPalette.Semantic.textFaint)
+                if recording.endedBy == .crashed {
+                    Text("Recovered after the app stopped unexpectedly")
+                        .font(PaiTypography.caption.font)
+                        .foregroundStyle(PaiPalette.Semantic.warningText)
+                }
             }
         }
     }
