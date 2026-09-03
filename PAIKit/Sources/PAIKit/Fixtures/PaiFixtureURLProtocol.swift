@@ -172,6 +172,13 @@
             // a real backend — but a screenshot of those two proves less than it appears to.
             sessionScoped("GET", suffix: "/stream") { PaiFixtures.sseStream },
             sessionScoped("GET", suffix: "/terminal") { PaiFixtures.terminalStream },
+            // `exact` ignores the query string (`URLRequest.url?.path` never includes it), so
+            // this answers `?session=` regardless of which conversation uuid was asked for.
+            exact("GET", "/api/arc/specs") { PaiFixtures.arcSpecs },
+            FixtureRoute(
+                method: "GET",
+                matches: { $0.hasPrefix("/api/arc/specs/") && $0.hasSuffix("/recover") }
+            ) { PaiFixtures.data(PaiFixtures.arcRecover) },
         ]
     }
 
