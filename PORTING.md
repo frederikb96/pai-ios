@@ -20,6 +20,43 @@ still owed, and the next agent either redoes them or stops trusting the file.
 
 ## Backlog
 
+### Verify: the in-session right-to-left swipe actually reaches the reader — pai-cloud anchor: none, iOS-only
+Needs `PAI/` because: `SessionDetailView` attaches `DragGesture(minimumDistance: 30)` via
+`.simultaneousGesture` over a `UIViewControllerRepresentable` wrapping a `UICollectionView`
+(`TranscriptCollectionView`) — whether a SwiftUI gesture sibling to a UIKit view's own pan/scroll
+recognizers actually receives touches, rather than losing them to the collection view or a code
+block's horizontal scroll, is exactly the class of question this repo's own layering doc calls
+out as untestable without a device. The width/height thresholds are chosen to make an ordinary
+vertical scroll fail the check, but nobody has swiped left on a real transcript and watched the
+menu open.
+
+### Verify: the ARC spec view's live refresh actually fires on an `arc` SSE signal — pai-cloud anchor: `pai_cloud.api._arc_event`
+Needs `PAI/` because: `TranscriptStore.applySseArc`, `PaiSseClient`'s `"arc"` case and
+`ArcSpecStore.applyLiveSignal` are each unit-tested on Linux with a synthetic event, but nothing
+here can hold a real SSE connection open, trigger a genuine write against a live spec from
+another device, and watch this screen update within a second rather than waiting for the 15s
+poll fallback. The poll fallback itself is real and load-bearing regardless of whether the live
+path works, so this screen is never expected to go stale for long even if the SSE half never
+fires as designed — but that is a claim, not yet an observation.
+
+### Verify: the "Spec" swipe action and its picker sheet feel right on a real list and transcript — pai-cloud anchor: none, iOS-only
+Needs `PAI/` because: `SessionListView`'s row now offers three trailing swipe actions
+(Actions/Subagents/Spec) rather than one, and `SessionDetailView`'s new swipe opens a
+`confirmationDialog` offering the same three — both are exercised only by a Mac CI screenshot of
+the list and the dialog's structure, never by an actual thumb: whether three swipe buttons fit
+comfortably on a real phone width, and whether the confirmation dialog reads as an obvious answer
+to a left swipe rather than an unexpected menu, are feel questions only a device answers.
+
+### Verify: the block detail sheet's markdown preview truncates sensibly — pai-cloud anchor: `MarkdownContentView` (`PAI/Transcript/TranscriptCards.swift`)
+Needs `PAI/` because: `ArcNotesPreview` applies `.lineLimit(6)` to a whole `MarkdownContentView`
+tree rather than to a single `Text`, which SwiftUI propagates through the environment to every
+`Text` inside — reasoned to truncate visually reasonably for a short note, unverified for a note
+whose first block is a large table or code block (both scroll sideways rather than wrap, so a
+line limit interacts with them differently than with prose). A Mac CI screenshot exercises one
+fixture shape; a real spec's notes are unpredictable prose.
+
+
+
 ### Notes: sort by creation date — pai-cloud anchor: `GET /api/notes`
 Needs a backend change first: the list route returns no creation timestamp, only
 `GET /api/notes/{id}` does, so the sort menu can offer last-modified, name and favourites-first and
