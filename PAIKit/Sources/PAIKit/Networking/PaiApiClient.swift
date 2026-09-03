@@ -88,6 +88,12 @@ public struct PaiSmtpTestResult: Codable, Sendable, Equatable {
     public let sent: Bool
 }
 
+/// `GET /api/arc/specs`'s response envelope — unwrapped by `getArcSpecs` so callers deal in a
+/// plain `[ArcSpec]`, matching every other list endpoint in this file.
+struct ArcSpecsPage: Codable, Sendable, Equatable {
+    let specs: [ArcSpec]
+}
+
 /// `client.ts`'s `searchSessions` inlines this union rather than naming it in `types.ts`.
 public enum SessionSearchMode: String, Sendable, Equatable {
     case fuzzy, semantic
@@ -614,6 +620,23 @@ public struct PaiApiClient: Sendable {
 
     public func getUsage() async throws -> Usage {
         try await send(path: "/api/usage")
+    }
+
+    // MARK: ARC
+
+    /// The specs bound to one conversation — `session` is a conversation uuid
+    /// (`Session.claudeSessionId`), never PAI's own session id. Empty when the conversation is
+    /// not running under any spec, which is the ordinary case for most sessions.
+    public func getArcSpecs(session: String) async throws -> [ArcSpec] {
+        let page: ArcSpecsPage = try await send(
+            path: "/api/arc/specs", query: [URLQueryItem(name: "session", value: session)])
+        return page.specs
+    }
+
+    /// Everything needed to draw a spec's whole timeline in one call — see
+    /// `ArcRecoverPayload`'s doc comment.
+    public func getArcRecover(specUuid: String) async throws -> ArcRecoverPayload {
+        try await send(path: "/api/arc/specs/\(specUuid)/recover")
     }
 
     // MARK: Auth

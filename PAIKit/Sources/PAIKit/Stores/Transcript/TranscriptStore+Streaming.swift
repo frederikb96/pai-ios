@@ -36,6 +36,13 @@ extension TranscriptStore {
         )
     }
 
+    /// Records an `arc` SSE signal — see `TranscriptStore.ArcSignal`'s doc comment for why this
+    /// always writes a new value even when the same spec fires twice in a row.
+    public func applySseArc(sessionId: String, event: SseArcEvent) {
+        let sequence = (liveArc[sessionId]?.sequence ?? 0) + 1
+        liveArc[sessionId] = ArcSignal(specUuid: event.specUuid, sequence: sequence)
+    }
+
     /// Called for `onConnected`.
     public func recordSseConnected(sessionId: String, at date: Date) {
         var activity = sseActivity[sessionId] ?? StreamActivity()

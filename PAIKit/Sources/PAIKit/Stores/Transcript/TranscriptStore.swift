@@ -48,6 +48,8 @@ public final class TranscriptStore {
     /// live picture while this session's transcript is open, for whichever store owns the
     /// session list to route into its own rows. See `applySseStatus`.
     public internal(set) var liveStatus: [String: LiveSessionStatus] = [:]
+    /// The latest `arc` SSE signal per session — see `ArcSignal`'s doc comment.
+    public internal(set) var liveArc: [String: ArcSignal] = [:]
 
     // Send-tracking state (``PendingMessage``, ``TranscriptDelivery``) is declared here — a
     // stored property cannot live in an extension — and its behaviour lives in
@@ -69,6 +71,16 @@ public final class TranscriptStore {
         public let blocker: Blocker?
         public let working: Bool?
         public let activityCounts: ActivityCounts?
+    }
+
+    /// The latest `arc` SSE signal for one session, carried with an incrementing `sequence`
+    /// rather than the bare spec uuid — a reader wants "refetch, something changed" on EVERY
+    /// event, including a second write to the same spec in a row, and `onChange(of:)` only fires
+    /// on a value that differs from the last one it saw. A bare `specUuid` would collapse two
+    /// such events into one observed change; the counter cannot.
+    public struct ArcSignal: Sendable, Equatable {
+        public let specUuid: String
+        public let sequence: Int
     }
 
     public func window(for sessionId: String) -> TranscriptWindow {

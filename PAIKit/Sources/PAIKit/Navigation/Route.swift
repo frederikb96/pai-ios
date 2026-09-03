@@ -55,6 +55,11 @@ public enum Route: Hashable, Sendable {
     /// anywhere free — no route means the screenshot workflow can never reach it at all,
     /// regardless of whether the list underneath has anything in it.
     case recordings
+    /// One spec's timeline — reached from a session's "Spec" action, never a home-screen
+    /// shortcut or a notification, so unlike `.note`/`.session` it carries no separate identity
+    /// concern: nothing ever replaces one `.arcSpec` destination with a different one at the
+    /// same stack depth.
+    case arcSpec(specUuid: String)
 
     /// Ignores `session`'s `messageID` — see that case's doc comment. Everything else is a plain
     /// per-case comparison, same as the synthesized version this replaces.
@@ -71,6 +76,7 @@ public enum Route: Hashable, Sendable {
         case (.notePreview(let a), .notePreview(let b)): return a == b
         case (.notifications, .notifications): return true
         case (.recordings, .recordings): return true
+        case (.arcSpec(let a), .arcSpec(let b)): return a == b
         default: return false
         }
     }
@@ -106,6 +112,9 @@ public enum Route: Hashable, Sendable {
             hasher.combine(9)
         case .recordings:
             hasher.combine(10)
+        case .arcSpec(let specUuid):
+            hasher.combine(11)
+            hasher.combine(specUuid)
         }
     }
 }
@@ -120,8 +129,13 @@ extension Route {
     /// hardcoding it, so a new screen becomes photographable without a CI file edit.
     public static let namedScreens: [String] = [
         "session", "terminal", "settings", "createSession", "subagents", "notes", "note", "noteContainers",
-        "notePreview", "notifications", "recordings",
+        "notePreview", "notifications", "recordings", "arcSpec",
     ]
+
+    /// Every spec-scoped fixture route answers under, regardless of which uuid the request
+    /// actually named — the same fixed-id pattern `fixtureNoteID` uses, so the screenshot
+    /// workflow can ask for the ARC screen without first discovering a real spec exists.
+    public static let fixtureArcSpecUuid = "3f1c9d7a-4b8e-4a2f-9c1d-7e5a2b6f0d31"
 
     /// Parses a launch-argument screen name into a route. `sessionID` fills in every
     /// session-scoped case — the fixture corpus answers identically for any id, so the caller
@@ -146,6 +160,7 @@ extension Route {
         case "notePreview": return .notePreview(id: noteID)
         case "notifications": return .notifications
         case "recordings": return .recordings
+        case "arcSpec": return .arcSpec(specUuid: fixtureArcSpecUuid)
         default: return nil
         }
     }
@@ -282,7 +297,7 @@ public final class Router {
             case .session(let id, _): return id
             case .terminal(let sessionID): return sessionID
             case .settings, .createSession, .subagents, .notes, .note, .noteContainers, .notePreview,
-                .notifications, .recordings:
+                .notifications, .recordings, .arcSpec:
                 continue
             }
         }
@@ -296,7 +311,7 @@ public final class Router {
             switch route {
             case .note(let id), .notePreview(let id): return id
             case .session, .terminal, .settings, .createSession, .subagents, .notes, .noteContainers,
-                .notifications, .recordings:
+                .notifications, .recordings, .arcSpec:
                 continue
             }
         }

@@ -139,6 +139,21 @@ public struct SseNotificationReadEvent: Codable, Sendable, Equatable {
     }
 }
 
+/// The transcript stream's `arc` event — sent to every session bound to a spec after any write
+/// to it. Carries the spec that changed and nothing else: the view re-reads what it needs over
+/// `GET /api/arc/specs/{uuid}/recover`, so this can never be a second, staler copy of the spec.
+public struct SseArcEvent: Codable, Sendable, Equatable {
+    public let specUuid: String
+
+    enum CodingKeys: String, CodingKey {
+        case specUuid = "spec_uuid"
+    }
+
+    public init(specUuid: String) {
+        self.specUuid = specUuid
+    }
+}
+
 /// Documented for parity with `types.ts`; the terminal stream itself decodes frames loosely
 /// (see `PaiTerminalStreamClient`) rather than through this type, because a malformed or
 /// non-JSON frame body is a normal case there, not a decode failure.
