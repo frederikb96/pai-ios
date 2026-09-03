@@ -486,6 +486,10 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             onInit: { [weak self] event in self?.applySseInit(event) },
             onBatch: { [weak self] event in self?.applySseBatch(event) },
             onStatus: { [weak self] event in self?.applyStatus(event) },
+            onArc: { [weak self] event in
+                guard let self else { return }
+                self.store.applySseArc(sessionId: self.sessionID, event: event)
+            },
             onActivity: { [weak self] in
                 guard let self else { return }
                 self.store.recordSseActivity(sessionId: self.sessionID, at: Date())

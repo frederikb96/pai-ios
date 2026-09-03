@@ -245,6 +245,16 @@ struct RootView: View {
             NotificationCenterScreen()
         case .recordings:
             RecordingsRouteScreen()
+        case .arcSpec(let specUuid):
+            // The session this spec was opened from, if the currently open route names one —
+            // read from the path rather than threaded through the route itself, since the route
+            // carries no session identity of its own (see `Route.arcSpec`'s doc comment). This
+            // is only ever an approximation of "which session pushed this screen": correct for
+            // the ordinary case (push from the session currently on top, or from that session's
+            // own in-session swipe), and simply `nil` — no live SSE signal, poll fallback only —
+            // for anything less direct, which is the safe default already documented on
+            // `ArcSpecView.sessionID`.
+            ArcSpecView(specUuid: specUuid, sessionID: environment.router.openSessionID)
         }
     }
 

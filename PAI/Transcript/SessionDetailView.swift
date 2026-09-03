@@ -15,6 +15,8 @@ struct SessionDetailView: View {
     @Environment(SettingsStore.self) private var settings
     @State private var searchState = TranscriptSearchState()
     @State private var isPresentingActionsSheet = false
+    @State private var isPresentingArcMenu = false
+    @State private var arcSpecTarget: ArcSpecPickerTarget?
     @State private var usage: Usage?
     /// Whether this screen has ever seen its session exist. Until it has, a `nil` lookup means
     /// "not fetched yet" — a deep link or a restored route can name a session outside every page
@@ -52,6 +54,19 @@ struct SessionDetailView: View {
                         ComposerBar(sessionID: sessionID)
                     }
                 }
+                // `.simultaneousGesture` rather than `.gesture`: this must never win exclusivity
+                // over the transcript's own UIKit scroll/pan recognizers or a code block's
+                // horizontal scroll — it only ever ADDS a recognizer alongside them. The width
+                // threshold is what keeps an ordinary vertical scroll from ever satisfying it;
+                // see PORTING.md for what remains unverified about how this behaves against the
+                // wrapped `UICollectionView` on a real device.
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 30)
+                        .onEnded { value in
+                            guard value.translation.width < -70, abs(value.translation.height) < 60 else { return }
+                            isPresentingArcMenu = true
+                        }
+                )
             } else {
                 // Unreachable in practice: `RootView` only shows this screen once the connection
                 // exists. A spinner rather than an empty screen, so the impossible case still
@@ -92,6 +107,20 @@ struct SessionDetailView: View {
         .sheet(isPresented: $isPresentingActionsSheet) {
             SessionActionsSheet(sessionId: sessionID)
         }
+        // The same three the session list's own trailing swipe offers (`SessionListView`) — see
+        // that swipe's own doc comment for why "Subagents" is skipped for a subagent itself.
+        .confirmationDialog("Session", isPresented: $isPresentingArcMenu, titleVisibility: .hidden) {
+            Button("Actions") { isPresentingActionsSheet = true }
+            if currentSession?.kind != .subagent {
+                Button("Subagents") { environment.router.push(.subagents(parentID: sessionID)) }
+            }
+            Button("Spec") {
+                arcSpecTarget = ArcSpecPickerTarget(
+                    sessionID: sessionID, claudeSessionID: currentSession?.claudeSessionId)
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .arcSpecPicker($arcSpecTarget, router: environment.router)
         .task {
             // A route restored after relaunch, or a deep link, can name a session outside every
             // page the list has loaded — this is what makes it resolvable regardless.
