@@ -20,6 +20,7 @@ struct SessionListView: View {
     @State private var hasLoadedInitialSessions = false
     @State private var isPresentingCreateSession = false
     @State private var actionsSheetTarget: SessionActionsTarget?
+    @State private var arcSpecTarget: ArcSpecPickerTarget?
 
     /// How many rows before the end trigger the next page — a screen or so at this row's fixed
     /// height, never at the last row itself, per the `scrolling` skill.
@@ -105,6 +106,7 @@ struct SessionListView: View {
         .sheet(item: $actionsSheetTarget) { target in
             SessionActionsSheet(sessionId: target.id)
         }
+        .arcSpecPicker($arcSpecTarget, router: environment.router)
     }
 
     // MARK: - The list
@@ -165,6 +167,24 @@ struct SessionListView: View {
                         Label("Actions", systemImage: "ellipsis.circle")
                     }
                     .tint(PaiPalette.primary500)
+                    // A subagent's own children are flattened into its top-level parent — see
+                    // `RootActionsList`'s matching guard — so this swipe action has nothing to
+                    // open for one either.
+                    if row.session.kind != .subagent {
+                        Button {
+                            environment.router.push(.subagents(parentID: row.id))
+                        } label: {
+                            Label("Subagents", systemImage: "cpu")
+                        }
+                        .tint(PaiPalette.Semantic.accentText)
+                    }
+                    Button {
+                        arcSpecTarget = ArcSpecPickerTarget(
+                            sessionID: row.id, claudeSessionID: row.session.claudeSessionId)
+                    } label: {
+                        Label("Spec", systemImage: "shippingbox")
+                    }
+                    .tint(PaiPalette.Semantic.warningText)
                 }
                 // `.highPriorityGesture`, not `.onLongPressGesture`: the row is a `Button`, and a
                 // bare gesture modifier competes with the button's own tap recognition rather than
