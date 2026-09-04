@@ -113,9 +113,12 @@ final class ArcFixturesTests: XCTestCase {
         XCTAssertEqual(timeline.segments.count, 2)
         XCTAssertEqual(timeline.segments[0].blocks.map(\.id), [1])
         XCTAssertEqual(timeline.segments[0].blocks[0].badge, .accepted)
-        XCTAssertNotNil(timeline.segments[0].marker)
+        // Segment 0 is never gated by a marker — the fixture's own single marker opens segment
+        // 1 instead, the one it actually precedes.
+        XCTAssertNil(timeline.segments[0].marker)
 
         let secondSegment = timeline.segments[1]
+        XCTAssertNotNil(secondSegment.marker)
         XCTAssertEqual(secondSegment.blocks.map(\.id).sorted(), [2, 3, 9, 11, 13])
         XCTAssertEqual(secondSegment.looseRows.map(\.id), [7])
         let workingBlock = try XCTUnwrap(secondSegment.blocks.first { $0.id == 2 })

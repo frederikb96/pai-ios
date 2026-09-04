@@ -51,10 +51,12 @@ final class ArcTimelineTests: XCTestCase {
 
         XCTAssertEqual(timeline.segments.count, 4)
         XCTAssertEqual(timeline.segments.map { $0.blocks.map(\.id) }, [[1], [2], [3], [4]])
-        XCTAssertEqual(timeline.segments[0].marker?.id, 2)
-        XCTAssertEqual(timeline.segments[1].marker?.id, 4)
-        XCTAssertEqual(timeline.segments[2].marker?.id, 6)
-        XCTAssertNil(timeline.segments[3].marker)
+        // Segment 0 carries no marker — nothing gates it. Segment `i` (`i > 0`) carries the
+        // marker immediately before it, never the one at its own index.
+        XCTAssertNil(timeline.segments[0].marker)
+        XCTAssertEqual(timeline.segments[1].marker?.id, 2)
+        XCTAssertEqual(timeline.segments[2].marker?.id, 4)
+        XCTAssertEqual(timeline.segments[3].marker?.id, 6)
     }
 
     // MARK: - Blocks and loose rows
