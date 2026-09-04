@@ -227,16 +227,24 @@ public struct ArcRecoverBlock: Codable, Sendable, Equatable, Identifiable {
 public struct ArcActiveSegment: Codable, Sendable, Equatable {
     public let index: Int
     public let blocks: [ArcRecoverBlock]
+    /// Row ids for this segment's own unresolved, blockless rows — `arc_service.recover`'s own
+    /// answer to the same question `ArcTimelineBuilder` already derives for every segment from
+    /// the flat `rows` dict, scoped here to just the active one. Optional, matching every other
+    /// field in this file decoded defensively rather than assumed present: a client running
+    /// against a backend from before this field shipped would otherwise fail the whole payload's
+    /// decode over one missing key.
+    public let loose: [Int]?
     public let busyAgents: [String]
 
     enum CodingKeys: String, CodingKey {
-        case index, blocks
+        case index, blocks, loose
         case busyAgents = "busy_agents"
     }
 
-    public init(index: Int, blocks: [ArcRecoverBlock], busyAgents: [String]) {
+    public init(index: Int, blocks: [ArcRecoverBlock], loose: [Int]? = nil, busyAgents: [String]) {
         self.index = index
         self.blocks = blocks
+        self.loose = loose
         self.busyAgents = busyAgents
     }
 }

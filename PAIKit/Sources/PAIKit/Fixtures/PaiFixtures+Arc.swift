@@ -61,6 +61,7 @@ extension PaiFixtures {
                 "total": 0
               }
             ],
+            "loose": [7],
             "busy_agents": ["arc-demo"]
           },
           "rows": {
