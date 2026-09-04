@@ -633,6 +633,21 @@ public struct PaiApiClient: Sendable {
         return page.specs
     }
 
+    /// Every ARC spec, most recently updated first — never scoped to a conversation, unlike
+    /// `getArcSpecs(session:)` above. `query` is a substring over name or uuid; `nil` or empty
+    /// asks for everything. Paged rather than fetched whole: `GET /api/arc/specs` defaults to 20
+    /// and caps at 100 per page server-side, so a caller that ignored that would silently read
+    /// only the first page as if it were the entire list.
+    public func listArcSpecs(query: String?, limit: Int, offset: Int) async throws -> [ArcSpec] {
+        var items: [URLQueryItem] = [
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "offset", value: String(offset)),
+        ]
+        if let query, !query.isEmpty { items.append(URLQueryItem(name: "query", value: query)) }
+        let page: ArcSpecsPage = try await send(path: "/api/arc/specs", query: items)
+        return page.specs
+    }
+
     /// Everything needed to draw a spec's whole timeline in one call — see
     /// `ArcRecoverPayload`'s doc comment.
     public func getArcRecover(specUuid: String) async throws -> ArcRecoverPayload {
