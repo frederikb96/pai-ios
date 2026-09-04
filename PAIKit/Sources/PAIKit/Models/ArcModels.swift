@@ -283,6 +283,20 @@ public struct ArcRecoverPayload: Codable, Sendable, Equatable {
     }
 }
 
+extension ArcLeaderAgent {
+    /// One letter per model family, mirroring `arc_rules.MODEL_FAMILIES` (`arcModel.ts`'s own
+    /// `modelCode`, kept in exact byte-for-byte agreement with the web here). Falls back to the
+    /// model string's own first letter, uppercased, for anything this table has not learned
+    /// about yet — `model` is free text server-side, so a card must still show SOMETHING rather
+    /// than nothing for an unrecognised value. `nil` only when no model is set at all.
+    private static let modelCodes: [String: String] = ["opus": "O", "sonnet": "S", "fable": "F", "haiku": "H"]
+
+    public var modelCode: String? {
+        guard let model, !model.isEmpty else { return nil }
+        return Self.modelCodes[model] ?? model.prefix(1).uppercased()
+    }
+}
+
 extension ArcRow {
     /// `n`'s values joined into one markdown string, in ascending numeric key order. Every spec
     /// this app has read numbers notes "1", "2", … but the field is free-form server-side, so a
