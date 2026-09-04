@@ -16,7 +16,7 @@ struct SessionDetailView: View {
     @State private var searchState = TranscriptSearchState()
     @State private var isPresentingActionsSheet = false
     @State private var isPresentingArcMenu = false
-    @State private var arcSpecTarget: ArcSpecPickerTarget?
+    @State private var arcSpecTarget: ArcSpecResolution?
     @State private var usage: Usage?
     /// Set only by the fixture screenshot workflow's own `.task` below — see its doc comment.
     /// Never touched by anything a real session does.
@@ -141,8 +141,11 @@ struct SessionDetailView: View {
                 Button("Subagents") { environment.router.push(.subagents(parentID: sessionID)) }
             }
             Button("Spec") {
-                arcSpecTarget = ArcSpecPickerTarget(
-                    sessionID: sessionID, claudeSessionID: currentSession?.claudeSessionId)
+                Task {
+                    arcSpecTarget = await resolveArcSpec(
+                        claudeSessionID: currentSession?.claudeSessionId,
+                        api: environment.connection?.apiClient, router: environment.router)
+                }
             }
             Button("Cancel", role: .cancel) {}
         }

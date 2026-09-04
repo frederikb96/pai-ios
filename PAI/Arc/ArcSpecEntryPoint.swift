@@ -2,35 +2,63 @@ import PAIKit
 import SwiftUI
 
 /// Where "Spec" (from a session row's trailing swipe or the in-session right-to-left swipe)
-/// leads: the specs bound to that session's conversation, so a single bound spec goes straight
-/// to `ArcSpecView` and anything else — none, several, or a fetch failure — gets a small sheet
-/// instead of guessing.
+/// resolves to — computed BEFORE anything is shown, so a session bound to exactly one spec goes
+/// straight to `ArcSpecView` and never sees a picker at all. Mirrors the web's own
+/// `openArcForSession`, which does the identical lookup-then-decide before navigating rather than
+/// opening a sheet that only decides once its own fetch resolves.
+enum ArcSpecResolution: Identifiable {
+    /// Several bound specs — offer a choice.
+    case multiple([ArcSpec])
+    /// Nothing bound (or no conversation to check at all).
+    case none
+    /// The check itself failed.
+    case failed
+
+    var id: String {
+        switch self {
+        case .multiple: return "multiple"
+        case .none: return "none"
+        case .failed: return "failed"
+        }
+    }
+}
+
+/// Fetches the specs bound to `claudeSessionID` and decides what "Spec" does: exactly one match
+/// pushes straight there and returns `nil` (nothing left to present), several return `.multiple`
+/// for the caller to show as a sheet, and zero / a failed check return `.none` / `.failed` for
+/// the same small notice sheet as before. Shared by both entry points
+/// (`SessionListView`'s swipe, `SessionDetailView`'s swipe menu) so they behave identically
+/// rather than drifting into two copies of this decision.
+@MainActor
+func resolveArcSpec(claudeSessionID: String?, api: PaiApiClient?, router: Router) async -> ArcSpecResolution? {
+    guard let claudeSessionID, let api else { return .none }
+    guard let specs = await ArcBoundSpecsStore(api: api).boundSpecs(session: claudeSessionID) else { return .failed }
+    if specs.isEmpty { return .none }
+    if specs.count == 1 {
+        router.push(.arcSpec(specUuid: specs[0].uuid))
+        return nil
+    }
+    return .multiple(specs)
+}
+
+/// The sheet shown only for `.multiple` / `.none` / `.failed` — the single-spec case never
+/// reaches this at all, having already been pushed directly by `resolveArcSpec`.
 struct ArcSpecPickerSheet: View {
-    /// `Session.claudeSessionId` — `nil` for a session that has never registered a conversation
-    /// yet, which cannot be bound to anything.
-    let claudeSessionID: String?
+    let resolution: ArcSpecResolution
     let onSelect: (String) -> Void
 
-    @Environment(AppEnvironment.self) private var environment
     @Environment(\.dismiss) private var dismiss
-    @State private var specs: [ArcSpec]?
-    @State private var didFail = false
 
     var body: some View {
         NavigationStack {
             Group {
-                if claudeSessionID == nil {
+                switch resolution {
+                case .none:
                     notice("This session is not running under an ARC spec.")
-                } else if let specs {
-                    if specs.isEmpty {
-                        notice("This session is not running under an ARC spec.")
-                    } else {
-                        specList(specs)
-                    }
-                } else if didFail {
+                case .failed:
                     notice("Could not check for a bound spec.")
-                } else {
-                    ProgressView()
+                case .multiple(let specs):
+                    specList(specs)
                 }
             }
             .navigationTitle("Spec")
@@ -39,15 +67,6 @@ struct ArcSpecPickerSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
                 }
-            }
-        }
-        .task {
-            guard let claudeSessionID, let client = environment.connection?.apiClient else { return }
-            let boundSpecs = ArcBoundSpecsStore(api: client)
-            if let result = await boundSpecs.boundSpecs(session: claudeSessionID) {
-                specs = result
-            } else {
-                didFail = true
             }
         }
         .presentationDetents([.medium])
@@ -90,23 +109,14 @@ struct ArcSpecPickerSheet: View {
     }
 }
 
-/// The `.sheet(item:)` target for `ArcSpecPickerSheet`, carrying whichever session it was opened
-/// for — a plain `String?` cannot be a sheet item, and `Identifiable` needs something to key on
-/// even when there is no conversation id yet.
-struct ArcSpecPickerTarget: Identifiable {
-    let sessionID: String
-    let claudeSessionID: String?
-    var id: String { sessionID }
-}
-
 extension View {
     /// Wires `ArcSpecPickerSheet` to a binding, and routes a picked spec to `ArcSpecView` via
     /// the app router. Shared by the session list's swipe action and the in-session swipe menu
     /// so the two entry points behave identically rather than drifting into two copies of this
     /// wiring.
-    func arcSpecPicker(_ target: Binding<ArcSpecPickerTarget?>, router: Router) -> some View {
-        sheet(item: target) { value in
-            ArcSpecPickerSheet(claudeSessionID: value.claudeSessionID) { specUuid in
+    func arcSpecPicker(_ target: Binding<ArcSpecResolution?>, router: Router) -> some View {
+        sheet(item: target) { resolution in
+            ArcSpecPickerSheet(resolution: resolution) { specUuid in
                 router.push(.arcSpec(specUuid: specUuid))
             }
         }

@@ -21,7 +21,7 @@ struct SessionListView: View {
     @State private var isPresentingCreateSession = false
     @State private var isPresentingApps = false
     @State private var actionsSheetTarget: SessionActionsTarget?
-    @State private var arcSpecTarget: ArcSpecPickerTarget?
+    @State private var arcSpecTarget: ArcSpecResolution?
 
     /// How many rows before the end trigger the next page — a screen or so at this row's fixed
     /// height, never at the last row itself, per the `scrolling` skill.
@@ -183,8 +183,11 @@ struct SessionListView: View {
                         .tint(PaiPalette.Semantic.accentText)
                     }
                     Button {
-                        arcSpecTarget = ArcSpecPickerTarget(
-                            sessionID: row.id, claudeSessionID: row.session.claudeSessionId)
+                        Task {
+                            arcSpecTarget = await resolveArcSpec(
+                                claudeSessionID: row.session.claudeSessionId,
+                                api: environment.connection?.apiClient, router: environment.router)
+                        }
                     } label: {
                         Label("Spec", systemImage: "shippingbox")
                     }
