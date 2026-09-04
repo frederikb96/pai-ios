@@ -12,14 +12,19 @@ struct FullScreenImageViewer: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var isSharing = false
+    @State private var zoomScale: CGFloat = 1
+
+    /// How close to the resting scale still counts as "not zoomed" for the swipe-to-dismiss gate
+    /// below — `UIScrollView` settles fractionally off `1.0` after its own rubber-band animation,
+    /// so an exact-equality check would leave the gesture permanently disabled after the first
+    /// pinch.
+    private static let restScaleTolerance: CGFloat = 1.01
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFit()
-                .padding()
+            ZoomableImageView(image: image, zoomScale: $zoomScale)
+                .ignoresSafeArea()
         }
         .overlay(alignment: .topTrailing) {
             HStack(spacing: 16) {
@@ -37,6 +42,14 @@ struct FullScreenImageViewer: View {
                 }
             }
             .foregroundStyle(.white)
+            .padding(10)
+            // A plain icon straight over the image is illegible against a light or busy region of
+            // it — the same class of "foreground content with nothing behind it to guarantee
+            // contrast" as the sign-in card's own bug, just with the roles of foreground and
+            // background swapped. A material scrim guarantees legibility regardless of what is
+            // under it, the way Photos' own toolbar does, without needing a fixed opaque colour
+            // that would look wrong in light mode.
+            .background(.thinMaterial, in: Capsule())
             .padding()
         }
         .sheet(isPresented: $isSharing) {
@@ -44,10 +57,13 @@ struct FullScreenImageViewer: View {
         }
         // A swipe down is the platform's own dismiss gesture for a full-screen presentation —
         // tapping the image itself does nothing, matching the web's "outside the image, never on
-        // it" rule, translated to the one gesture iOS already gives a modal for free.
+        // it" rule, translated to the one gesture iOS already gives a modal for free. Gated on
+        // resting scale, matching Photos: once zoomed in, a downward drag pans the image inside
+        // its `UIScrollView` instead of dismissing the screen.
         .gesture(
             DragGesture(minimumDistance: 40)
                 .onEnded { value in
+                    guard zoomScale <= Self.restScaleTolerance else { return }
                     if value.translation.height > 80 { dismiss() }
                 }
         )
