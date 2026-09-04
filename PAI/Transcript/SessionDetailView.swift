@@ -16,7 +16,7 @@ struct SessionDetailView: View {
     @State private var searchState = TranscriptSearchState()
     @State private var isPresentingActionsSheet = false
     @State private var isPresentingArcMenu = false
-    @State private var arcSpecTarget: ArcSpecPickerTarget?
+    @State private var arcSpecTarget: ArcSpecResolution?
     @State private var usage: Usage?
     /// Whether this screen has ever seen its session exist. Until it has, a `nil` lookup means
     /// "not fetched yet" — a deep link or a restored route can name a session outside every page
@@ -115,8 +115,11 @@ struct SessionDetailView: View {
                 Button("Subagents") { environment.router.push(.subagents(parentID: sessionID)) }
             }
             Button("Spec") {
-                arcSpecTarget = ArcSpecPickerTarget(
-                    sessionID: sessionID, claudeSessionID: currentSession?.claudeSessionId)
+                Task {
+                    arcSpecTarget = await resolveArcSpec(
+                        claudeSessionID: currentSession?.claudeSessionId,
+                        api: environment.connection?.apiClient, router: environment.router)
+                }
             }
             Button("Cancel", role: .cancel) {}
         }
