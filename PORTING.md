@@ -30,6 +30,30 @@ out as untestable without a device. The width/height thresholds are chosen to ma
 vertical scroll fail the check, but nobody has swiped left on a real transcript and watched the
 menu open.
 
+The gesture now also requires `startLocation.x` to fall inside a trailing-edge margin
+(`SessionDetailView.edgeSwipeWidth`, read via `.onGeometryChange`) before the width/height
+thresholds are even considered — reasoned to make it behave like iOS's own edge swipes, and to
+stop it ever competing with a horizontal drag that starts over a wide code block or table, which
+never starts at the literal screen edge. Unverified for the same reason as above, plus one more:
+whether a drag starting in that narrow a margin is even easy to land with a real thumb, or reads
+as unreliable next to a native edge-swipe-back gesture occupying the opposite edge.
+
+### Verify: the full-screen image viewer's pinch-to-zoom, pan and swipe-to-dismiss interplay — pai-cloud anchor: none, iOS-only
+Needs `PAI/` because: `ZoomableImageView` wraps a `UIScrollView`/`UIImageView` pair for pinch and
+double-tap zoom, matching Photos — `AspectFit.scale(fitting:into:)` (the one piece of arithmetic
+it depends on) is unit-tested on Linux, but the gesture recognizer wiring itself is UIKit and
+needs a device. Three things specifically are reasoned rather than watched: whether
+`FullScreenImageViewer`'s own SwiftUI `DragGesture` (swipe-to-dismiss) still receives touches at
+all now that it sits over a `UIScrollView` with its own pan recognizer, rather than over a plain
+`Image` as before — the same "SwiftUI gesture sibling to a UIKit view's own recognizers" question
+the transcript swipe above is already flagged for; whether gating that gesture on
+`zoomScale <= 1.01` actually feels right rather than occasionally swallowing a pan meant to scroll
+a barely-zoomed image; and whether double-tap-to-zoom's target point tracks the tapped location
+convincingly on a real device. The Mac workflow's `fullscreen-image` fixture screenshot
+(`-PaiFixtureRoute session -PaiFixtureOpenImage`, landing via `SessionAttachmentChipView`'s own
+fixture-mode auto-open) proves the screen renders and its buttons are legible against the fixture
+image; it cannot prove any gesture behaves.
+
 ### Verify: the ARC spec view's live refresh actually fires on an `arc` SSE signal — pai-cloud anchor: `pai_cloud.api._arc_event`
 Needs `PAI/` because: `TranscriptStore.applySseArc`, `PaiSseClient`'s `"arc"` case and
 `ArcSpecStore.applyLiveSignal` are each unit-tested on Linux with a synthetic event, but nothing

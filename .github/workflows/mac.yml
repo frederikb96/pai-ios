@@ -260,6 +260,20 @@ jobs:
           cat artifacts/note-editor-timing.json || true
           xcrun simctl terminate "$udid" "$bundle" || true
 
+          # The sign-in card, in its rejected state, over a screen with its own list content —
+          # reproduces the shape of the bug report (the card drawn see-through over the
+          # notification list beneath it) rather than only the ordinary session list, which has
+          # no list content directly under the card to prove is or isn't bleeding through.
+          screenshot auth-rejected -PaiFixtureRoute notifications -PaiFixtureAuthState rejected
+          xcrun simctl terminate "$udid" "$bundle" || true
+
+          # `FullScreenImageViewer` is a `.fullScreenCover(item:)`, reachable by no `Route` — the
+          # session screen's own fixture attachment chip presents it automatically under this flag
+          # (`SessionAttachmentChipView`'s own `.task`), which is the only way fixture mode can
+          # land here with no device interaction.
+          screenshot fullscreen-image -PaiFixtureRoute session -PaiFixtureOpenImage
+          xcrun simctl terminate "$udid" "$bundle" || true
+
           names=$(python3 -c "import json; print('\n'.join(json.load(open('artifacts/screens.json'))['screens']))")
           while IFS= read -r name; do
             [ -n "$name" ] || continue
