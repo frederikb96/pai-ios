@@ -19,6 +19,9 @@ import Foundation
 /// - `PaiFixtures+Voice.swift` — drafts, plan usage, secret presence, a voice token, Claude
 ///   sign-in state, and the recording metadata a "past recordings" screen would show
 /// - `PaiFixtures+Terminal.swift` — a short terminal frame sequence, live and scrolled-back
+/// - `PaiFixtures+Attachment.swift` — the one real, decodable image `GET
+///   /api/session/{id}/attachment` answers, and the VM path the transcript's own `pai-file:`
+///   marker names it by
 /// - `PaiFixtures+Outgoing.swift` — request bodies the app itself sends, so a control that
 ///   renders correctly and puts the wrong thing on the wire has something to be caught against
 /// - `PaiFixtures+Unhappy.swift` — error bodies, empty pages, and the minimal/discovered session

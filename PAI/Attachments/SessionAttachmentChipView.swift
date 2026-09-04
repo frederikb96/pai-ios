@@ -65,20 +65,6 @@ struct SessionAttachmentChipView: View {
                 "An agent offered “\(filename)” from its own machine. It will be fetched through the connection "
                     + "and saved to your device.")
         }
-        #if DEBUG
-            .task {
-                // The Mac workflow's only way to reach `FullScreenImageViewer` — a
-                // `.fullScreenCover(item:)` with no `Route` of its own, so nothing else in fixture
-                // mode can land on it. Matched by path, not just "any image chip present on
-                // appear": the fixture transcript carries more than one attachment reference, and
-                // firing this on every one of them would race several `fullScreenTarget`s (each
-                // chip's own `@State`) to present their own cover over the same screen.
-                guard PaiFixtureLaunch.isEnabled(), PaiFixtureLaunch.opensImageAutomatically(),
-                    path.contains("reconcile-diff"), case .idle = state
-                else { return }
-                handleTap()
-            }
-        #endif
     }
 
     private var isLoading: Bool {

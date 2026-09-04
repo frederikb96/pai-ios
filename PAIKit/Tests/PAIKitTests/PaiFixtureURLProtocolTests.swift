@@ -49,6 +49,18 @@ final class PaiFixtureURLProtocolTests: XCTestCase {
         XCTAssertEqual(body(second), PaiFixtures.transcript)
     }
 
+    /// The one route whose body is genuine binary, not JSON re-encoded as UTF-8 — comparing
+    /// `Data` directly rather than through `body(_:)`'s `String` decoding, which would corrupt
+    /// non-UTF-8 bytes before the assertion ever saw them. Matches any `path` query, same as
+    /// `testSessionScopedRouteMatchesAnyID` above matches any session id.
+    func testAttachmentRouteAnswersTheFixtureImageRegardlessOfPath() {
+        let match = PaiFixtureURLProtocol.route(
+            method: "GET", path: "/api/session/305df4d3/attachment",
+            query: [URLQueryItem(name: "path", value: "/anything/at/all.png")])
+        XCTAssertEqual(match.status, 200)
+        XCTAssertEqual(match.body(), PaiFixtures.attachmentImage)
+    }
+
     /// The method matters as much as the path: a `POST` to a `GET`-only route is a different
     /// request the table has no entry for, not a fuzzy match on the path alone.
     func testMethodMismatchFallsThroughToTheDefault() {

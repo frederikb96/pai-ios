@@ -37,13 +37,18 @@
 
             // Neither streaming client checks the content type — both look only at the status —
             // but sending the honest one costs nothing and stops a future reader concluding the
-            // stream fixtures are being served wrong when something else is broken.
+            // stream fixtures are being served wrong when something else is broken. The attachment
+            // endpoint's actual caller (`SessionAttachmentChipView.present(_:)`) doesn't check it
+            // either — it decides "is this an image" from the file path's own extension — but a
+            // JSON content-type on binary PNG bytes would still mislead the next person to read it.
             let isStream = path.hasSuffix("/stream") || path.hasSuffix("/terminal")
+            let isAttachment = path.hasPrefix("/api/session/") && path.hasSuffix("/attachment")
+            let contentType = isStream ? "text/event-stream" : (isAttachment ? "image/png" : "application/json")
             let response = HTTPURLResponse(
                 url: request.url ?? URL(string: "https://fixture.invalid")!,
                 statusCode: match.status,
                 httpVersion: "HTTP/1.1",
-                headerFields: ["Content-Type": isStream ? "text/event-stream" : "application/json"]
+                headerFields: ["Content-Type": contentType]
             )!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: match.body())
@@ -165,6 +170,15 @@
             // `.../messages` and `.../messages/find` are answered by `route(method:path:query:)`
             // itself, ahead of this table — the only two routes whose body genuinely depends on
             // the query string. No entry for either here.
+            // The corpus has one attachment, not one per path — matching `sessionScoped`'s own
+            // reasoning above, this answers any `?path=` with the same image. A plain
+            // `FixtureRoute` rather than `sessionScoped`/`exact`, since both of those funnel their
+            // body through `PaiFixtures.data(_ json: String)`, a UTF-8 string encode that would
+            // corrupt binary PNG bytes — this route returns `Data` directly instead.
+            FixtureRoute(
+                method: "GET",
+                matches: { $0.hasPrefix("/api/session/") && $0.hasSuffix("/attachment") }
+            ) { PaiFixtures.attachmentImage },
             // The notes half. Order matters here and only here: `/api/notes/containers` and
             // `/api/notes/config` would otherwise be read as a note whose id is "containers" or
             // "config".

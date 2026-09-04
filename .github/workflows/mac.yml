@@ -268,9 +268,9 @@ jobs:
           xcrun simctl terminate "$udid" "$bundle" || true
 
           # `FullScreenImageViewer` is a `.fullScreenCover(item:)`, reachable by no `Route` — the
-          # session screen's own fixture attachment chip presents it automatically under this flag
-          # (`SessionAttachmentChipView`'s own `.task`), which is the only way fixture mode can
-          # land here with no device interaction.
+          # session screen fetches the fixture attachment directly and presents it under this flag
+          # (`SessionDetailView`'s own `.task`), rather than through a message row's attachment
+          # chip, which the fixture corpus deliberately places outside the default tail window.
           screenshot fullscreen-image -PaiFixtureRoute session -PaiFixtureOpenImage
           xcrun simctl terminate "$udid" "$bundle" || true
 
