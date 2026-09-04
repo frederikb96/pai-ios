@@ -43,8 +43,14 @@ public enum ArcSubagentLookup {
     /// filter, only substring matching over title/initial_message, so paging is the only correct
     /// way to reach a child past the first page. `nil` when the name is never found before the
     /// pages run out, in either sense (no more pages, or `maxPages` reached).
+    ///
+    /// `@Sendable` on `fetchPage`, matching `PushRegistrationStore.registerToken` and
+    /// `VoiceRecordingSession.mintToken` — this is a plain nonisolated function, so a caller's
+    /// closure literal crosses an isolation boundary to reach it and Swift 6 requires the
+    /// closure TYPE be provably safe to send, not merely whatever it captures (`PaiApiClient`
+    /// itself is already `Sendable`).
     public static func findBoundSubagent(
-        agentName: String, fetchPage: (String?) async throws -> SessionsPage
+        agentName: String, fetchPage: @Sendable (String?) async throws -> SessionsPage
     ) async throws -> Session? {
         var cursor: String?
         for _ in 0..<maxPages {
