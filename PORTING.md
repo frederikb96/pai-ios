@@ -33,11 +33,13 @@ menu open.
 ### Verify: the ARC spec view's live refresh actually fires on an `arc` SSE signal — pai-cloud anchor: `pai_cloud.api._arc_event`
 Needs `PAI/` because: `TranscriptStore.applySseArc`, `PaiSseClient`'s `"arc"` case and
 `ArcSpecStore.applyLiveSignal` are each unit-tested on Linux with a synthetic event, but nothing
-here can hold a real SSE connection open, trigger a genuine write against a live spec from
-another device, and watch this screen update within a second rather than waiting for the 15s
-poll fallback. The poll fallback itself is real and load-bearing regardless of whether the live
-path works, so this screen is never expected to go stale for long even if the SSE half never
-fires as designed — but that is a claim, not yet an observation.
+here can hold a real SSE connection open, watch this app receive the event, and confirm the
+screen updates within a second rather than waiting for the 15s poll fallback. A write against a
+live spec to trigger the event is not the obstacle — that is ordinary REST work, doable from this
+VM. Running the app to watch the client side of the stream is. The poll fallback itself is real
+and load-bearing regardless of whether the live path works, so this screen is never expected to
+go stale for long even if the SSE half never fires as designed — but that is a claim, not yet an
+observation.
 
 ### Verify: the marker bar's passed state reads clearly next to the divider rules — pai-cloud anchor: none, iOS-only
 Needs `PAI/` because: `ArcMarkerBar` now swaps its centred icon for a two-word `Label` ("Passed")
@@ -58,8 +60,14 @@ Needs `PAI/` because: `ArcNotesPreview` applies `.lineLimit(6)` to a whole `Mark
 tree rather than to a single `Text`, which SwiftUI propagates through the environment to every
 `Text` inside — reasoned to truncate visually reasonably for a short note, unverified for a note
 whose first block is a large table or code block (both scroll sideways rather than wrap, so a
-line limit interacts with them differently than with prose). A Mac CI screenshot exercises one
-fixture shape; a real spec's notes are unpredictable prose.
+line limit interacts with them differently than with prose).
+
+The fixture corpus now carries all three shapes (row 4's notes are plain prose, row 5's start
+with a table, row 8's with a fenced code block), and `ArcFixturesTests` proves each one parses to
+the block type it claims — that part no longer needs a device. What still does: `ArcBlockDetailSheet`
+is a `.sheet(item:)`, not a `Route`, and the Mac workflow's screenshot sweep only opens named
+routes (`-PaiFixtureRoute <name>`), so this sheet is not reached by any automated screenshot
+today, prose included — the blocker is not fixture variety but that nothing taps into the sheet.
 
 
 

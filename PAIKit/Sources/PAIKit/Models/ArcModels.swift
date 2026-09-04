@@ -1,9 +1,9 @@
 import Foundation
 
 /// Swift port of the ARC v3 wire shapes — `pai_cloud.wire.ArcSpecWire`/`ArcRowWire` and
-/// `pai_cloud.arc_service.recover`'s payload. There is no `types.ts` entry to mirror yet: the
-/// web client for these routes is built in the same round this file is, so the backend's own
-/// `TypedDict`s and the running routes are the source of truth here rather than a port.
+/// `pai_cloud.arc_service.recover`'s payload. `web/src/api/types.ts` owns this contract
+/// (`ArcRow`, `ArcSpec`, `ArcRecoverBlock`, `ArcRecoverResponse`, `ArcLeaderG`, `ArcSseEvent`);
+/// this file is a port of it, not an independent source.
 ///
 /// A "spec" is one ARC run: rows grouped into blocks with an assigned agent, sequence markers
 /// gating order. See `ArcRecoverPayload`'s doc comment for how a client reconstructs the whole
@@ -70,11 +70,15 @@ extension ArcRowStatus: Codable {
 }
 
 /// A leader row's `g` — which agent it names, and what came back. `{"type": "kai"}` alone is a
-/// leader Kai does the work under himself, so every field past `type` is optional; `agentId`
+/// leader Kai does the work under himself, so every field past `type` is optional. `type` itself
+/// is optional too: the server only requires `g` to be an object, never that it carries a
+/// `type` key, and a hand-written row (how a leader is made outside `arc block add`, which
+/// always writes one) can omit it — a present-but-invalid nested object would otherwise throw
+/// out of `decodeIfPresent` and fail the whole spec's decode, not just this one row. `agentId`
 /// (the subagent transcript stem) and `returnedAt` are written by the agent path once the agent
 /// has actually run.
 public struct ArcLeaderAgent: Codable, Sendable, Equatable {
-    public let type: String
+    public let type: String?
     public let model: String?
     public let name: String?
     public let agentId: String?
@@ -87,7 +91,7 @@ public struct ArcLeaderAgent: Codable, Sendable, Equatable {
     }
 
     public init(
-        type: String, model: String? = nil, name: String? = nil, agentId: String? = nil, returnedAt: String? = nil
+        type: String?, model: String? = nil, name: String? = nil, agentId: String? = nil, returnedAt: String? = nil
     ) {
         self.type = type
         self.model = model
