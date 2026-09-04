@@ -41,6 +41,13 @@ final class PaiFixtureLaunchTests: XCTestCase {
         XCTAssertNil(PaiFixtureLaunch.requestedAuthState(arguments: ["/path/to/app", "-PaiFixtureMode"]))
     }
 
+    func testOpensImageAutomaticallyIsTrueOnlyWhenItsFlagIsPresent() {
+        XCTAssertTrue(
+            PaiFixtureLaunch.opensImageAutomatically(
+                arguments: ["/path/to/app", "-PaiFixtureMode", "-PaiFixtureOpenImage"]))
+        XCTAssertFalse(PaiFixtureLaunch.opensImageAutomatically(arguments: ["/path/to/app", "-PaiFixtureMode"]))
+    }
+
     func testFlagOrderDoesNotMatter() {
         let name = PaiFixtureLaunch.requestedRouteName(
             arguments: ["/path/to/app", "-PaiFixtureRoute", "terminal", "-PaiFixtureMode"]

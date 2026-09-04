@@ -16,6 +16,7 @@
         static let routeFlag = "-PaiFixtureRoute"
         static let authStateFlag = "-PaiFixtureAuthState"
         static let searchKindFlag = "-PaiFixtureSearchKind"
+        static let openImageFlag = "-PaiFixtureOpenImage"
 
         /// The session id every session-scoped fixture route answers under, regardless of which
         /// id the request actually named — fixed so a screenshot workflow can always ask for this
@@ -49,6 +50,15 @@
         /// Absent means an ordinary open with no search — every other screenshot's behaviour.
         public static func requestedSearchKind(arguments: [String] = ProcessInfo.processInfo.arguments) -> String? {
             value(for: searchKindFlag, in: arguments)
+        }
+
+        /// Whether `-PaiFixtureOpenImage` was passed — how the Mac workflow reaches
+        /// `FullScreenImageViewer`, a `.fullScreenCover(item:)` with no `Route` of its own to
+        /// launch straight into. Combined with `-PaiFixtureRoute session`, this makes the session
+        /// screen's own fixture attachment chip present itself on appear rather than waiting for a
+        /// tap nothing in the workflow can perform.
+        public static func opensImageAutomatically(arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
+            arguments.contains(openImageFlag)
         }
 
         static func value(for flag: String, in arguments: [String]) -> String? {
