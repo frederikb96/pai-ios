@@ -27,8 +27,10 @@ extension PaiFixtures {
         """
 
     /// `GET /api/arc/specs/{uuid}/recover` — two segments: the first Done and behind a marker,
-    /// the second holding a working block, a not-yet-spawned block and a loose row. Gives
-    /// `ArcSpecView` one of each badge state to render.
+    /// the second holding five parallel blocks (one of each badge state — working, not-spawned,
+    /// accepted, returned, cancelled) and a loose row. Gives `ArcSpecView` a segment wide enough
+    /// to show real horizontal scrolling, one of every badge state to render, and (block 9) a
+    /// leader-only block to prove it renders like any other rather than as a special case.
     public static let arcRecover = """
         {
           "spec": "3f1c9d7a-4b8e-4a2f-9c1d-7e5a2b6f0d31",
@@ -55,6 +57,39 @@ extension PaiFixtures {
                 "i": "Review the thing",
                 "s": "P",
                 "g": null,
+                "rows": [],
+                "done": 0,
+                "cancelled": 0,
+                "total": 0
+              },
+              {
+                "b": 9,
+                "leader": 10,
+                "i": "Ship the review notes",
+                "s": "D",
+                "g": {"type": "aria", "model": "opus", "name": "arc-accepted-demo", "returned_at": "2026-09-03T09:00:00.000000+00:00"},
+                "rows": [],
+                "done": 0,
+                "cancelled": 0,
+                "total": 0
+              },
+              {
+                "b": 11,
+                "leader": 12,
+                "i": "Draft the follow-up",
+                "s": "I",
+                "g": {"type": "fable", "model": "fable", "name": "arc-returned-demo", "returned_at": "2026-09-03T09:30:00.000000+00:00"},
+                "rows": [],
+                "done": 0,
+                "cancelled": 0,
+                "total": 0
+              },
+              {
+                "b": 13,
+                "leader": 14,
+                "i": "Abandoned spike",
+                "s": "X",
+                "g": {"type": "aria", "model": "haiku", "name": "arc-cancelled-demo"},
                 "rows": [],
                 "done": 0,
                 "cancelled": 0,
@@ -97,6 +132,21 @@ extension PaiFixtures {
             "7": {
               "id": 7, "i": "A stray note, no block yet", "src": "U", "diff": 0, "s": "P", "o": 3.8, "k": "R",
               "b": null, "g": null, "n": {}, "r": [], "v": null
+            },
+            "10": {
+              "id": 10, "i": "Ship the review notes", "src": "U", "diff": 1, "s": "D", "o": 4.2, "k": "L",
+              "b": 9, "g": {"type": "aria", "model": "opus", "name": "arc-accepted-demo", "returned_at": "2026-09-03T09:00:00.000000+00:00"},
+              "n": {}, "r": [], "v": null
+            },
+            "12": {
+              "id": 12, "i": "Draft the follow-up", "src": "U", "diff": 1, "s": "I", "o": 4.4, "k": "L",
+              "b": 11, "g": {"type": "fable", "model": "fable", "name": "arc-returned-demo", "returned_at": "2026-09-03T09:30:00.000000+00:00"},
+              "n": {}, "r": [], "v": null
+            },
+            "14": {
+              "id": 14, "i": "Abandoned spike", "src": "U", "diff": 0, "s": "X", "o": 4.6, "k": "L",
+              "b": 13, "g": {"type": "aria", "model": "haiku", "name": "arc-cancelled-demo"},
+              "n": {}, "r": [], "v": null
             }
           }
         }
