@@ -121,6 +121,47 @@ public enum MessageDisplay {
         return name == "bash" && Ansi.hasEscapes(displayed) ? Ansi.strip(displayed) : displayed
     }
 
+    public struct NotifyReply: Equatable, Sendable {
+        public let title: String
+        public let body: String
+    }
+
+    /// Best-effort extraction of a `notify` tool call's title/body from its own reply text, for
+    /// rendering the notification's title and body directly instead of the reply's raw YAML —
+    /// not a general YAML parser.
+    ///
+    /// `notify()` (`backend/src/pai_cloud/mcp_server.py`) always emits `title` and `body` as the
+    /// two lines right after `marker`, via block-style YAML (`backend/src/pai_cloud/mcp_serializer.py`,
+    /// PyYAML's `SafeDumper` with `default_flow_style=False`). PyYAML renders a value as a bare
+    /// `key: value` plain scalar whenever it can, and switches to a quoted style — always starting
+    /// with `'` — the moment it can't: a newline, leading/trailing whitespace, a leading digit or
+    /// "yes"/"no"/"null"-shaped ambiguity, an inline `: `. That quoted style folds a single
+    /// embedded line break into a blank output line, which this deliberately does not attempt to
+    /// reverse: doing so correctly means re-implementing YAML's folding rules for a cosmetic gain.
+    /// When either value took the quoted form this returns `nil` and the caller falls back to the
+    /// raw dump — correct in every case, specially rendered only when both values are the plain
+    /// single-line form real notification text is in practice. Mirrors the web's
+    /// `parseNotifyReply` (`web/src/utils/messageDisplay.ts`) exactly, so the two clients agree on
+    /// when to special-case a reply.
+    public static func parseNotifyReply(_ content: String) -> NotifyReply? {
+        guard let title = firstLineMatch(of: "title: (.*)", in: content),
+            let body = firstLineMatch(of: "body: (.*)", in: content)
+        else { return nil }
+        guard !title.hasPrefix("'"), !body.hasPrefix("'") else { return nil }
+        return NotifyReply(title: title, body: body)
+    }
+
+    private static func firstLineMatch(of pattern: String, in content: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: "^" + pattern + "$", options: [.anchorsMatchLines]) else {
+            return nil
+        }
+        let range = NSRange(content.startIndex..<content.endIndex, in: content)
+        guard let match = regex.firstMatch(in: content, range: range), match.numberOfRanges > 1,
+            let valueRange = Range(match.range(at: 1), in: content)
+        else { return nil }
+        return String(content[valueRange])
+    }
+
     /// Strips the line-number prefixes the Read tool emits (`   141→content`).
     ///
     /// Written as a scan rather than a regex: this runs over every Read result in a transcript,

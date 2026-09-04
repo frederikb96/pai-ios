@@ -159,4 +159,47 @@ final class MessageDisplayTests: XCTestCase {
         XCTAssertEqual(MessageDisplay.splitLabeledContent("bare").label, "bare")
         XCTAssertEqual(MessageDisplay.splitLabeledContent("bare").body, "")
     }
+
+    // MARK: - parseNotifyReply
+
+    /// Every fixture below is real output of `backend/src/pai_cloud/mcp_serializer.py`'s
+    /// `serialize_response`, captured directly rather than hand-typed — the same fixtures the
+    /// web's `parseNotifyReply` tests use, since the two are meant to agree on when to
+    /// special-case a reply.
+    func testParseNotifyReplyExtractsPlainSingleLineScalars() {
+        let content =
+            "status: ok\nsent: true\nnotification_id: id\nmarker: pai-notify:x\n"
+            + "title: Deploy finished\nbody: The release is live.\n"
+        let reply = MessageDisplay.parseNotifyReply(content)
+        XCTAssertEqual(reply?.title, "Deploy finished")
+        XCTAssertEqual(reply?.body, "The release is live.")
+    }
+
+    /// PyYAML only switches to its quoted form when a plain scalar cannot represent the value at
+    /// all — a value merely containing an apostrophe (not at the very start) stays plain. The
+    /// boundary this checks is "quoted" meaning "starts with a quote", not "contains one".
+    func testParseNotifyReplyDoesNotMistakeAMidStringApostropheForTheQuotedForm() {
+        let content = "status: ok\ntitle: It's fine\nbody: ok\n"
+        let reply = MessageDisplay.parseNotifyReply(content)
+        XCTAssertEqual(reply?.title, "It's fine")
+        XCTAssertEqual(reply?.body, "ok")
+    }
+
+    func testParseNotifyReplyReturnsNilWhenTitleNeededTheQuotedFormForAnInlineColon() {
+        let content =
+            "status: ok\nsent: true\nnotification_id: id\nmarker: pai-notify:x\n"
+            + "title: 'Deploy: finished'\nbody: x\n"
+        XCTAssertNil(MessageDisplay.parseNotifyReply(content))
+    }
+
+    func testParseNotifyReplyReturnsNilWhenBodyNeededTheQuotedFormForAnEmbeddedLineBreak() {
+        let content =
+            "status: ok\nsent: true\nnotification_id: id\nmarker: pai-notify:x\n"
+            + "title: Deploy finished\nbody: 'The release is live.\n\n  Check it out.'\n"
+        XCTAssertNil(MessageDisplay.parseNotifyReply(content))
+    }
+
+    func testParseNotifyReplyReturnsNilForAReplyCarryingNeitherField() {
+        XCTAssertNil(MessageDisplay.parseNotifyReply("status: ok\nsent: false\nreason: rate_limited\n"))
+    }
 }

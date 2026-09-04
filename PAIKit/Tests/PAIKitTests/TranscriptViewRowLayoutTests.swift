@@ -39,12 +39,14 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         toolCalls: [ToolCall]? = nil,
         toolResult: ToolResult? = nil,
         originMeta: [String: String]? = nil,
-        timestamp: String? = "2026-08-29T00:00:00Z"
+        timestamp: String? = "2026-08-29T00:00:00Z",
+        notificationMarker: String? = nil
     ) -> Message {
         Message(
             id: 1, sessionId: "s", type: type, subtype: subtype, outboxId: nil, timestamp: timestamp,
             content: content, thinking: thinking, toolCalls: toolCalls, toolResult: toolResult,
-            hookSummary: nil, tokens: nil, origin: nil, originMeta: originMeta, createdAt: nil)
+            hookSummary: nil, tokens: nil, origin: nil, originMeta: originMeta,
+            notificationMarker: notificationMarker, createdAt: nil)
     }
 
     private func expandAll(_: String) -> Bool { true }
@@ -214,6 +216,36 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         let text = MessageDisplay.displayText(of: MessageDisplay.spec(for: calls[0]))
         let content = measuredContentHeight(
             [.codeBlock(language: nil, code: text)], atWidth: 400 - 20, measurer: measurer, cache: cache)
+        let expected = 32 + content + 12
+        XCTAssertEqual(actual, expected)
+    }
+
+    /// Proves `.notifyReply` was added to the SAME switch arm as `.toolCall`/`.toolResult`/etc,
+    /// not a plausible-looking but wrong one (a bubble's gutter-and-double-padding formula, say) —
+    /// a mistake that would still compile, since every arm in `TranscriptRowLayout` is exhaustive
+    /// either way, and would only show up as a systematically wrong scroll position on a real
+    /// device. Independently reconstructs the expected height from the header/content-padding
+    /// formula this card shares with `.toolCall`, never from `TranscriptRowMetrics`'s own
+    /// constants, for the same reason `testAnExpandedToolCallAddsHeaderContentAndContentPadding`
+    /// does.
+    func testANotifyReplyCardMeasuresLikeItsSharedHeaderChromeGroup() {
+        let yaml =
+            "status: ok\nmarker: pai-notify:x\ntitle: \(cardSensitiveText)\nbody: a short body\n"
+        let result = ToolResult(toolUseId: "1", toolName: "Bash", content: yaml, isError: false)
+        let msg = message(
+            type: .toolResult, toolResult: result, timestamp: nil, notificationMarker: "pai-notify:x")
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        let actual = TranscriptRowLayout.height(
+            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
+            metrics: metrics)
+
+        let content = measuredContentHeight(
+            [
+                .paragraph(InlineText(runs: [InlineRun(text: cardSensitiveText)])),
+                .paragraph(InlineText(runs: [InlineRun(text: "a short body")])),
+            ], atWidth: 400 - 20, measurer: measurer, cache: cache)
         let expected = 32 + content + 12
         XCTAssertEqual(actual, expected)
     }

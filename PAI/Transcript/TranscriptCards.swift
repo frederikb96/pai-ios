@@ -178,6 +178,14 @@ struct TranscriptCardKindView: View {
                 ToolBodyText(blocks: card.blocks, highlightsByBlockIndex: highlightsByBlockIndex)
             }
 
+        case .notifyReply:
+            // `expandKey` is nil for this card (`TranscriptRowPlan/notifyReplyCard`), so
+            // `onToggle` is already nil here too — there is nothing to collapse into a one-line
+            // summary that would not just repeat the title.
+            CardChrome(icon: "bell", label: "Notification sent", isExpanded: isExpanded, onToggle: onToggle) {
+                MarkdownContentView(blocks: card.blocks, highlights: highlightsByBlockIndex)
+            }
+
         case .userBubble(let text, let attachmentPaths):
             UserBubbleView(
                 text: text, attachmentPaths: attachmentPaths, sessionID: sessionID, apiClient: apiClient,

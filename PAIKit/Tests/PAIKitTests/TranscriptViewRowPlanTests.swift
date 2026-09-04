@@ -13,12 +13,14 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         toolResult: ToolResult? = nil,
         hookSummary: HookSummary? = nil,
         origin: String? = nil,
-        originMeta: [String: String]? = nil
+        originMeta: [String: String]? = nil,
+        notificationMarker: String? = nil
     ) -> Message {
         Message(
             id: 1, sessionId: "s", type: type, subtype: subtype, outboxId: nil, timestamp: "2026-08-29T00:00:00Z",
             content: content, thinking: thinking, toolCalls: toolCalls, toolResult: toolResult,
-            hookSummary: hookSummary, tokens: nil, origin: origin, originMeta: originMeta, createdAt: nil)
+            hookSummary: hookSummary, tokens: nil, origin: origin, originMeta: originMeta,
+            notificationMarker: notificationMarker, createdAt: nil)
     }
 
     private func expandAll(_: String) -> Bool { true }
@@ -86,6 +88,61 @@ final class TranscriptViewRowPlanTests: XCTestCase {
     func testAToolResultMessageWithNoPayloadProducesNoCard() {
         let msg = message(type: .toolResult, toolResult: nil)
         XCTAssertTrue(TranscriptRowPlan.cards(for: msg, isExpanded: expandAll).isEmpty)
+    }
+
+    // MARK: - A notify tool_result, the card a notification jump lands on
+
+    /// Real `serialize_response()` output (`backend/src/pai_cloud/mcp_serializer.py`) for a
+    /// successful `notify` call — same text whether the reply reached the transcript as a native
+    /// MCP tool_result or a Bash tool_result wrapping `mcp-call`'s stdout.
+    private let notifyReplyContent =
+        "status: ok\nsent: true\nnotification_id: 11111111-1111-1111-1111-111111111111\n"
+        + "marker: pai-notify:11111111-1111-1111-1111-111111111111\n"
+        + "title: Deploy finished\nbody: The release is live.\n"
+
+    func testAToolResultCarryingAMarkerBecomesANotifyReplyCard() {
+        let result = ToolResult(toolUseId: "1", toolName: "Bash", content: notifyReplyContent, isError: false)
+        let msg = message(
+            type: .toolResult, toolResult: result,
+            notificationMarker: "pai-notify:11111111-1111-1111-1111-111111111111")
+
+        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+
+        XCTAssertEqual(cards.count, 1)
+        guard case .notifyReply(let title, let body) = cards[0].kind else {
+            return XCTFail("expected a notifyReply card, got \(cards[0].kind)")
+        }
+        XCTAssertEqual(title, "Deploy finished")
+        XCTAssertEqual(body, "The release is live.")
+        // Always shown, unlike an ordinary toolResult card — never collapsed behind a preference.
+        XCTAssertNil(cards[0].expandKey)
+        XCTAssertTrue(cards[0].isExpanded)
+    }
+
+    func testAMarkedResultFallsBackToTheOrdinaryToolResultCardWhenTheReplyTextCannotBeParsed() {
+        let quoted =
+            "status: ok\nmarker: pai-notify:x\ntitle: 'Deploy: finished'\nbody: x\n"
+        let result = ToolResult(toolUseId: "1", toolName: "Bash", content: quoted, isError: false)
+        let msg = message(type: .toolResult, toolResult: result, notificationMarker: "pai-notify:x")
+
+        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+
+        XCTAssertEqual(cards.count, 1)
+        guard case .toolResult(let carried) = cards[0].kind else {
+            return XCTFail("expected the generic toolResult fallback, got \(cards[0].kind)")
+        }
+        XCTAssertEqual(carried.toolUseId, "1")
+    }
+
+    func testAnOrdinaryToolResultWithNoMarkerIsNeverTreatedAsANotifyReply() {
+        let result = ToolResult(toolUseId: "1", toolName: "Read", content: notifyReplyContent, isError: false)
+        let msg = message(type: .toolResult, toolResult: result, notificationMarker: nil)
+
+        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+
+        guard case .toolResult = cards[0].kind else {
+            return XCTFail("a result with no marker must never become a notifyReply card")
+        }
     }
 
     // MARK: - Collapsed vs expanded
