@@ -168,15 +168,18 @@ already cached with its read position by the time it is tapped.
 
 ### Verify: search, the kind navigator and deep links actually land right on a device — pai-cloud anchor: `web/src/hooks/useTranscriptFind.ts`
 Needs `PAI/` because: `locate`'s merge-or-replace decision (`TranscriptStore.overlapsOrAbuts`), the
-inner/outer stepping decision (`TranscriptSearchState.next(hitCount:)`/`previous(hitCount:)`) and
-the payload/seeding math are all unit-tested — but the actual scroll landing, the claim that no
-settle hold is needed (a collapsed card's expand-then-recompute genuinely finishing before the
-30%-lead is read), the `Menu` picker's real appearance and dismissal, and whether 250ms reads as
-responsive against a real network round trip are none of them things Linux can watch. Also
-unwatched: the catch-up race `loadNewer()` closes (a live message arriving between a settling
-`after_id` page and the flag flipping) — proven only by the store-level test that a held-aside id
-is exactly the id a follow-up fetch would need to recover, never by a live SSE stream actually
-racing a real fetch.
+inner/outer stepping decision (`TranscriptSearchState.next(hitCount:)`/`previous(hitCount:)`), the
+payload/seeding math, the nearest-row fallback (`TranscriptLanding`) and a code-block hit's line
+(`CodeBlockHitGeometry`) are all unit-tested, and the `Mac` workflow's own
+`GET /transcript/landing` now asserts the row a `.replaced`-window jump actually lands on — but
+the `Menu` picker's real appearance and dismissal, whether 250ms reads as responsive against a
+real network round trip, and whether the horizontal centring inside a code block
+(`CodeBlockScrollView`'s `glyphAdvance`/`viewportEstimate`) actually lands the current hit on
+screen rather than off one edge are none of them things Linux — or a fixture screenshot — can
+watch. Also unwatched: the catch-up race `loadNewer()` closes (a live message arriving between a
+settling `after_id` page and the flag flipping) — proven only by the store-level test that a
+held-aside id is exactly the id a follow-up fetch would need to recover, never by a live SSE
+stream actually racing a real fetch.
 
 ### Notes: `readPositionPayload` now gates on `hasNewer`
 Closed the gap this file used to note here — `TranscriptWindow.hasNewer` exists now (row 25's own
