@@ -18,6 +18,20 @@ struct SessionDetailView: View {
     @State private var isPresentingArcMenu = false
     @State private var arcSpecTarget: ArcSpecPickerTarget?
     @State private var usage: Usage?
+    /// Read once via `.onGeometryChange` below, not a `GeometryReader` wrapping the screen — a
+    /// `GeometryReader` becomes the layout for whatever it contains, and the point here is to
+    /// observe the existing `VStack`'s width without changing how it lays out. Starts effectively
+    /// infinite rather than `0` so the edge-swipe check below fails closed — no drag can satisfy
+    /// `startLocation.x > .greatestFiniteMagnitude - edgeSwipeWidth` — for the one frame before
+    /// the real width is known, instead of failing open and accepting a swipe from anywhere.
+    @State private var screenWidth: CGFloat = .greatestFiniteMagnitude
+
+    /// How close to the trailing edge a drag must START for the ARC menu swipe to engage — chosen
+    /// to match iOS's own edge-swipe hot zone (`UIScreenEdgePanGestureRecognizer`'s is about this
+    /// wide) rather than an arbitrary fraction of the screen. Anywhere inside this margin is
+    /// outside where a code block or table would ever be scrolled from, since a thumb starting a
+    /// horizontal scroll inside one starts over the content, not at the literal screen edge.
+    private static let edgeSwipeWidth: CGFloat = 24
     /// Whether this screen has ever seen its session exist. Until it has, a `nil` lookup means
     /// "not fetched yet" — a deep link or a restored route can name a session outside every page
     /// the list has loaded — and leaving on that would close the screen before it opened.
@@ -54,16 +68,24 @@ struct SessionDetailView: View {
                         ComposerBar(sessionID: sessionID)
                     }
                 }
+                .onGeometryChange(for: CGFloat.self, of: \.size.width) { screenWidth = $0 }
                 // `.simultaneousGesture` rather than `.gesture`: this must never win exclusivity
                 // over the transcript's own UIKit scroll/pan recognizers or a code block's
-                // horizontal scroll — it only ever ADDS a recognizer alongside them. The width
-                // threshold is what keeps an ordinary vertical scroll from ever satisfying it;
-                // see PORTING.md for what remains unverified about how this behaves against the
-                // wrapped `UICollectionView` on a real device.
+                // horizontal scroll — it only ever ADDS a recognizer alongside them. Restricted to
+                // a drag that STARTS inside the trailing edge margin (`edgeSwipeWidth`), the way
+                // iOS's own edge swipes work — that is what stops it from ever competing with a
+                // code block's or table's horizontal scroll, which is dragged from wherever the
+                // content is, essentially never from the literal screen edge. The width/height
+                // thresholds on the drag itself are what keeps an ordinary vertical scroll from
+                // satisfying it even when it does start in that margin; see PORTING.md for what
+                // remains unverified about how this behaves against the wrapped `UICollectionView`
+                // on a real device.
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 30)
                         .onEnded { value in
-                            guard value.translation.width < -70, abs(value.translation.height) < 60 else { return }
+                            guard value.startLocation.x > screenWidth - Self.edgeSwipeWidth,
+                                value.translation.width < -70, abs(value.translation.height) < 60
+                            else { return }
                             isPresentingArcMenu = true
                         }
                 )
