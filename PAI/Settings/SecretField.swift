@@ -87,17 +87,11 @@ struct SecretField: View {
         }
     }
 
-    /// The backend sends ISO-8601; a raw string is still shown if parsing fails, rather than
-    /// hiding the timestamp Freddy asked to see beside the dots.
+    /// The backend sends ISO-8601 with six fractional digits, which a bare `ISO8601DateFormatter`
+    /// rejects outright — `IsoTimestamp` is what actually parses it. A raw string is still shown
+    /// if parsing fails, rather than hiding the timestamp Freddy asked to see beside the dots.
     private func formatted(_ raw: String) -> String {
-        guard let date = Self.isoFormatter.date(from: raw) else { return raw }
+        guard let date = IsoTimestamp.date(from: raw) else { return raw }
         return date.formatted(date: .abbreviated, time: .shortened)
     }
-
-    /// `ISO8601DateFormatter` is a reference type with no documented thread-safety guarantee,
-    /// but every call into `formatted(_:)` comes from this view's own `body`, which SwiftUI
-    /// always runs on the main actor — unlike `IsoTimestamp`'s shared formatters, which are also
-    /// reached from tests off the main actor and so need a lock around them, `nonisolated(unsafe)`
-    /// alone is enough here.
-    private nonisolated(unsafe) static let isoFormatter = ISO8601DateFormatter()
 }
