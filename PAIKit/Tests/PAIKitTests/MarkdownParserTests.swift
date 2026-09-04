@@ -184,6 +184,51 @@ final class MarkdownParserTests: XCTestCase {
         XCTAssertEqual(runs.first?.destination, "https://example.com/d.png")
     }
 
+    // MARK: - Bare URLs
+
+    /// The cmark-gfm "autolink" extension is not attached (`MarkdownParser`'s own doc comment
+    /// explains why), so a bare URL reaching a real link destination proves the fallback pass is
+    /// what did it, not cmark itself.
+    func testBareUrlBecomesALink() {
+        let runs = MarkdownParser.parse("See https://example.com/path for details.").firstParagraphRuns
+        guard let link = runs.first(where: { $0.destination != nil }) else {
+            return XCTFail("no run carried a link destination: \(runs)")
+        }
+        XCTAssertEqual(link.text, "https://example.com/path")
+        XCTAssertEqual(link.destination, "https://example.com/path")
+        XCTAssertEqual(runs.map(\.text).joined(), "See https://example.com/path for details.")
+    }
+
+    /// Sentence punctuation immediately after a URL almost never belongs to it — the link must
+    /// stop before the period, not swallow it.
+    func testTrailingSentencePunctuationIsNotPartOfTheLink() {
+        let runs = MarkdownParser.parse("Read https://example.com/x.").firstParagraphRuns
+        guard let link = runs.first(where: { $0.destination != nil }) else {
+            return XCTFail("no run carried a link destination: \(runs)")
+        }
+        XCTAssertEqual(link.text, "https://example.com/x")
+        XCTAssertFalse(link.text.hasSuffix("."), "the trailing period was swallowed into the link")
+    }
+
+    /// A URL already inside real markdown link syntax must not be re-split — the destination
+    /// composed through `[text](url)` is what should survive, unchanged.
+    func testUrlInsideAMarkdownLinkIsNotReautolinked() {
+        let runs = MarkdownParser.parse("[https://example.com](https://example.com/actual)").firstParagraphRuns
+        XCTAssertEqual(runs.map(\.text), ["https://example.com"])
+        XCTAssertEqual(runs.first?.destination, "https://example.com/actual")
+    }
+
+    /// A URL inside an inline code span is source, not prose — it must stay exactly as written
+    /// and never become tappable.
+    func testUrlInsideInlineCodeIsLeftAlone() {
+        let runs = MarkdownParser.parse("Run `curl https://example.com/x`").firstParagraphRuns
+        guard let code = runs.first(where: { $0.style.contains(.code) }) else {
+            return XCTFail("no code run: \(runs)")
+        }
+        XCTAssertEqual(code.text, "curl https://example.com/x")
+        XCTAssertNil(code.destination, "a code span became tappable")
+    }
+
     // MARK: - List details carried from the source
 
     func testTaskListStateAndOrdinalStartAreCarried() {
