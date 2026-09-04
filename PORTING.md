@@ -229,3 +229,21 @@ spec name, are neither of them things Linux can watch.
 Closed the gap this file used to note here — `TranscriptWindow.hasNewer` exists now (row 25's own
 piece), and `TranscriptAnchor.readPositionPayload(for:hasNewer:)` reads it live at save time, the
 same way the web's own `saveReadPosition` does, rather than trusting a possibly-stale `atLiveEdge`.
+
+### Verify: resolving "Spec" to a single bound spec pushes cleanly from both entry points — pai-cloud anchor: none, iOS-only
+Needs `PAI/` because: `resolveArcSpec` is awaited from inside a swipe action's `Button` (
+`SessionListView`) and from a `confirmationDialog`'s own `Button("Spec")` (`SessionDetailView`),
+pushing `.arcSpec` directly only once the async bound-specs lookup returns, with no picker in
+between for the single-spec case. Reasoned to be safe — the confirmationDialog's own dismissal
+completes well before the awaited push arrives, and a swipe action is not a sheet at all, so
+neither should hit the documented "push while a sheet is mid-dismissal" trap — but never watched
+on a device for the brief visual gap between the tap and the spec view appearing, or for whether
+either row's own dismiss animation interacts oddly with a push landing mid-way through it.
+
+### Verify: a live report chip's push-then-dismiss lands cleanly on a real tap — pai-cloud anchor: web/src/apps/arc/ArcDetailSheet.tsx (`ArcReportLink`)
+Needs `PAI/` because: `ArcReportChip` pushes `.arcReport` onto the router and calls `dismiss()`
+right after, the same order `CreateSessionView` documents for a push made while a sheet is
+mid-dismissal. Proven only by the fixture route rendering the report screen in isolation
+(`-PaiFixtureRoute arcReport`) and by `@Environment(\.dismiss)` resolving to the enclosing sheet in
+principle — never by an actual tap on a chip nested inside a live block or unassigned detail
+sheet's own `List`, mid-dismiss animation and all.
