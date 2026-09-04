@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 
 @testable import PAIKit
@@ -133,5 +134,36 @@ final class SearchBlockOffsetTests: XCTestCase {
             isExpanded: { _ in false }, measurer: measurer, cache: cache, metrics: metrics)
 
         XCTAssertEqual(offset, 38)
+    }
+
+    /// A hit on a later line inside a code block must land strictly further down than one on an
+    /// earlier line of the SAME block — proves `MarkdownCodeBlockLayout.lineOffset` composes with
+    /// `blockOffset` the way `revealHit` actually adds them, not merely that the formula runs.
+    /// `lineHeight` is a literal, independent of any constant the code under test reads, so a
+    /// mutation to the real font metrics cannot silently keep this green.
+    func testALaterLineInACodeBlockAddsMoreOffsetThanAnEarlierOne() {
+        let code = "one\ntwo\nthree\nfour"
+        let msg = message(type: .assistant, thinking: code)
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+        let blockTop =
+            TranscriptRowLayout.blockOffset(
+                cardIndex: 0, blockIndex: 0, for: msg, width: width, environment: environment, isExpanded: expandAll,
+                measurer: measurer, cache: cache, metrics: metrics) ?? 0
+
+        let lineHeight = 18.0
+        let padding = TranscriptRowMetrics.codeBlockPadding
+        func offset(forHitAt location: Int) -> Double {
+            let position = CodeBlockHitGeometry.position(of: NSRange(location: location, length: 1), in: code)
+            return blockTop
+                + MarkdownCodeBlockLayout.lineOffset(line: position.line, lineHeight: lineHeight, padding: padding)
+        }
+
+        let firstLineOffset = offset(forHitAt: 0)  // "o" of "one", line 0
+        let thirdLineOffset = offset(forHitAt: 9)  // "t" of "three", line 2
+
+        XCTAssertEqual(firstLineOffset, blockTop + padding)
+        XCTAssertEqual(thirdLineOffset, blockTop + padding + 2 * lineHeight)
+        XCTAssertGreaterThan(thirdLineOffset, firstLineOffset)
     }
 }

@@ -30,4 +30,15 @@ public enum MarkdownCodeBlockLayout {
     public static func height(for code: String, lineHeight: Double, padding: Double = 0) -> Double {
         Double(lineCount(of: code)) * lineHeight + 2 * padding
     }
+
+    /// The extra vertical distance from a code block's own top edge to one hit's line — added to
+    /// `TranscriptRowLayout.blockOffset`'s own answer (the block's top) so a hit deep inside a
+    /// long block is actually brought on screen rather than merely scrolling to the block's top.
+    ///
+    /// `line` is 0-based, the same counting ``lineCount(of:)`` uses; `lineHeight`/`padding` must
+    /// be the exact values ``height(for:lineHeight:padding:)`` measured the whole block with, or
+    /// the two disagree about where a line actually sits.
+    public static func lineOffset(line: Int, lineHeight: Double, padding: Double) -> Double {
+        padding + Double(line) * lineHeight
+    }
 }
