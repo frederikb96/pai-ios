@@ -376,18 +376,25 @@ private struct CodeBlockScrollView<Content: View>: View {
     private func revealCurrentHit() {
         guard let range = currentHitRange else { return }
         let column = CodeBlockHitGeometry.position(of: range, in: code).column
-        let x = max(0, Double(column) * Self.glyphAdvance - Self.viewportEstimate / 2)
+        let x = max(
+            0, Double(column) * CodeBlockScrollGeometry.glyphAdvance - CodeBlockScrollGeometry.viewportEstimate / 2)
         position.scrollTo(x: x)
     }
+}
 
+/// The two measurements ``CodeBlockScrollView``'s horizontal centring needs, pulled out of that
+/// type because a generic type cannot carry a static stored property at all (a Swift language
+/// limit, not a style choice) — `CodeBlockScrollView<Content>` is generic over what it draws.
+private enum CodeBlockScrollGeometry {
     /// A generous stand-in for "half the code block's own visible width". The real viewport width
-    /// needs a `GeometryReader`, which would then also govern this view's measurement — and this
-    /// package's row heights are computed independently of what any view reports (the `scrolling`
-    /// skill's central rule), so nothing here may become a second source of that number. Erring
-    /// wide only ever undershoots the centring; `ScrollView` already clamps past the text's end.
-    private static let viewportEstimate: Double = 320
+    /// needs a `GeometryReader`, which would then also govern the view's own measurement — and
+    /// this package's row heights are computed independently of what any view reports (the
+    /// `scrolling` skill's central rule), so nothing here may become a second source of that
+    /// number. Erring wide only ever undershoots the centring; `ScrollView` already clamps past
+    /// the text's end.
+    static let viewportEstimate: Double = 320
 
-    private static let glyphAdvance: Double = {
+    static let glyphAdvance: Double = {
         let pointSize = PaiTypography.markdownCodeBlock.pointSize(for: .large)
         let font = UIFont.monospacedSystemFont(ofSize: pointSize, weight: .regular)
         return ("M" as NSString).size(withAttributes: [.font: font]).width
