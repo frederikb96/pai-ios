@@ -65,12 +65,28 @@ final class ArcSpecStoreTests: XCTestCase {
         XCTAssertNil(store.errorMessage)
     }
 
-    /// The spec fetch failing must fail the whole load — a screen showing rows from `recover`
-    /// with a stale or empty `boundSessions` would silently break every badge tap on it.
-    func testLoadFailsWhenTheSpecFetchFailsEvenIfRecoverSucceeds() async {
+    /// The spec fetch is only what enables the badge → subagent lookup — its failure must not
+    /// take the timeline down with it. `recover` alone is enough to draw the screen.
+    func testLoadRendersFromRecoverAloneWhenTheSpecFetchFails() async {
         let api = FakeArcSpecApi()
         await api.setSpecResult(.failure(.transport("offline")))
         await api.setRecoverResult(.success(makeRecover()))
+        let store = ArcSpecStore(specUuid: "spec-1", api: api)
+
+        await store.load()
+
+        XCTAssertNil(store.errorMessage)
+        XCTAssertNotNil(store.timeline)
+        XCTAssertEqual(store.name, "Demo")
+        XCTAssertTrue(store.boundSessions.isEmpty, "no session bindings without the spec record")
+    }
+
+    /// `recover` is what actually draws the screen, so its own failure fails the whole load —
+    /// unlike the spec fetch, there is no degraded rendering to fall back to.
+    func testLoadFailsWhenTheRecoverFetchFailsEvenIfSpecSucceeds() async {
+        let api = FakeArcSpecApi()
+        await api.setSpecResult(.success(makeSpec(sessions: ["conv-a"])))
+        await api.setRecoverResult(.failure(.transport("offline")))
         let store = ArcSpecStore(specUuid: "spec-1", api: api)
 
         await store.load()

@@ -197,6 +197,12 @@
                 method: "GET",
                 matches: { $0.hasPrefix("/api/arc/specs/") && $0.hasSuffix("/recover") }
             ) { PaiFixtures.data(PaiFixtures.arcRecover) },
+            // `/api/arc/specs/{uuid}` — four path segments, one fewer than the `/recover` route
+            // above, which this table checks first, so a recover request is never read as this.
+            FixtureRoute(
+                method: "GET",
+                matches: { $0.hasPrefix("/api/arc/specs/") && $0.split(separator: "/").count == 4 }
+            ) { PaiFixtures.data(PaiFixtures.arcSpec) },
         ]
     }
 
