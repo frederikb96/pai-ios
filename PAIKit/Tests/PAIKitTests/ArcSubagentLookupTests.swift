@@ -67,6 +67,16 @@ final class ArcSubagentLookupTests: XCTestCase {
 
     // MARK: - findBoundSubagent (paging)
 
+    /// `findBoundSubagent`'s `fetchPage` is `@Sendable`, so a call-recording test closure needs
+    /// somewhere Sendable-safe to record into — an `actor`, matching `FakeArcSpecListApi`'s own
+    /// shape above, rather than a captured local `var` a `@Sendable` closure cannot mutate.
+    private actor CallRecorder {
+        private(set) var cursors: [String?] = []
+        func record(_ cursor: String?) {
+            cursors.append(cursor)
+        }
+    }
+
     /// The name is not on the first page — proves the walk actually follows the cursor to a
     /// second page rather than trusting the first (default-sized) one alone.
     func test_findBoundSubagent_findsNameOnASecondPage() async throws {
@@ -74,14 +84,15 @@ final class ArcSubagentLookupTests: XCTestCase {
             sessions: [session(id: "a", claudeSessionId: nil, subagentName: "other")], nextCursor: "cursor-2")
         let secondPage = SessionsPage(
             sessions: [session(id: "b", claudeSessionId: nil, subagentName: "arc-core")], nextCursor: nil)
-        var requestedCursors: [String?] = []
+        let recorder = CallRecorder()
 
         let found = try await ArcSubagentLookup.findBoundSubagent(agentName: "arc-core") { cursor in
-            requestedCursors.append(cursor)
+            await recorder.record(cursor)
             return cursor == nil ? firstPage : secondPage
         }
 
         XCTAssertEqual(found?.id, "b")
+        let requestedCursors = await recorder.cursors
         XCTAssertEqual(requestedCursors, [nil, "cursor-2"])
     }
 
@@ -90,14 +101,15 @@ final class ArcSubagentLookupTests: XCTestCase {
     func test_findBoundSubagent_exhaustsPagesWithoutAMatch_isNil() async throws {
         let onlyPage = SessionsPage(
             sessions: [session(id: "a", claudeSessionId: nil, subagentName: "someone-else")], nextCursor: nil)
-        var callCount = 0
+        let recorder = CallRecorder()
 
-        let found = try await ArcSubagentLookup.findBoundSubagent(agentName: "arc-core") { _ in
-            callCount += 1
+        let found = try await ArcSubagentLookup.findBoundSubagent(agentName: "arc-core") { cursor in
+            await recorder.record(cursor)
             return onlyPage
         }
 
         XCTAssertNil(found)
+        let callCount = await recorder.cursors.count
         XCTAssertEqual(callCount, 1, "a page with no nextCursor must stop the walk after exactly one call")
     }
 }

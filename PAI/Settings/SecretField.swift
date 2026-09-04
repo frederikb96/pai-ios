@@ -94,5 +94,10 @@ struct SecretField: View {
         return date.formatted(date: .abbreviated, time: .shortened)
     }
 
-    private static let isoFormatter = ISO8601DateFormatter()
+    /// `ISO8601DateFormatter` is a reference type with no documented thread-safety guarantee,
+    /// but every call into `formatted(_:)` comes from this view's own `body`, which SwiftUI
+    /// always runs on the main actor — unlike `IsoTimestamp`'s shared formatters, which are also
+    /// reached from tests off the main actor and so need a lock around them, `nonisolated(unsafe)`
+    /// alone is enough here.
+    private nonisolated(unsafe) static let isoFormatter = ISO8601DateFormatter()
 }
