@@ -24,6 +24,7 @@ struct ArcSpecView: View {
     @Environment(ToastCenter.self) private var toasts
     @State private var store: ArcSpecStore?
     @State private var detailTarget: ArcDetailTarget?
+    @State private var isPresentingOverview = false
 
     /// The vertical timeline's own scroll anchor, and each segment's own horizontal row anchor —
     /// both `@State` on this view, which `NavigationStack` keeps alive (never torn down) while a
@@ -50,6 +51,27 @@ struct ArcSpecView: View {
         .navigationTitle(store?.name ?? "Spec")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("arc-spec-view")
+        .toolbar {
+            // Mirrors the web's header button: only appears once the spec actually has an
+            // overview, and opens it as rendered markdown rather than the plain-caption preview
+            // this view used to keep inline above the timeline.
+            if let overview = store?.overview, !overview.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        isPresentingOverview = true
+                    } label: {
+                        Image(systemName: "doc.text")
+                    }
+                    .accessibilityLabel("Spec overview")
+                    .accessibilityIdentifier("arc-overview-button")
+                }
+            }
+        }
+        .sheet(isPresented: $isPresentingOverview) {
+            if let overview = store?.overview {
+                ArcMarkdownFullScreenView(markdown: overview, title: "Overview")
+            }
+        }
         .task {
             guard store == nil, let client = environment.connection?.apiClient else { return }
             let newStore = ArcSpecStore(specUuid: specUuid, api: client)
@@ -74,9 +96,9 @@ struct ArcSpecView: View {
         .sheet(item: $detailTarget) { target in
             switch target {
             case .block(let block):
-                ArcBlockDetailSheet(block: block)
+                ArcBlockDetailSheet(block: block, specUuid: specUuid)
             case .unassigned(let rows):
-                ArcUnassignedDetailSheet(rows: rows)
+                ArcUnassignedDetailSheet(rows: rows, specUuid: specUuid)
             }
         }
     }
@@ -93,17 +115,10 @@ struct ArcSpecView: View {
                 Divider()
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        if let overview = store.overview, !overview.isEmpty {
-                            Text(overview)
-                                .font(PaiTypography.caption.font)
-                                .foregroundStyle(PaiPalette.Semantic.textMuted)
-                                .padding(.horizontal, 16)
-                                .padding(.top, 8)
-                                .padding(.bottom, 4)
-                        }
                         ForEach(timeline.segments) { segment in
                             ArcFlowSegmentView(
                                 segment: segment,
+                                isLast: segment.index == timeline.segments.count - 1,
                                 onOpenBlock: { detailTarget = .block($0) },
                                 onOpenBadge: { openBadge(for: $0, store: store) },
                                 onOpenUnassigned: { detailTarget = .unassigned($0) },
@@ -218,11 +233,25 @@ enum ArcCardID: Hashable {
 
 // MARK: - Segment
 
-/// One segment of the flow: the marker bar that opened it (if any — the first segment has
-/// none), a fixed connector down into its own horizontally-scrolling row of blocks, then a
-/// connector down to the next marker. Mirrors `ArcFlowSegment.tsx`.
+/// One segment of the flow: the marker bar that opened it (if any — segment 0 has none), then
+/// its blocks laid out left to right in one horizontally-scrolling row, with a synthetic card
+/// for the segment's own unassigned rows at the right end. Mirrors `ArcFlowSegment.tsx`.
+///
+/// Deliberately no per-card stub down onto the trunk: an earlier version gave every card its
+/// own short vertical line meeting the trunk at a rounded dot, and even gated correctly it still
+/// read as visual noise rather than structure — the dashed trunk alone already says "these are
+/// parallel", one card at a time doesn't need to repeat it. A connector only ever draws between
+/// two things that are actually there: the TOP one only when `segment.marker` is set (so
+/// segment 0 gets none above it), the BOTTOM one only when `isLast` is false (so the final
+/// segment gets none dangling below it into nothing). Freddy's own report of "odd lines coming
+/// from the top" was exactly the unconditional version of this on the web — the per-card stubs
+/// had the identical bug one level down, which is the other half of why they're gone rather than
+/// merely re-gated.
 private struct ArcFlowSegmentView: View {
     let segment: ArcTimelineSegment
+    /// Whether this is the final segment in the timeline — gates the bottom connector, which
+    /// otherwise has no next marker to lead into.
+    let isLast: Bool
     let onOpenBlock: (ArcTimelineBlock) -> Void
     let onOpenBadge: (ArcTimelineBlock) -> Void
     let onOpenUnassigned: ([ArcRow]) -> Void
@@ -238,42 +267,41 @@ private struct ArcFlowSegmentView: View {
                     .padding(.top, 12)
             }
             if hasRow {
-                ArcConnectorStub()
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, segment.marker == nil ? 12 : 6)
+                if segment.marker != nil {
+                    ArcConnectorStub()
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.top, 6)
+                }
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(alignment: .top, spacing: 14) {
                         ForEach(segment.blocks) { block in
-                            VStack(spacing: 0) {
-                                ArcConnectorStub()
-                                ArcFlowBlockCard(
-                                    block: block, onOpenDetail: { onOpenBlock(block) },
-                                    onOpenBadge: { onOpenBadge(block) })
-                            }
+                            ArcFlowBlockCard(
+                                block: block, onOpenDetail: { onOpenBlock(block) },
+                                onOpenBadge: { onOpenBadge(block) }
+                            )
                             .id(ArcCardID.block(block.id))
                         }
                         if !segment.looseRows.isEmpty {
-                            VStack(spacing: 0) {
-                                ArcConnectorStub()
-                                ArcUnassignedFlowCard(rows: segment.looseRows) {
-                                    onOpenUnassigned(segment.looseRows)
-                                }
+                            ArcUnassignedFlowCard(rows: segment.looseRows) {
+                                onOpenUnassigned(segment.looseRows)
                             }
                             .id(ArcCardID.unassigned)
                         }
                     }
                     .padding(.horizontal, 16)
-                    .padding(.top, 8)
+                    .padding(.top, segment.marker == nil ? 12 : 8)
                     .overlay(alignment: .top) {
                         ArcDashedTrunk().padding(.horizontal, 16)
                     }
                 }
                 .scrollPosition(id: rowScrollBinding)
 
-                ArcConnectorStub()
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.bottom, 6)
+                if !isLast {
+                    ArcConnectorStub()
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.bottom, 6)
+                }
             }
         }
     }
