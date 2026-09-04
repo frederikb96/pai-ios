@@ -54,6 +54,16 @@ public struct ArcTimelineBlock: Sendable, Equatable, Identifiable {
         self.rows = rows
         self.badge = badge
     }
+
+    /// Mirrors `pai_cloud.arc_service.recover`'s own per-block counts exactly
+    /// (`arc_service.py`'s `done`/`cancelled`/`total`) — counted separately, never folded
+    /// together, so a block a caller might otherwise read as "2/2 done" cannot also show rows
+    /// that were actually cancelled rather than finished. Derived from `rows` rather than read
+    /// off the wire's own `ArcRecoverBlock`, since that summary exists only for the spec's
+    /// currently active segment and this timeline covers every segment.
+    public var done: Int { rows.filter { $0.s == .done }.count }
+    public var cancelled: Int { rows.filter { $0.s == .cancelled }.count }
+    public var total: Int { rows.count }
 }
 
 /// Everything between two markers (or before the first / after the last): the blocks that may
@@ -116,13 +126,20 @@ public enum ArcTimelineBuilder {
                     loose.append(row)
                 }
             }
-            let blocks = blocksByID.keys.sorted().map { blockID -> ArcTimelineBlock in
+            // Sorted by the leader's own `o` — the only ordering axis the contract has — not by
+            // block id, matching the web's own sort. A block whose leader row is missing (a spec
+            // mid-write) sorts by `o` 0, same as `orderedBefore`'s own fallback.
+            let blocks = blocksByID.keys.map { blockID -> ArcTimelineBlock in
                 let members = blocksByID[blockID] ?? []
                 let leader = members.first { $0.k == .leader }
                 let rest = members.filter { $0.k != .leader }
                 return ArcTimelineBlock(
                     id: blockID, leader: leader, rows: rest, badge: ArcBadgeState.of(leader: leader, busyAgents: busy)
                 )
+            }.sorted { lhs, rhs in
+                let lo = lhs.leader?.o ?? 0, ro = rhs.leader?.o ?? 0
+                if lo != ro { return lo < ro }
+                return lhs.id < rhs.id
             }
             segments.append(
                 ArcTimelineSegment(

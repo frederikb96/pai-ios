@@ -202,7 +202,10 @@ private struct ArcBlockCard: View {
                             .font(PaiTypography.caption.font)
                             .foregroundStyle(PaiPalette.Semantic.textMuted)
                     } else {
-                        Text("\(doneCount) / \(block.rows.count) done")
+                        // `done` and `cancelled` are counted separately, matching the backend's
+                        // own split — a cancelled row is neither hidden inside "done" nor simply
+                        // dropped from the count.
+                        Text(rowCountText)
                             .font(PaiTypography.caption.font)
                             .foregroundStyle(PaiPalette.Semantic.textMuted)
                     }
@@ -225,8 +228,10 @@ private struct ArcBlockCard: View {
         .accessibilityIdentifier("arc-block-\(block.id)")
     }
 
-    private var doneCount: Int {
-        block.rows.filter { $0.s == .done || $0.s == .cancelled }.count
+    private var rowCountText: String {
+        var text = "\(block.done) / \(block.total) done"
+        if block.cancelled > 0 { text += " · \(block.cancelled) cancelled" }
+        return text
     }
 }
 
@@ -284,14 +289,16 @@ private struct ArcLooseRowView: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "circle")
                     .font(.caption2)
                     .foregroundStyle(PaiPalette.Semantic.textFaint)
+                    .padding(.top, 3)
+                // `i` is routinely a full sentence — wrap rather than truncate.
                 Text(row.i ?? "Row \(row.id)")
                     .font(PaiTypography.body.font)
                     .foregroundStyle(PaiPalette.Semantic.textSecondary)
-                    .lineLimit(1)
+                    .multilineTextAlignment(.leading)
                 Spacer()
             }
             .padding(.vertical, 4)
