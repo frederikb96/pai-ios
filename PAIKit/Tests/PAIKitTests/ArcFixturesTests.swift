@@ -18,6 +18,13 @@ final class ArcFixturesTests: XCTestCase {
         XCTAssertEqual(page.specs[0].sessions, ["11111111-1111-1111-1111-111111111111"])
     }
 
+    func test_arcSpecFixture_decodes() throws {
+        let spec = try JSONDecoder().decode(ArcSpec.self, from: PaiFixtures.data(PaiFixtures.arcSpec))
+        XCTAssertEqual(spec.uuid, "3f1c9d7a-4b8e-4a2f-9c1d-7e5a2b6f0d31")
+        XCTAssertEqual(spec.sessions, ["11111111-1111-1111-1111-111111111111"])
+        XCTAssertEqual(spec.rowCount, 6)
+    }
+
     func test_arcRecoverFixture_decodes() throws {
         let payload = try JSONDecoder().decode(
             ArcRecoverPayload.self, from: PaiFixtures.data(PaiFixtures.arcRecover))

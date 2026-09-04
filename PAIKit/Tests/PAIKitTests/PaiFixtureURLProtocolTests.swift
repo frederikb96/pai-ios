@@ -42,6 +42,18 @@ final class PaiFixtureURLProtocolTests: XCTestCase {
         XCTAssertEqual(body(match), PaiFixtures.notesConfig)
     }
 
+    /// `/api/arc/specs/{uuid}` is four path segments and `/api/arc/specs/{uuid}/recover` is
+    /// five — table order alone is what keeps a recover request from being read as a plain
+    /// spec-by-id lookup, since both routes' predicates share the same prefix.
+    func testArcSpecByIdRouteIsNotConfusedWithRecover() {
+        let spec = PaiFixtureURLProtocol.route(
+            method: "GET", path: "/api/arc/specs/3f1c9d7a-4b8e-4a2f-9c1d-7e5a2b6f0d31")
+        let recover = PaiFixtureURLProtocol.route(
+            method: "GET", path: "/api/arc/specs/3f1c9d7a-4b8e-4a2f-9c1d-7e5a2b6f0d31/recover")
+        XCTAssertEqual(body(spec), PaiFixtures.arcSpec)
+        XCTAssertEqual(body(recover), PaiFixtures.arcRecover)
+    }
+
     func testSessionScopedRouteMatchesAnyID() {
         let first = PaiFixtureURLProtocol.route(method: "GET", path: "/api/session/one/messages")
         let second = PaiFixtureURLProtocol.route(method: "GET", path: "/api/session/305df4d3/messages")

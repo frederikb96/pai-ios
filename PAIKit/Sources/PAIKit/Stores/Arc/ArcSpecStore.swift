@@ -45,15 +45,20 @@ public final class ArcSpecStore {
         self.api = api
     }
 
+    /// `recover` is what draws the screen, so only its own failure fails the whole load. The
+    /// spec fetch is best-effort alongside it: losing it only disables the badge → subagent
+    /// lookup (`boundSessions` stays empty), never the timeline itself.
     public func load() async {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
+        async let specTask = api.getArcSpec(uuid: specUuid)
+        async let recoverTask = api.getArcRecover(specUuid: specUuid)
+
+        let spec = try? await specTask
         do {
-            async let specTask = api.getArcSpec(uuid: specUuid)
-            async let recoverTask = api.getArcRecover(specUuid: specUuid)
-            let (spec, recover) = try await (specTask, recoverTask)
-            boundSessions = spec.sessions
+            let recover = try await recoverTask
+            boundSessions = spec?.sessions ?? []
             apply(recover)
         } catch {
             errorMessage = (error as? PaiError)?.userMessage ?? "Could not load this spec"

@@ -26,6 +26,24 @@ extension PaiFixtures {
         }
         """
 
+    /// `GET /api/arc/specs/{uuid}` — the fixture spec's own record, matching `arcSpecs`'s single
+    /// item field for field but carrying `row_count` unwrapped rather than nested under `specs`,
+    /// the shape the plain-by-id route actually answers with.
+    public static let arcSpec = """
+        {
+          "uuid": "3f1c9d7a-4b8e-4a2f-9c1d-7e5a2b6f0d31",
+          "name": "Demo build",
+          "phase": "Build",
+          "effort": 2,
+          "project_id": null,
+          "sessions": ["11111111-1111-1111-1111-111111111111"],
+          "overview": "A short-lived demo spec for the screenshot workflow.",
+          "created_at": "2026-09-01T09:00:00.000000+00:00",
+          "updated_at": "2026-09-03T10:00:00.000000+00:00",
+          "row_count": 6
+        }
+        """
+
     /// `GET /api/arc/specs/{uuid}/recover` — two segments: the first Done and behind a marker,
     /// the second holding five parallel blocks (one of each badge state — working, not-spawned,
     /// accepted, returned, cancelled) and a loose row. Gives `ArcSpecView` a segment wide enough
