@@ -79,11 +79,15 @@ extension PaiFixtures {
             },
             "5": {
               "id": 5, "i": "The thing itself", "src": "U", "diff": 1, "s": "P", "o": 3.5, "k": "R",
-              "b": 2, "g": null, "n": {}, "r": [], "v": null
+              "b": 2, "g": null,
+              "n": {"1": "| Col A | Col B |\\n| --- | --- |\\n| 1 | 2 |\\n\\nProse after the table."},
+              "r": [], "v": null
             },
             "8": {
               "id": 8, "i": "A sub-task that got cancelled", "src": "U", "diff": 0, "s": "X", "o": 3.6, "k": "R",
-              "b": 2, "g": null, "n": {}, "r": [], "v": null
+              "b": 2, "g": null,
+              "n": {"1": "```swift\\nlet x = 1\\n```\\n\\nProse after the code block."},
+              "r": [], "v": null
             },
             "6": {
               "id": 6, "i": "Review the thing", "src": "U", "diff": 1, "s": "P", "o": 4.0, "k": "L",
