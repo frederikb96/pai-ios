@@ -264,6 +264,48 @@ final class MarkdownParserTests: XCTestCase {
         XCTAssertNil(code.destination, "a code span became tappable")
     }
 
+    // MARK: - Bare email addresses
+
+    /// GFM's "extended email autolink" — matched on the web side too — turns a bare address into
+    /// a `mailto:` link with no surrounding markdown syntax needed.
+    func testBareEmailBecomesAMailtoLink() {
+        let runs = MarkdownParser.parse("Reach me at fberg@posteo.de please.").firstParagraphRuns
+        guard let link = runs.first(where: { $0.destination != nil }) else {
+            return XCTFail("no run carried a link destination: \(runs)")
+        }
+        XCTAssertEqual(link.text, "fberg@posteo.de")
+        XCTAssertEqual(link.destination, "mailto:fberg@posteo.de")
+    }
+
+    /// A domain with no dot at all is not a valid autolink target — "user@localhost" stays plain
+    /// text on the web too.
+    func testEmailWithNoDotInTheDomainStaysPlainText() {
+        let runs = MarkdownParser.parse("ping user@localhost now").firstParagraphRuns
+        XCTAssertNil(runs.first(where: { $0.destination != nil }))
+        XCTAssertEqual(runs.map(\.text).joined(), "ping user@localhost now")
+    }
+
+    /// Sentence punctuation right after an address must stay out of the link, the same rule the
+    /// URL branch already enforces.
+    func testTrailingSentencePunctuationIsNotPartOfTheEmailLink() {
+        let runs = MarkdownParser.parse("Mail fberg@posteo.de.").firstParagraphRuns
+        guard let link = runs.first(where: { $0.destination != nil }) else {
+            return XCTFail("no run carried a link destination: \(runs)")
+        }
+        XCTAssertEqual(link.text, "fberg@posteo.de")
+        XCTAssertFalse(link.text.hasSuffix("."), "the trailing period was swallowed into the link")
+    }
+
+    /// An address inside an inline code span is source, not prose — same guarantee as a URL's.
+    func testEmailInsideInlineCodeIsLeftAlone() {
+        let runs = MarkdownParser.parse("Run `mail -s hi fberg@posteo.de`").firstParagraphRuns
+        guard let code = runs.first(where: { $0.style.contains(.code) }) else {
+            return XCTFail("no code run: \(runs)")
+        }
+        XCTAssertEqual(code.text, "mail -s hi fberg@posteo.de")
+        XCTAssertNil(code.destination, "a code span became tappable")
+    }
+
     // MARK: - List details carried from the source
 
     func testTaskListStateAndOrdinalStartAreCarried() {
