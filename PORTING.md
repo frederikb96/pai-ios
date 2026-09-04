@@ -181,6 +181,28 @@ settling `after_id` page and the flag flipping) — proven only by the store-lev
 held-aside id is exactly the id a follow-up fetch would need to recover, never by a live SSE
 stream actually racing a real fetch.
 
+### Verify: the Apps sheet and the search-scope bar feel right on a real screen — pai-cloud anchor: none, iOS-only
+Needs `PAI/` because: `AppsHomeSheet`'s `.presentationDetents([.medium])` with only two rows, and
+`.searchScopes` replacing the semantic-search toolbar icon on `SessionListView`, are both proven
+only by a Mac CI screenshot of their static structure — whether a two-row sheet reads sensibly at
+`.medium` height rather than looking mostly empty, and whether the scope bar's appear/disappear
+animation as the search field activates feels like part of the search bar rather than a
+second, disconnected control, are feel questions only a device answers.
+
+### Verify: Apps → Arc/Notes lands full screen rather than dropping the push — pai-cloud anchor: none, iOS-only
+Needs `PAI/` because: `AppsHomeSheet.openArc()`/`openNotes()` push onto the router before calling
+`dismiss()`, the same order `CreateSessionView` documents as the fix for a known iOS trap (a push
+onto the stack behind a sheet mid-dismissal being dropped, silently). `ArcSpecPickerSheet`'s own
+picker had the reverse order and was corrected to match — reasoned from that precedent and from
+`CreateSessionView`'s own comment, never watched on a device for either sheet.
+
+### Verify: the Arc spec list's scroll-triggered pagination and debounced search feel right — pai-cloud anchor: none, iOS-only
+Needs `PAI/` because: `ArcSpecListView`'s near-the-end `loadMore` trigger and its 500ms search
+debounce mirror `SessionListView`'s own shapes and are unit-tested at the `ArcSpecListStore`
+level (offset math, `hasMore`, failure keeping what already loaded) — but the actual scroll
+momentum against a real network round trip, and whether 500ms reads as responsive while typing a
+spec name, are neither of them things Linux can watch.
+
 ### Notes: `readPositionPayload` now gates on `hasNewer`
 Closed the gap this file used to note here — `TranscriptWindow.hasNewer` exists now (row 25's own
 piece), and `TranscriptAnchor.readPositionPayload(for:hasNewer:)` reads it live at save time, the

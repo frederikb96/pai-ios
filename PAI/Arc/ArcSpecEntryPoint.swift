@@ -57,9 +57,11 @@ struct ArcSpecPickerSheet: View {
     private func specList(_ specs: [ArcSpec]) -> some View {
         List(specs) { spec in
             Button {
-                let uuid = spec.uuid
+                // Push before dismissing — see `CreateSessionView`'s own comment on this exact
+                // order: a push onto the stack behind a sheet that is mid-dismissal is dropped
+                // often enough to be a known iOS trap, and the failure is silent.
+                onSelect(spec.uuid)
                 dismiss()
-                onSelect(uuid)
             } label: {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(spec.name)

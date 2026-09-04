@@ -255,6 +255,10 @@ struct RootView: View {
             // for anything less direct, which is the safe default already documented on
             // `ArcSpecView.sessionID`.
             ArcSpecView(specUuid: specUuid, sessionID: environment.router.openSessionID)
+        case .apps:
+            AppsRouteScreen()
+        case .arcSpecList:
+            ArcSpecListView()
         }
     }
 
@@ -396,6 +400,26 @@ private struct CreateSessionRouteScreen: View {
         Color.clear
             .sheet(isPresented: $isPresented) {
                 CreateSessionView()
+            }
+            .onChange(of: isPresented) { _, presented in
+                guard !presented else { return }
+                environment.router.pop()
+            }
+    }
+}
+
+/// What `.apps` pushes to — reproduces the sheet the session list's "Apps" toolbar button
+/// actually presents, since `AppsHomeSheet` has no screen of its own to navigate to. Shaped
+/// exactly like `CreateSessionRouteScreen` above, for the same reason: real usage never pushes
+/// this route, only the fixture screenshot workflow does.
+private struct AppsRouteScreen: View {
+    @Environment(AppEnvironment.self) private var environment
+    @State private var isPresented = true
+
+    var body: some View {
+        Color.clear
+            .sheet(isPresented: $isPresented) {
+                AppsHomeSheet()
             }
             .onChange(of: isPresented) { _, presented in
                 guard !presented else { return }
