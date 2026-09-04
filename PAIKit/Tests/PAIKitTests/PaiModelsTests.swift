@@ -61,6 +61,7 @@ final class PaiModelsTests: XCTestCase {
               "hook_summary": {"hook_names":["h1"],"has_errors":false,"errors":[],"prevented_continuation":false},
               "tokens": {"input_tokens": 3},
               "origin": "agent", "origin_meta": {"from": "laptop", "group": "g1"},
+              "notification_marker": "pai-notify:abc-123",
               "created_at": "2026-08-24T00:00:01Z"
             }
             """.utf8)
@@ -77,7 +78,28 @@ final class PaiModelsTests: XCTestCase {
         XCTAssertEqual(message.tokens?.inputTokens, 3)
         XCTAssertEqual(message.origin, "agent")
         XCTAssertEqual(message.originMeta?["from"], "laptop")
+        XCTAssertEqual(message.notificationMarker, "pai-notify:abc-123")
         XCTAssertEqual(message.createdAt, "2026-08-24T00:00:01Z")
+    }
+
+    /// Every row ingested before `notification_marker` existed omits the key entirely, not just
+    /// sends it as `null` — a synthesized decoder that required the key would fail every one of
+    /// them rather than reading an absent value as "not a notification reply".
+    func testMessageNotificationMarkerDecodesToNilWhenTheKeyIsAbsent() throws {
+        let json = Data(
+            """
+            {
+              "id": 6, "session_id": "s1", "type": "user", "subtype": null,
+              "outbox_id": null,
+              "timestamp": null, "content": "hi", "thinking": null,
+              "tool_calls": null, "tool_result": null, "hook_summary": null, "tokens": null,
+              "origin": null, "origin_meta": null,
+              "created_at": null
+            }
+            """.utf8)
+        let message = try JSONDecoder().decode(Message.self, from: json)
+
+        XCTAssertNil(message.notificationMarker)
     }
 
     // MARK: - PaiJSONValue number precision (Decimal, not Double)
