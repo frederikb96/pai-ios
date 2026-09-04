@@ -3,10 +3,13 @@ import Markdown
 
 /// Turns a message's markdown into ``MarkdownBlock`` values.
 ///
-/// The parse itself is Apple's cmark-gfm wrapper, so GFM tables, strikethrough, task lists and
-/// autolinks are spec-correct rather than approximated. What this type adds is the conversion
-/// into a model that can be measured: a flat run list per paragraph, a rectangular table, and no
-/// node whose size depends on a network fetch.
+/// The parse itself is Apple's cmark-gfm wrapper, so GFM tables, strikethrough and task lists are
+/// spec-correct rather than approximated — the syntax extensions cmark-gfm attaches for those
+/// (`CommonMarkConverter.swift`) do not include the "autolink" extension, though, so a bare
+/// `https://…` still parses as ordinary text on its own; ``autolinkedRuns(in:style:)`` is the
+/// second pass that catches it. Otherwise, what this type adds is the conversion into a model
+/// that can be measured: a flat run list per paragraph, a rectangular table, and no node whose
+/// size depends on a network fetch.
 ///
 /// Nothing here touches UIKit, which is the point — the decomposition is testable on any
 /// platform, and only the measuring pass needs a device.
@@ -156,7 +159,18 @@ public enum MarkdownParser {
         for child in children {
             switch child {
             case let text as Markdown.Text:
-                runs.append(InlineRun(text: text.string, style: style, destination: destination))
+                // GFM tables, strikethrough and task lists are attached to the underlying cmark
+                // parser as syntax extensions (`CommonMarkConverter.swift`); the GFM "autolink"
+                // extension — the one that would turn a bare `https://…` into a link on its own —
+                // is not. So a plain `Markdown.Text` node here can genuinely contain a URL that
+                // parsed as nothing but text, and this is where that gets a second look. Skipped
+                // when `destination` is already set: that text is already the label of a real
+                // markdown link (or an image's alt text), and re-splitting it would only ever
+                // shorten the tappable region, never usefully change it.
+                runs.append(
+                    contentsOf: destination == nil
+                        ? autolinkedRuns(in: text.string, style: style)
+                        : [InlineRun(text: text.string, style: style, destination: destination)])
 
             case let code as InlineCode:
                 runs.append(InlineRun(text: code.code, style: style.union(.code), destination: destination))
@@ -203,6 +217,57 @@ public enum MarkdownParser {
                 appendRuns(from: child.children, style: style, destination: destination, into: &runs)
             }
         }
+    }
+
+    /// The obvious autolink rule, stated so it can be ported 1:1 elsewhere: match `http://` or
+    /// `https://` followed by any run of non-whitespace characters, then peel `.,;:!?'")]}`
+    /// off the END of the match one character at a time — a URL is rarely followed immediately by
+    /// sentence punctuation with no space, and swallowing it would make "see https://x.com." into
+    /// a link one character too long. Nothing about the START of the match is trimmed; a scheme is
+    /// unambiguous. Not fenced-code-aware by construction: this only ever runs against a
+    /// `Markdown.Text` node, and cmark already routes a fenced or inline code span's content
+    /// through `CodeBlock`/`InlineCode` instead, so a URL inside either never reaches here at all.
+    private static let bareUrlPattern = try! NSRegularExpression(pattern: #"https?://\S+"#)
+    private static let urlTrailingPunctuation: Set<Character> = [
+        ".", ",", ";", ":", "!", "?", "'", "\"", ")", "]", "}",
+    ]
+
+    private static func autolinkedRuns(in text: String, style: InlineStyle) -> [InlineRun] {
+        let matches = bareUrlPattern.matches(in: text, range: NSRange(text.startIndex..., in: text))
+        guard !matches.isEmpty else { return [InlineRun(text: text, style: style)] }
+
+        var runs: [InlineRun] = []
+        var cursor = text.startIndex
+        for match in matches {
+            guard let matchRange = Range(match.range, in: text) else { continue }
+            if cursor < matchRange.lowerBound {
+                runs.append(InlineRun(text: String(text[cursor..<matchRange.lowerBound]), style: style))
+            }
+
+            var urlRange = matchRange
+            while let last = text[urlRange].last, urlTrailingPunctuation.contains(last) {
+                urlRange = urlRange.lowerBound..<text.index(before: urlRange.upperBound)
+            }
+
+            if urlRange.isEmpty {
+                // Trimmed away entirely — every character was punctuation, so there was never a
+                // real URL here (a bare "https://" with nothing after it, say). Shown as plain
+                // text rather than as a link to nowhere.
+                runs.append(InlineRun(text: String(text[matchRange]), style: style))
+            } else {
+                let url = String(text[urlRange])
+                runs.append(InlineRun(text: url, style: style, destination: url))
+                if urlRange.upperBound < matchRange.upperBound {
+                    runs.append(
+                        InlineRun(text: String(text[urlRange.upperBound..<matchRange.upperBound]), style: style))
+                }
+            }
+            cursor = matchRange.upperBound
+        }
+        if cursor < text.endIndex {
+            runs.append(InlineRun(text: String(text[cursor...]), style: style))
+        }
+        return runs
     }
 
     /// Joins neighbouring runs that share styling, so `**bold `code`**` is not three runs where
