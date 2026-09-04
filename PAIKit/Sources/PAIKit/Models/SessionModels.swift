@@ -563,6 +563,9 @@ public struct Machine: Codable, Sendable, Equatable, Identifiable {
         public let totalBytes: Int?
         public let shippedBytes: Int?
         public let pendingBytes: Int?
+        /// Paths a restart is still waiting on the pod to confirm before it can resume shipping
+        /// them — non-zero only in the brief window right after a restart.
+        public let resyncPending: Int?
 
         enum CodingKeys: String, CodingKey {
             case totalFiles = "total_files"
@@ -570,6 +573,7 @@ public struct Machine: Codable, Sendable, Equatable, Identifiable {
             case totalBytes = "total_bytes"
             case shippedBytes = "shipped_bytes"
             case pendingBytes = "pending_bytes"
+            case resyncPending = "resync_pending"
         }
 
         public init(
@@ -577,13 +581,15 @@ public struct Machine: Codable, Sendable, Equatable, Identifiable {
             completeFiles: Int? = nil,
             totalBytes: Int? = nil,
             shippedBytes: Int? = nil,
-            pendingBytes: Int? = nil
+            pendingBytes: Int? = nil,
+            resyncPending: Int? = nil
         ) {
             self.totalFiles = totalFiles
             self.completeFiles = completeFiles
             self.totalBytes = totalBytes
             self.shippedBytes = shippedBytes
             self.pendingBytes = pendingBytes
+            self.resyncPending = resyncPending
         }
     }
 

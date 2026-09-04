@@ -83,6 +83,25 @@ final class FixtureDecodingTests: XCTestCase {
         _ = try decode([SessionType].self, from: PaiFixtures.sessionTypes, "session types")
     }
 
+    /// `resync_pending` is only present on the wire in the brief window right after a restart —
+    /// a client that only ever decoded the corpus's steady-state fixture would never notice the
+    /// key missing from its own model.
+    func testBackfillDecodesResyncPendingWhenPresentAndAbsent() throws {
+        let withField = """
+            {"total_files": 812, "complete_files": 809, "total_bytes": 411238912,
+             "shipped_bytes": 409991040, "pending_bytes": 1247872, "resync_pending": 3}
+            """
+        let present = try decode(Machine.Backfill.self, from: withField, "backfill with resync_pending")
+        XCTAssertEqual(present.resyncPending, 3)
+
+        let withoutField = """
+            {"total_files": 812, "complete_files": 809, "total_bytes": 411238912,
+             "shipped_bytes": 409991040, "pending_bytes": 1247872}
+            """
+        let absent = try decode(Machine.Backfill.self, from: withoutField, "backfill without resync_pending")
+        XCTAssertNil(absent.resyncPending)
+    }
+
     // MARK: - Transcript
 
     func testTheWholeTranscriptDecodes() throws {
