@@ -173,6 +173,39 @@ final class ArcTimelineTests: XCTestCase {
         XCTAssertEqual(withNotes.notesMarkdown, "first\n\nsecond\n\ntenth")
     }
 
+    // MARK: - agentLabel / modelCode
+
+    /// The main session's own work carries no model or name — reads as the single word `Kai`
+    /// rather than a `type · model · name` line with two blanks, mirroring `arcModel.ts`'s own
+    /// short-circuit exactly.
+    func test_agentLabel_kaiType_readsAsKaiRegardlessOfOtherFields() {
+        let leader = row(
+            id: 1, o: 1, k: .leader, b: 1, g: ArcLeaderAgent(type: "kai", model: "opus", name: "should-be-ignored"))
+        let timeline = ArcTimelineBuilder.build(rows: [leader], busyAgents: [])
+        XCTAssertEqual(timeline.segments[0].blocks[0].agentLabel, "Kai")
+    }
+
+    func test_agentLabel_joinsTypeModelCodeAndName() {
+        let leader = row(
+            id: 1, o: 1, k: .leader, b: 1, g: ArcLeaderAgent(type: "aria", model: "sonnet", name: "arc-core"))
+        let timeline = ArcTimelineBuilder.build(rows: [leader], busyAgents: [])
+        XCTAssertEqual(timeline.segments[0].blocks[0].agentLabel, "aria · S · arc-core")
+    }
+
+    /// A model this table has not learned about yet still shows something, from the model
+    /// string's own first letter, rather than silently dropping the model segment.
+    func test_agentLabel_unrecognizedModel_fallsBackToFirstLetterUppercased() {
+        let leader = row(id: 1, o: 1, k: .leader, b: 1, g: ArcLeaderAgent(type: "aria", model: "gemini", name: "n"))
+        let timeline = ArcTimelineBuilder.build(rows: [leader], busyAgents: [])
+        XCTAssertEqual(timeline.segments[0].blocks[0].agentLabel, "aria · G · n")
+    }
+
+    func test_agentLabel_noAgentAssigned_isNil() {
+        let leader = row(id: 1, o: 1, k: .leader, b: 1)
+        let timeline = ArcTimelineBuilder.build(rows: [leader], busyAgents: [])
+        XCTAssertNil(timeline.segments[0].blocks[0].agentLabel)
+    }
+
     func test_notesMarkdown_nilWhenEmpty() {
         let noNotes = ArcRow(
             id: 1, i: nil, src: nil, diff: nil, s: nil, o: nil, k: nil, b: nil, g: nil, n: [:], r: nil, v: nil)

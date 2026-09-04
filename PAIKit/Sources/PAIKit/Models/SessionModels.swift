@@ -70,6 +70,35 @@ extension SessionState: Codable {
     }
 }
 
+/// Working/idle/closed derived purely from a conversation's own hook signals — never from
+/// `state`. See `Session.presenceState`'s doc comment for what this answers that `state` cannot.
+/// See `SessionStatus`'s doc comment for why `.unrecognized` exists rather than throwing.
+public enum SessionPresenceState: Sendable, Hashable {
+    case working, idle, closed
+    case unrecognized(String)
+}
+
+extension SessionPresenceState: Codable {
+    private static let knownValues: [String: SessionPresenceState] = [
+        "working": .working, "idle": .idle, "closed": .closed,
+    ]
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = Self.knownValues[raw] ?? .unrecognized(raw)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .working: try container.encode("working")
+        case .idle: try container.encode("idle")
+        case .closed: try container.encode("closed")
+        case let .unrecognized(raw): try container.encode(raw)
+        }
+    }
+}
+
 /// See `SessionStatus`'s doc comment for why `.unrecognized` exists rather than throwing.
 /// `.unknown` is different: it is the backend's own explicit `"unknown"` blocker kind, a real
 /// value `types.ts` declares — not a decode fallback.
@@ -179,6 +208,15 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// otherwise-`ready` session. `nil` for every other state and for the agent's own
     /// unspecified value — never read a `nil` here as "idle".
     public let working: Bool?
+    /// Working/idle/closed derived purely from presence signals — `/idle`, `/active` and a
+    /// `SessionEnd` hook's `/closed` — never from `state`. Genuinely new information only for a
+    /// session `state` cannot answer at all: one PAI holds no live process for (`discovered` is
+    /// true, and `state` sits permanently `.closed`). For any session `state` already covers,
+    /// this tracks the same signals `working` above already does and adds nothing — read
+    /// `state`/`working` there instead; see `SessionListDomain.dotState(for:)`. `nil` when
+    /// neither signal has ever landed for this session (no hook registered, an old session, a
+    /// subagent). Absent on a backend that predates it.
+    public let presenceState: SessionPresenceState?
     public let title: String?
     /// True once the name was chosen by hand. For a conversation with a `phaseId`, setting
     /// `title` locks that PHASE against the auto-summariser — the same lock every other
@@ -267,6 +305,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         case sessionType = "session_type"
         case model
         case status, state, blocker, working, title
+        case presenceState = "presence_state"
         case titleLocked = "title_locked"
         case initialMessage = "initial_message"
         case sessionTokens = "session_tokens"
@@ -307,6 +346,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         state: SessionState?,
         blocker: Blocker?,
         working: Bool?,
+        presenceState: SessionPresenceState? = nil,
         title: String?,
         titleLocked: Bool?,
         initialMessage: String?,
@@ -347,6 +387,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.state = state
         self.blocker = blocker
         self.working = working
+        self.presenceState = presenceState
         self.title = title
         self.titleLocked = titleLocked
         self.initialMessage = initialMessage
@@ -382,14 +423,19 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     }
 
     /// A copy with the session-level fields of a live SSE `status` event applied — the same
-    /// three-plus-one fields `TranscriptStore.LiveSessionStatus` carries, and nothing else,
-    /// because that event never reports any other column this type holds.
+    /// fields `TranscriptStore.LiveSessionStatus` carries, and nothing else, because that event
+    /// never reports any other column this type holds.
+    ///
+    /// 🚨 Every parameter here MUST be passed through explicitly, never left to a `= nil`
+    /// default: this calls the memberwise initializer with `self`'s own other fields, so a
+    /// property relying on its default would be silently reset to `nil` on every live update.
     public func withLiveStatus(
-        state: SessionState?, blocker: Blocker?, working: Bool?, activityCounts: ActivityCounts?
+        state: SessionState?, blocker: Blocker?, working: Bool?, presenceState: SessionPresenceState?,
+        activityCounts: ActivityCounts?
     ) -> Session {
         Session(
             id: id, sessionType: sessionType, model: model, status: status, state: state, blocker: blocker,
-            working: working,
+            working: working, presenceState: presenceState,
             title: title, titleLocked: titleLocked, initialMessage: initialMessage,
             sessionTokens: sessionTokens, claudeSessionId: claudeSessionId, idleTimeoutMinutes: idleTimeoutMinutes,
             effectiveIdleTimeoutMinutes: effectiveIdleTimeoutMinutes, cseId: cseId, transcriptPath: transcriptPath,

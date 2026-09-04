@@ -5,7 +5,7 @@ import Foundation
 /// same progression). Derived, never stored: the backend keeps only a timestamp
 /// (`g.returnedAt`) and a status letter, never a state word, so a client asking "what should the
 /// badge say" always answers it fresh from those two plus whether the name is in `busyAgents`.
-public enum ArcBadgeState: Sendable, Equatable {
+public enum ArcBadgeState: Sendable, Hashable {
     /// No agent has ever reported activity for this block — `g` unset, or set but with neither a
     /// busy signal nor a return timestamp (a leader assigned ahead of time, per S23: "a leader
     /// may sit unassigned for days; only activation needs the name").
@@ -64,6 +64,17 @@ public struct ArcTimelineBlock: Sendable, Equatable, Identifiable {
     public var done: Int { rows.filter { $0.s == .done }.count }
     public var cancelled: Int { rows.filter { $0.s == .cancelled }.count }
     public var total: Int { rows.count }
+
+    /// The flow card's small type line — `type · model-code · name`, or the single word `Kai`
+    /// for the main session's own work (`g.type == "kai"`, which is never spawned and has no
+    /// name to match a subagent lookup against). Mirrors `arcModel.ts`'s `agentLabel` exactly.
+    /// `nil` only for a block with no agent assigned yet.
+    public var agentLabel: String? {
+        guard let g = leader?.g else { return nil }
+        if g.type == "kai" { return "Kai" }
+        let parts = [g.type, g.modelCode, g.name].compactMap { $0 }.filter { !$0.isEmpty }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
 }
 
 /// Everything between two markers (or before the first / after the last): the blocks that may

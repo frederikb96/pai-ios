@@ -247,16 +247,18 @@ public final class SessionListStore {
     /// to update, and `ensureSessionLoaded` is the caller's tool for that case, not this one.
     public func applyLiveStatus(
         sessionId: String, state: SessionState?, blocker: Blocker?, working: Bool?,
-        activityCounts: ActivityCounts?
+        presenceState: SessionPresenceState?, activityCounts: ActivityCounts?
     ) {
         if let index = syncedSessions.firstIndex(where: { $0.id == sessionId }) {
             syncedSessions[index] = syncedSessions[index].withLiveStatus(
-                state: state, blocker: blocker, working: working, activityCounts: activityCounts
+                state: state, blocker: blocker, working: working, presenceState: presenceState,
+                activityCounts: activityCounts
             )
         }
         if let index = serverFilteredResults.firstIndex(where: { $0.session.id == sessionId }) {
             let updated = serverFilteredResults[index].session.withLiveStatus(
-                state: state, blocker: blocker, working: working, activityCounts: activityCounts
+                state: state, blocker: blocker, working: working, presenceState: presenceState,
+                activityCounts: activityCounts
             )
             serverFilteredResults[index] = SessionSearchResult(
                 session: updated, score: serverFilteredResults[index].score

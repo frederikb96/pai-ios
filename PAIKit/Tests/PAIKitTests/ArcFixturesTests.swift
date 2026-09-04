@@ -21,7 +21,7 @@ final class ArcFixturesTests: XCTestCase {
     func test_arcRecoverFixture_decodes() throws {
         let payload = try JSONDecoder().decode(
             ArcRecoverPayload.self, from: PaiFixtures.data(PaiFixtures.arcRecover))
-        XCTAssertEqual(payload.rows.count, 7)
+        XCTAssertEqual(payload.rows.count, 10)
         XCTAssertEqual(payload.activeSegment.index, 1)
         XCTAssertEqual(payload.activeSegment.busyAgents, ["arc-demo"])
 
@@ -109,11 +109,21 @@ final class ArcFixturesTests: XCTestCase {
         XCTAssertNotNil(timeline.segments[0].marker)
 
         let secondSegment = timeline.segments[1]
-        XCTAssertEqual(secondSegment.blocks.map(\.id).sorted(), [2, 3])
+        XCTAssertEqual(secondSegment.blocks.map(\.id).sorted(), [2, 3, 9, 11, 13])
         XCTAssertEqual(secondSegment.looseRows.map(\.id), [7])
         let workingBlock = try XCTUnwrap(secondSegment.blocks.first { $0.id == 2 })
         XCTAssertEqual(workingBlock.badge, .working)
         let notSpawnedBlock = try XCTUnwrap(secondSegment.blocks.first { $0.id == 3 })
         XCTAssertEqual(notSpawnedBlock.badge, .notSpawned)
+
+        // Blocks 9/11/13 round out every remaining badge state — the fixture's whole point is
+        // giving the flow view one card of each colour to render side by side.
+        let acceptedBlock = try XCTUnwrap(secondSegment.blocks.first { $0.id == 9 })
+        XCTAssertEqual(acceptedBlock.badge, .accepted)
+        XCTAssertEqual(acceptedBlock.total, 0, "a leader-only block must still report 0/0, not a special case")
+        let returnedBlock = try XCTUnwrap(secondSegment.blocks.first { $0.id == 11 })
+        XCTAssertEqual(returnedBlock.badge, .returned)
+        let cancelledBlock = try XCTUnwrap(secondSegment.blocks.first { $0.id == 13 })
+        XCTAssertEqual(cancelledBlock.badge, .cancelled)
     }
 }

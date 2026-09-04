@@ -655,7 +655,7 @@ final class SessionStoreListStoreTests: XCTestCase {
         await store.loadInitialSessions()
 
         store.applyLiveStatus(
-            sessionId: "s1", state: .ready, blocker: nil, working: true,
+            sessionId: "s1", state: .ready, blocker: nil, working: true, presenceState: .working,
             activityCounts: ActivityCounts(agents: 2, tasks: 1)
         )
 
@@ -664,11 +664,33 @@ final class SessionStoreListStoreTests: XCTestCase {
         XCTAssertEqual(store.syncedSessions.first?.activityCounts, ActivityCounts(agents: 2, tasks: 1))
     }
 
+    /// `withLiveStatus` rebuilds the row from its own memberwise initializer — a parameter left
+    /// to default to `nil` there would silently drop this field on every live update rather than
+    /// carrying it through, which is exactly the trap this asserts against.
+    func testApplyLiveStatusCarriesPresenceStateThrough() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1", state: .closed)], nextCursor: nil))
+        }
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        store.applyLiveStatus(
+            sessionId: "s1", state: .closed, blocker: nil, working: nil, presenceState: .working,
+            activityCounts: nil
+        )
+
+        XCTAssertEqual(store.syncedSessions.first?.presenceState, .working)
+    }
+
     func testApplyLiveStatusIsANoOpForASessionNotInAnyLoadedSource() async {
         let api = FakeSessionListApi()
         let store = makeStore(api: api)
 
-        store.applyLiveStatus(sessionId: "not-loaded", state: .ready, blocker: nil, working: true, activityCounts: nil)
+        store.applyLiveStatus(
+            sessionId: "not-loaded", state: .ready, blocker: nil, working: true, presenceState: nil,
+            activityCounts: nil
+        )
 
         XCTAssertTrue(store.syncedSessions.isEmpty)
     }

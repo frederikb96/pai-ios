@@ -1,6 +1,16 @@
 import Foundation
 import Observation
 
+/// The narrow slice of `PaiApiClient` this store needs — see `/subagents`' guidance on declaring
+/// a protocol per consumer rather than mirroring the whole client, matching
+/// `ArcSpecListApiClient`'s own shape.
+public protocol ArcSpecApiClient: Sendable {
+    func getArcSpec(uuid: String) async throws -> ArcSpec
+    func getArcRecover(specUuid: String) async throws -> ArcRecoverPayload
+}
+
+extension PaiApiClient: ArcSpecApiClient {}
+
 /// One spec's whole timeline, loaded from `GET /api/arc/specs/{uuid}/recover` and re-derived
 /// client-side by `ArcTimelineBuilder` — see that type's doc comment for why one call suffices
 /// for every segment, not only the active one.
@@ -11,7 +21,7 @@ import Observation
 @Observable
 public final class ArcSpecStore {
     public let specUuid: String
-    private let api: PaiApiClient
+    private let api: ArcSpecApiClient
 
     public private(set) var name: String?
     public private(set) var overview: String?
@@ -19,6 +29,10 @@ public final class ArcSpecStore {
     public private(set) var timeline: ArcTimeline?
     public private(set) var isLoading = false
     public private(set) var errorMessage: String?
+    /// Conversation uuids this spec is bound to — `ArcSubagentLookup.resolveBoundSessionId`'s
+    /// own input for a block card's badge tap. Fetched alongside `recover`, since that call
+    /// carries no session binding of its own.
+    public private(set) var boundSessions: [String] = []
 
     /// The last `TranscriptStore.ArcSignal.sequence` this store has already acted on, per the
     /// session it was told about — so a caller can pass every live signal it observes and this
@@ -26,7 +40,7 @@ public final class ArcSpecStore {
     /// that itself.
     private var lastAppliedSequence: Int?
 
-    public init(specUuid: String, api: PaiApiClient) {
+    public init(specUuid: String, api: ArcSpecApiClient) {
         self.specUuid = specUuid
         self.api = api
     }
@@ -36,7 +50,11 @@ public final class ArcSpecStore {
         errorMessage = nil
         defer { isLoading = false }
         do {
-            apply(try await api.getArcRecover(specUuid: specUuid))
+            async let specTask = api.getArcSpec(uuid: specUuid)
+            async let recoverTask = api.getArcRecover(specUuid: specUuid)
+            let (spec, recover) = try await (specTask, recoverTask)
+            boundSessions = spec.sessions
+            apply(recover)
         } catch {
             errorMessage = (error as? PaiError)?.userMessage ?? "Could not load this spec"
         }

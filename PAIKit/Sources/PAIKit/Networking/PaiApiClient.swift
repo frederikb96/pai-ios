@@ -654,6 +654,14 @@ public struct PaiApiClient: Sendable {
         try await send(path: "/api/arc/specs/\(specUuid)/recover")
     }
 
+    /// One spec's own record — fetched alongside `getArcRecover` for its `sessions` list, the
+    /// conversation uuids a block card's badge tap searches for a bound session to look up
+    /// subagents against (`ArcSubagentLookup.resolveBoundSessionId`). `recover` carries no
+    /// session binding of its own.
+    public func getArcSpec(uuid: String) async throws -> ArcSpec {
+        try await send(path: "/api/arc/specs/\(uuid)")
+    }
+
     // MARK: Auth
 
     public func getMe() async throws -> MeResponse {

@@ -97,10 +97,39 @@ struct ArcRowDetailSheet: View {
     }
 }
 
+/// One segment's own unassigned rows (`k == .regular`, `b == nil`) — the sheet the flow view's
+/// synthetic "Unassigned rows" card opens, listing every row it bundles the same way a block's
+/// own rows are listed. UI-only: nothing here writes to the spec.
+struct ArcUnassignedDetailSheet: View {
+    let rows: [ArcRow]
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Rows") {
+                    ForEach(rows) { row in
+                        ArcRowSummaryRow(row: row)
+                    }
+                }
+            }
+            .navigationTitle("Unassigned rows")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
 /// One row inside a block detail sheet — status glyph, goal text, tap opens the row's own detail.
 /// Distinguishes all five statuses rather than collapsing to done/not-done: a cancelled row
 /// looks nothing like a pending one, even though neither is "done".
-private struct ArcRowSummaryRow: View {
+struct ArcRowSummaryRow: View {
     let row: ArcRow
 
     @State private var isPresentingDetail = false
