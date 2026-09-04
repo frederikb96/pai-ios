@@ -106,6 +106,24 @@ final class NoteWikilinksTests: XCTestCase {
         XCTAssertEqual(after, " after")
     }
 
+    func testWikilinkResolvingToAnAttachmentBecomesItsOwnLinkSegment() {
+        let attachments = [
+            NoteAttachmentRecord(
+                relPath: "attachments/repo.codelocal", basename: "repo.codelocal", ext: "codelocal",
+                sizeBytes: 1, mtimeMs: 0, linkCount: 1)
+        ]
+        let segments = splitBodyForRender(
+            "before [[attachments/repo.codelocal]] after", nameToId: [:],
+            attachmentIndex: buildAttachmentIndex(attachments))
+        XCTAssertEqual(
+            segments,
+            [
+                .text("before "),
+                .attachmentLink(relPath: "attachments/repo.codelocal"),
+                .text(" after"),
+            ])
+    }
+
     func testBodyWithNoLinksIsOneWholeTextSegment() {
         let segments = splitBodyForRender("Just plain text.", nameToId: [:])
         XCTAssertEqual(segments, [.text("Just plain text.")])

@@ -143,6 +143,76 @@ final class NotePreviewDocumentTests: XCTestCase {
         XCTAssertEqual(document.items[3].startLine, 4)
     }
 
+    /// A shape seen in a real vault: a plain (non-embed) wikilink to a real attachment must
+    /// resolve to an attachment link rather than fall through to the dead-target strikethrough
+    /// branch — a note carrying `[[attachments/repo.codelocal]]` rendered struck through as
+    /// though the file were missing, while the web (which resolves a wikilink against the
+    /// attachment index, not just note names) correctly showed a download chip.
+    func testWikilinkToARealAttachmentBecomesAnAttachmentLinkItemNotStrikethrough() {
+        let body = "My Repo Stuff [[attachments/repo.codelocal]]"
+        let attachments = [
+            NoteAttachmentRecord(
+                relPath: "attachments/repo.codelocal", basename: "repo.codelocal", ext: "codelocal",
+                sizeBytes: 1, mtimeMs: 0, linkCount: 1)
+        ]
+        let document = NotePreviewDocument(
+            body: body, nameToId: [:], attachmentIndex: buildAttachmentIndex(attachments))
+        XCTAssertEqual(document.items.count, 2)
+
+        guard case .block(.paragraph(let text)) = document.items[0].kind else {
+            return XCTFail("expected the leading text as its own paragraph, got \(document.items[0].kind)")
+        }
+        XCTAssertEqual(text.plainText, "My Repo Stuff")
+        XCTAssertFalse(
+            text.runs.contains { $0.style.contains(.strikethrough) },
+            "the attachment link text must not be struck through")
+
+        guard case .attachmentLink(let target) = document.items[1].kind else {
+            return XCTFail("expected an attachment link, got \(document.items[1].kind)")
+        }
+        XCTAssertEqual(target, "attachments/repo.codelocal")
+    }
+
+    /// A bare filename (no `attachments/` prefix) still resolves — the basename fallback step,
+    /// checked only after a note-by-name match fails, mirroring the web and the pod's own
+    /// `note_links_resolved` three-step order.
+    func testWikilinkToAnAttachmentByBareBasenameStillResolves() {
+        let body = "[[repo.codelocal]]"
+        let attachments = [
+            NoteAttachmentRecord(
+                relPath: "attachments/repo.codelocal", basename: "repo.codelocal", ext: "codelocal",
+                sizeBytes: 1, mtimeMs: 0, linkCount: 1)
+        ]
+        let document = NotePreviewDocument(
+            body: body, nameToId: [:], attachmentIndex: buildAttachmentIndex(attachments))
+        XCTAssertEqual(document.items.count, 1)
+        guard case .attachmentLink(let target) = document.items[0].kind else {
+            return XCTFail("expected an attachment link, got \(document.items[0].kind)")
+        }
+        XCTAssertEqual(target, "attachments/repo.codelocal")
+    }
+
+    /// A wikilink that resolves to BOTH a note and an attachment by full path must resolve to the
+    /// attachment — `note_links_resolved`'s own priority order, which the web mirrors.
+    func testWikilinkPrefersAnExactAttachmentPathMatchOverANoteName() {
+        let body = "[[attachments/shared-name]]"
+        let attachments = [
+            NoteAttachmentRecord(
+                relPath: "attachments/shared-name", basename: "shared-name", ext: "",
+                sizeBytes: 1, mtimeMs: 0, linkCount: 1)
+        ]
+        // "shared-name" is the basename step's lookup key — the one a note match would be found
+        // under if the attachment's full-path match (checked first) did not already win.
+        let document = NotePreviewDocument(
+            body: body, nameToId: ["shared-name": "note-should-lose"],
+            attachmentIndex: buildAttachmentIndex(attachments))
+        XCTAssertEqual(document.items.count, 1)
+        guard case .attachmentLink(let target) = document.items[0].kind else {
+            return XCTFail("expected an attachment link, got \(document.items[0].kind)")
+        }
+        XCTAssertEqual(target, "attachments/shared-name")
+    }
+
     /// Several embeds on consecutive lines, with no blank line between them, would otherwise cmark
     /// as one paragraph carrying every placeholder at once — each must still land as its own item.
     func testConsecutiveEmbedsWithNoBlankLineEachBecomeTheirOwnItem() {

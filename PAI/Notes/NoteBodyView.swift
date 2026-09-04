@@ -26,6 +26,13 @@ struct NoteBodyView: View {
     let highlight: String?
 
     @Environment(AppEnvironment.self) private var environment
+    @Environment(NotesStore.self) private var notes
+    // Loaded once per container rather than threaded in from a caller: every wikilink resolution
+    // in this note needs it, and a link to an existing attachment must resolve the same way the
+    // web does — without it, every plain `[[attachments/foo]]` wikilink reads as dead (missing)
+    // even though the file exists, because a wikilink target that isn't a note name would
+    // otherwise never be checked against anything else.
+    @State private var attachmentIndex = AttachmentIndex.empty
 
     init(
         body: String, nameToId: [String: String], containerId: String?,
@@ -39,7 +46,7 @@ struct NoteBodyView: View {
     }
 
     var body: some View {
-        let document = NotePreviewDocument(body: noteBody, nameToId: nameToId)
+        let document = NotePreviewDocument(body: noteBody, nameToId: nameToId, attachmentIndex: attachmentIndex)
         let currentItemIndex = jump.flatMap {
             document.itemIndex(forCharacterOffset: $0.characterOffset, in: noteBody)
         }
@@ -80,6 +87,16 @@ struct NoteBodyView: View {
         // read while previewing, and following it should land on the same rendered page rather
         // than dropping into the target note's editor.
         .confirmingExternalLinks(onNoteLink: { id in environment.router.push(.notePreview(id: id)) })
+        // Reloads whenever the container changes (a different note opened in place) or is nil
+        // (nothing to resolve against, matching the initial `.empty` state).
+        .task(id: containerId) {
+            guard let containerId else {
+                attachmentIndex = .empty
+                return
+            }
+            attachmentIndex =
+                (try? await buildAttachmentIndex(notes.listAttachments(containerId: containerId))) ?? .empty
+        }
     }
 
     @ViewBuilder
@@ -88,13 +105,20 @@ struct NoteBodyView: View {
         case .block(let block):
             NotePreviewBlockView(block: block, highlightQuery: highlight, isCurrentTarget: isCurrentTarget)
         case .embed(let target, _):
-            if let containerId {
-                NoteAttachmentEmbedView(containerId: containerId, target: target)
-            } else {
-                Text("\(target) — this note has no container, so its attachments can't be resolved")
-                    .font(PaiTypography.caption.font)
-                    .foregroundStyle(PaiPalette.Notes.muted)
-            }
+            attachmentView(target: target, mode: .embed)
+        case .attachmentLink(let target):
+            attachmentView(target: target, mode: .link)
+        }
+    }
+
+    @ViewBuilder
+    private func attachmentView(target: String, mode: NoteAttachmentEmbedView.Mode) -> some View {
+        if let containerId {
+            NoteAttachmentEmbedView(containerId: containerId, target: target, mode: mode)
+        } else {
+            Text("\(target) — this note has no container, so its attachments can't be resolved")
+                .font(PaiTypography.caption.font)
+                .foregroundStyle(PaiPalette.Notes.muted)
         }
     }
 }
@@ -297,15 +321,25 @@ struct NotePreviewTableView: View {
     }
 }
 
-/// An Obsidian embed (`![[attachments/foo.png]]`) rendered inline: an image renders in place and
-/// opens the shared ``FullScreenImageViewer`` on tap — the same interaction and the same viewer a
-/// session's own attachments use — and anything else is a tappable chip that confirms before
-/// handing the file to the system share sheet, so a stray tap can never start a download on its
-/// own. Loads on appearance rather than deferring to a tap on the chip itself — a note body
-/// carries only its own handful of attachments, unlike a long chat transcript.
-private struct NoteAttachmentEmbedView: View {
+/// An Obsidian embed (`![[attachments/foo.png]]`) or a plain wikilink resolved to an attachment
+/// (`[[attachments/foo.png]]`), rendered inline: in ``Mode/embed`` mode an image renders in place
+/// and opens the shared ``FullScreenImageViewer`` on tap — the same interaction and the same
+/// viewer a session's own attachments use — and anything else is a tappable chip that confirms
+/// before handing the file to the system share sheet, so a stray tap can never start a download on
+/// its own. In ``Mode/link`` mode every attachment, image included, always renders as the download
+/// chip: a plain wikilink is a *reference* to open the file, not a request to embed it inline —
+/// only `![[...]]` means that, mirroring the web's `NoteAttachmentEmbed` `mode` prop. Loads on
+/// appearance rather than deferring to a tap on the chip itself — a note body carries only its own
+/// handful of attachments, unlike a long chat transcript.
+struct NoteAttachmentEmbedView: View {
+    enum Mode: Equatable {
+        case embed
+        case link
+    }
+
     let containerId: String
     let target: String
+    var mode: Mode = .embed
 
     @Environment(NotesStore.self) private var notes
     @State private var state: LoadState = .loading
@@ -324,7 +358,7 @@ private struct NoteAttachmentEmbedView: View {
         Group {
             switch state {
             case .loaded(let data):
-                if isImage, let uiImage = UIImage(data: data) {
+                if mode == .embed, isImage, let uiImage = UIImage(data: data) {
                     Button {
                         fullScreenTarget = FullScreenImageTarget(image: uiImage, filename: filename)
                     } label: {

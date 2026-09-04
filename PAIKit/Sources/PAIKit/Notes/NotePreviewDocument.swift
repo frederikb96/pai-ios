@@ -1,12 +1,14 @@
 import Foundation
 import Markdown
 
-/// One item in ``NotePreviewDocument/items``: a top-level rendered block, or a resolved
-/// attachment embed — both need to sit in the same ordered, line-addressable list, since a jump
-/// target can land on either.
+/// One item in ``NotePreviewDocument/items``: a top-level rendered block, a resolved attachment
+/// embed (`![[...]]`), or a plain wikilink that resolved to an attachment rather than a note —
+/// all three need to sit in the same ordered, line-addressable list, since a jump target can land
+/// on any of them.
 public enum NotePreviewItemKind: Sendable {
     case block(MarkdownBlock)
     case embed(target: String, alias: String?)
+    case attachmentLink(target: String)
 }
 
 /// A rendered item plus the 1-based source line its markdown started at — how a jump lands on
@@ -36,7 +38,7 @@ public struct NotePreviewItem: Identifiable, Sendable {
 public struct NotePreviewDocument: Sendable {
     public let items: [NotePreviewItem]
 
-    public init(body: String, nameToId: [String: String]) {
+    public init(body: String, nameToId: [String: String], attachmentIndex: AttachmentIndex = .empty) {
         let links = findWikilinks(body)
         let chars = Array(body)
 
@@ -80,8 +82,18 @@ public struct NotePreviewDocument: Sendable {
             } else {
                 // A wikilink's own source text never contains a newline (the grammar excludes it),
                 // so it stays part of the segment currently accumulating rather than starting a
-                // new one, and `line` needs no adjustment for it.
-                appendChunk(Wikilinks.resolvedMarkdown(for: link, nameToId: nameToId))
+                // new one, and `line` needs no adjustment for it — except when it resolves to an
+                // attachment, which (like an embed) becomes its own item rather than inline text.
+                let resolution = Wikilinks.resolveWikilinkTarget(
+                    link.target, nameToId: nameToId, attachmentIndex: attachmentIndex)
+                if case .attachment(let relPath) = resolution {
+                    flushText()
+                    built.append(
+                        NotePreviewItem(id: built.count, kind: .attachmentLink(target: relPath), startLine: line))
+                } else {
+                    let display = Wikilinks.escapeMarkdownText(link.alias ?? link.target)
+                    appendChunk(Wikilinks.inlineMarkdown(display: display, resolution: resolution))
+                }
             }
             cursor = link.end
         }
