@@ -137,16 +137,30 @@ struct ArcSpecView: View {
 
 /// The horizontal bar between two segments — its `i` is why the run waits here, its `v` how it
 /// knows it may pass. See the design report's §1 for the picture this renders literally.
+///
+/// A marker's own status carries only two shapes (`nil`, still open, or `"D"`, passed — nothing
+/// else is legal) — rendered distinguishably by icon, colour AND word together, matching
+/// `ArcBadgeView`'s own "colour plus label, never colour alone" rule, so a passed marker never
+/// reads the same as one the run has not reached yet.
 private struct ArcMarkerBar: View {
     let marker: ArcRow
+
+    private var passed: Bool { marker.s == .done }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Rectangle().fill(PaiPalette.Semantic.borderStrong).frame(height: 1)
-                Image(systemName: "flag.checkered")
-                    .font(.caption)
-                    .foregroundStyle(PaiPalette.Semantic.textMuted)
+                if passed {
+                    Label("Passed", systemImage: "checkmark.seal.fill")
+                        .labelStyle(.titleAndIcon)
+                        .font(.caption)
+                        .foregroundStyle(PaiPalette.green500)
+                } else {
+                    Image(systemName: "flag.checkered")
+                        .font(.caption)
+                        .foregroundStyle(PaiPalette.Semantic.textMuted)
+                }
                 Rectangle().fill(PaiPalette.Semantic.borderStrong).frame(height: 1)
             }
             if let text = marker.i, !text.isEmpty {
@@ -181,7 +195,13 @@ private struct ArcBlockCard: View {
                     ArcBadgeView(state: block.badge)
                 }
                 HStack(spacing: 8) {
-                    if !block.rows.isEmpty {
+                    if block.rows.isEmpty {
+                        // Per S23, a block can be deliberately leader-only with no member rows
+                        // ever coming — say so plainly rather than reading as one still waiting.
+                        Text("Leader only")
+                            .font(PaiTypography.caption.font)
+                            .foregroundStyle(PaiPalette.Semantic.textMuted)
+                    } else {
                         Text("\(doneCount) / \(block.rows.count) done")
                             .font(PaiTypography.caption.font)
                             .foregroundStyle(PaiPalette.Semantic.textMuted)
