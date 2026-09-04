@@ -42,6 +42,19 @@ final class ArcFixturesTests: XCTestCase {
         XCTAssertEqual(buildBlock.done, 0)
         XCTAssertEqual(buildBlock.cancelled, 1)
         XCTAssertEqual(buildBlock.total, 2)
+
+        // Row 7 is this segment's own loose row — no block, unresolved, not a marker.
+        XCTAssertEqual(payload.activeSegment.loose, [7])
+    }
+
+    /// A backend from before `active_segment.loose` shipped omits the key entirely rather than
+    /// sending an empty array — decoding must tolerate that rather than fail the whole payload.
+    func test_arcActiveSegment_decodesWithoutLooseKey() throws {
+        let json = """
+            {"index": 0, "blocks": [], "busy_agents": []}
+            """
+        let segment = try JSONDecoder().decode(ArcActiveSegment.self, from: Data(json.utf8))
+        XCTAssertNil(segment.loose)
     }
 
     /// A leader written by hand rather than by `arc block add` (which always writes `type`) can
