@@ -70,6 +70,19 @@ public enum Route: Hashable, Sendable {
     /// nothing ever replaces one `.arcSpecList` destination with a different one at the same
     /// stack depth.
     case arcSpecList
+    /// One report a row or a block leader's `r` field names, full page — reached by tapping a
+    /// report chip in the block/unassigned detail sheet, which pushes this BEFORE dismissing
+    /// itself (`CreateSessionView`'s documented order) and then dismisses, so the sheet never
+    /// reappears underneath. Pushed on top of `.arcSpec`, so the native back gesture returns
+    /// there directly — the same "one level, to the spec view" shape the web's own Escape rule
+    /// gives the equivalent report page, achieved here for free by `NavigationStack` rather than
+    /// needing a parallel `sessionOrigin`-style field.
+    case arcReport(specUuid: String, reportUuid: String)
+    /// Reached only from the fixture screenshot workflow, the same way `.createSession`/
+    /// `.recordings`/`.apps` are: real usage never pushes this, it presents the overview as a
+    /// sheet from `ArcSpecView`'s own header button. `RootView` reproduces that sheet
+    /// presentation here for the same reason those three do.
+    case arcOverview(specUuid: String)
 
     /// Ignores `session`'s `messageID` — see that case's doc comment. Everything else is a plain
     /// per-case comparison, same as the synthesized version this replaces.
@@ -89,6 +102,8 @@ public enum Route: Hashable, Sendable {
         case (.arcSpec(let a), .arcSpec(let b)): return a == b
         case (.apps, .apps): return true
         case (.arcSpecList, .arcSpecList): return true
+        case (.arcReport(let a1, let a2), .arcReport(let b1, let b2)): return a1 == b1 && a2 == b2
+        case (.arcOverview(let a), .arcOverview(let b)): return a == b
         default: return false
         }
     }
@@ -131,6 +146,13 @@ public enum Route: Hashable, Sendable {
             hasher.combine(12)
         case .arcSpecList:
             hasher.combine(13)
+        case .arcReport(let specUuid, let reportUuid):
+            hasher.combine(14)
+            hasher.combine(specUuid)
+            hasher.combine(reportUuid)
+        case .arcOverview(let specUuid):
+            hasher.combine(15)
+            hasher.combine(specUuid)
         }
     }
 }
@@ -145,13 +167,19 @@ extension Route {
     /// hardcoding it, so a new screen becomes photographable without a CI file edit.
     public static let namedScreens: [String] = [
         "session", "terminal", "settings", "createSession", "subagents", "notes", "note", "noteContainers",
-        "notePreview", "notifications", "recordings", "arcSpec", "apps", "arcSpecList",
+        "notePreview", "notifications", "recordings", "arcSpec", "apps", "arcSpecList", "arcReport", "arcOverview",
     ]
 
     /// Every spec-scoped fixture route answers under, regardless of which uuid the request
     /// actually named — the same fixed-id pattern `fixtureNoteID` uses, so the screenshot
     /// workflow can ask for the ARC screen without first discovering a real spec exists.
     public static let fixtureArcSpecUuid = "3f1c9d7a-4b8e-4a2f-9c1d-7e5a2b6f0d31"
+
+    /// The report id `arcReport`'s own fixture route answers under — the fixture's
+    /// `GET /api/arc/reports/{uuid}` route (`PaiFixtureURLProtocol`) serves the same report
+    /// regardless of which uuid is actually asked for, the same way `fixtureArcSpecUuid`'s
+    /// route does, so this only needs to be a well-formed uuid, never one looked up anywhere.
+    public static let fixtureArcReportUuid = "9c274e11-9b1d-4d54-9a90-7d5b6a6be5aa"
 
     /// Parses a launch-argument screen name into a route. `sessionID` fills in every
     /// session-scoped case — the fixture corpus answers identically for any id, so the caller
@@ -179,6 +207,8 @@ extension Route {
         case "arcSpec": return .arcSpec(specUuid: fixtureArcSpecUuid)
         case "apps": return .apps
         case "arcSpecList": return .arcSpecList
+        case "arcReport": return .arcReport(specUuid: fixtureArcSpecUuid, reportUuid: fixtureArcReportUuid)
+        case "arcOverview": return .arcOverview(specUuid: fixtureArcSpecUuid)
         default: return nil
         }
     }
@@ -315,7 +345,7 @@ public final class Router {
             case .session(let id, _): return id
             case .terminal(let sessionID): return sessionID
             case .settings, .createSession, .subagents, .notes, .note, .noteContainers, .notePreview,
-                .notifications, .recordings, .arcSpec, .apps, .arcSpecList:
+                .notifications, .recordings, .arcSpec, .apps, .arcSpecList, .arcReport, .arcOverview:
                 continue
             }
         }
@@ -329,7 +359,7 @@ public final class Router {
             switch route {
             case .note(let id), .notePreview(let id): return id
             case .session, .terminal, .settings, .createSession, .subagents, .notes, .noteContainers,
-                .notifications, .recordings, .arcSpec, .apps, .arcSpecList:
+                .notifications, .recordings, .arcSpec, .apps, .arcSpecList, .arcReport, .arcOverview:
                 continue
             }
         }

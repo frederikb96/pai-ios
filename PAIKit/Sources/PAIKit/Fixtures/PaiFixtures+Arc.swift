@@ -6,6 +6,21 @@ import Foundation
 /// two-segment story, not any real spec's rows.
 extension PaiFixtures {
 
+    /// `GET /api/arc/reports/{uuid}` — the report `arcRecover`'s row 10 (block 9's own leader)
+    /// and row 5 (an ordinary row in block 2) both carry, so a Mac screenshot exercises the
+    /// report chip in both places it renders: a block leader's header row and an ordinary row's
+    /// own summary. Served for any uuid asked for — see `PaiFixtureURLProtocol`'s own route.
+    public static let arcReport = """
+        {
+          "uuid": "\(Route.fixtureArcReportUuid)",
+          "spec_uuid": "3f1c9d7a-4b8e-4a2f-9c1d-7e5a2b6f0d31",
+          "name": "Build verification",
+          "summary": "How the build step was checked before the block shipped.",
+          "content": "# Build verification\\n\\nRan the build against a clean checkout and confirmed the output matched the acceptance check.\\n\\n- Compiled without warnings\\n- Tests green\\n- No secrets in the diff",
+          "created_at": "2026-09-03T09:10:00.000000+00:00"
+        }
+        """
+
     /// `GET /api/arc/specs?session=...` — one spec bound to the fixture session.
     public static let arcSpecs = """
         {
@@ -135,7 +150,7 @@ extension PaiFixtures {
               "id": 5, "i": "The thing itself", "src": "U", "diff": 1, "s": "P", "o": 3.5, "k": "R",
               "b": 2, "g": null,
               "n": {"1": "| Col A | Col B |\\n| --- | --- |\\n| 1 | 2 |\\n\\nProse after the table."},
-              "r": [], "v": null
+              "r": ["\(Route.fixtureArcReportUuid)"], "v": null
             },
             "8": {
               "id": 8, "i": "A sub-task that got cancelled", "src": "U", "diff": 0, "s": "X", "o": 3.6, "k": "R",
@@ -154,7 +169,7 @@ extension PaiFixtures {
             "10": {
               "id": 10, "i": "Ship the review notes", "src": "U", "diff": 1, "s": "D", "o": 4.2, "k": "L",
               "b": 9, "g": {"type": "aria", "model": "opus", "name": "arc-accepted-demo", "returned_at": "2026-09-03T09:00:00.000000+00:00"},
-              "n": {}, "r": [], "v": null
+              "n": {}, "r": ["\(Route.fixtureArcReportUuid)"], "v": null
             },
             "12": {
               "id": 12, "i": "Draft the follow-up", "src": "U", "diff": 1, "s": "I", "o": 4.4, "k": "L",

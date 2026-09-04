@@ -217,6 +217,13 @@
                 method: "GET",
                 matches: { $0.hasPrefix("/api/arc/specs/") && $0.split(separator: "/").count == 4 }
             ) { PaiFixtures.data(PaiFixtures.arcSpec) },
+            // `/api/arc/reports/{uuid}` — answers the same fixture report regardless of which
+            // uuid is actually asked for, the same way the `/specs/{uuid}` route above does, so
+            // a row's own `r` field never has to be kept in sync with a second fixed uuid.
+            FixtureRoute(
+                method: "GET",
+                matches: { $0.hasPrefix("/api/arc/reports/") }
+            ) { PaiFixtures.data(PaiFixtures.arcReport) },
         ]
     }
 
