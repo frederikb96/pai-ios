@@ -4,6 +4,7 @@ import SwiftUI
 /// A block's leader plus every row it owns — reached by tapping a block card in `ArcSpecView`.
 struct ArcBlockDetailSheet: View {
     let block: ArcTimelineBlock
+    let specUuid: String
 
     @Environment(\.dismiss) private var dismiss
 
@@ -24,6 +25,13 @@ struct ArcBlockDetailSheet: View {
                                         .foregroundStyle(PaiPalette.Semantic.textFaint)
                                 }
                             }
+                            // The leader's own reports — `block.rows` deliberately excludes the
+                            // leader itself (see `ArcTimeline.swift`), so this is the one place
+                            // its `r` field surfaces, mirroring `ArcDetailSheet.tsx`'s identical
+                            // header-row treatment.
+                            if let reports = leader.r, !reports.isEmpty {
+                                ArcReportChipRow(specUuid: specUuid, reportUuids: reports)
+                            }
                         }
                         .padding(.vertical, 4)
                         if let preview = leader.notesMarkdown {
@@ -40,7 +48,7 @@ struct ArcBlockDetailSheet: View {
                             .foregroundStyle(PaiPalette.Semantic.textMuted)
                     }
                     ForEach(block.rows) { row in
-                        ArcRowSummaryRow(row: row)
+                        ArcRowSummaryRow(row: row, specUuid: specUuid)
                     }
                 }
             }
@@ -102,6 +110,7 @@ struct ArcRowDetailSheet: View {
 /// own rows are listed. UI-only: nothing here writes to the spec.
 struct ArcUnassignedDetailSheet: View {
     let rows: [ArcRow]
+    let specUuid: String
 
     @Environment(\.dismiss) private var dismiss
 
@@ -110,7 +119,7 @@ struct ArcUnassignedDetailSheet: View {
             List {
                 Section("Rows") {
                     ForEach(rows) { row in
-                        ArcRowSummaryRow(row: row)
+                        ArcRowSummaryRow(row: row, specUuid: specUuid)
                     }
                 }
             }
@@ -131,24 +140,31 @@ struct ArcUnassignedDetailSheet: View {
 /// looks nothing like a pending one, even though neither is "done".
 struct ArcRowSummaryRow: View {
     let row: ArcRow
+    let specUuid: String
 
     @State private var isPresentingDetail = false
 
     var body: some View {
-        Button {
-            isPresentingDetail = true
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: statusIcon)
-                    .foregroundStyle(statusColor)
-                Text(row.i ?? "Row \(row.id)")
-                    .font(PaiTypography.body.font)
-                    .foregroundStyle(PaiPalette.Semantic.textPrimary)
-                    .strikethrough(row.s == .done || row.s == .cancelled)
-                    .lineLimit(2)
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                isPresentingDetail = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: statusIcon)
+                        .foregroundStyle(statusColor)
+                    Text(row.i ?? "Row \(row.id)")
+                        .font(PaiTypography.body.font)
+                        .foregroundStyle(PaiPalette.Semantic.textPrimary)
+                        .strikethrough(row.s == .done || row.s == .cancelled)
+                        .lineLimit(2)
+                }
+            }
+            .buttonStyle(.plain)
+            if let reports = row.r, !reports.isEmpty {
+                ArcReportChipRow(specUuid: specUuid, reportUuids: reports)
+                    .padding(.leading, 24)
             }
         }
-        .buttonStyle(.plain)
         .sheet(isPresented: $isPresentingDetail) {
             ArcRowDetailSheet(title: "Row", row: row)
         }
@@ -171,6 +187,63 @@ struct ArcRowSummaryRow: View {
         case .verify: return PaiPalette.Semantic.warningText
         case .done: return PaiPalette.green500
         case .cancelled: return PaiPalette.Semantic.textFaint
+        }
+    }
+}
+
+/// A row of report chips — one per uuid in a row or a block leader's own `r` field, wrapping
+/// onto a new line rather than scrolling, since a row rarely carries more than one or two.
+struct ArcReportChipRow: View {
+    let specUuid: String
+    let reportUuids: [String]
+
+    var body: some View {
+        // `HStack` rather than a wrapping layout: matches every other chip row in this app
+        // (`ArcLegendView`, the leader's own agent/badge row above), and a row's `r` field is
+        // never large enough in practice to need one.
+        HStack(spacing: 6) {
+            ForEach(reportUuids, id: \.self) { reportUuid in
+                ArcReportChip(specUuid: specUuid, reportUuid: reportUuid)
+            }
+        }
+    }
+}
+
+/// One report a row or a block leader's `r` field names — the uuid alone tells nothing readable,
+/// so the name is fetched lazily on mount purely to label the chip, mirroring `ArcReportLink`'s
+/// identical reasoning on the web. Tapping pushes the report's own full-page screen onto the app
+/// navigation stack FIRST, then dismisses whichever sheet the chip is inside — the block or
+/// unassigned detail sheet, reached via `@Environment(\.dismiss)`, which resolves to the nearest
+/// enclosing presentation regardless of how deep this chip sits inside that sheet's own `List`.
+/// Push-before-dismiss is the order `CreateSessionView` documents: a push made while a sheet is
+/// mid-dismissal is dropped silently.
+private struct ArcReportChip: View {
+    let specUuid: String
+    let reportUuid: String
+
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String?
+
+    var body: some View {
+        Button {
+            environment.router.push(.arcReport(specUuid: specUuid, reportUuid: reportUuid))
+            dismiss()
+        } label: {
+            Label(name ?? "Report", systemImage: "doc.text")
+                .font(PaiTypography.caption.font)
+                .foregroundStyle(PaiPalette.Semantic.textSecondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(PaiPalette.Semantic.panelBackground, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .task {
+            guard let client = environment.connection?.apiClient else { return }
+            // A report deleted after the row was written, or a transient failure — the chip
+            // still works (the report screen has its own error state), it just can't show a
+            // name yet, matching `ArcReportLink`'s identical fallback on the web.
+            name = try? await client.getArcReport(uuid: reportUuid).name
         }
     }
 }
@@ -202,9 +275,12 @@ struct ArcNotesPreview: View {
     }
 }
 
-/// The full, scrollable render a notes preview taps into.
+/// The full, scrollable render a notes preview taps into — and, with `title: "Overview"`, the
+/// sheet `ArcSpecView`'s own header button opens for the spec's overview. One renderer for both,
+/// since neither is anything but rendered markdown behind a "Close" button.
 struct ArcMarkdownFullScreenView: View {
     let markdown: String
+    var title: String = "Notes"
 
     @Environment(\.dismiss) private var dismiss
 
@@ -215,7 +291,7 @@ struct ArcMarkdownFullScreenView: View {
                     .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .navigationTitle("Notes")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
