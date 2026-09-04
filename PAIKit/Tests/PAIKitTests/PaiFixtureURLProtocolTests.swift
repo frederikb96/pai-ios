@@ -64,4 +64,88 @@ final class PaiFixtureURLProtocolTests: XCTestCase {
         let decoded = try? JSONDecoder().decode(ErrorBody.self, from: match.body())
         XCTAssertEqual(decoded?.detail, "no fixture route for GET /api/does-not-exist")
     }
+
+    // MARK: - Query-driven paging (the .replaced landing path)
+
+    private func decodeMessages(_ match: PaiFixtureURLProtocol.Match) -> [Message] {
+        (try? JSONDecoder().decode([Message].self, from: match.body())) ?? []
+    }
+
+    func testMessagesRouteHonoursTailAndLimit() {
+        let match = PaiFixtureURLProtocol.route(
+            method: "GET", path: "/api/session/one/messages",
+            query: [URLQueryItem(name: "tail", value: "true"), URLQueryItem(name: "limit", value: "5")])
+        let messages = decodeMessages(match)
+        XCTAssertEqual(messages.count, 5)
+        XCTAssertEqual(messages.map(\.id).sorted(), messages.map(\.id), "a page must already be ascending")
+    }
+
+    /// The exact case this fixture corpus exists for: an `around_id` far from the tail must come
+    /// back as a page that does not overlap the loaded tail window at all — the shape `locate`'s
+    /// `mergeOrReplaceWindow` reads as "replace", never "merge" (search-virtualization design,
+    /// "the around page, and merge-or-replace"). Proves the corpus is genuinely large enough,
+    /// not just that paging code runs.
+    func testAroundIdFarFromTheTailAnswersAPageThatDoesNotOverlapIt() {
+        let tailMatch = PaiFixtureURLProtocol.route(
+            method: "GET", path: "/api/session/one/messages", query: [URLQueryItem(name: "tail", value: "true")])
+        let tailIds = decodeMessages(tailMatch).map(\.id)
+        guard let oldestTailId = tailIds.min() else { return XCTFail("tail page returned nothing") }
+
+        let aroundMatch = PaiFixtureURLProtocol.route(
+            method: "GET", path: "/api/session/one/messages",
+            query: [URLQueryItem(name: "around_id", value: "9029"), URLQueryItem(name: "limit", value: "150")])
+        let aroundMessages = decodeMessages(aroundMatch)
+        XCTAssertFalse(aroundMessages.isEmpty)
+        XCTAssertTrue(aroundMessages.contains { $0.id == 9029 })
+        XCTAssertLessThan(
+            aroundMessages.map(\.id).max() ?? .max, oldestTailId,
+            "the around page must not reach the tail window at all, or a merge would apply instead of a replace")
+    }
+
+    func testBeforeIdReturnsOlderRowsOnly() {
+        let match = PaiFixtureURLProtocol.route(
+            method: "GET", path: "/api/session/one/messages",
+            query: [URLQueryItem(name: "before_id", value: "9010"), URLQueryItem(name: "limit", value: "3")])
+        let ids = decodeMessages(match).map(\.id)
+        XCTAssertEqual(ids, [9007, 9008, 9009])
+    }
+
+    func testAfterIdReturnsNewerRowsOnly() {
+        let match = PaiFixtureURLProtocol.route(
+            method: "GET", path: "/api/session/one/messages",
+            query: [URLQueryItem(name: "after_id", value: "9050"), URLQueryItem(name: "limit", value: "3")])
+        let ids = decodeMessages(match).map(\.id)
+        XCTAssertEqual(ids, [9051, 9052, 9053])
+    }
+
+    func testNoRecognisedQueryStillAnswersTheWholeTranscript() {
+        let match = PaiFixtureURLProtocol.route(method: "GET", path: "/api/session/one/messages", query: [])
+        XCTAssertEqual(String(decoding: match.body(), as: UTF8.self), PaiFixtures.transcript)
+    }
+
+    // MARK: - /messages/find
+
+    func testFindWithBoundaryKindReturnsSessionStartAndEveryCompactRow() {
+        let match = PaiFixtureURLProtocol.route(
+            method: "GET", path: "/api/session/one/messages/find",
+            query: [URLQueryItem(name: "kind", value: "boundary")])
+        let result = try? JSONDecoder().decode(MessageFindResult.self, from: match.body())
+        XCTAssertEqual(result?.messageIds.first, 9001, "the session's own first row is always a boundary hit")
+        XCTAssertTrue(result?.messageIds.contains(9042) ?? false, "message 9042 is the curated system/compact row")
+        XCTAssertEqual(result?.total, result?.messageIds.count)
+    }
+
+    func testFindWithATextQueryMatchesContentCaseInsensitively() {
+        let match = PaiFixtureURLProtocol.route(
+            method: "GET", path: "/api/session/one/messages/find", query: [URLQueryItem(name: "q", value: "SONNET")])
+        let result = try? JSONDecoder().decode(MessageFindResult.self, from: match.body())
+        XCTAssertTrue(result?.messageIds.contains(9028) ?? false, "message 9028's content names Sonnet 5")
+    }
+
+    func testFindWithNoQueryOrKindReturnsNoHits() {
+        let match = PaiFixtureURLProtocol.route(method: "GET", path: "/api/session/one/messages/find", query: [])
+        let result = try? JSONDecoder().decode(MessageFindResult.self, from: match.body())
+        XCTAssertEqual(result?.messageIds, [])
+        XCTAssertEqual(result?.total, 0)
+    }
 }
