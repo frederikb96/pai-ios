@@ -191,7 +191,7 @@ public enum TranscriptRowLayout {
         case .relayedBubble, .command, .resentUserBubble:
             let labelChrome = TranscriptRowMetrics.bubbleLabelLineHeight + TranscriptRowMetrics.bubbleLabelSpacing
             return labelChrome + TranscriptRowMetrics.bubbleVerticalPadding / 2
-        case .thinking, .toolCall, .toolResult, .agentMessage, .system, .legacyCommandOutput:
+        case .thinking, .toolCall, .toolResult, .notifyReply, .agentMessage, .system, .legacyCommandOutput:
             return TranscriptRowMetrics.cardHeaderHeight + TranscriptRowMetrics.cardContentVerticalPadding / 2
         }
     }
@@ -204,7 +204,7 @@ public enum TranscriptRowLayout {
         case .userBubble, .relayedBubble, .command, .assistantBubble, .resentUserBubble:
             return max(
                 0, cellWidth - TranscriptRowMetrics.bubbleGutter - 2 * TranscriptRowMetrics.bubbleHorizontalPadding)
-        case .thinking, .toolCall, .toolResult, .agentMessage, .system, .legacyCommandOutput:
+        case .thinking, .toolCall, .toolResult, .notifyReply, .agentMessage, .system, .legacyCommandOutput:
             return max(0, cellWidth - 2 * TranscriptRowMetrics.cardHorizontalPadding)
         }
     }
@@ -272,7 +272,7 @@ public enum TranscriptRowLayout {
             guard args != nil else { return TranscriptRowMetrics.cardHeaderHeight }
             return content + labelChrome + TranscriptRowMetrics.bubbleVerticalPadding
 
-        case .thinking, .toolCall, .toolResult, .agentMessage, .system, .legacyCommandOutput:
+        case .thinking, .toolCall, .toolResult, .notifyReply, .agentMessage, .system, .legacyCommandOutput:
             // `CardChrome` pads whatever `content()` it was handed whenever it is expanded —
             // even when that content is an empty `ToolBodyText` and draws nothing, the padding
             // around it is still there. `card.blocks.isEmpty` cannot stand in for "collapsed":

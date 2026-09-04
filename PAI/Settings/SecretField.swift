@@ -88,11 +88,11 @@ struct SecretField: View {
     }
 
     /// The backend sends ISO-8601; a raw string is still shown if parsing fails, rather than
-    /// hiding the timestamp Freddy asked to see beside the dots.
+    /// hiding the timestamp Freddy asked to see beside the dots. `IsoTimestamp` rather than a
+    /// bare `ISO8601DateFormatter()` — this backend's timestamps carry a fractional-seconds
+    /// component a bare formatter rejects outright (see that type's own doc comment).
     private func formatted(_ raw: String) -> String {
-        guard let date = Self.isoFormatter.date(from: raw) else { return raw }
+        guard let date = IsoTimestamp.date(from: raw) else { return raw }
         return date.formatted(date: .abbreviated, time: .shortened)
     }
-
-    private static let isoFormatter = ISO8601DateFormatter()
 }

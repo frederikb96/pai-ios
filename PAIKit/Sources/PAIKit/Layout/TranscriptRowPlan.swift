@@ -17,6 +17,11 @@ public struct TranscriptCardPlan: Equatable, Sendable {
         /// A tool's result, arriving as its own message and rendered as its own row — never
         /// paired with the call that produced it.
         case toolResult(ToolResult)
+        /// A `notify` tool call's own reply — the bubble a notification jump (push, notification
+        /// centre, kind stepping) now lands on, rendered as the notification it describes rather
+        /// than the generic tool result's raw YAML. Always shown, unlike `.toolResult`: there is
+        /// nothing to collapse into a one-line summary that would not just repeat the title.
+        case notifyReply(title: String, body: String)
         case userBubble(text: String, attachmentPaths: [String])
         /// A genuine prompt relayed from another session (`subtype: "pai_message"`), drawn like
         /// Freddy's own bubble but coloured differently so a reader can tell it was not him.
@@ -85,6 +90,11 @@ public enum TranscriptRowPlan {
 
         case .toolResult:
             guard let result = message.toolResult else { return [] }
+            if let marker = message.notificationMarker, !marker.isEmpty,
+                let reply = MessageDisplay.parseNotifyReply(result.content)
+            {
+                return [notifyReplyCard(title: reply.title, body: reply.body)]
+            }
             return [toolResultCard(result, isExpanded: isExpanded)]
 
         case .hidden, .none:
@@ -232,6 +242,13 @@ public enum TranscriptRowPlan {
             kind: .toolResult(result), expandKey: key, isExpanded: expanded,
             blocks: expanded && !text.isEmpty ? [codeBlock(text)] : []
         )
+    }
+
+    private static func notifyReplyCard(title: String, body: String) -> TranscriptCardPlan {
+        var blocks: [MarkdownBlock] = [paragraph(title)]
+        if !body.isEmpty { blocks.append(paragraph(body)) }
+        return TranscriptCardPlan(
+            kind: .notifyReply(title: title, body: body), expandKey: nil, isExpanded: true, blocks: blocks)
     }
 
     private static func hookSummaryText(_ summary: HookSummary) -> String {
