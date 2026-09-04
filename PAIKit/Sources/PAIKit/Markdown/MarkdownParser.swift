@@ -219,18 +219,50 @@ public enum MarkdownParser {
         }
     }
 
-    /// The obvious autolink rule, stated so it can be ported 1:1 elsewhere: match `http://` or
-    /// `https://` followed by any run of non-whitespace characters, then peel `.,;:!?'")]}`
-    /// off the END of the match one character at a time — a URL is rarely followed immediately by
-    /// sentence punctuation with no space, and swallowing it would make "see https://x.com." into
-    /// a link one character too long. Nothing about the START of the match is trimmed; a scheme is
-    /// unambiguous. Not fenced-code-aware by construction: this only ever runs against a
-    /// `Markdown.Text` node, and cmark already routes a fenced or inline code span's content
-    /// through `CodeBlock`/`InlineCode` instead, so a URL inside either never reaches here at all.
-    private static let bareUrlPattern = try! NSRegularExpression(pattern: #"https?://\S+"#)
-    private static let urlTrailingPunctuation: Set<Character> = [
-        ".", ",", ";", ":", "!", "?", "'", "\"", ")", "]", "}",
-    ]
+    /// GFM's "extended autolink" grammar (the same one `remark-gfm` applies on the web side of
+    /// this rule, confirmed against its own rendering rather than assumed): `http://`/`https://`,
+    /// or a bare `www.` domain not preceded by a word character or another `.` — matched greedily
+    /// through non-whitespace, then narrowed by ``trimTrailingPunctuation(from:in:)`` below. A
+    /// `www.` match's destination gets an implicit `http://` prefix, same as GFM specifies; the
+    /// visible label stays the `www…` text exactly as written. Nothing about the START of a match
+    /// is trimmed either way; a scheme or `www.` is unambiguous. Not fenced-code-aware by
+    /// construction: this only ever runs against a `Markdown.Text` node, and cmark already routes
+    /// a fenced or inline code span's content through `CodeBlock`/`InlineCode` instead, so a URL
+    /// inside either never reaches here at all.
+    private static let bareUrlPattern = try! NSRegularExpression(
+        pattern: #"https?://\S+|(?<![\w.])www\.\S+"#)
+
+    /// GFM's own trimmed trailing-punctuation set — deliberately not the broader "anything that
+    /// looks like sentence punctuation" a hand-rolled guess might reach for (no quotes, no square
+    /// or curly brackets): matching the spec exactly is what lets iOS and the web agree on a link
+    /// boundary in every case, not just the common ones.
+    private static let urlTrailingPunctuation: Set<Character> = [".", ",", ":", "!", "?", "*", "_", "~"]
+
+    /// Peels punctuation off the end of a candidate autolink one character at a time, exactly as
+    /// GFM's spec describes: ordinary trailing punctuation always comes off, but a trailing `)` is
+    /// removed only when the candidate has more `)` than `(` in it — a URL like Wikipedia's own
+    /// `.../wiki/Foo_(bar)` keeps its closing paren, while `(see https://example.com/x)` loses the
+    /// outer one it never belonged to. Re-evaluated after every removal ("recursively, incrementally
+    /// moving inward" in the spec's own words), since trimming a `)` can reveal more punctuation
+    /// underneath it, or reveal a `(` that changes whether the NEXT `)` in from the end still counts
+    /// as unbalanced.
+    private static func trimTrailingPunctuation(from range: Range<String.Index>, in text: String) -> Range<String.Index>
+    {
+        var range = range
+        while let last = text[range].last {
+            if urlTrailingPunctuation.contains(last) {
+                range = range.lowerBound..<text.index(before: range.upperBound)
+            } else if last == ")" {
+                let opens = text[range].count { $0 == "(" }
+                let closes = text[range].count { $0 == ")" }
+                guard closes > opens else { break }
+                range = range.lowerBound..<text.index(before: range.upperBound)
+            } else {
+                break
+            }
+        }
+        return range
+    }
 
     private static func autolinkedRuns(in text: String, style: InlineStyle) -> [InlineRun] {
         let matches = bareUrlPattern.matches(in: text, range: NSRange(text.startIndex..., in: text))
@@ -244,10 +276,7 @@ public enum MarkdownParser {
                 runs.append(InlineRun(text: String(text[cursor..<matchRange.lowerBound]), style: style))
             }
 
-            var urlRange = matchRange
-            while let last = text[urlRange].last, urlTrailingPunctuation.contains(last) {
-                urlRange = urlRange.lowerBound..<text.index(before: urlRange.upperBound)
-            }
+            let urlRange = trimTrailingPunctuation(from: matchRange, in: text)
 
             if urlRange.isEmpty {
                 // Trimmed away entirely — every character was punctuation, so there was never a
@@ -255,8 +284,10 @@ public enum MarkdownParser {
                 // text rather than as a link to nowhere.
                 runs.append(InlineRun(text: String(text[matchRange]), style: style))
             } else {
-                let url = String(text[urlRange])
-                runs.append(InlineRun(text: url, style: style, destination: url))
+                let visible = String(text[urlRange])
+                let destination =
+                    visible.hasPrefix("http://") || visible.hasPrefix("https://") ? visible : "http://" + visible
+                runs.append(InlineRun(text: visible, style: style, destination: destination))
                 if urlRange.upperBound < matchRange.upperBound {
                     runs.append(
                         InlineRun(text: String(text[urlRange.upperBound..<matchRange.upperBound]), style: style))

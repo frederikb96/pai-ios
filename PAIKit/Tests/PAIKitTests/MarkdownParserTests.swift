@@ -210,6 +210,41 @@ final class MarkdownParserTests: XCTestCase {
         XCTAssertFalse(link.text.hasSuffix("."), "the trailing period was swallowed into the link")
     }
 
+    /// GFM's "www autolink": a bare domain with no scheme still becomes a link, with an implicit
+    /// `http://` prefix on the destination — but the visible label stays exactly what was typed,
+    /// not the synthesized destination.
+    func testBareWwwDomainBecomesALinkWithAnImplicitScheme() {
+        let runs = MarkdownParser.parse("See www.example.com for details.").firstParagraphRuns
+        guard let link = runs.first(where: { $0.destination != nil }) else {
+            return XCTFail("no run carried a link destination: \(runs)")
+        }
+        XCTAssertEqual(link.text, "www.example.com")
+        XCTAssertEqual(link.destination, "http://www.example.com")
+    }
+
+    /// A URL whose path contains a genuinely balanced pair of parentheses — the classic case is a
+    /// Wikipedia disambiguation link — must keep its closing paren as part of the link rather than
+    /// treating it as prose punctuation wrapping the URL.
+    func testBalancedParenthesesInsideTheUrlAreKept() {
+        let runs = MarkdownParser.parse("See https://en.wikipedia.org/wiki/Foo_(bar) for details.").firstParagraphRuns
+        guard let link = runs.first(where: { $0.destination != nil }) else {
+            return XCTFail("no run carried a link destination: \(runs)")
+        }
+        XCTAssertEqual(link.text, "https://en.wikipedia.org/wiki/Foo_(bar)")
+    }
+
+    /// The mirror case: a URL wrapped in prose parentheses, with nothing balanced inside it, must
+    /// lose the outer closing paren — it was never part of the link.
+    func testUnbalancedTrailingParenthesisIsExcludedFromTheLink() {
+        let runs = MarkdownParser.parse("(see https://example.com/x)").firstParagraphRuns
+        guard let link = runs.first(where: { $0.destination != nil }) else {
+            return XCTFail("no run carried a link destination: \(runs)")
+        }
+        XCTAssertEqual(link.text, "https://example.com/x")
+        XCTAssertEqual(
+            runs.map(\.text).joined(), "(see https://example.com/x)", "the closing paren must survive as plain text")
+    }
+
     /// A URL already inside real markdown link syntax must not be re-split — the destination
     /// composed through `[text](url)` is what should survive, unchanged.
     func testUrlInsideAMarkdownLinkIsNotReautolinked() {
