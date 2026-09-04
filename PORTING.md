@@ -69,7 +69,29 @@ is a `.sheet(item:)`, not a `Route`, and the Mac workflow's screenshot sweep onl
 routes (`-PaiFixtureRoute <name>`), so this sheet is not reached by any automated screenshot
 today, prose included — the blocker is not fixture variety but that nothing taps into the sheet.
 
+### Verify: the flow view's horizontal scrolling feels right on a real phone — pai-cloud anchor: `web/src/apps/arc/ArcFlowSegment.tsx`
+Needs `PAI/` because: `ArcFlowSegmentView` lays a segment's blocks out in a `ScrollView(.horizontal)`
+nested inside the outer vertical `ScrollView`, with a dashed `Path`-drawn trunk overlaid on the same
+scrolling `HStack` the cards sit in — reasoned to scroll independently on both axes (the vertical
+timeline never scrolls sideways, each segment's own row scrolls on its own), unverified whether a
+real thumb's horizontal drag on a card row is ever captured by the outer vertical `ScrollView`
+instead, which is exactly the class of gesture-ownership question this repo already flags as
+untestable without a device (see the right-to-left swipe entry above). The fixture corpus
+(`PaiFixtures.arcRecover`) now gives one segment five parallel cards plus the unassigned card
+specifically so a Mac screenshot shows a row wide enough to actually need scrolling, but a
+screenshot proves the row overflows, not that scrolling it feels right.
 
+### Verify: the swipe-back from a subagent transcript returns to the same scroll position, both axes — pai-cloud anchor: `web/src/apps/arc/ArcApp.tsx` (`scrollPositions`)
+Needs `PAI/` because: `ArcSpecView` deliberately carries no persistence layer for this the way the
+web's `stores/arc.ts` does — `NavigationStack` keeps a pushed-under view alive rather than
+unmounting it, so `topSegmentID`/`rowScrollAnchors` are plain `@State` bound through
+`.scrollPosition(id:)`, reasoned to survive a badge tap's push to `.session(id:)` and a swipe back
+with no explicit save/restore step at all (the same mechanism `SubagentListScreen` already uses for
+an analogous list-position case). Unverified: whether `.scrollPosition(id:)` on a *horizontal*
+`ScrollView` nested inside a *vertical* one survives the trip as cleanly as `SubagentListScreen`'s
+single vertical list does — SwiftUI's own `ScrollView` state restoration across a push/pop has been
+reported unreliable in exactly this nested-axis shape, and nothing on Linux can hold a real
+navigation stack open, push, pop, and read back a content offset.
 
 ### Notes: sort by creation date — pai-cloud anchor: `GET /api/notes`
 Needs a backend change first: the list route returns no creation timestamp, only
