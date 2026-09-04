@@ -267,6 +267,39 @@ jobs:
             xcrun simctl terminate "$udid" "$bundle" || true
           done <<< "$names"
 
+          # Where a jump into UNLOADED history actually lands — a screenshot alone shows the
+          # result, not the row id the controller computed, so this is what proves the .replaced
+          # window path (the fault that shipped) rather than only the ordinary .prepended one
+          # (the path that always worked, and the one every other screenshot here happens to
+          # exercise since nothing else jumps far from the loaded tail). `boundary` kind search
+          # lands on the session's own first row and its one `system`/`compact` row — both several
+          # hundred ids clear of the fixture corpus's own tail window by construction.
+          screenshot jump-landing -PaiFixtureRoute session -PaiFixtureSearchKind boundary
+          landed=0
+          for attempt in $(seq 1 10); do
+            if curl -sS --max-time 3 "http://127.0.0.1:8765/transcript/landing" -o artifacts/landing.json; then
+              top=$(python3 -c "import json; print(json.load(open('artifacts/landing.json')).get('topVisibleRowId'))")
+              if [ "$top" != "None" ]; then landed=1; break; fi
+            fi
+            sleep 2
+          done
+          xcrun simctl terminate "$udid" "$bundle" || true
+          if [ "$landed" -ne 1 ]; then
+            echo "::warning::jump-landing: /transcript/landing never reported a row — see landing.json"
+            fail=1
+          else
+            # The two boundary hits in the fixture corpus (search-virtualization design's own
+            # "the around page, and merge-or-replace") — landing anywhere else means the .replaced
+            # path is still reading stale offsets.
+            python3 -c "
+          import json, sys
+          top = json.load(open('artifacts/landing.json'))['topVisibleRowId']
+          ok = top in (9001, 9042) or 9001 <= top <= 9010 or 9033 <= top <= 9042
+          print(f'landed on row {top}')
+          sys.exit(0 if ok else 1)
+          " || { echo "::error::jump-landing: landed far from both boundary targets (9001, 9042) — see landing.json"; fail=1; }
+          fi
+
           [ "$fail" -eq 0 ] || { echo 'one or more screens failed — see the warnings above'; exit 1; }
 
       # No fixture mode and no debug bridge in Release — this is the plain "does it draw

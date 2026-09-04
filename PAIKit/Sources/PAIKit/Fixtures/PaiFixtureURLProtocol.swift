@@ -31,7 +31,9 @@
         override public func startLoading() {
             let method = request.httpMethod ?? "GET"
             let path = request.url?.path ?? ""
-            let match = Self.route(method: method, path: path)
+            let query =
+                request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.queryItems } ?? []
+            let match = Self.route(method: method, path: path, query: query)
 
             // Neither streaming client checks the content type — both look only at the status —
             // but sending the honest one costs nothing and stops a future reader concluding the
@@ -67,8 +69,22 @@
         /// body — `{"detail": ...}` is the one shape every call site already parses — rather than
         /// an empty or wrongly-typed payload a decoder would choke on. Internal, not private, so
         /// `PaiFixtureURLProtocolTests` can assert on it directly without going through a real
-        /// `URLRequest`.
-        static func route(method: String, path: String) -> Match {
+        /// `URLRequest`. `query` defaults to empty so every existing call site (and every
+        /// pre-existing test) keeps working unchanged.
+        static func route(method: String, path: String, query: [URLQueryItem] = []) -> Match {
+            // These two are handled ahead of the plain table below because they are the only
+            // routes whose answer genuinely depends on the query string — every other route
+            // answers one fixed body regardless of what was asked for. Intercepted by exact path
+            // rather than folded into `sessionScoped`, so the ordinary "any session, any id"
+            // matching below is untouched for every route that does not need this.
+            if method == "GET", path.hasPrefix("/api/session/") {
+                if path.hasSuffix("/messages/find") {
+                    return Match(status: 200) { findResponse(query: query) }
+                }
+                if path.hasSuffix("/messages") {
+                    return Match(status: 200) { messagesResponse(query: query) }
+                }
+            }
             guard let fixture = routes.first(where: { $0.method == method && $0.matches(path) }) else {
                 let detail = "no fixture route for \(method) \(path)"
                 return Match(status: 404) { Data("{\"detail\":\"\(detail)\"}".utf8) }
@@ -146,7 +162,9 @@
                 matches: { $0.hasPrefix("/api/notifications/") && $0.split(separator: "/").count == 3 }
             ) { PaiFixtures.data(PaiFixtures.notificationDetail) },
             exact("POST", "/api/alerts/clear") { PaiFixtures.alertsCleared },
-            sessionScoped("GET", suffix: "/messages") { PaiFixtures.transcript },
+            // `.../messages` and `.../messages/find` are answered by `route(method:path:query:)`
+            // itself, ahead of this table — the only two routes whose body genuinely depends on
+            // the query string. No entry for either here.
             // The notes half. Order matters here and only here: `/api/notes/containers` and
             // `/api/notes/config` would otherwise be read as a note whose id is "containers" or
             // "config".

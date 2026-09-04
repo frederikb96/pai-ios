@@ -1,6 +1,7 @@
 import Foundation
 import PAIKit
 import SwiftUI
+import UIKit
 
 /// Re-exports ``TranscriptRowMetrics/markdownBlockSpacing`` under the name both this file (the
 /// rendered spacing) and `TranscriptCollectionViewController` (the measured spacing, threaded
@@ -63,11 +64,12 @@ struct TranscriptRowContent: View {
     /// knows the message id and this view does not need to. Empty outside a search.
     var highlights: [TranscriptSearchHit] = []
     var currentHit: TranscriptSearchHit?
-    /// Whether this is the row a notification deep link (row 5.28) just landed on. Unlike a
-    /// search hit, which highlights one text range via `highlights`/`currentHit`, a deep link's
-    /// target is the whole message — there is no range to paint, so it gets a ring around the
-    /// card instead, "exactly as kind-stepping already treats it" per the design.
-    var isDeepLinkTarget = false
+    /// Whether this is the row a notification deep link just landed on, OR the current search
+    /// hit's own row — the web draws one ring for both ("the two should not [visually] differ",
+    /// `MessageBubble.tsx`'s own comment), since a deep link and a kind search both target a whole
+    /// message with no text range to paint via `highlights`/`currentHit`, and a landing on a text
+    /// hit wants its row visibly marked too, not only the highlighted span inside it.
+    var isRinged = false
 
     private var cards: [TranscriptCardPlan] {
         TranscriptRowPlan.cards(for: message, isExpanded: isExpanded)
@@ -96,7 +98,7 @@ struct TranscriptRowContent: View {
         // An overlay, never a border baked into the frame — it must not add a point to the row's
         // measured height, which `TranscriptRowLayout` already computed for a plain bubble.
         .overlay {
-            if isDeepLinkTarget {
+            if isRinged {
                 RoundedRectangle(cornerRadius: 10)
                     // Matches the web's `ring-yellow-400 dark:ring-yellow-500` — the same ring
                     // its own `MessageBubble.tsx` comment says a search current-match and a deep
@@ -333,6 +335,72 @@ struct CardChrome<Content: View>: View {
     }
 }
 
+/// A code block's own horizontally-scrolling container — shared by `ToolBodyText` and
+/// `MarkdownContentView`'s `.codeBlock` case, so revealing the current search hit's own column
+/// lives in exactly one place rather than growing a second, drifting copy.
+///
+/// Vertical reveal (which LINE) is `revealHit`'s own job, upstream of this view — this only ever
+/// moves the horizontal offset, and only for the current hit's own column. A row landing with no
+/// text occurrence (a kind hit, a deep link) has no column to reveal, so `highlights` is simply
+/// empty then and this does nothing, same as it always did before search existed.
+private struct CodeBlockScrollView<Content: View>: View {
+    let code: String
+    let highlights: [TranscriptHighlightSpan]
+    @ViewBuilder let content: () -> Content
+
+    @State private var position = ScrollPosition()
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: true) {
+            content()
+                .textSelection(.enabled)
+                .fixedSize(horizontal: true, vertical: true)
+                .padding(TranscriptRowMetrics.codeBlockPadding)
+        }
+        .scrollPosition($position)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PaiPalette.Semantic.raisedSurface, in: RoundedRectangle(cornerRadius: 6))
+        .onAppear { revealCurrentHit() }
+        .onChange(of: currentHitRange) { _, _ in revealCurrentHit() }
+    }
+
+    private var currentHitRange: NSRange? {
+        highlights.first { $0.isCurrent }?.range
+    }
+
+    /// Centres the current hit's own column under the viewport — the horizontal counterpart to
+    /// `revealHit`'s vertical centring, using the same `CodeBlockHitGeometry` a search landing
+    /// already computed the line from. `glyphAdvance` converts a column straight to points because
+    /// a code block never wraps and every glyph in a monospaced font is the same width — no text
+    /// layout pass needed to answer "how far across is column N".
+    private func revealCurrentHit() {
+        guard let range = currentHitRange else { return }
+        let column = CodeBlockHitGeometry.position(of: range, in: code).column
+        let x = max(
+            0, Double(column) * CodeBlockScrollGeometry.glyphAdvance - CodeBlockScrollGeometry.viewportEstimate / 2)
+        position.scrollTo(x: x)
+    }
+}
+
+/// The two measurements ``CodeBlockScrollView``'s horizontal centring needs, pulled out of that
+/// type because a generic type cannot carry a static stored property at all (a Swift language
+/// limit, not a style choice) — `CodeBlockScrollView<Content>` is generic over what it draws.
+private enum CodeBlockScrollGeometry {
+    /// A generous stand-in for "half the code block's own visible width". The real viewport width
+    /// needs a `GeometryReader`, which would then also govern the view's own measurement — and
+    /// this package's row heights are computed independently of what any view reports (the
+    /// `scrolling` skill's central rule), so nothing here may become a second source of that
+    /// number. Erring wide only ever undershoots the centring; `ScrollView` already clamps past
+    /// the text's end.
+    static let viewportEstimate: Double = 320
+
+    static let glyphAdvance: Double = {
+        let pointSize = PaiTypography.markdownCodeBlock.pointSize(for: .large)
+        let font = UIFont.monospacedSystemFont(ofSize: pointSize, weight: .regular)
+        return ("M" as NSString).size(withAttributes: [.font: font]).width
+    }()
+}
+
 /// A card body wrapped as a single `.codeBlock` (see `TranscriptRowPlan`'s doc comment on why) —
 /// rendered monospaced on a raised ground, matching the web's `<pre>` (`bg-surface-100
 /// dark:bg-surface-800`, the same pairing ``PaiPalette/Semantic/raisedSurface`` already carries —
@@ -353,14 +421,9 @@ struct ToolBodyText: View {
                 // that it does not wrap. Left to wrap, a card is drawn taller than the row it was
                 // given and the overflow is simply cut off, so an expanded card shows part of its
                 // output and no way to reach the rest.
-                ScrollView(.horizontal, showsIndicators: true) {
+                CodeBlockScrollView(code: code, highlights: highlightsByBlockIndex[index] ?? []) {
                     coloredText(for: code, highlights: highlightsByBlockIndex[index] ?? [])
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: true, vertical: true)
-                        .padding(TranscriptRowMetrics.codeBlockPadding)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(PaiPalette.Semantic.raisedSurface, in: RoundedRectangle(cornerRadius: 6))
             } else {
                 MarkdownContentView(blocks: [block], highlights: [0: highlightsByBlockIndex[index] ?? []])
             }
@@ -672,17 +735,12 @@ struct MarkdownContentView: View {
             // pinned to a line-count height here rather than left to size itself: two independent
             // answers to "how tall is this" is exactly the disagreement the transcript's
             // precomputed layout cannot absorb.
-            ScrollView(.horizontal, showsIndicators: true) {
+            CodeBlockScrollView(code: code, highlights: highlights) {
                 TranscriptTextHighlighting.plainText(
                     code, font: PaiTypography.markdownCodeBlock.font, highlights: highlights
                 )
                 .foregroundStyle(PaiPalette.Semantic.textPrimary)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: true, vertical: true)
-                .padding(TranscriptRowMetrics.codeBlockPadding)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(PaiPalette.Semantic.raisedSurface, in: RoundedRectangle(cornerRadius: 6))
 
         case .blockQuote(let nested):
             HStack(spacing: TranscriptRowMetrics.blockQuoteSpacing) {
