@@ -33,11 +33,11 @@ public final class PaiSseClient {
         public var onInit: @MainActor @Sendable (SseInitEvent) -> Void
         public var onBatch: @MainActor @Sendable (SseBatchEvent) -> Void
         public var onStatus: @MainActor @Sendable (SseStatusEvent) -> Void
-        /// A spec bound to this session just changed — see `SseArcEvent`'s doc comment. Optional
+        /// A spec bound to this session just changed — see `ArcSseEvent`'s doc comment. Optional
         /// with a no-op default: only a screen actually showing an ARC spec cares, and every
         /// other caller of this client (the ordinary transcript view) should not have to name a
         /// callback for an event it has nothing to do with.
-        public var onArc: @MainActor @Sendable (SseArcEvent) -> Void
+        public var onArc: @MainActor @Sendable (ArcSseEvent) -> Void
         /// Fired for every successfully-parsed SSE record, including a bare `ping`/`processing`
         /// with no `onInit`/`onBatch`/`onStatus` counterpart — a caller's only way to tell "the
         /// connection is open and flowing, just with nothing semantic to report right now" apart
@@ -50,7 +50,7 @@ public final class PaiSseClient {
             onInit: @escaping @MainActor @Sendable (SseInitEvent) -> Void,
             onBatch: @escaping @MainActor @Sendable (SseBatchEvent) -> Void,
             onStatus: @escaping @MainActor @Sendable (SseStatusEvent) -> Void,
-            onArc: @escaping @MainActor @Sendable (SseArcEvent) -> Void = { _ in },
+            onArc: @escaping @MainActor @Sendable (ArcSseEvent) -> Void = { _ in },
             onActivity: @escaping @MainActor @Sendable () -> Void,
             onConnected: @escaping @MainActor @Sendable () -> Void,
             onDisconnected: @escaping @MainActor @Sendable () -> Void
@@ -208,7 +208,7 @@ public final class PaiSseClient {
             }
 
         case "arc":
-            guard let event = try? JSONDecoder().decode(SseArcEvent.self, from: jsonData) else { return }
+            guard let event = try? JSONDecoder().decode(ArcSseEvent.self, from: jsonData) else { return }
             callbacks.onArc(event)
 
         case "processing", "ping":
