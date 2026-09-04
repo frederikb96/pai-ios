@@ -25,14 +25,15 @@ extension TranscriptStore {
 
     /// The `status` event's `pending_sends`/`last_error` pair, the derived "is a turn running"
     /// flag the transcript uses for its own loading indicator, and the session-level fields
-    /// (`state`/`blocker`/`working`/`activity_counts`) recorded in `liveStatus` for whichever
-    /// store owns the session list to route into its own rows — see that property's doc comment.
+    /// (`state`/`blocker`/`working`/`presence_state`/`activity_counts`) recorded in `liveStatus`
+    /// for whichever store owns the session list to route into its own rows — see that
+    /// property's doc comment.
     public func applySseStatus(sessionId: String, event: SseStatusEvent) {
         setDelivery(sessionId: sessionId, pendingSends: event.pendingSends ?? [], lastError: event.lastError)
         isProcessing[sessionId] = event.status == .pending || event.status == .active
         liveStatus[sessionId] = LiveSessionStatus(
             state: event.state, blocker: event.blocker, working: event.working,
-            activityCounts: event.activityCounts
+            presenceState: event.presenceState, activityCounts: event.activityCounts
         )
     }
 

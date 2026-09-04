@@ -58,6 +58,8 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
     public let blocker: Blocker?
     /// See `Session.working`.
     public let working: Bool?
+    /// See `Session.presenceState`.
+    public let presenceState: SessionPresenceState?
     /// See `Session.activityCounts`.
     public let activityCounts: ActivityCounts?
     /// Outgoing messages not yet delivered.
@@ -76,6 +78,7 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case status, state, blocker, working, queued
+        case presenceState = "presence_state"
         case activityCounts = "activity_counts"
         case queuedTexts = "queued_texts"
         case pendingSends = "pending_sends"
@@ -87,6 +90,7 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
         state: SessionState?,
         blocker: Blocker?,
         working: Bool?,
+        presenceState: SessionPresenceState? = nil,
         activityCounts: ActivityCounts? = nil,
         queued: Int?,
         queuedTexts: [String]?,
@@ -97,6 +101,7 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
         self.state = state
         self.blocker = blocker
         self.working = working
+        self.presenceState = presenceState
         self.activityCounts = activityCounts
         self.queued = queued
         self.queuedTexts = queuedTexts

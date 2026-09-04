@@ -221,7 +221,8 @@ final class PaiModelsTests: XCTestCase {
         let json = Data(
             """
             {"id":"s1","session_type":"claude","status":"active","state":"ready","blocker":null,
-             "working":true,"title":"t","title_locked":true,"initial_message":null,
+             "working":true,"presence_state":"idle","title":"t","title_locked":true,
+             "initial_message":null,
              "session_tokens":0,"claude_session_id":null,
              "idle_timeout_minutes":30,"effective_idle_timeout_minutes":30,"cse_id":null,
              "created_at":null,"updated_at":null,"last_activity_at":null,"working_dir":null,
@@ -236,6 +237,7 @@ final class PaiModelsTests: XCTestCase {
         let session = try JSONDecoder().decode(Session.self, from: json)
 
         XCTAssertEqual(session.working, true)
+        XCTAssertEqual(session.presenceState, .idle)
         XCTAssertEqual(session.idleTimeoutMinutes, 30)
         XCTAssertEqual(session.effectiveIdleTimeoutMinutes, 30)
         XCTAssertEqual(session.agent, "laptop")
@@ -265,6 +267,33 @@ final class PaiModelsTests: XCTestCase {
         XCTAssertEqual(kind, .unrecognized("orchestrator"))
         let reencoded = try JSONEncoder().encode(kind)
         XCTAssertEqual(String(data: reencoded, encoding: .utf8), #""orchestrator""#)
+    }
+
+    /// Same guard as `SessionStatus`/`SessionKind`: a value this build predates must not throw
+    /// and blank the whole session list.
+    func testSessionPresenceStateRoundTripsAnUnrecognizedValueRatherThanDroppingIt() throws {
+        let presence = try JSONDecoder().decode(SessionPresenceState.self, from: Data(#""stalled""#.utf8))
+        XCTAssertEqual(presence, .unrecognized("stalled"))
+        let reencoded = try JSONEncoder().encode(presence)
+        XCTAssertEqual(String(data: reencoded, encoding: .utf8), #""stalled""#)
+    }
+
+    /// A backend that predates `presence_state` omits the key entirely — must decode to `nil`
+    /// rather than throw and blank the row.
+    func testSessionPresenceStateIsNilWhenTheKeyIsAbsent() throws {
+        let json = Data(
+            """
+            {"id":"s1","session_type":"claude","status":"active","state":null,"blocker":null,
+             "working":null,"title":null,"title_locked":null,"initial_message":null,
+             "session_tokens":0,"claude_session_id":null,
+             "idle_timeout_minutes":null,"effective_idle_timeout_minutes":null,"cse_id":null,
+             "created_at":null,"updated_at":null,"last_activity_at":null,"working_dir":null,
+             "agent":null,"kind":null,"parent_session_id":null,"subagent_name":null,
+             "subagent_type":null,"subagent_description":null,"remote_control":null,
+             "discovered":null,"project_id":null,"phase_id":null,"project_name":null}
+            """.utf8)
+        let session = try JSONDecoder().decode(Session.self, from: json)
+        XCTAssertNil(session.presenceState)
     }
 
     // MARK: - Machine
