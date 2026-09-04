@@ -348,7 +348,7 @@ extension PaiFixtures {
 
           { "id": 9052, "session_id": "305df4d3-1554-4fc3-be04-39a354a9e619", "type": "assistant", "subtype": null,
             "timestamp": "2026-08-29T09:41:55Z",
-            "content": "Reconciled the fixtures against the live contract — done.\n\npai-file: /home/frederik/.tmp/reconcile-diff.png",
+            "content": "Reconciled the fixtures against the live contract — done.\n\npai-file: \#(attachmentPath)",
             "thinking": null, "tool_calls": null, "tool_result": null, "hook_summary": null,
             "tokens": { "input_tokens": 1204, "output_tokens": 312, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 18344,
                         "cache_creation": { "ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 0 } },
@@ -363,6 +363,11 @@ extension PaiFixtures {
     /// fix (search-virtualization design, "the around page, and merge-or-replace"). At
     /// `TranscriptStore.tailLimit` (300) and `olderPageLimit` (150), a corpus of this size puts a
     /// target near the curated rows several hundred ids clear of the tail, comfortably past both.
+    ///
+    /// That same distance buries the curated set's own attachment message (id 9052) past the
+    /// default tail window on an ordinary open — an unrelated screenshot that needs to reach it
+    /// (the full-screen image viewer's own) cannot rely on scrolling there and fetches the
+    /// attachment directly instead, by path, independent of message pagination.
     private static let fillerTranscriptEntries: String = {
         // Five seconds after the curated set's own last timestamp ("2026-08-29T09:41:55Z") —
         // parsed rather than a second hand-typed literal, so the two can never quietly drift apart.

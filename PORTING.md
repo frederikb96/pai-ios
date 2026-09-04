@@ -50,7 +50,7 @@ the transcript swipe above is already flagged for; whether gating that gesture o
 `zoomScale <= 1.01` actually feels right rather than occasionally swallowing a pan meant to scroll
 a barely-zoomed image; and whether double-tap-to-zoom's target point tracks the tapped location
 convincingly on a real device. The Mac workflow's `fullscreen-image` fixture screenshot
-(`-PaiFixtureRoute session -PaiFixtureOpenImage`, landing via `SessionAttachmentChipView`'s own
+(`-PaiFixtureRoute session -PaiFixtureOpenImage`, landing via `SessionDetailView`'s own
 fixture-mode auto-open) proves the screen renders and its buttons are legible against the fixture
 image; it cannot prove any gesture behaves.
 

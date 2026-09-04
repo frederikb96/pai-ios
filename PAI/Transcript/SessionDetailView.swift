@@ -18,6 +18,9 @@ struct SessionDetailView: View {
     @State private var isPresentingArcMenu = false
     @State private var arcSpecTarget: ArcSpecPickerTarget?
     @State private var usage: Usage?
+    /// Set only by the fixture screenshot workflow's own `.task` below — see its doc comment.
+    /// Never touched by anything a real session does.
+    @State private var fixtureImageTarget: FullScreenImageTarget?
     /// Read once via `.onGeometryChange` below, not a `GeometryReader` wrapping the screen — a
     /// `GeometryReader` becomes the layout for whatever it contains, and the point here is to
     /// observe the existing `VStack`'s width without changing how it lays out. Starts effectively
@@ -129,6 +132,7 @@ struct SessionDetailView: View {
         .sheet(isPresented: $isPresentingActionsSheet) {
             SessionActionsSheet(sessionId: sessionID)
         }
+        .fullScreenImageViewer($fixtureImageTarget)
         // The same three the session list's own trailing swipe offers (`SessionListView`) — see
         // that swipe's own doc comment for why "Subagents" is skipped for a subagent itself.
         .confirmationDialog("Session", isPresented: $isPresentingArcMenu, titleVisibility: .hidden) {
@@ -160,6 +164,27 @@ struct SessionDetailView: View {
                 else { return }
                 searchState.open()
                 searchState.kind = kind
+            }
+            .task {
+                // `-PaiFixtureOpenImage` — how the Mac workflow reaches `FullScreenImageViewer`, a
+                // `.fullScreenCover` with no `Route` of its own. Presented from here rather than
+                // from `SessionAttachmentChipView`'s own tap handling: that chip lives inside a
+                // virtualized `UICollectionView` row, built only when scrolled into view, and the
+                // fixture corpus's own padding (`PaiFixtures+Transcript.swift`) deliberately puts
+                // 848 messages after the one attachment message, well past the default tail
+                // window — so the chip for it is never built at all in an ordinary open, and its
+                // own `.task` never fires. This screen, unlike a message row, is guaranteed to
+                // exist the moment the session route is reached, and fetches the fixture
+                // attachment directly by path — independent of whether any particular message is
+                // currently loaded or visible.
+                guard PaiFixtureLaunch.isEnabled(), PaiFixtureLaunch.opensImageAutomatically(),
+                    let apiClient = environment.connection?.apiClient,
+                    let result = try? await apiClient.getAttachment(
+                        sessionId: sessionID, path: PaiFixtures.attachmentPath),
+                    case .ok(let data, _) = result,
+                    let image = UIImage(data: data)
+                else { return }
+                fixtureImageTarget = FullScreenImageTarget(image: image, filename: "reconcile-diff.png")
             }
         #endif
         // The session this screen is *about* stopped existing — deleted from the actions sheet

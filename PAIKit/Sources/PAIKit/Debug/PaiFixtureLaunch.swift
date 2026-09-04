@@ -54,9 +54,11 @@
 
         /// Whether `-PaiFixtureOpenImage` was passed — how the Mac workflow reaches
         /// `FullScreenImageViewer`, a `.fullScreenCover(item:)` with no `Route` of its own to
-        /// launch straight into. Combined with `-PaiFixtureRoute session`, this makes the session
-        /// screen's own fixture attachment chip present itself on appear rather than waiting for a
-        /// tap nothing in the workflow can perform.
+        /// launch straight into. Combined with `-PaiFixtureRoute session`, this makes
+        /// `SessionDetailView`'s own `.task` fetch the fixture attachment directly and present the
+        /// viewer on appear, rather than waiting for a tap on a message row's attachment chip —
+        /// which the fixture corpus deliberately places outside the default tail window, so it is
+        /// never built by the virtualized transcript at all in an ordinary open.
         public static func opensImageAutomatically(arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
             arguments.contains(openImageFlag)
         }

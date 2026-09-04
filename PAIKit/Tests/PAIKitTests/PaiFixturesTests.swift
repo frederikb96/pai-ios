@@ -329,6 +329,28 @@ final class PaiFixturesTests: XCTestCase {
         XCTAssertGreaterThan(longUrlLine?.count ?? 0, 120, "the bare URL isn't long enough to need wrapping")
     }
 
+    // MARK: - Attachment
+
+    /// The PNG magic bytes and a real, non-trivial size — proof the base64 literal actually
+    /// decodes to genuine image bytes rather than to empty `Data` (`Data(base64Encoded:)` fails
+    /// silently, returning `nil`, which `PaiFixtures.attachmentImage` would otherwise mask behind
+    /// its own `?? Data()` fallback). A one-byte or empty result would still let the fixture
+    /// route answer 200, and `UIImage(data:)` failing on the device is not something this suite
+    /// can see at all — this is the floor that keeps that failure from being silent here too.
+    func testAttachmentImageDecodesToARealPng() {
+        let data = PaiFixtures.attachmentImage
+        let pngMagicBytes: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+        XCTAssertEqual(Array(data.prefix(8)), pngMagicBytes, "does not start with the PNG signature")
+        XCTAssertGreaterThan(data.count, 500, "suspiciously small for a real image")
+    }
+
+    /// The transcript's own `pai-file:` marker and the fixture route answering a fetch for it
+    /// must name the same path — this is what `\#(attachmentPath)` interpolation in the curated
+    /// transcript is for; a hardcoded second copy could drift from the route silently.
+    func testTranscriptAttachmentMarkerNamesTheFixtureAttachmentPath() {
+        XCTAssertTrue(PaiFixtures.transcript.contains("pai-file: \(PaiFixtures.attachmentPath)"))
+    }
+
     // MARK: - Terminal
 
     func testTerminalFramesIncludeLiveScrolledBackAndMissingLiveField() {
