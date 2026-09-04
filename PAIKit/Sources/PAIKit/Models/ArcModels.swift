@@ -185,8 +185,8 @@ public struct ArcSpec: Codable, Sendable, Equatable, Identifiable {
 }
 
 /// One block in the run's current segment — `pai_cloud.arc_service.recover`'s own per-block
-/// summary. `done`/`total` count only the block's non-leader rows, matching R4 ("done" is never
-/// about the leader row itself).
+/// summary. `done`/`cancelled`/`total` count only the block's non-leader rows, matching R4
+/// ("done" is never about the leader row itself).
 public struct ArcRecoverBlock: Codable, Sendable, Equatable, Identifiable {
     public var id: Int { b }
     public let b: Int
@@ -196,10 +196,12 @@ public struct ArcRecoverBlock: Codable, Sendable, Equatable, Identifiable {
     public let g: ArcLeaderAgent?
     public let rows: [Int]
     public let done: Int
+    public let cancelled: Int
     public let total: Int
 
     public init(
-        b: Int, leader: Int?, i: String?, s: ArcRowStatus?, g: ArcLeaderAgent?, rows: [Int], done: Int, total: Int
+        b: Int, leader: Int?, i: String?, s: ArcRowStatus?, g: ArcLeaderAgent?, rows: [Int], done: Int,
+        cancelled: Int, total: Int
     ) {
         self.b = b
         self.leader = leader
@@ -208,6 +210,7 @@ public struct ArcRecoverBlock: Codable, Sendable, Equatable, Identifiable {
         self.g = g
         self.rows = rows
         self.done = done
+        self.cancelled = cancelled
         self.total = total
     }
 }

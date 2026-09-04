@@ -21,7 +21,7 @@ final class ArcFixturesTests: XCTestCase {
     func test_arcRecoverFixture_decodes() throws {
         let payload = try JSONDecoder().decode(
             ArcRecoverPayload.self, from: PaiFixtures.data(PaiFixtures.arcRecover))
-        XCTAssertEqual(payload.rows.count, 6)
+        XCTAssertEqual(payload.rows.count, 7)
         XCTAssertEqual(payload.activeSegment.index, 1)
         XCTAssertEqual(payload.activeSegment.busyAgents, ["arc-demo"])
 
@@ -35,6 +35,13 @@ final class ArcFixturesTests: XCTestCase {
         XCTAssertEqual(marker.k, .marker)
         XCTAssertNil(marker.s)
         XCTAssertEqual(marker.v, "The demo spec exists and has rows.")
+
+        // `cancelled` is counted separately from `done`/`total` — a member row this block never
+        // finished but is no longer waiting on, distinct from both the other two counts.
+        let buildBlock = try XCTUnwrap(payload.activeSegment.blocks.first { $0.b == 2 })
+        XCTAssertEqual(buildBlock.done, 0)
+        XCTAssertEqual(buildBlock.cancelled, 1)
+        XCTAssertEqual(buildBlock.total, 2)
     }
 
     /// Bridges the fixture into `ArcTimelineBuilder` — decoding correctly and building the right

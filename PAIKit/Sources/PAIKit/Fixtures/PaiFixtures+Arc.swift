@@ -44,9 +44,10 @@ extension PaiFixtures {
                 "i": "Build the thing",
                 "s": "I",
                 "g": {"type": "aria", "model": "sonnet", "name": "arc-demo"},
-                "rows": [5],
+                "rows": [5, 8],
                 "done": 0,
-                "total": 1
+                "cancelled": 1,
+                "total": 2
               },
               {
                 "b": 3,
@@ -56,6 +57,7 @@ extension PaiFixtures {
                 "g": null,
                 "rows": [],
                 "done": 0,
+                "cancelled": 0,
                 "total": 0
               }
             ],
@@ -77,6 +79,10 @@ extension PaiFixtures {
             },
             "5": {
               "id": 5, "i": "The thing itself", "src": "U", "diff": 1, "s": "P", "o": 3.5, "k": "R",
+              "b": 2, "g": null, "n": {}, "r": [], "v": null
+            },
+            "8": {
+              "id": 8, "i": "A sub-task that got cancelled", "src": "U", "diff": 0, "s": "X", "o": 3.6, "k": "R",
               "b": 2, "g": null, "n": {}, "r": [], "v": null
             },
             "6": {
