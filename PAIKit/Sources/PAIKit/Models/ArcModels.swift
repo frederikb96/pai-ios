@@ -297,6 +297,35 @@ extension ArcLeaderAgent {
     }
 }
 
+/// `GET /api/arc/reports/{uuid}` — a report an agent attached to a spec, full content included.
+/// `ArcRow.r` carries the uuids a row or block leader references; the report screen fetches each
+/// one by uuid rather than trusting anything already on the row, since a row only ever carries
+/// the id.
+public struct ArcReport: Codable, Sendable, Equatable {
+    public let uuid: String
+    public let specUuid: String
+    public let name: String
+    public let summary: String?
+    public let content: String
+    public let createdAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case uuid
+        case specUuid = "spec_uuid"
+        case name, summary, content
+        case createdAt = "created_at"
+    }
+
+    public init(uuid: String, specUuid: String, name: String, summary: String?, content: String, createdAt: String) {
+        self.uuid = uuid
+        self.specUuid = specUuid
+        self.name = name
+        self.summary = summary
+        self.content = content
+        self.createdAt = createdAt
+    }
+}
+
 extension ArcRow {
     /// `n`'s values joined into one markdown string, in ascending numeric key order. Every spec
     /// this app has read numbers notes "1", "2", … but the field is free-form server-side, so a

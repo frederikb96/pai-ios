@@ -259,6 +259,10 @@ struct RootView: View {
             AppsRouteScreen()
         case .arcSpecList:
             ArcSpecListView()
+        case .arcReport(let specUuid, let reportUuid):
+            ArcReportScreen(specUuid: specUuid, reportUuid: reportUuid)
+        case .arcOverview(let specUuid):
+            ArcOverviewRouteScreen(specUuid: specUuid)
         }
     }
 
@@ -445,6 +449,36 @@ private struct RecordingsRouteScreen: View {
                         onInsertTranscript: { _ in },
                         onAttach: { _ in }
                     )
+                }
+            }
+            .onChange(of: isPresented) { _, presented in
+                guard !presented else { return }
+                environment.router.pop()
+            }
+    }
+}
+
+/// What `.arcOverview` pushes to — reproduces the sheet `ArcSpecView`'s own header button
+/// presents, since the overview has no screen of its own to navigate to; real usage never
+/// pushes this route, only the fixture screenshot workflow does. Fetches the overview text
+/// directly rather than depending on `ArcSpecStore` having loaded, since the whole point is a
+/// screenshot the app can reach with nothing else on screen underneath. Shaped exactly like
+/// `CreateSessionRouteScreen` above, for the same reason.
+private struct ArcOverviewRouteScreen: View {
+    let specUuid: String
+    @Environment(AppEnvironment.self) private var environment
+    @State private var isPresented = true
+    @State private var overview: String?
+
+    var body: some View {
+        Color.clear
+            .task {
+                guard let client = environment.connection?.apiClient else { return }
+                overview = try? await client.getArcRecover(specUuid: specUuid).overview
+            }
+            .sheet(isPresented: $isPresented) {
+                if let overview {
+                    ArcMarkdownFullScreenView(markdown: overview, title: "Overview")
                 }
             }
             .onChange(of: isPresented) { _, presented in

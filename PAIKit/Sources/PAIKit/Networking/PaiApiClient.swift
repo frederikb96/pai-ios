@@ -662,6 +662,12 @@ public struct PaiApiClient: Sendable {
         try await send(path: "/api/arc/specs/\(uuid)")
     }
 
+    /// A report a row or a block leader's `r` field names — full content included, so the report
+    /// screen needs nothing else about the spec to have loaded first.
+    public func getArcReport(uuid: String) async throws -> ArcReport {
+        try await send(path: "/api/arc/reports/\(uuid)")
+    }
+
     // MARK: Auth
 
     public func getMe() async throws -> MeResponse {
