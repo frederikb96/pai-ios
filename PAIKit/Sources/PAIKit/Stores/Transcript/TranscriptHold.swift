@@ -19,12 +19,6 @@ public struct SystemWallClock: WallClock {
 public enum TranscriptHoldKind: Equatable, Sendable {
     case bottom
     case restore(messageId: Int)
-    /// A row landed on by something outside ordinary scrolling — a search hit, or a notification
-    /// deep link resolving to its message. Both want the same 30%-from-top landing and the same
-    /// re-assertion while the layout settles; only the visual they leave behind differs (a text
-    /// highlight for one, a ring around the whole card for the other), which lives with the row
-    /// content rather than with the hold.
-    case jump(messageId: Int)
 }
 
 /// A held scroll position: a target, and how long it stays defended.

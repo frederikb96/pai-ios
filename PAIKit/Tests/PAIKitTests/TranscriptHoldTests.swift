@@ -60,7 +60,7 @@ final class TranscriptHoldTests: XCTestCase {
         let clock = FakeWallClock()
         let controller = TranscriptHoldController(clock: clock)
 
-        controller.begin(.jump(messageId: 3))
+        controller.begin(.restore(messageId: 3))
         clock.advance(by: TranscriptHold.duration + 0.01)
 
         XCTAssertFalse(controller.isActive, "a hold nobody extended must not read as active forever")

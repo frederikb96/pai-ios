@@ -175,8 +175,11 @@
         /// around a cell's text, only the spacing and divider ``MarkdownTableLayout`` takes as
         /// separate parameters.
         /// One line's height inside a fenced block, resolved the same way a table row's is so the
-        /// two non-wrapping blocks answer Dynamic Type identically.
-        private static func codeLineHeight(for environment: MeasurementEnvironment) -> Double {
+        /// two non-wrapping blocks answer Dynamic Type identically. `public` so a caller landing a
+        /// search hit on a specific line (`revealHit`) can convert it to a vertical offset with
+        /// the exact number this block's own height was measured with — never a second, private
+        /// guess the two could quietly disagree about.
+        public static func codeLineHeight(for environment: MeasurementEnvironment) -> Double {
             let category = UIContentSizeCategory(rawValue: environment.sizeCategoryToken)
             let pointSize = PaiTypography.markdownCodeBlock.pointSize(for: category)
             let font = resolveFont(style: PaiTypography.markdownCodeBlock, pointSize: pointSize)
