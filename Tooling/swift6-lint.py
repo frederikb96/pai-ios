@@ -21,6 +21,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 TYPE_DECLARATION = re.compile(r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:public |internal |private |fileprivate |final |open )*(?:class|struct|enum|actor|extension)\b")
+#: A generic type's own declaration line — the `<` sits between the type's name and its body,
+#: never inside an inheritance clause or a following `where`, so this is enough to tell a generic
+#: declaration from a plain one without parsing the parameter list itself.
+GENERIC_TYPE_DECLARATION = re.compile(
+    r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:public |internal |private |fileprivate |final |open )*"
+    r"(?:class|struct|enum|actor)\s+\w+\s*<"
+)
+#: `static let` is always stored; `static var NAME ... =` is too — Swift's computed-property
+#: syntax never has an `=` after the type, only a `{ get ... }`/`{ get set }` block, so requiring
+#: the `=` is what tells a stored declaration from a computed one without parsing the body.
+STORED_STATIC = re.compile(r"^\s*(?:public |internal |private |fileprivate )?static (?:let|var) [A-Za-z_]\w*\s*(?::[^={]*)?=")
 STORED_STATIC_VAR = re.compile(r"^\s*(?:public |internal |private |fileprivate )?static var [A-Za-z_]\w*\s*(?::[^={]*)?=")
 #: A `static let`/`static var` declaration, `let` included — unlike `STORED_STATIC_VAR` above,
 #: which only cares about mutable state, this one flags an *immutable* static too: the type, not
@@ -302,6 +313,44 @@ def unmarked_observer_token_read_in_deinit(
     return findings
 
 
+def stored_static_in_generic_type(lines: list[str]) -> list[tuple[int, str, str]]:
+    """A `static let`/`static var` declared directly inside a generic type.
+
+    Swift rejects this outright — "static stored properties not supported in generic types" — a
+    plain type error with no Sendable/actor reasoning behind it, so `parse-swift.sh` (stops
+    before type checking) cannot see it and neither can the package build (this shape lives only
+    in the app target, which compiles nowhere but a Mac). A `CodeBlockScrollView<Content: View>`
+    with two `static let`s for a measure-once font metric shipped exactly this and cost a full Mac
+    run to discover.
+
+    Scoped by indentation like the rest of this file — a nested non-generic type declared inside
+    the generic one would be misread as still being in scope, which is the same narrowing every
+    other check here already accepts in exchange for staying a regex rather than a parser.
+    """
+    findings: list[tuple[int, str, str]] = []
+    for index, line in enumerate(lines):
+        if not GENERIC_TYPE_DECLARATION.match(line):
+            continue
+        indent = len(line) - len(line.lstrip())
+        opening = index
+        while opening < len(lines) and "{" not in lines[opening]:
+            opening += 1
+            if opening - index > 8:
+                opening = index
+                break
+        for cursor in range(opening + 1, len(lines)):
+            body = lines[cursor]
+            if body.strip() and (len(body) - len(body.lstrip())) <= indent:
+                break
+            if STORED_STATIC.match(body):
+                findings.append((
+                    cursor + 1, body.strip(),
+                    "stored 'static let'/'static var' is not allowed inside a generic type — move it "
+                    "to a non-generic type or file scope",
+                ))
+    return findings
+
+
 def check(path: Path) -> list[tuple[int, str, str]]:
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     isolated = main_actor_line_numbers(lines)
@@ -309,6 +358,7 @@ def check(path: Path) -> list[tuple[int, str, str]]:
     findings.extend(nonisolated_uikit_access(lines))
     findings.extend(switch_after_guard_missing_return(lines))
     findings.extend(unmarked_observer_token_read_in_deinit(lines, isolated))
+    findings.extend(stored_static_in_generic_type(lines))
 
     for index, line in enumerate(lines):
         if STORED_STATIC_VAR.match(line) and index not in isolated and "nonisolated(unsafe)" not in line:

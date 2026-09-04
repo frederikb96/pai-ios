@@ -15,6 +15,7 @@
         static let modeFlag = "-PaiFixtureMode"
         static let routeFlag = "-PaiFixtureRoute"
         static let authStateFlag = "-PaiFixtureAuthState"
+        static let searchKindFlag = "-PaiFixtureSearchKind"
 
         /// The session id every session-scoped fixture route answers under, regardless of which
         /// id the request actually named — fixed so a screenshot workflow can always ask for this
@@ -39,6 +40,15 @@
         /// since fixture mode has no live agent to report a real outage from.
         public static func requestedAuthState(arguments: [String] = ProcessInfo.processInfo.arguments) -> String? {
             value(for: authStateFlag, in: arguments)
+        }
+
+        /// A `MessageKind.rawValue` to open transcript search with, via `-PaiFixtureSearchKind
+        /// <kind>` — how the Mac workflow reaches a jump that lands OUTSIDE the loaded tail
+        /// window with no device interaction. `boundary` is the kind that reproduces the bug this
+        /// exists to prove fixed: the session-start and compaction rows the jump dropdown lists.
+        /// Absent means an ordinary open with no search — every other screenshot's behaviour.
+        public static func requestedSearchKind(arguments: [String] = ProcessInfo.processInfo.arguments) -> String? {
+            value(for: searchKindFlag, in: arguments)
         }
 
         static func value(for flag: String, in arguments: [String]) -> String? {

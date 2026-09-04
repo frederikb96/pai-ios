@@ -126,6 +126,20 @@ struct SessionDetailView: View {
             // page the list has loaded — this is what makes it resolvable regardless.
             await sessions.ensureSessionLoaded(id: sessionID)
         }
+        #if DEBUG
+            .task {
+                // `-PaiFixtureSearchKind <kind>` — the Mac workflow's own way to drive a jump
+                // landing with no device interaction. Opens the same way tapping the search icon
+                // does, through the state `TranscriptCollectionViewController` already observes,
+                // so this exercises exactly the search-virtualization landing path rather than a
+                // shortcut invented for the screenshot.
+                guard PaiFixtureLaunch.isEnabled(), let rawKind = PaiFixtureLaunch.requestedSearchKind(),
+                    let kind = MessageKind(rawValue: rawKind)
+                else { return }
+                searchState.open()
+                searchState.kind = kind
+            }
+        #endif
         // The session this screen is *about* stopped existing — deleted from the actions sheet
         // right here, or from another client. Without this the transcript and composer stay live
         // and typeable over a session that is gone: the header quietly empties, the title falls

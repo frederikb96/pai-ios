@@ -121,6 +121,24 @@ struct PAIApp: App {
                 }
             }
 
+            // Where a jump actually landed — the CI counterpart to a screenshot for the
+            // search-virtualization landing path, since a screenshot shows the RESULT of a
+            // landing but not the row id it computed. `nil` for everything when no transcript
+            // screen is on top, which reads as "nothing to report" rather than an error.
+            router.register("GET", "/transcript/landing") { _ in
+                DispatchQueue.main.sync {
+                    MainActor.assumeIsolated {
+                        guard let controller = TranscriptCollectionViewController.current else {
+                            return .encoding(
+                                TranscriptCollectionViewController.LandingSnapshot(
+                                    topVisibleRowId: nil, contentOffsetY: 0, currentMessageId: nil,
+                                    highlightedMessageId: nil))
+                        }
+                        return .encoding(controller.landingSnapshot())
+                    }
+                }
+            }
+
             router.register("GET", "/logs") { request in
                 let level = request.query["level"].flatMap(DebugLogBuffer.Level.init(rawValue:)) ?? .debug
                 let limit = request.query["limit"].flatMap(Int.init) ?? 100

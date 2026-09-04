@@ -14,11 +14,17 @@ import Foundation
 /// `pai-cloud/web/src/utils/messageDisplay.ts`, not guessed.
 extension PaiFixtures {
 
-    /// `GET /api/session/{id}/messages?tail=true` for the session above — 52 rows, ids
-    /// 9001...9052 (a private range chosen only to be easy to spot in a debugger, not meaningful
-    /// on its own).
-    public static let transcript: String = #"""
-        [
+    /// `GET /api/session/{id}/messages?tail=true` for the session above — the 52 curated rows
+    /// below (ids 9001...9052, a private range chosen only to be easy to spot in a debugger),
+    /// followed by ``fillerTranscriptEntries``. `PaiFixtureURLProtocol` slices this whole array by
+    /// `tail`/`before_id`/`after_id`/`around_id`, matching the real endpoint's own paging — a
+    /// request that ignores every query parameter is what this used to be, and it could only ever
+    /// answer the ordinary open, never a jump into unloaded history.
+    public static let transcript: String = "[\n" + curatedTranscriptEntries + ",\n" + fillerTranscriptEntries + "\n]"
+
+    /// The 52 hand-written rows: every `Message.type`, every system `subtype`, both legacy row
+    /// shapes, every tool family, and the markdown stress cases — see this file's own doc comment.
+    private static let curatedTranscriptEntries: String = #"""
           { "id": 9001, "session_id": "305df4d3-1554-4fc3-be04-39a354a9e619", "type": "user", "subtype": null,
             "outbox_id": 5001, "timestamp": "2026-08-29T06:12:03Z",
             "content": "Build the canned fixture corpus for the screenshot run.",
@@ -347,6 +353,48 @@ extension PaiFixtures {
             "tokens": { "input_tokens": 1204, "output_tokens": 312, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 18344,
                         "cache_creation": { "ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 0 } },
             "created_at": "2026-08-29T09:41:55Z" }
-        ]
         """#
+
+    /// Generated padding after the curated 52 — ids 9053...9900, plain `user`/`assistant`
+    /// exchanges with no coverage the curated rows do not already have. Only the corpus SIZE is
+    /// its job: a jump target has to be separable from the loaded tail window by more than one
+    /// `around_id` page's own width for `locate` to ever take the `.replaced` path rather than the
+    /// `.prepended`/merge one — that path is exactly what silently failed before this block's own
+    /// fix (search-virtualization design, "the around page, and merge-or-replace"). At
+    /// `TranscriptStore.tailLimit` (300) and `olderPageLimit` (150), a corpus of this size puts a
+    /// target near the curated rows several hundred ids clear of the tail, comfortably past both.
+    private static let fillerTranscriptEntries: String = {
+        // Five seconds after the curated set's own last timestamp ("2026-08-29T09:41:55Z") —
+        // parsed rather than a second hand-typed literal, so the two can never quietly drift apart.
+        let curatedEnd = transcriptTimestampFormatter.date(from: "2026-08-29T09:41:55Z") ?? Date()
+        let base = curatedEnd.addingTimeInterval(5)
+        var parts: [String] = []
+        parts.reserveCapacity(848)
+        for offset in 0..<848 {
+            let id = 9053 + offset
+            let isUser = offset.isMultiple(of: 2)
+            let type = isUser ? "user" : "assistant"
+            let timestamp = transcriptTimestampFormatter.string(from: base.addingTimeInterval(TimeInterval(offset * 5)))
+            let content =
+                isUser
+                ? "Filler question #\(id), padding the fixture corpus past the tail window."
+                : "Filler answer #\(id) to question #\(id - 1), padding the fixture corpus past the tail window."
+            parts.append(
+                """
+                      { "id": \(id), "session_id": "305df4d3-1554-4fc3-be04-39a354a9e619", "type": "\(type)", "subtype": null,
+                        "timestamp": "\(timestamp)", "content": "\(content)", "thinking": null, "tool_calls": null,
+                        "tool_result": null, "hook_summary": null, "tokens": null, "created_at": "\(timestamp)" }
+                """)
+        }
+        return parts.joined(separator: ",\n")
+    }()
+
+    /// `nonisolated(unsafe)`: `ISO8601DateFormatter` cannot be proven `Sendable`, but this is
+    /// configured once by `static let`'s own one-time initialization and only ever read
+    /// afterward — never mutated concurrently.
+    private static nonisolated(unsafe) let transcriptTimestampFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
 }
