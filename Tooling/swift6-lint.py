@@ -22,6 +22,16 @@ ROOT = Path(__file__).resolve().parent.parent
 
 TYPE_DECLARATION = re.compile(r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:public |internal |private |fileprivate |final |open )*(?:class|struct|enum|actor|extension)\b")
 STORED_STATIC_VAR = re.compile(r"^\s*(?:public |internal |private |fileprivate )?static var [A-Za-z_]\w*\s*(?::[^={]*)?=")
+#: A `static let`/`static var` declaration, `let` included — unlike `STORED_STATIC_VAR` above,
+#: which only cares about mutable state, this one flags an *immutable* static too: the type, not
+#: the mutability, is what Swift 6 strict concurrency objects to. `[static-any-formatter]`.
+STATIC_LET_OR_VAR = re.compile(r"^\s*(?:public |internal |private |fileprivate )?static (?:let|var)\s+[A-Za-z_]\w*")
+#: A declared type carrying `Any` inside a collection literal's brackets (`[String: Any]`,
+#: `[Any]`, `[AnyHashable: Any]`) — `Any` is not `Sendable`, and neither is a collection of it.
+STATIC_ANY_COLLECTION_TYPE = re.compile(r":\s*\[[^\]\n]*\bAny\b[^\]\n]*\]")
+#: A Foundation formatter initializer — none of these three are `Sendable` either, and a
+#: `static let formatter = DateFormatter()` is the single most common shape this takes here.
+STATIC_FORMATTER_INIT = re.compile(r"\b(?:ISO8601DateFormatter|DateFormatter|NumberFormatter)\(\)")
 SHADOWED_WRAPPER = re.compile(r"^\s*(?:public |internal |private |fileprivate )?(?:enum|struct|class|actor) (State|Binding|Environment|Namespace|Observable)\s*[:{]")
 AMBIGUOUS_PAIR = re.compile(r"(?:width|x|dx): \.[A-Za-z]\w*, (?:height|y|dy): \.[A-Za-z]\w*")
 ISOLATED_STATIC = re.compile(r"^\s*(?:public |internal |private |fileprivate )?static (?:let|var) ([A-Za-z_]\w*)\b")
@@ -317,6 +327,19 @@ def check(path: Path) -> list[tuple[int, str, str]]:
                 index + 1, line.strip(),
                 "both members inferred leaves the literal's type ambiguous — name it "
                 "(CGFloat.greatestFiniteMagnitude)",
+            ))
+        if (
+            STATIC_LET_OR_VAR.match(line)
+            and index not in isolated
+            and "nonisolated(unsafe)" not in line
+            and (STATIC_ANY_COLLECTION_TYPE.search(line) or STATIC_FORMATTER_INIT.search(line))
+        ):
+            findings.append((
+                index + 1, line.strip(),
+                "a static 'Any'-containing collection or Foundation formatter "
+                "(ISO8601DateFormatter/DateFormatter/NumberFormatter) is not Sendable — Swift 6 "
+                "strict concurrency rejects it as global state; make it computed ({ ... }), or "
+                "isolate the type to @MainActor",
             ))
     return findings
 
