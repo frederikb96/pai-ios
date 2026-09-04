@@ -81,19 +81,24 @@ struct RootView: View {
         case .ready:
             if let connection = environment.connection {
                 ZStack(alignment: .bottom) {
-                    NavigationStack(path: navigationPath) {
-                        SessionListView()
-                            .navigationDestination(for: Route.self) { route in
-                                destination(for: route)
-                            }
-                    }
-                    // A block above the stack's own content, pushing it down rather than
-                    // floating over it — the same "above the whole app" placement the web gives
-                    // it, so it reads on the session list and inside an open conversation alike.
-                    // Decorates the `NavigationStack` itself, which stays one view instance across
-                    // every push, so the inset persists regardless of what the stack shows.
-                    .safeAreaInset(edge: .top, spacing: 0) {
+                    // A plain `VStack`, not `.safeAreaInset(edge: .top)` on the `NavigationStack`.
+                    // The inset approach let the banner draw see-through over a pushed screen's
+                    // own content instead of pushing it down — a pushed `List` that paints its own
+                    // edge-to-edge background (`paiScreenBackground()`'s `ignoresSafeAreaEdges:
+                    // .all`) does not reliably inherit an inset reserved by an ancestor outside the
+                    // `NavigationStack`, across a UIKit-bridged push. A `VStack` sidesteps that
+                    // whole class of interaction: the banner's natural height is ordinary layout,
+                    // not a safe-area negotiation, so the `NavigationStack` genuinely gets a
+                    // smaller frame rather than a promise of one. It still sits below the status
+                    // bar the same way, since a `VStack` respects the top safe area by default.
+                    VStack(spacing: 0) {
                         ClaudeAuthBanner()
+                        NavigationStack(path: navigationPath) {
+                            SessionListView()
+                                .navigationDestination(for: Route.self) { route in
+                                    destination(for: route)
+                                }
+                        }
                     }
                     ToastOverlay(toasts: connection.toasts)
                 }
