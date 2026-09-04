@@ -39,6 +39,12 @@ poll fallback. The poll fallback itself is real and load-bearing regardless of w
 path works, so this screen is never expected to go stale for long even if the SSE half never
 fires as designed — but that is a claim, not yet an observation.
 
+### Verify: the marker bar's passed state reads clearly next to the divider rules — pai-cloud anchor: none, iOS-only
+Needs `PAI/` because: `ArcMarkerBar` now swaps its centred icon for a two-word `Label` ("Passed")
+when the marker's own status is Done, inside an `HStack` whose two `Rectangle` dividers are
+expected to absorb the width difference — reasoned to lay out sensibly, unverified on a real
+screen width whether the label crowds the dividers or wraps.
+
 ### Verify: the "Spec" swipe action and its picker sheet feel right on a real list and transcript — pai-cloud anchor: none, iOS-only
 Needs `PAI/` because: `SessionListView`'s row now offers three trailing swipe actions
 (Actions/Subagents/Spec) rather than one, and `SessionDetailView`'s new swipe opens a

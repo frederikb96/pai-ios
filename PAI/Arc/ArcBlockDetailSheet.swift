@@ -33,7 +33,9 @@ struct ArcBlockDetailSheet: View {
                 }
                 Section("Rows") {
                     if block.rows.isEmpty {
-                        Text("Nothing else in this block yet.")
+                        // Per S23, a leader-only block has no member rows to show, and none ever
+                        // coming — distinct from a block still waiting on work.
+                        Text("Leader only — no other rows in this block.")
                             .font(PaiTypography.caption.font)
                             .foregroundStyle(PaiPalette.Semantic.textMuted)
                     }
