@@ -83,8 +83,9 @@ public struct ArcTimelineBlock: Sendable, Equatable, Identifiable {
 public struct ArcTimelineSegment: Sendable, Equatable, Identifiable {
     public var id: Int { index }
     public let index: Int
-    /// The marker row that closes this segment — `nil` for the last, still-open segment, which
-    /// has nothing below it yet.
+    /// The marker that opened this segment — `nil` for segment 0, which nothing gates. Mirrors
+    /// `arcModel.ts`'s own `buildSegments`: segment `i` (`i > 0`) carries `markers[i - 1]`, the
+    /// marker immediately before it, never the one at its own index.
     public let marker: ArcRow?
     public let blocks: [ArcTimelineBlock]
     public let looseRows: [ArcRow]
@@ -154,7 +155,13 @@ public enum ArcTimelineBuilder {
             }
             segments.append(
                 ArcTimelineSegment(
-                    index: index, marker: index < markers.count ? markers[index] : nil, blocks: blocks, looseRows: loose
+                    // `markers[index - 1]`, never `markers[index]` — the marker that PRECEDES
+                    // this segment, matching `buildSegments`'s own `i > 0 ? markers[i - 1] :
+                    // null`. The off-by-one both ends of this wrong would produce is exactly
+                    // the shape that stays invisible without a live spec holding more than one
+                    // marker: it assigns segment 0 the FIRST marker instead of none, and drops
+                    // the LAST marker instead of assigning it to the final segment.
+                    index: index, marker: index > 0 ? markers[index - 1] : nil, blocks: blocks, looseRows: loose
                 )
             )
         }
