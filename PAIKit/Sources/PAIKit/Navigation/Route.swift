@@ -60,6 +60,16 @@ public enum Route: Hashable, Sendable {
     /// concern: nothing ever replaces one `.arcSpec` destination with a different one at the
     /// same stack depth.
     case arcSpec(specUuid: String)
+    /// The Apps section (row 87/88) — reached only from the fixture screenshot workflow, the
+    /// same way `.createSession`/`.recordings` are: real usage presents `AppsHomeSheet` from the
+    /// session list's toolbar button, never by pushing a route. `RootView` reproduces that sheet
+    /// presentation here for the same reason those two do.
+    case apps
+    /// Every ARC spec, not just the ones bound to one conversation — reached from Apps' "Arc"
+    /// row. Carries no identity concern of its own for the same reason `.arcSpec` does not:
+    /// nothing ever replaces one `.arcSpecList` destination with a different one at the same
+    /// stack depth.
+    case arcSpecList
 
     /// Ignores `session`'s `messageID` — see that case's doc comment. Everything else is a plain
     /// per-case comparison, same as the synthesized version this replaces.
@@ -77,6 +87,8 @@ public enum Route: Hashable, Sendable {
         case (.notifications, .notifications): return true
         case (.recordings, .recordings): return true
         case (.arcSpec(let a), .arcSpec(let b)): return a == b
+        case (.apps, .apps): return true
+        case (.arcSpecList, .arcSpecList): return true
         default: return false
         }
     }
@@ -115,6 +127,10 @@ public enum Route: Hashable, Sendable {
         case .arcSpec(let specUuid):
             hasher.combine(11)
             hasher.combine(specUuid)
+        case .apps:
+            hasher.combine(12)
+        case .arcSpecList:
+            hasher.combine(13)
         }
     }
 }
@@ -129,7 +145,7 @@ extension Route {
     /// hardcoding it, so a new screen becomes photographable without a CI file edit.
     public static let namedScreens: [String] = [
         "session", "terminal", "settings", "createSession", "subagents", "notes", "note", "noteContainers",
-        "notePreview", "notifications", "recordings", "arcSpec",
+        "notePreview", "notifications", "recordings", "arcSpec", "apps", "arcSpecList",
     ]
 
     /// Every spec-scoped fixture route answers under, regardless of which uuid the request
@@ -161,6 +177,8 @@ extension Route {
         case "notifications": return .notifications
         case "recordings": return .recordings
         case "arcSpec": return .arcSpec(specUuid: fixtureArcSpecUuid)
+        case "apps": return .apps
+        case "arcSpecList": return .arcSpecList
         default: return nil
         }
     }
@@ -297,7 +315,7 @@ public final class Router {
             case .session(let id, _): return id
             case .terminal(let sessionID): return sessionID
             case .settings, .createSession, .subagents, .notes, .note, .noteContainers, .notePreview,
-                .notifications, .recordings, .arcSpec:
+                .notifications, .recordings, .arcSpec, .apps, .arcSpecList:
                 continue
             }
         }
@@ -311,7 +329,7 @@ public final class Router {
             switch route {
             case .note(let id), .notePreview(let id): return id
             case .session, .terminal, .settings, .createSession, .subagents, .notes, .noteContainers,
-                .notifications, .recordings, .arcSpec:
+                .notifications, .recordings, .arcSpec, .apps, .arcSpecList:
                 continue
             }
         }
