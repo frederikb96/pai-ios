@@ -19,6 +19,7 @@ struct SessionListView: View {
     /// genuinely empty but showing "No sessions yet" would be a false claim.
     @State private var hasLoadedInitialSessions = false
     @State private var isPresentingCreateSession = false
+    @State private var isPresentingApps = false
     @State private var actionsSheetTarget: SessionActionsTarget?
     @State private var arcSpecTarget: ArcSpecPickerTarget?
 
@@ -38,8 +39,22 @@ struct SessionListView: View {
         // The system search field: scroll-to-reveal and a Cancel button for free, rather than
         // the hand-rolled field the web needs (it has no such control to reach for).
         .searchable(text: filterTextBinding, prompt: filterPlaceholder)
+        // Semantic search moved here from its own title-bar icon (row 89) — `.searchScopes` is
+        // the native element for exactly this shape (Mail's "Current Mailbox"/"All Mailboxes" is
+        // the same primitive), and it appears only while the search field itself is active,
+        // which a toolbar icon cannot do. A button living inside `.searchable`'s own field is not
+        // an option SwiftUI exposes; a scope bar is the closest native equivalent that still
+        // reads as part of the search bar rather than a separate control.
+        .searchScopes(semanticScopeBinding) {
+            Text("Text").tag(SessionSearchScope.text)
+            Text("Meaning").tag(SessionSearchScope.meaning)
+        }
         .onSubmit(of: .search) { sessions.commitFilterTextNow() }
         .toolbar {
+            // Declared in this order — plus, apps, settings, notifications — so the rendered
+            // trailing group reads right-to-left as notifications, settings, apps, plus, the
+            // order Freddy asked for and the same declaration convention this file already used
+            // (the "+" was always declared first, and always renders as the outermost icon).
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     isPresentingCreateSession = true
@@ -50,12 +65,12 @@ struct SessionListView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    environment.router.push(.notes)
+                    isPresentingApps = true
                 } label: {
-                    Image(systemName: "note.text")
+                    Image(systemName: "square.grid.2x2")
                 }
-                .accessibilityLabel("Notes")
-                .accessibilityIdentifier("open-notes")
+                .accessibilityLabel("Apps")
+                .accessibilityIdentifier("open-apps")
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -65,20 +80,6 @@ struct SessionListView: View {
                 }
                 .accessibilityIdentifier("open-settings")
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    sessions.setSemanticMode(!sessions.semanticMode)
-                } label: {
-                    Image(systemName: "sparkles")
-                }
-                .tint(sessions.semanticMode ? PaiPalette.Semantic.accentText : nil)
-                .accessibilityLabel("Search by meaning, not just text")
-                .accessibilityAddTraits(sessions.semanticMode ? [.isSelected] : [])
-                .accessibilityIdentifier("semantic-toggle")
-            }
-            // Fifth trailing item, at the toolbar's own limit (row 5.27 note 8) — nothing here
-            // moves into an overflow yet, since whether it actually crowds a real phone is a
-            // question only a Mac run's screenshot can answer.
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     environment.router.push(.notifications)
@@ -91,6 +92,9 @@ struct SessionListView: View {
                 )
                 .accessibilityIdentifier("open-notifications")
             }
+        }
+        .sheet(isPresented: $isPresentingApps) {
+            AppsHomeSheet()
         }
         .task {
             // Guarded, because pushing a session and coming back re-runs this: a second
@@ -263,6 +267,13 @@ struct SessionListView: View {
         Binding(get: { sessions.filterQueryText }, set: { sessions.updateFilterText($0) })
     }
 
+    private var semanticScopeBinding: Binding<SessionSearchScope> {
+        Binding(
+            get: { sessions.semanticMode ? .meaning : .text },
+            set: { sessions.setSemanticMode($0 == .meaning) }
+        )
+    }
+
     private var thresholdBinding: Binding<Double> {
         Binding(get: { sessions.threshold }, set: { sessions.setThreshold($0) })
     }
@@ -364,6 +375,13 @@ private struct MachineChip: View {
 /// be `Identifiable`, since `String` alone cannot be used as a sheet item.
 private struct SessionActionsTarget: Identifiable {
     let id: String
+}
+
+/// The two values `.searchScopes` picks between — a plain local `Hashable` type rather than
+/// reusing `SessionListStore.semanticMode`'s `Bool` directly, since `.searchScopes` needs
+/// distinct, `Text`-labelled cases to render as a scope bar rather than a single toggle.
+private enum SessionSearchScope: Hashable {
+    case text, meaning
 }
 
 /// One row: state dot (or a working spinner in its place), warnings, title, when it last did
