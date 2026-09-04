@@ -54,7 +54,11 @@ struct ZoomableImageView: UIViewRepresentable {
 
     final class Coordinator: NSObject, UIScrollViewDelegate {
         @Binding private var zoomScale: CGFloat
-        weak var scrollView: ZoomableScrollView?
+        // `fileprivate`, not the implicit `internal` a nested type's member defaults to — the
+        // Linux-invisible compile error this fixes only ever surfaces on a Mac build:
+        // `ZoomableScrollView` is `private` (file-scoped), so a member whose type IS that private
+        // type cannot itself be wider than fileprivate access.
+        fileprivate weak var scrollView: ZoomableScrollView?
 
         init(zoomScale: Binding<CGFloat>) {
             _zoomScale = zoomScale

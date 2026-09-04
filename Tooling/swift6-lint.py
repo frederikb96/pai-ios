@@ -351,6 +351,82 @@ def stored_static_in_generic_type(lines: list[str]) -> list[tuple[int, str, str]
     return findings
 
 
+#: A file-scoped `private`/`fileprivate` type declaration — the shape whose name a wider-access
+#: property elsewhere in the same file must not expose without matching that access itself.
+PRIVATE_TOP_LEVEL_TYPE = re.compile(
+    r"^(?:private|fileprivate)\s+(?:final\s+)?(?:class|struct|enum|actor)\s+([A-Za-z_]\w*)"
+)
+#: A stored property with an explicit type — `modifiers` captures everything before `var`/`let`
+#: (attributes, access level, `weak`/`unowned`/`lazy`/`static`), so a later check can tell "this
+#: declaration already restricts itself" from "this declaration needs to" without re-parsing.
+PROPERTY_DECLARATION = re.compile(
+    r"^\s*(?P<modifiers>(?:@\w+(?:\([^)]*\))?\s+)*"
+    r"(?:public\s+|internal\s+|open\s+|private\s+|fileprivate\s+)*"
+    r"(?:weak\s+|unowned(?:\([^)]*\))?\s+|lazy\s+|static\s+|final\s+)*)"
+    r"(?:var|let)\s+[A-Za-z_]\w*\s*:\s*(?P<type>[A-Za-z_]\w*)\??"
+)
+
+
+def private_type_used_too_widely(lines: list[str]) -> list[tuple[int, str, str]]:
+    """A stored property typed with a file-private type, declared with no access modifier of its
+    own — so it defaults to `internal`, or states `internal`/`public` explicitly.
+
+    Swift rejects this outright: "property must be declared fileprivate because its type uses a
+    private type" — a plain access-control error with no Sendable/actor reasoning, invisible to
+    `parse-swift.sh` (stops before type checking) and to the package build (the shape lives only
+    in the app target, which compiles nowhere but a Mac). A `UIViewRepresentable`'s `Coordinator`
+    holding `weak var scrollView: ZoomableScrollView?`, where `ZoomableScrollView` is a sibling
+    `private final class`, shipped exactly this.
+
+    Skips a declaration lexically inside the private type's OWN body — a member there needs no
+    explicit modifier to reference its own enclosing type. Scoped by indentation like the rest of
+    this file.
+    """
+    private_types: dict[str, int] = {}
+    for index, line in enumerate(lines):
+        match = PRIVATE_TOP_LEVEL_TYPE.match(line)
+        if match:
+            private_types[match.group(1)] = index
+    if not private_types:
+        return []
+
+    own_body: set[int] = set()
+    for declared_at in private_types.values():
+        indent = len(lines[declared_at]) - len(lines[declared_at].lstrip())
+        opening = declared_at
+        while opening < len(lines) and "{" not in lines[opening]:
+            opening += 1
+            if opening - declared_at > 4:
+                opening = declared_at
+                break
+        for cursor in range(opening + 1, len(lines)):
+            body = lines[cursor]
+            if body.strip() and (len(body) - len(body.lstrip())) <= indent:
+                break
+            own_body.add(cursor)
+
+    findings: list[tuple[int, str, str]] = []
+    for index, line in enumerate(lines):
+        if index in own_body:
+            continue
+        match = PROPERTY_DECLARATION.match(line)
+        if not match:
+            continue
+        type_name = match.group("type")
+        if type_name not in private_types:
+            continue
+        modifiers = match.group("modifiers")
+        if "private" in modifiers or "fileprivate" in modifiers:
+            continue
+        findings.append((
+            index + 1, line.strip(),
+            f"'{type_name}' is a private type here, so this property must itself be declared "
+            "'fileprivate' (or 'private') — Swift rejects exposing a private type through a "
+            "wider-access member",
+        ))
+    return findings
+
+
 def check(path: Path) -> list[tuple[int, str, str]]:
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     isolated = main_actor_line_numbers(lines)
@@ -359,6 +435,7 @@ def check(path: Path) -> list[tuple[int, str, str]]:
     findings.extend(switch_after_guard_missing_return(lines))
     findings.extend(unmarked_observer_token_read_in_deinit(lines, isolated))
     findings.extend(stored_static_in_generic_type(lines))
+    findings.extend(private_type_used_too_widely(lines))
 
     for index, line in enumerate(lines):
         if STORED_STATIC_VAR.match(line) and index not in isolated and "nonisolated(unsafe)" not in line:
