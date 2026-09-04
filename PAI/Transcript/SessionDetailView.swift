@@ -148,7 +148,7 @@ struct SessionDetailView: View {
             guard let newValue else { return }
             sessions.applyLiveStatus(
                 sessionId: sessionID, state: newValue.state, blocker: newValue.blocker, working: newValue.working,
-                activityCounts: newValue.activityCounts
+                presenceState: newValue.presenceState, activityCounts: newValue.activityCounts
             )
         }
         .task {
@@ -203,7 +203,11 @@ struct SessionDetailView: View {
     }
 
     private func isWorking(_ session: Session) -> Bool {
-        transcript.liveStatus[sessionID]?.working ?? SessionListDomain.isWorking(session)
+        // A discovered session's `working` never fires at all (see `Session.presenceState`), so
+        // its spinner is read off `presenceState` instead — already applied onto `session` by
+        // `applyLiveStatus` above, same as the session list row.
+        if session.discovered == true { return SessionListDomain.isWorking(session) }
+        return transcript.liveStatus[sessionID]?.working ?? SessionListDomain.isWorking(session)
     }
 
     /// The transcript's own live SSE figure wins once it has reported anything for this session;

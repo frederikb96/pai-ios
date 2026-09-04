@@ -27,6 +27,13 @@ final class SessionStoreRowStateTests: XCTestCase {
         XCTAssertEqual(SessionListDomain.dotState(for: session), .grey)
     }
 
+    /// A message typed at a discovered session has nowhere to go — PAI holds no process for it —
+    /// regardless of how alive `presenceState` says it looks on screen.
+    func testDiscoveredSessionStaysNotDrivableWhateverPresenceStateSays() {
+        let session = SessionFixture.make(state: .closed, presenceState: .working, discovered: true)
+        XCTAssertFalse(SessionListDomain.isDrivable(session))
+    }
+
     /// A subagent is never drivable whatever its state — the row anatomy's grey dot must not
     /// depend on whether someone remembered to also null out `state` for one.
     func testSubagentIsGreyEvenWithAReadyState() {
@@ -55,6 +62,28 @@ final class SessionStoreRowStateTests: XCTestCase {
         XCTAssertEqual(SessionListDomain.dotState(for: session), .grey)
     }
 
+    /// A discovered session's `state` sits permanently `.closed` — there is no PAI process to
+    /// poll — so `presenceState` is the only field that can tell it apart from one that is
+    /// genuinely gone.
+    func testDiscoveredSessionReadsPresenceStateInsteadOfItsPermanentlyClosedState() {
+        let idle = SessionFixture.make(state: .closed, presenceState: .idle, discovered: true)
+        let working = SessionFixture.make(state: .closed, presenceState: .working, discovered: true)
+        let closed = SessionFixture.make(state: .closed, presenceState: .closed, discovered: true)
+        let unknown = SessionFixture.make(state: .closed, presenceState: nil, discovered: true)
+
+        XCTAssertEqual(SessionListDomain.dotState(for: idle), .ready)
+        XCTAssertEqual(SessionListDomain.dotState(for: working), .ready)
+        XCTAssertEqual(SessionListDomain.dotState(for: closed), .grey)
+        XCTAssertEqual(SessionListDomain.dotState(for: unknown), .grey)
+    }
+
+    /// A stale `presence_state: .idle` left over from before PAI closed a session it actually
+    /// launched must not turn that dot green — only a discovered session reads this field at all.
+    func testNonDiscoveredSessionNeverReadsPresenceStateForItsDot() {
+        let session = SessionFixture.make(state: .closed, presenceState: .idle, discovered: false)
+        XCTAssertEqual(SessionListDomain.dotState(for: session), .grey)
+    }
+
     func testLegacyStatusFallsBackOnlyWhenStateIsAbsent() {
         let withState = SessionFixture.make(status: .error, state: .ready)
         XCTAssertEqual(SessionListDomain.dotState(for: withState), .ready)
@@ -73,6 +102,20 @@ final class SessionStoreRowStateTests: XCTestCase {
         // A stale `working: true` reported outside `.ready` must not read as working — this is
         // the exact guard the report calls out: `worker_status` does not self-clear.
         XCTAssertFalse(SessionListDomain.isWorking(SessionFixture.make(state: .attention, working: true)))
+    }
+
+    /// `working` never fires for a discovered session (see `dotState(for:)`), so its spinner is
+    /// read off `presenceState` instead.
+    func testIsWorkingReadsPresenceStateForADiscoveredSession() {
+        let working = SessionFixture.make(state: .closed, presenceState: .working, discovered: true)
+        let idle = SessionFixture.make(state: .closed, presenceState: .idle, discovered: true)
+        XCTAssertTrue(SessionListDomain.isWorking(working))
+        XCTAssertFalse(SessionListDomain.isWorking(idle))
+    }
+
+    func testIsWorkingIgnoresPresenceStateForASessionPaiActuallyLaunched() {
+        let session = SessionFixture.make(state: .closed, presenceState: .working, discovered: false)
+        XCTAssertFalse(SessionListDomain.isWorking(session))
     }
 
     func testDotStatePulsesOnlyForInFlightStates() {

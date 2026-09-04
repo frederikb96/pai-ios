@@ -70,6 +70,7 @@ public final class TranscriptStore {
         public let state: SessionState?
         public let blocker: Blocker?
         public let working: Bool?
+        public let presenceState: SessionPresenceState?
         public let activityCounts: ActivityCounts?
     }
 

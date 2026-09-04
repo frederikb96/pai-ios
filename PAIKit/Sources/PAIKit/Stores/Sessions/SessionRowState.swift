@@ -31,10 +31,28 @@ public enum SessionListDomain {
     /// because that is the whole point of the color: it never turns green just because the
     /// conversation happens to be going well without PAI's help. Otherwise prefers `state` when
     /// present, falling back to the legacy `status` enum.
+    ///
+    /// `state` sits permanently `.closed` for a session PAI never launched (`discovered`) since
+    /// there is no process to poll, so it reads `presenceState` instead — the only field that
+    /// can tell such a session apart from one that is genuinely gone. Scoped to exactly that
+    /// case: a drivable session, and a non-discovered grey session, both still come from `state`
+    /// alone, unchanged.
     public static func dotState(for session: Session) -> SessionDotState {
-        if isGrey(session) { return .grey }
+        if isGrey(session) {
+            if session.discovered == true { return dotState(forPresence: session.presenceState) }
+            return .grey
+        }
         if let state = session.state { return dotState(for: state) }
         return dotState(for: session.status)
+    }
+
+    /// `.working` and `.idle` render identically (green, no pulse) — `isWorking` is what swaps
+    /// the dot for a spinner, exactly as it does for a PAI-launched session.
+    private static func dotState(forPresence presence: SessionPresenceState?) -> SessionDotState {
+        switch presence {
+        case .working, .idle: return .ready
+        case .closed, .unrecognized, nil: return .grey
+        }
     }
 
     public static func dotState(for state: SessionState) -> SessionDotState {
@@ -66,10 +84,14 @@ public enum SessionListDomain {
     /// True while Claude is actively mid-turn on an otherwise-`ready` session. Deliberately gated
     /// on `state == .ready` rather than `working` alone: the agent's own `worker_status` does not
     /// self-clear, so trusting it outside a session already known to be up would spin forever on
-    /// a stale value. Not read by the list row itself — the report that mapped this screen flags
-    /// it as worth having for the chat header, which reads through the same `Session`.
+    /// a stale value.
+    ///
+    /// A discovered session's `state` never reaches `.ready` at all (see `dotState(for:)`), so it
+    /// reads `presenceState` instead — the same underlying signals, carried on the one field that
+    /// still updates for a session PAI holds no process for.
     public static func isWorking(_ session: Session) -> Bool {
-        session.state == .ready && session.working == true
+        if session.discovered == true { return session.presenceState == .working }
+        return session.state == .ready && session.working == true
     }
 
     /// Whether PAI has a live process of its own for this session — the only thing that decides

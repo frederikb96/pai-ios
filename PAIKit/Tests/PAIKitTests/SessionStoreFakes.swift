@@ -348,6 +348,7 @@ enum SessionFixture {
         status: SessionStatus = .active,
         state: SessionState? = .ready,
         working: Bool? = nil,
+        presenceState: SessionPresenceState? = nil,
         title: String? = nil,
         initialMessage: String? = nil,
         sessionTokens: Int = 0,
@@ -362,6 +363,7 @@ enum SessionFixture {
         parentSessionId: String? = nil,
         subagentName: String? = nil,
         subagentType: String? = nil,
+        discovered: Bool? = nil,
         activityCounts: ActivityCounts? = nil
     ) -> Session {
         Session(
@@ -371,6 +373,7 @@ enum SessionFixture {
             state: state,
             blocker: nil,
             working: working,
+            presenceState: presenceState,
             title: title,
             titleLocked: nil,
             initialMessage: initialMessage,
@@ -390,7 +393,7 @@ enum SessionFixture {
             subagentType: subagentType,
             subagentDescription: nil,
             remoteControl: nil,
-            discovered: nil,
+            discovered: discovered,
             projectId: nil,
             phaseId: nil,
             projectName: projectName,
