@@ -73,6 +73,23 @@ final class ArcTimelineTests: XCTestCase {
         XCTAssertEqual(segment.looseRows.map(\.id), [3])
     }
 
+    /// `done` and `cancelled` are counted separately, mirroring the backend's own split — a
+    /// cancelled row must never be folded into `done` the way `arc_rules.RESOLVED` (`{D, X}`)
+    /// tempts a client to recompute it.
+    func test_blockCounts_keepDoneAndCancelledSeparate() {
+        let leader = row(id: 1, o: 1, k: .leader, b: 1)
+        let pending = row(id: 2, s: .pending, o: 2, b: 1)
+        let done = row(id: 3, s: .done, o: 3, b: 1)
+        let cancelled = row(id: 4, s: .cancelled, o: 4, b: 1)
+
+        let timeline = ArcTimelineBuilder.build(rows: [leader, pending, done, cancelled], busyAgents: [])
+
+        let block = timeline.segments[0].blocks[0]
+        XCTAssertEqual(block.done, 1)
+        XCTAssertEqual(block.cancelled, 1)
+        XCTAssertEqual(block.total, 3)
+    }
+
     /// Within a block, member rows sort by `(o, id)` — the tie-break matters whenever two rows
     /// share an `o` written in the same payload.
     func test_blockMembers_sortByOrderThenId() {
@@ -83,6 +100,18 @@ final class ArcTimelineTests: XCTestCase {
         let timeline = ArcTimelineBuilder.build(rows: [leader, second, firstTie], busyAgents: [])
 
         XCTAssertEqual(timeline.segments[0].blocks[0].rows.map(\.id), [3, 5])
+    }
+
+    /// Blocks within a segment sort by the leader's own `o`, not by block id — the only ordering
+    /// axis the contract has. Block ids deliberately run the opposite way from their leaders' `o`
+    /// here, so a sort that (wrongly) fell back to block id would produce the reverse order.
+    func test_blocksInASegment_sortByLeadersOrderNotBlockID() {
+        let earlyLeader = row(id: 1, o: 1, k: .leader, b: 100)
+        let lateLeader = row(id: 2, o: 9, k: .leader, b: 1)
+
+        let timeline = ArcTimelineBuilder.build(rows: [earlyLeader, lateLeader], busyAgents: [])
+
+        XCTAssertEqual(timeline.segments[0].blocks.map(\.id), [100, 1])
     }
 
     // MARK: - Badge state

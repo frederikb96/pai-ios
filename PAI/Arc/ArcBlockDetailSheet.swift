@@ -56,8 +56,7 @@ struct ArcBlockDetailSheet: View {
     }
 
     private func agentSummary(_ agent: ArcLeaderAgent) -> String {
-        [agent.name, agent.model, agent.type].compactMap { $0 }.first.map { "\($0)" }
-            ?? agent.type
+        agent.name ?? agent.model ?? agent.type ?? "Agent"
     }
 }
 
@@ -98,7 +97,9 @@ struct ArcRowDetailSheet: View {
     }
 }
 
-/// One row inside a block detail sheet — status dot, goal text, tap opens the row's own detail.
+/// One row inside a block detail sheet — status glyph, goal text, tap opens the row's own detail.
+/// Distinguishes all five statuses rather than collapsing to done/not-done: a cancelled row
+/// looks nothing like a pending one, even though neither is "done".
 private struct ArcRowSummaryRow: View {
     let row: ArcRow
 
@@ -109,17 +110,38 @@ private struct ArcRowSummaryRow: View {
             isPresentingDetail = true
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: row.s == .done ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(row.s == .done ? PaiPalette.green500 : PaiPalette.Semantic.textFaint)
+                Image(systemName: statusIcon)
+                    .foregroundStyle(statusColor)
                 Text(row.i ?? "Row \(row.id)")
                     .font(PaiTypography.body.font)
                     .foregroundStyle(PaiPalette.Semantic.textPrimary)
+                    .strikethrough(row.s == .done || row.s == .cancelled)
                     .lineLimit(2)
             }
         }
         .buttonStyle(.plain)
         .sheet(isPresented: $isPresentingDetail) {
             ArcRowDetailSheet(title: "Row", row: row)
+        }
+    }
+
+    private var statusIcon: String {
+        switch row.s {
+        case .pending, nil, .unrecognized: return "circle"
+        case .inProgress: return "gearshape.2.fill"
+        case .verify: return "checkmark.seal"
+        case .done: return "checkmark.circle.fill"
+        case .cancelled: return "xmark.circle"
+        }
+    }
+
+    private var statusColor: Color {
+        switch row.s {
+        case .pending, nil, .unrecognized: return PaiPalette.Semantic.textFaint
+        case .inProgress: return PaiPalette.Semantic.accentText
+        case .verify: return PaiPalette.Semantic.warningText
+        case .done: return PaiPalette.green500
+        case .cancelled: return PaiPalette.Semantic.textFaint
         }
     }
 }
