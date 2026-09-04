@@ -232,6 +232,21 @@ public enum MarkdownParser {
     private static let bareUrlPattern = try! NSRegularExpression(
         pattern: #"https?://\S+|(?<![\w.])www\.\S+"#)
 
+    /// GFM's "extended email autolink" grammar, likewise confirmed against `remark-gfm`'s own
+    /// rendering: a local part of alphanumerics plus `+_.-`, an `@`, and a domain of at least two
+    /// dot-separated labels of alphanumerics and internal hyphens. No separate trailing-punctuation
+    /// pass is needed the way the URL branch needs one — the character classes below simply do not
+    /// contain `.`/`,`/`!`/`)` etc. at a position that would trail the match, so GFM's domain-only
+    /// exception ("a period is part of the address only when another label follows it") falls out
+    /// of the grammar for free. Not chasing GFM's own further-out quirks here (a domain ending in a
+    /// digit, or a `.` immediately followed by `-`/`_`, are treated inconsistently even between
+    /// cmark-gfm's own reference implementation and its stated rule) — those are exactly the kind
+    /// of contrived case the URL branch's own trailing-punctuation set also declines to chase.
+    private static let emailPattern = try! NSRegularExpression(
+        pattern:
+            #"[A-Za-z0-9+_.-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+"#
+    )
+
     /// GFM's own trimmed trailing-punctuation set — deliberately not the broader "anything that
     /// looks like sentence punctuation" a hand-rolled guess might reach for (no quotes, no square
     /// or curly brackets): matching the spec exactly is what lets iOS and the web agree on a link
@@ -264,33 +279,59 @@ public enum MarkdownParser {
         return range
     }
 
+    private enum AutolinkKind {
+        case url
+        case email
+    }
+
     private static func autolinkedRuns(in text: String, style: InlineStyle) -> [InlineRun] {
-        let matches = bareUrlPattern.matches(in: text, range: NSRange(text.startIndex..., in: text))
-        guard !matches.isEmpty else { return [InlineRun(text: text, style: style)] }
+        let fullRange = NSRange(text.startIndex..., in: text)
+        var candidates: [(range: Range<String.Index>, kind: AutolinkKind)] = []
+        for match in bareUrlPattern.matches(in: text, range: fullRange) {
+            guard let range = Range(match.range, in: text) else { continue }
+            candidates.append((range, .url))
+        }
+        for match in emailPattern.matches(in: text, range: fullRange) {
+            guard let range = Range(match.range, in: text) else { continue }
+            // A URL already covering this span wins — the "user@example.com" inside
+            // "https://user@example.com" is not a second, nested autolink.
+            guard !candidates.contains(where: { $0.range.overlaps(range) }) else { continue }
+            candidates.append((range, .email))
+        }
+        guard !candidates.isEmpty else { return [InlineRun(text: text, style: style)] }
+        candidates.sort { $0.range.lowerBound < $1.range.lowerBound }
 
         var runs: [InlineRun] = []
         var cursor = text.startIndex
-        for match in matches {
-            guard let matchRange = Range(match.range, in: text) else { continue }
+        for candidate in candidates {
+            let matchRange = candidate.range
             if cursor < matchRange.lowerBound {
                 runs.append(InlineRun(text: String(text[cursor..<matchRange.lowerBound]), style: style))
             }
 
-            let urlRange = trimTrailingPunctuation(from: matchRange, in: text)
+            switch candidate.kind {
+            case .email:
+                let visible = String(text[matchRange])
+                runs.append(InlineRun(text: visible, style: style, destination: "mailto:" + visible))
 
-            if urlRange.isEmpty {
-                // Trimmed away entirely — every character was punctuation, so there was never a
-                // real URL here (a bare "https://" with nothing after it, say). Shown as plain
-                // text rather than as a link to nowhere.
-                runs.append(InlineRun(text: String(text[matchRange]), style: style))
-            } else {
-                let visible = String(text[urlRange])
-                let destination =
-                    visible.hasPrefix("http://") || visible.hasPrefix("https://") ? visible : "http://" + visible
-                runs.append(InlineRun(text: visible, style: style, destination: destination))
-                if urlRange.upperBound < matchRange.upperBound {
-                    runs.append(
-                        InlineRun(text: String(text[urlRange.upperBound..<matchRange.upperBound]), style: style))
+            case .url:
+                let urlRange = trimTrailingPunctuation(from: matchRange, in: text)
+
+                if urlRange.isEmpty {
+                    // Trimmed away entirely — every character was punctuation, so there was never
+                    // a real URL here (a bare "https://" with nothing after it, say). Shown as
+                    // plain text rather than as a link to nowhere.
+                    runs.append(InlineRun(text: String(text[matchRange]), style: style))
+                } else {
+                    let visible = String(text[urlRange])
+                    let destination =
+                        visible.hasPrefix("http://") || visible.hasPrefix("https://")
+                        ? visible : "http://" + visible
+                    runs.append(InlineRun(text: visible, style: style, destination: destination))
+                    if urlRange.upperBound < matchRange.upperBound {
+                        runs.append(
+                            InlineRun(text: String(text[urlRange.upperBound..<matchRange.upperBound]), style: style))
+                    }
                 }
             }
             cursor = matchRange.upperBound
