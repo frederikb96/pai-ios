@@ -203,6 +203,9 @@ public struct Message: Codable, Sendable, Equatable, Identifiable {
     public let origin: String?
     /// The rest of the marker's attributes — `from`, `session`, `group`, `sent`, …
     public let originMeta: [String: String]?
+    /// `pai-notify:<uuid>` on the tool_result row carrying a notification's reply, nil elsewhere
+    /// (and absent on every row ingested before this field existed).
+    public let notificationMarker: String?
     public let createdAt: String?
 
     enum CodingKeys: String, CodingKey {
@@ -217,6 +220,7 @@ public struct Message: Codable, Sendable, Equatable, Identifiable {
         case tokens
         case origin
         case originMeta = "origin_meta"
+        case notificationMarker = "notification_marker"
         case createdAt = "created_at"
     }
 
@@ -235,6 +239,7 @@ public struct Message: Codable, Sendable, Equatable, Identifiable {
         tokens: TokenUsage?,
         origin: String?,
         originMeta: [String: String]?,
+        notificationMarker: String? = nil,
         createdAt: String?
     ) {
         self.id = id
@@ -251,6 +256,7 @@ public struct Message: Codable, Sendable, Equatable, Identifiable {
         self.tokens = tokens
         self.origin = origin
         self.originMeta = originMeta
+        self.notificationMarker = notificationMarker
         self.createdAt = createdAt
     }
 }
