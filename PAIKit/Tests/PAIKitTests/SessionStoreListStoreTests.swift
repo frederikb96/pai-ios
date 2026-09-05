@@ -683,6 +683,24 @@ final class SessionStoreListStoreTests: XCTestCase {
         XCTAssertEqual(store.syncedSessions.first?.presenceState, .working)
     }
 
+    /// The same trap as the presence-state test above, for the field a scheduled-session filter
+    /// depends on: a task link established at launch must survive every live-status update, not
+    /// just the first render.
+    func testApplyLiveStatusCarriesTaskIdThrough() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1", state: .ready, taskId: "task-1")], nextCursor: nil))
+        }
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        store.applyLiveStatus(
+            sessionId: "s1", state: .ready, blocker: nil, working: true, presenceState: nil, activityCounts: nil
+        )
+
+        XCTAssertEqual(store.syncedSessions.first?.taskId, "task-1")
+    }
+
     func testApplyLiveStatusIsANoOpForASessionNotInAnyLoadedSource() async {
         let api = FakeSessionListApi()
         let store = makeStore(api: api)

@@ -7,12 +7,20 @@ import SwiftUI
 /// every browsable path is a `/home/frederik/...` path that exists on both machines and means a
 /// different tree on each, so browsing the wrong one silently points a session at the wrong
 /// checkout. `agent` is threaded in from the caller rather than read from anywhere shared.
+///
+/// Below the favourites it also lists whatever `environments` names — every session type beyond
+/// the top-level home/fast pair (`CreateSessionStore.environmentSessionTypes`), per Freddy's own
+/// wording: tapping Custom shows the directory favourites first, then a section for "other custom
+/// environments where I can click on." Picking one is not a directory choice at all, so it routes
+/// through `onSelectEnvironment` rather than `onSelect`.
 struct DirectoryBrowserView: View {
     @Environment(\.dismiss) private var dismiss
 
     let agent: String?
     let api: PaiApiClient?
+    var environments: [SessionType] = []
     let onSelect: (String) -> Void
+    var onSelectEnvironment: (String) -> Void = { _ in }
 
     @State private var store: DirectoryBrowserStore?
 
@@ -77,6 +85,24 @@ struct DirectoryBrowserView: View {
                                         .foregroundStyle(PaiPalette.amber500)
                                 }
                             }
+                        }
+                    }
+                }
+
+                if !environments.isEmpty {
+                    Section("Environments") {
+                        ForEach(environments) { type in
+                            Button {
+                                onSelectEnvironment(type.id)
+                                dismiss()
+                            } label: {
+                                Label {
+                                    Text(type.name)
+                                } icon: {
+                                    Text(type.icon)
+                                }
+                            }
+                            .accessibilityIdentifier("directory-browser-environment-\(type.id)")
                         }
                     }
                 }

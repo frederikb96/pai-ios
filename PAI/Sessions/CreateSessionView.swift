@@ -96,6 +96,7 @@ struct CreateSessionView: View {
             } else if let sessionType = persisted.sessionType {
                 store.selectSessionType(sessionType)
             }
+            store.selectModel(persisted.model)
             // The point of this screen is the text field — true whether it was reached by tapping
             // "+" or by a home-screen shortcut built to land here ready to type.
             isComposerFocused = true
@@ -129,6 +130,10 @@ struct CreateSessionView: View {
                             workingDirRow(dir, createSession)
                         }
 
+                        if !createSession.availableSessionTypes.isEmpty {
+                            modelPicker(createSession)
+                        }
+
                         if let errorMessage {
                             Label(errorMessage, systemImage: "exclamationmark.circle.fill")
                                 .font(PaiTypography.caption.font)
@@ -146,10 +151,18 @@ struct CreateSessionView: View {
             }
             .paiScreenBackground()
             .sheet(isPresented: $isPresentingDirectoryBrowser) {
-                DirectoryBrowserView(agent: createSession.selectedMachine, api: environment.connection?.apiClient) {
-                    path in
+                DirectoryBrowserView(
+                    agent: createSession.selectedMachine, api: environment.connection?.apiClient,
+                    environments: createSession.environmentSessionTypes
+                ) { path in
                     createSession.selectWorkingDir(path)
                     drafts.selectWorkingDir(path)
+                } onSelectEnvironment: { typeID in
+                    createSession.selectWorkingDir(nil)
+                    drafts.selectWorkingDir(nil)
+                    createSession.selectSessionType(typeID)
+                    drafts.selectSessionType(typeID)
+                    isComposerFocused = true
                 }
             }
             .sheet(isPresented: $showingPhotoPicker) {
@@ -229,9 +242,12 @@ struct CreateSessionView: View {
 
     // MARK: - Session type picker
 
+    /// Only the top-level pair (home/fast) plus Custom — everything else a machine offers lives
+    /// inside the Custom directory browser instead, below its favourites
+    /// (`CreateSessionStore.primarySessionTypeIds`'s doc comment).
     private func sessionTypePicker(_ createSession: CreateSessionStore) -> some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 8)], spacing: 8) {
-            ForEach(createSession.availableSessionTypes) { type in
+            ForEach(createSession.primarySessionTypes) { type in
                 SessionTypeCard(type: type, isSelected: createSession.selectedSessionTypeId == type.id) {
                     createSession.selectSessionType(type.id)
                     drafts.selectSessionType(type.id)
@@ -242,10 +258,54 @@ struct CreateSessionView: View {
             SessionTypeCard(
                 type: SessionType(id: "custom", name: "Custom", icon: "📁"),
                 isSelected: createSession.selectedSessionTypeId == "custom"
+                    || createSession.environmentSessionTypes.contains { $0.id == createSession.selectedSessionTypeId }
             ) {
                 isPresentingDirectoryBrowser = true
             }
             .accessibilityIdentifier("session-type-custom")
+        }
+    }
+
+    // MARK: - Model picker
+
+    /// Mirrors the web's `ModelPicker.tsx`: a row of aliases, disabled (with the same reason
+    /// shown beneath it) whenever `fast` is selected, since that sandbox always hardcodes its
+    /// own model.
+    private func modelPicker(_ createSession: CreateSessionStore) -> some View {
+        let disabled = createSession.selectedSessionTypeId == CreateSessionStore.preselectedSessionTypeId
+        return VStack(spacing: 4) {
+            HStack(spacing: 8) {
+                ForEach(CreateSessionStore.modelOptions, id: \.label) { option in
+                    let isSelected = createSession.selectedModel == option.id
+                    Button {
+                        createSession.selectModel(option.id)
+                        drafts.selectModel(option.id)
+                        isComposerFocused = true
+                    } label: {
+                        Text(option.label)
+                            .font(PaiTypography.captionEmphasized.font)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                isSelected ? PaiPalette.Semantic.accentBackground : PaiPalette.Semantic.raisedSurface,
+                                in: Capsule()
+                            )
+                            .foregroundStyle(
+                                isSelected ? PaiPalette.Semantic.accentText : PaiPalette.Semantic.textPrimary
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(disabled)
+                    .opacity(disabled ? 0.5 : 1)
+                    .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+                    .accessibilityIdentifier("create-session-model-\(option.label.lowercased())")
+                }
+            }
+            if disabled {
+                Text("Fast sessions always run Sonnet.")
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Semantic.textMuted)
+            }
         }
     }
 

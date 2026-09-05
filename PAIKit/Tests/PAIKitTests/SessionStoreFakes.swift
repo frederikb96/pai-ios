@@ -372,6 +372,7 @@ enum SessionFixture {
         subagentName: String? = nil,
         subagentType: String? = nil,
         discovered: Bool? = nil,
+        taskId: String? = nil,
         activityCounts: ActivityCounts? = nil
     ) -> Session {
         Session(
@@ -405,6 +406,7 @@ enum SessionFixture {
             projectId: nil,
             phaseId: nil,
             projectName: projectName,
+            taskId: taskId,
             activityCounts: activityCounts
         )
     }

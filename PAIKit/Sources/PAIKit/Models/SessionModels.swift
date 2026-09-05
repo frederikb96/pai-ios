@@ -452,7 +452,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             readPositionMessageId: readPositionMessageId, readPositionOffsetPx: readPositionOffsetPx,
             readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
             sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
-            projectId: projectId, phaseId: phaseId, projectName: projectName, activityCounts: activityCounts
+            projectId: projectId, phaseId: phaseId, projectName: projectName, taskId: taskId,
+            activityCounts: activityCounts
         )
     }
 }
