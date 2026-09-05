@@ -20,6 +20,7 @@ struct SessionActionsSheet: View {
 
     @State private var actions: SessionActionsStore?
     @State private var path: [ActionsRoute] = []
+    @State private var arcSpecTarget: ArcSpecResolution?
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -49,6 +50,22 @@ struct SessionActionsSheet: View {
                     } onOpenSubagents: {
                         dismiss()
                         environment.router.push(.subagents(parentID: sessionId))
+                    } onOpenSpec: {
+                        Task {
+                            // A single bound spec is already pushed by the time this returns
+                            // `nil` — matching every other entry point's own "push before
+                            // dismissing" rule (`CreateSessionView`'s doc comment on the same
+                            // trap). Only the ambiguous/empty/failed cases need this sheet to
+                            // stay open a moment longer, for the picker below.
+                            if let resolution = await resolveArcSpec(
+                                claudeSessionID: actions.session?.claudeSessionId,
+                                api: environment.connection?.apiClient, router: environment.router)
+                            {
+                                arcSpecTarget = resolution
+                            } else {
+                                dismiss()
+                            }
+                        }
                     }
                 } else {
                     ProgressView()
@@ -72,6 +89,17 @@ struct SessionActionsSheet: View {
             actions = SessionActionsStore(sessionId: sessionId, sessionList: sessionList, api: client)
         }
         .presentationDetents([.medium, .large])
+        // A picker chosen here also closes THIS sheet — the web's own menu closes itself before
+        // routing to the spec (`SessionActionsMenu.tsx`'s `openArcForSession` call), and leaving
+        // it open would strand it on top of wherever the push just landed. Built inline rather
+        // than through the shared `arcSpecPicker(_:router:)` helper the list and transcript swipe
+        // actions use, since only this entry point also needs to dismiss its own sheet.
+        .sheet(item: $arcSpecTarget) { resolution in
+            ArcSpecPickerSheet(resolution: resolution) { specUuid in
+                environment.router.push(.arcSpec(specUuid: specUuid))
+                dismiss()
+            }
+        }
     }
 
     @ViewBuilder
@@ -94,6 +122,8 @@ private enum ActionsRoute: Hashable {
 // MARK: - Root list
 
 private struct RootActionsList: View {
+    @Environment(AppEnvironment.self) private var environment
+
     let actions: SessionActionsStore
     let isOwner: Bool
     @Binding var path: [ActionsRoute]
@@ -101,8 +131,10 @@ private struct RootActionsList: View {
     let onClose: () -> Void
     let onCloseFailed: () -> Void
     let onOpenSubagents: () -> Void
+    let onOpenSpec: () -> Void
 
     @State private var copiedConversationId = false
+    @State private var copiedLink = false
     @State private var confirmingDelete = false
 
     var body: some View {
@@ -124,6 +156,14 @@ private struct RootActionsList: View {
                     }
                 }
 
+                // Unlike the web, which hides this until a fetch confirms a bound spec exists,
+                // this always shows and resolves on tap — the same "just ask, then say so if
+                // there is nothing" shape the list's own swipe action and the transcript's edge
+                // swipe both already use for this exact question.
+                Button(action: onOpenSpec) {
+                    Label("Spec", systemImage: "shippingbox")
+                }
+
                 if let url = SessionListDomain.claudeCodeUrl(cseId: session.cseId) {
                     Link(destination: url) {
                         Label("Open in Claude Code", systemImage: "arrow.up.forward.app")
@@ -142,6 +182,17 @@ private struct RootActionsList: View {
                         Label(
                             "Copy conversation id", systemImage: copiedConversationId ? "checkmark" : "doc.on.doc")
                     }
+                }
+
+                Button {
+                    UIPasteboard.general.string = "\(environment.backendURL)/session/\(actions.sessionId)"
+                    copiedLink = true
+                    Task {
+                        try? await Task.sleep(for: .seconds(1.5))
+                        copiedLink = false
+                    }
+                } label: {
+                    Label("Copy link to this session", systemImage: copiedLink ? "checkmark" : "link")
                 }
 
                 Button {
