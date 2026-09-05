@@ -59,17 +59,21 @@ private final class FakeDraftsFetching: DraftsFetching, @unchecked Sendable {
         return remoteDrafts
     }
 
-    func putDraft(key: String, text: String, sessionType: String?, workingDir: String?) async throws -> PutDraftResult {
+    func putDraft(
+        key: String, text: String, sessionType: String?, workingDir: String?, model: String?
+    ) async throws -> PutDraftResult {
         record("putDraft:start:\(key)")
         if let putGate {
             await putGate.wait()
         }
         record("putDraft:done:\(key)")
-        if text.isEmpty && sessionType == nil && workingDir == nil {
+        if text.isEmpty && sessionType == nil && workingDir == nil && model == nil {
             return .deleted(key: key)
         }
         return .saved(
-            Draft(key: key, text: text, sessionType: sessionType, workingDir: workingDir, updatedAt: "server-\(text)")
+            Draft(
+                key: key, text: text, sessionType: sessionType, workingDir: workingDir, model: model,
+                updatedAt: "server-\(text)")
         )
     }
 
@@ -129,6 +133,18 @@ final class DraftStoreTests: XCTestCase {
         let entry = store.draft(for: DraftKey.newSession)
         XCTAssertNil(entry.workingDir)
         XCTAssertNil(entry.sessionType, "clearing the directory should have cleared the derived session type too")
+    }
+
+    /// `selectModel` is independent of the session-type/working-dir coupling above — picking a
+    /// model must not disturb either.
+    func testSelectingAModelDoesNotClobberAnAlreadyChosenSessionType() async {
+        let store = DraftStore(api: FakeDraftsFetching(), scheduler: InstantDraftScheduler())
+        store.selectSessionType("fast")
+        store.selectModel("opus")
+
+        let entry = store.draft(for: DraftKey.newSession)
+        XCTAssertEqual(entry.sessionType, "fast")
+        XCTAssertEqual(entry.model, "opus")
     }
 
     func testClearDraftRemovesTheLocalEntryImmediately() async {

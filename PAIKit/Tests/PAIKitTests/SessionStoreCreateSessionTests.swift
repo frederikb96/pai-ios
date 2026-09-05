@@ -130,6 +130,24 @@ final class SessionStoreCreateSessionTests: XCTestCase {
         XCTAssertEqual(store.selectedSessionTypeId, "fast")
     }
 
+    // MARK: - primary vs. environment session types
+
+    /// Freddy's own wording: the top-level picker keeps only home/fast; everything else a
+    /// machine offers surfaces inside the Custom directory browser instead.
+    func testPrimaryTypesAreOnlyHomeAndFastEverythingElseIsAnEnvironment() async {
+        let machineApi = FakeMachineDirectoryApi()
+        await machineApi.setResult(
+            .success([machine(slug: "vm", types: [type("home"), type("fast"), type("websearch")])]))
+        let machines = MachineStore(api: machineApi)
+        await machines.refresh()
+
+        let store = CreateSessionStore(machines: machines, api: FakeCreateSessionApi())
+        await store.start()
+
+        XCTAssertEqual(store.primarySessionTypes.map(\.id), ["home", "fast"])
+        XCTAssertEqual(store.environmentSessionTypes.map(\.id), ["websearch"])
+    }
+
     // MARK: - reset
 
     func testResetReturnsToDefaultMachineWithNoTypeOrDirectory() {
@@ -195,6 +213,27 @@ final class SessionStoreCreateSessionTests: XCTestCase {
         XCTAssertEqual(message, "Maximum concurrent sessions on 'vm' (50) reached.")
         // The screen stays put on failure — nothing about the in-progress choice is cleared.
         XCTAssertEqual(store.workingDir, "/home/frederik/pai-cloud")
+    }
+
+    func testCreateSendsTheSelectedModel() async {
+        let api = FakeCreateSessionApi()
+        let store = CreateSessionStore(machines: MachineStore(api: FakeMachineDirectoryApi()), api: api)
+        store.selectModel("opus")
+
+        _ = await store.create(message: "hello")
+
+        let calls = await api.postMessageCalls
+        XCTAssertEqual(calls[0].model, "opus")
+    }
+
+    func testCreateOmitsTheModelWhenNoneWasChosen() async {
+        let api = FakeCreateSessionApi()
+        let store = CreateSessionStore(machines: MachineStore(api: FakeMachineDirectoryApi()), api: api)
+
+        _ = await store.create(message: "hello")
+
+        let calls = await api.postMessageCalls
+        XCTAssertNil(calls[0].model)
     }
 
     func testIsCreatingIsTrueOnlyWhileTheRequestIsInFlight() async {

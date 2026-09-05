@@ -6,7 +6,7 @@ public protocol CreateSessionApiClient: Sendable {
     func getSessionTypes() async throws -> [SessionType]
     func postMessage(
         sessionId: String?, message: String, files: [PaiFileUpload], sessionType: String?, workingDir: String?,
-        agent: String?
+        agent: String?, model: String?
     ) async throws -> PostMessageResponse
 }
 
@@ -37,11 +37,27 @@ public final class CreateSessionStore {
     /// "Fast" selected while the request that would actually fire launches "Home".
     public static let preselectedSessionTypeId = "fast"
 
+    /// The types the top-level picker shows — Freddy's own wording: "the top-level type row
+    /// keeps only home / fast / custom." Everything else a machine offers (`websearch`, and any
+    /// environment added after it) surfaces inside the Custom directory browser instead, below
+    /// its favourites, matching the web's identical `SessionTypePicker` change. A client-only
+    /// distinction, the same way `preselectedSessionTypeId` above is: the wire carries no
+    /// "primary" flag on a `SessionType`.
+    public static let primarySessionTypeIds: Set<String> = ["home", CreateSessionStore.preselectedSessionTypeId]
+
+    /// `claude --model` aliases the picker offers, in display order. Mirrors the web's
+    /// `ModelPicker.tsx` `MODEL_OPTIONS` — short aliases only, so there is no id table here to
+    /// fall out of date as Anthropic reassigns what each tier resolves to.
+    public static let modelOptions: [(id: String?, label: String)] = [
+        (nil, "Default"), ("haiku", "Haiku"), ("sonnet", "Sonnet"), ("opus", "Opus"), ("fable", "Fable"),
+    ]
+
     public private(set) var selectedMachine: String
     /// `nil` until preselection or an explicit choice has run — never left displaying a type the
     /// create request would not actually send.
     public private(set) var selectedSessionTypeId: String?
     public private(set) var workingDir: String?
+    public private(set) var selectedModel: String?
     public private(set) var isCreating = false
 
     /// The legacy flat `/api/session-types` list — a fallback for `selectedMachine ==
@@ -66,6 +82,17 @@ public final class CreateSessionStore {
             return machine.sessionTypes
         }
         return selectedMachine == MachineStore.defaultMachineSlug ? globalSessionTypes : []
+    }
+
+    /// The top-level picker's own pills — see `primarySessionTypeIds`'s doc comment.
+    public var primarySessionTypes: [SessionType] {
+        availableSessionTypes.filter { Self.primarySessionTypeIds.contains($0.id) }
+    }
+
+    /// Everything else a machine offers, shown inside the Custom directory browser below its
+    /// favourites rather than at the top level.
+    public var environmentSessionTypes: [SessionType] {
+        availableSessionTypes.filter { !Self.primarySessionTypeIds.contains($0.id) }
     }
 
     /// Resets to a fresh visit's state. The machine choice is deliberately never remembered
@@ -111,6 +138,10 @@ public final class CreateSessionStore {
         selectedSessionTypeId = id
     }
 
+    public func selectModel(_ id: String?) {
+        selectedModel = id
+    }
+
     /// A chosen directory is what makes a session custom, so the two always move together.
     /// `nil` (Cancel, or an explicit Clear) drops back to no type, which immediately re-admits
     /// the preselect rule to choose `fast`/the first type again.
@@ -132,14 +163,17 @@ public final class CreateSessionStore {
         let type = selectedSessionTypeId
         let dir = workingDir
         let machine = selectedMachine
+        let model = selectedModel
         do {
             let result = try await api.postMessage(
-                sessionId: nil, message: message, files: files, sessionType: type, workingDir: dir, agent: machine
+                sessionId: nil, message: message, files: files, sessionType: type, workingDir: dir, agent: machine,
+                model: model
             )
             let now = ISO8601DateFormatter().string(from: Date())
             let optimistic = Session(
                 id: result.sessionId,
                 sessionType: type ?? globalSessionTypes.first?.id ?? "default",
+                model: model,
                 status: .pending,
                 state: .starting,
                 blocker: nil,

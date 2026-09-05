@@ -96,6 +96,13 @@ public final class DraftStore {
         scheduleFlush(DraftKey.newSession)
     }
 
+    public func selectModel(_ id: String?) {
+        var entry = draft(for: DraftKey.newSession)
+        entry.model = id
+        drafts[DraftKey.newSession] = entry
+        scheduleFlush(DraftKey.newSession)
+    }
+
     // MARK: - Clearing
 
     /// Discards a draft, locally and on the server.
@@ -146,7 +153,8 @@ public final class DraftStore {
             guard let self else { return }
             do {
                 let result = try await api.putDraft(
-                    key: key, text: entry.text, sessionType: entry.sessionType, workingDir: entry.workingDir
+                    key: key, text: entry.text, sessionType: entry.sessionType, workingDir: entry.workingDir,
+                    model: entry.model
                 )
                 let updatedAt: String? = {
                     switch result {
@@ -198,7 +206,8 @@ public final class DraftStore {
             }
             if let local = drafts[row.key], local.remoteUpdatedAt == row.updatedAt { continue }
             drafts[row.key] = DraftEntry(
-                text: row.text, sessionType: row.sessionType, workingDir: row.workingDir, remoteUpdatedAt: row.updatedAt
+                text: row.text, sessionType: row.sessionType, workingDir: row.workingDir, model: row.model,
+                remoteUpdatedAt: row.updatedAt
             )
         }
 

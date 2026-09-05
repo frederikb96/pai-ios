@@ -20,7 +20,7 @@ public struct Draft: Codable, Sendable, Equatable, Identifiable {
     public let workingDir: String?
     /// The `claude --model` alias this draft's session will launch with — only meaningful on the
     /// `"new"` draft, alongside `sessionType`/`workingDir`. `nil` lets Claude Code pick the
-    /// plan's own default rather than naming one. The picker that sets this is not built here yet.
+    /// plan's own default rather than naming one.
     public let model: String?
     public let updatedAt: String?
 

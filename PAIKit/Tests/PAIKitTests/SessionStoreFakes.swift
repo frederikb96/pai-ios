@@ -222,7 +222,12 @@ actor FakeSubagentListApi: SubagentListApiClient {
 
 actor FakeCreateSessionApi: CreateSessionApiClient {
     private(set) var postMessageCalls:
-        [(sessionId: String?, message: String, sessionType: String?, workingDir: String?, agent: String?)] = []
+        [
+            (
+                sessionId: String?, message: String, sessionType: String?, workingDir: String?, agent: String?,
+                model: String?
+            )
+        ] = []
     var sessionTypesResult: Result<[SessionType], PaiError> = .success([])
     var postMessageResult: Result<PostMessageResponse, PaiError> = .success(
         PostMessageResponse(sessionId: "new-session-id", messageId: 1)
@@ -237,10 +242,13 @@ actor FakeCreateSessionApi: CreateSessionApiClient {
 
     func postMessage(
         sessionId: String?, message: String, files: [PaiFileUpload], sessionType: String?, workingDir: String?,
-        agent: String?
+        agent: String?, model: String?
     ) async throws -> PostMessageResponse {
         postMessageCalls.append(
-            (sessionId: sessionId, message: message, sessionType: sessionType, workingDir: workingDir, agent: agent)
+            (
+                sessionId: sessionId, message: message, sessionType: sessionType, workingDir: workingDir,
+                agent: agent, model: model
+            )
         )
         switch postMessageResult {
         case let .success(response): return response

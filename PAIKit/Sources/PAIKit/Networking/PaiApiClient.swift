@@ -423,7 +423,8 @@ public struct PaiApiClient: Sendable {
         files: [PaiFileUpload] = [],
         sessionType: String? = nil,
         workingDir: String? = nil,
-        agent: String? = nil
+        agent: String? = nil,
+        model: String? = nil
     ) async throws -> PostMessageResponse {
         let boundary = "PAIKit-\(UUID().uuidString)"
         var body = Data()
@@ -439,6 +440,8 @@ public struct PaiApiClient: Sendable {
         // Which machine a brand new session launches on. Ignored server-side once `sessionId`
         // names an existing one.
         if let agent { Self.appendFormField(&body, boundary: boundary, name: "agent", value: agent) }
+        // Fixed at creation — ignored server-side once `sessionId` names an existing one.
+        if let model { Self.appendFormField(&body, boundary: boundary, name: "model", value: model) }
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 
         return try await send(
@@ -576,22 +579,25 @@ public struct PaiApiClient: Sendable {
         key: String,
         text: String,
         sessionType: String? = nil,
-        workingDir: String? = nil
+        workingDir: String? = nil,
+        model: String? = nil
     ) async throws -> PutDraftResult {
         struct Body: Encodable {
             let text: String
             let sessionType: String?
             let workingDir: String?
+            let model: String?
             enum CodingKeys: String, CodingKey {
                 case text
                 case sessionType = "session_type"
                 case workingDir = "working_dir"
+                case model
             }
         }
         return try await send(
             path: "/api/drafts/\(Self.encodeDraftKey(key))",
             method: "PUT",
-            body: try Self.jsonBody(Body(text: text, sessionType: sessionType, workingDir: workingDir))
+            body: try Self.jsonBody(Body(text: text, sessionType: sessionType, workingDir: workingDir, model: model))
         )
     }
 

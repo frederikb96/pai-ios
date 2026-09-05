@@ -387,6 +387,28 @@ final class PaiApiClientTests: XCTestCase {
         XCTAssertTrue(body.contains("laptop"), body)
     }
 
+    /// `model` only matters on a create, and only when the caller actually named one — an
+    /// unconditional emit would send an empty `model` field on every existing-session send,
+    /// mirroring `agent`'s own rule above.
+    func testPostMessageOmitsModelFieldWhenNotProvided() async throws {
+        stubJSON(#"{"session_id":"s1","message_id":9}"#)
+        let client = try makeClient()
+        _ = try await client.postMessage(sessionId: "s1", message: "hello")
+
+        let body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertFalse(body.contains("name=\"model\""), body)
+    }
+
+    func testPostMessageIncludesModelFieldWhenProvided() async throws {
+        stubJSON(#"{"session_id":"s1","message_id":9}"#)
+        let client = try makeClient()
+        _ = try await client.postMessage(message: "hello", model: "opus")
+
+        let body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains("name=\"model\""), body)
+        XCTAssertTrue(body.contains("opus"), body)
+    }
+
     func testErrorResponseSurfacesServerDetailThroughTheRealDecodePath() async throws {
         stubJSON(#"{"detail":"session not found"}"#, statusCode: 404)
         let client = try makeClient()
