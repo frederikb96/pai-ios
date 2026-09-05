@@ -92,10 +92,16 @@ public enum MessageDisplay {
         case .inline(let text):
             return text
         case .edit(let filePath, let oldString, let newString):
-            var lines = [filePath]
-            if let oldString { lines.append("- \(oldString)") }
-            if let newString { lines.append("+ \(newString)") }
-            return lines.joined(separator: "\n")
+            guard oldString != nil || newString != nil else { return filePath }
+            let diffLines = EditDiff.lines(old: oldString ?? "", new: newString ?? "")
+            let rendered = diffLines.map { line -> String in
+                switch line {
+                case .context(let text): return text
+                case .removed(let text): return "- \(text)"
+                case .added(let text): return "+ \(text)"
+                }
+            }
+            return ([filePath] + rendered).joined(separator: "\n")
         case .write(let filePath, let content):
             return [filePath, content].compactMap { $0 }.joined(separator: "\n")
         case .json(let text):

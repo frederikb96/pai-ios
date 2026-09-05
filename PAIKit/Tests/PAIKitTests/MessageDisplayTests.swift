@@ -51,6 +51,34 @@ final class MessageDisplayTests: XCTestCase {
         XCTAssertEqual(text, "/a/b.txt from line 141")
     }
 
+    // MARK: - Edit display text
+
+    /// The actual regression: a multi-line old/new pair used to glue one `-`/`+` onto the whole
+    /// block, so only the first line of each side ever carried a marker and every continuation
+    /// line rendered as plain text. Every line must carry its own marker now.
+    func testEditDisplayTextMarksEveryLineOfAMultiLineChange() {
+        let text = MessageDisplay.displayText(
+            of: .edit(filePath: "/a.swift", oldString: "one\ntwo", newString: "three\nfour"))
+
+        XCTAssertEqual(text, "/a.swift\n- one\n- two\n+ three\n+ four")
+    }
+
+    /// A line unchanged between old and new must appear once, not duplicated under both `-` and
+    /// `+` — the whole-block gluing did not diff at all, so this line would previously have shown
+    /// up twice.
+    func testEditDisplayTextShowsAnUnchangedLineOnceAsContext() {
+        let text = MessageDisplay.displayText(
+            of: .edit(filePath: "/a.swift", oldString: "keep\nold", newString: "keep\nnew"))
+
+        XCTAssertEqual(text, "/a.swift\nkeep\n- old\n+ new")
+    }
+
+    func testEditDisplayTextWithNeitherStringIsJustTheFilePath() {
+        let text = MessageDisplay.displayText(of: .edit(filePath: "/a.swift", oldString: nil, newString: nil))
+
+        XCTAssertEqual(text, "/a.swift")
+    }
+
     // MARK: - Line-number stripping
 
     /// The scan replaces a regex, so the risk is that it strips more than the prefix. A `→` in

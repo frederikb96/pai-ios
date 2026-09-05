@@ -450,25 +450,82 @@ struct ToolBodyText: View {
         attributed.foregroundColor = PaiPalette.Semantic.textPrimary
 
         if let colorHint {
+            let rawLines = code.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            var lineRanges: [NSRange] = []
             var cursor = 0
-            for substring in code.split(separator: "\n", omittingEmptySubsequences: false) {
-                let line = String(substring)
+            for line in rawLines {
                 let length = line.utf16.count
-                defer { cursor += length + 1 }  // +1 for the "\n" this split consumed between lines
+                let lineRange = NSRange(location: cursor, length: length)
+                lineRanges.append(lineRange)
+                cursor += length + 1  // +1 for the "\n" this split consumed between lines
                 guard length > 0,
-                    let range = TranscriptTextHighlighting.attributedRange(
-                        NSRange(location: cursor, length: length), source: code, in: attributed)
+                    let range = TranscriptTextHighlighting.attributedRange(lineRange, source: code, in: attributed)
                 else { continue }
                 attributed[range].foregroundColor = colorHint.color(forLine: line)
+            }
+
+            if colorHint == .diff {
+                applyWordLevelDiffHighlight(
+                    rawLines: rawLines, lineRanges: lineRanges, code: code, colorHint: colorHint, into: &attributed)
             }
         }
 
         TranscriptTextHighlighting.apply(highlights, to: &attributed, source: code)
         return Text(attributed)
     }
+
+    /// The word-level pass inside a changed line — `EditDiff.changedLinePairs` finds a removed
+    /// line immediately followed by the added line it turned into, and this tints only the
+    /// tokens that actually differ within that pair, on top of the whole-line colouring above.
+    /// Background colour only: it never changes the text or its length, so it can never move a
+    /// row's measured height (`native.md`'s "paint-only" rule for a highlight applied as text
+    /// attributes).
+    private func applyWordLevelDiffHighlight(
+        rawLines: [String], lineRanges: [NSRange], code: String, colorHint: ToolBodyColorHint,
+        into attributed: inout AttributedString
+    ) {
+        // `EditDiff.changedLinePairs` only needs to know which lines are removed/added — the
+        // literal `- `/`+ ` prefix `displayText(of:)` wrote is what carries that here, decoded
+        // back rather than threaded through as a second argument.
+        let diffLines: [EditDiff.Line] = rawLines.map { line in
+            if line.hasPrefix("- ") { return .removed(String(line.dropFirst(2))) }
+            if line.hasPrefix("+ ") { return .added(String(line.dropFirst(2))) }
+            return .context(line)
+        }
+        for pair in EditDiff.changedLinePairs(in: diffLines) {
+            guard case .removed(let removedText) = diffLines[pair.removedIndex],
+                case .added(let addedText) = diffLines[pair.addedIndex]
+            else { continue }
+            let wordDiff = EditDiff.wordDiff(removed: removedText, added: addedText)
+            highlightChangedTokens(
+                wordDiff.removed, prefixedLine: rawLines[pair.removedIndex], lineRange: lineRanges[pair.removedIndex],
+                code: code, colorHint: colorHint, into: &attributed)
+            highlightChangedTokens(
+                wordDiff.added, prefixedLine: rawLines[pair.addedIndex], lineRange: lineRanges[pair.addedIndex],
+                code: code, colorHint: colorHint, into: &attributed)
+        }
+    }
+
+    private func highlightChangedTokens(
+        _ tokens: [EditDiff.WordToken], prefixedLine: String, lineRange: NSRange, code: String,
+        colorHint: ToolBodyColorHint, into attributed: inout AttributedString
+    ) {
+        // Every line `EditDiff.lines` can pair carries exactly a two-character `- `/`+ ` prefix
+        // (`displayText(of:)`'s own construction) ahead of the text `wordDiff` tokenized.
+        var offset = lineRange.location + 2
+        for token in tokens {
+            let length = token.text.utf16.count
+            defer { offset += length }
+            guard token.changed, length > 0,
+                let range = TranscriptTextHighlighting.attributedRange(
+                    NSRange(location: offset, length: length), source: code, in: attributed)
+            else { continue }
+            attributed[range].backgroundColor = colorHint.color(forLine: prefixedLine).opacity(0.28)
+        }
+    }
 }
 
-enum ToolBodyColorHint {
+enum ToolBodyColorHint: Equatable {
     case bashCommand
     case diff
 
