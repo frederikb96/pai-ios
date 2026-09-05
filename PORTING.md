@@ -264,10 +264,36 @@ neither should hit the documented "push while a sheet is mid-dismissal" trap —
 on a device for the brief visual gap between the tap and the spec view appearing, or for whether
 either row's own dismiss animation interacts oddly with a push landing mid-way through it.
 
-### Verify: a live report chip's push-then-dismiss lands cleanly on a real tap — pai-cloud anchor: web/src/apps/arc/ArcDetailSheet.tsx (`ArcReportLink`)
-Needs `PAI/` because: `ArcReportChip` pushes `.arcReport` onto the router and calls `dismiss()`
-right after, the same order `CreateSessionView` documents for a push made while a sheet is
-mid-dismissal. Proven only by the fixture route rendering the report screen in isolation
-(`-PaiFixtureRoute arcReport`) and by `@Environment(\.dismiss)` resolving to the enclosing sheet in
-principle — never by an actual tap on a chip nested inside a live block or unassigned detail
-sheet's own `List`, mid-dismiss animation and all.
+### Verify: the spec block/unassigned pages restore the exact scroll position on Back — pai-cloud anchor: none, iOS-only
+Needs `PAI/` because: a block and the unassigned-rows bundle were rebuilt as pushed pages instead
+of a `.sheet`, per Freddy's own screenshot and proposal — a report tapped from inside used to push
+onto the app's navigation stack while the sheet stayed on top of it, rendering full screen behind
+a sheet that still said Close. `ArcSpecView` now keeps one scroll anchor per open page
+(`detailScrollAnchors`, keyed by `ArcDetailTarget.id`) across the pop, the same identity-anchored
+`.scrollPosition(id:)` mechanism its own segment rows already use — reasoned correct by that
+precedent, never watched: whether scrolling into a long block, opening a report, and coming Back
+actually lands on the same row rather than merely a plausible one.
+
+### Verify: the Edit diff's word-level highlight, once a real device paints it — pai-cloud anchor: web/src/utils/messageDisplay.ts, web/src/components/MessageBubble.tsx
+Needs `PAI/` because: `MessageDisplay.displayText`'s `.edit` case and `EditDiff`'s line/word
+diffing are pure functions, proven on Linux — but `ToolBodyText.applyWordLevelDiffHighlight`
+tints changed tokens with a background colour laid over text already coloured by line, inside a
+code block that scrolls sideways inside the transcript's own vertically-scrolling
+`UICollectionView` (`CodeBlockScrollView`, already flagged elsewhere in this file as an
+unverified nested-scroll shape). Never watched: whether the two colour layers read clearly
+together rather than muddy, whether the tint is legible in both light and dark mode, and whether
+recolouring the same characters twice (line pass, then word pass) costs anything visible on a
+long diff.
+
+### Verify: the Scheduler app, end to end on a device — pai-cloud anchor: web/src/apps/scheduler/
+Needs `PAI/` because: this is a brand-new screen flow (`SchedulerListView`, `TaskEditorView`) with
+no prior Mac run of any kind — every check so far is `parse-swift.sh` (syntax only, stops before
+name resolution) and the Linux-side store tests. Specific things reasoned rather than watched: the
+model choice uses a manual button row rather than a native `Picker` bound to an optional tag,
+deliberately avoiding SwiftUI's own history of mishandling a `nil`-tagged selection, but the
+`Picker`s this screen DOES use for environment, session policy and gate runtime are plain-String/
+non-optional enum tags and unverified for the ordinary reason any `Picker` is; the environment
+field's own directory browser and "other environments" section reuse `DirectoryBrowserView`
+unmodified, so their own risk is only in wiring, not rendering; and the gate script editor is a
+plain `TextEditor` with no syntax highlighting at all, a deliberate scope cut against the web's
+CodeMirror-based one, never confirmed to be an acceptable trade in practice on a phone keyboard.
