@@ -102,6 +102,12 @@ public final class SessionListStore {
     public private(set) var filterQueryText: String = ""
     private var debouncedQuery: String = ""
     public private(set) var machineFilter: String?
+    /// The "Scheduled" chip — sessions the scheduler itself launched, exclusively, wherever they
+    /// happen to run. Mutually exclusive with `machineFilter`, the same way "All" and a machine
+    /// chip already are: filters the synced list (source A) rather than issuing a server query,
+    /// since there is no server-side scheduled filter yet — every session already carries its own
+    /// `taskId` once loaded.
+    public private(set) var scheduledOnly = false
     public private(set) var semanticMode = false
     public var threshold: Double = SessionListStore.defaultSemanticThreshold
 
@@ -148,10 +154,14 @@ public final class SessionListStore {
     /// from `syncedSessions`/`serverFilteredResults` on every read rather than caching it keeps
     /// the source-of-truth arrays as the only state that can go stale — this is always derived.
     public var rows: [SessionListRow] {
-        let base: [Session] =
-            isServerFiltered
-            ? thresholdFilteredServerResults.map(\.session)
-            : syncedSessions
+        let base: [Session]
+        if scheduledOnly {
+            base = syncedSessions.filter { $0.taskId != nil }
+        } else if isServerFiltered {
+            base = thresholdFilteredServerResults.map(\.session)
+        } else {
+            base = syncedSessions
+        }
         // A subagent opened elsewhere lands in the same synced store so a chat view can find it
         // by id — it must never surface as a row of its own here.
         let withoutSubagents = base.filter { $0.kind != .subagent }
@@ -315,6 +325,16 @@ public final class SessionListStore {
     /// A machine chip — `nil` for "All". A discrete choice, so it answers immediately.
     public func setMachineFilter(_ slug: String?) {
         machineFilter = slug
+        scheduledOnly = false
+        refetchServerFiltered()
+    }
+
+    /// The "Scheduled" chip — exclusive with every machine chip, the same way they are exclusive
+    /// with each other. Never issues a request: it re-filters the synced list already in memory.
+    public func setScheduledOnly(_ enabled: Bool) {
+        scheduledOnly = enabled
+        guard enabled else { return }
+        machineFilter = nil
         refetchServerFiltered()
     }
 

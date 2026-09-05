@@ -222,12 +222,10 @@ actor FakeSubagentListApi: SubagentListApiClient {
 
 actor FakeCreateSessionApi: CreateSessionApiClient {
     private(set) var postMessageCalls:
-        [
-            (
-                sessionId: String?, message: String, sessionType: String?, workingDir: String?, agent: String?,
-                model: String?
-            )
-        ] = []
+        [(
+            sessionId: String?, message: String, sessionType: String?, workingDir: String?, agent: String?,
+            model: String?
+        )] = []
     var sessionTypesResult: Result<[SessionType], PaiError> = .success([])
     var postMessageResult: Result<PostMessageResponse, PaiError> = .success(
         PostMessageResponse(sessionId: "new-session-id", messageId: 1)

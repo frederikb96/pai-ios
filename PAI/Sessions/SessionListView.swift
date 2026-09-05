@@ -29,9 +29,7 @@ struct SessionListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if showsMachineChips {
-                machineChips
-            }
+            filterChips
             list
         }
         .paiScreenBackground()
@@ -297,26 +295,37 @@ struct SessionListView: View {
             && !sessions.filterQueryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    // MARK: - Machine chips
+    // MARK: - Filter chips
 
-    /// Only earns its place once there is a choice to make — one machine means no chips at all,
-    /// not a disabled row.
+    /// Per-machine chips only earn their place once there is a choice to make — one machine means
+    /// no per-machine chips, not a disabled row. "Scheduled" is a separate axis (sessions the
+    /// scheduler launched, wherever they run) and always offers a real choice, so the chip row
+    /// itself is never hidden the way the machine-only row used to be.
     private var showsMachineChips: Bool {
         MachineStore.hasMultipleAgents(machines.allMachines)
     }
 
-    private var machineChips: some View {
+    private var filterChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                MachineChip(title: "All", isSelected: sessions.machineFilter == nil) {
+                MachineChip(title: "All", isSelected: sessions.machineFilter == nil && !sessions.scheduledOnly) {
                     sessions.setMachineFilter(nil)
                 }
+                MachineChip(title: "Scheduled", isSelected: sessions.scheduledOnly) {
+                    sessions.setScheduledOnly(!sessions.scheduledOnly)
+                }
+                .accessibilityIdentifier("session-filter-scheduled")
                 // Offline machines stay selectable here, unlike the launch picker: this filters
                 // what to look at, not where to launch, and a grey laptop session is exactly
                 // what a chip here is for finding.
-                ForEach(machines.allMachines) { machine in
-                    MachineChip(title: machine.displayName, isSelected: sessions.machineFilter == machine.slug) {
-                        sessions.setMachineFilter(machine.slug)
+                if showsMachineChips {
+                    ForEach(machines.allMachines) { machine in
+                        MachineChip(
+                            title: machine.displayName,
+                            isSelected: sessions.machineFilter == machine.slug && !sessions.scheduledOnly
+                        ) {
+                            sessions.setMachineFilter(machine.slug)
+                        }
                     }
                 }
             }

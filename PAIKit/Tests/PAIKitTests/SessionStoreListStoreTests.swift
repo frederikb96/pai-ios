@@ -689,7 +689,9 @@ final class SessionStoreListStoreTests: XCTestCase {
     func testApplyLiveStatusCarriesTaskIdThrough() async {
         let api = FakeSessionListApi()
         await api.setGetSessionsResult { _ in
-            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1", state: .ready, taskId: "task-1")], nextCursor: nil))
+            .success(
+                SessionsPage(
+                    sessions: [SessionFixture.make(id: "s1", state: .ready, taskId: "task-1")], nextCursor: nil))
         }
         let store = makeStore(api: api)
         await store.loadInitialSessions()
@@ -699,6 +701,42 @@ final class SessionStoreListStoreTests: XCTestCase {
         )
 
         XCTAssertEqual(store.syncedSessions.first?.taskId, "task-1")
+    }
+
+    // MARK: - scheduledOnly
+
+    /// The "Scheduled" chip shows sessions the scheduler launched EXCLUSIVELY — filtered out of
+    /// the synced list already in memory, never a fresh request.
+    func testScheduledOnlyShowsOnlySessionsCarryingATaskId() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(
+                SessionsPage(
+                    sessions: [
+                        SessionFixture.make(id: "ordinary"),
+                        SessionFixture.make(id: "scheduled", taskId: "task-1"),
+                    ], nextCursor: nil))
+        }
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        store.setScheduledOnly(true)
+
+        XCTAssertEqual(store.rows.map(\.id), ["scheduled"])
+    }
+
+    /// "Scheduled" and a machine chip are exclusive, the same way "All" and a machine chip are —
+    /// selecting one clears the other rather than the two combining.
+    func testScheduledOnlyAndAMachineFilterAreMutuallyExclusive() async {
+        let api = FakeSessionListApi()
+        let store = makeStore(api: api)
+
+        store.setScheduledOnly(true)
+        store.setMachineFilter("vm")
+        XCTAssertFalse(store.scheduledOnly)
+
+        store.setScheduledOnly(true)
+        XCTAssertNil(store.machineFilter)
     }
 
     func testApplyLiveStatusIsANoOpForASessionNotInAnyLoadedSource() async {
