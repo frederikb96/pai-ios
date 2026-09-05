@@ -33,6 +33,11 @@ struct ArcSpecView: View {
     /// `scrollPositions` (segment index), since a segment has no id of its own.
     @State private var topSegmentID: Int?
     @State private var rowScrollAnchors: [Int: ArcCardID] = [:]
+    /// A block or unassigned page's own scroll anchor, kept here rather than on that page itself
+    /// so it survives the page being popped and pushed again — the same reason `rowScrollAnchors`
+    /// above lives here instead of on `ArcFlowSegmentView`. Keyed by `detailTarget.id`, since a
+    /// block and the unassigned bundle both need one and neither is a segment.
+    @State private var detailScrollAnchors: [String: Int] = [:]
 
     /// How often this screen refreshes on its own when no live SSE signal is reaching it —
     /// mirrors `SessionDetailView`'s own usage-poll interval, the closest existing precedent for
@@ -93,14 +98,25 @@ struct ArcSpecView: View {
                 await store?.refreshQuietly()
             }
         }
-        .sheet(item: $detailTarget) { target in
+        // A pushed page, not a sheet — see `ArcBlockDetailView`'s own doc comment for why: a
+        // report chip tapped from a sheet pushed onto this same navigation stack while the sheet
+        // stayed on top of it, landing full-screen behind a sheet that still said Close.
+        .navigationDestination(item: $detailTarget) { target in
             switch target {
             case .block(let block):
-                ArcBlockDetailSheet(block: block, specUuid: specUuid)
+                ArcBlockDetailView(block: block, specUuid: specUuid, topRowID: detailScrollBinding(for: target))
             case .unassigned(let rows):
-                ArcUnassignedDetailSheet(rows: rows, specUuid: specUuid)
+                ArcUnassignedDetailView(
+                    rows: rows, specUuid: specUuid, topRowID: detailScrollBinding(for: target))
             }
         }
+    }
+
+    private func detailScrollBinding(for target: ArcDetailTarget) -> Binding<Int?> {
+        Binding(
+            get: { detailScrollAnchors[target.id] },
+            set: { detailScrollAnchors[target.id] = $0 }
+        )
     }
 
     @ViewBuilder
@@ -211,7 +227,7 @@ struct ArcSpecView: View {
 /// The `.sheet(item:)` target for the block detail sheet — a real block, or the synthetic
 /// bundle of one segment's own unassigned rows. Mirrors `ArcDetailSheet.tsx`'s own
 /// `ArcDetailTarget` union.
-private enum ArcDetailTarget: Identifiable {
+private enum ArcDetailTarget: Identifiable, Hashable {
     case block(ArcTimelineBlock)
     case unassigned([ArcRow])
 
@@ -221,6 +237,12 @@ private enum ArcDetailTarget: Identifiable {
         case .unassigned: return "unassigned"
         }
     }
+
+    /// `.navigationDestination(item:)` requires `Hashable`. Identity by `id` alone, the same
+    /// shape `Route`'s own custom conformance uses — the associated block/rows are what the
+    /// destination is built from, not what makes two targets "the same navigation."
+    static func == (lhs: ArcDetailTarget, rhs: ArcDetailTarget) -> Bool { lhs.id == rhs.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
 /// A horizontal row's own scroll-restoration anchor — a real block by id, or the segment's
@@ -474,7 +496,7 @@ struct ArcBadgeView: View {
 /// The synthetic card for a segment's own loose rows (`k == .regular`, `b == nil`) — a UI-only
 /// bundle, never written to the spec itself, that keeps a segment with a handful of unassigned
 /// rows from growing an unbounded tail of one-off cards beside its real blocks. Sits at the
-/// right of its segment's row; tapping lists the rows it bundles in `ArcUnassignedDetailSheet`.
+/// right of its segment's row; tapping lists the rows it bundles in `ArcUnassignedDetailView`.
 /// Mirrors `ArcUnassignedCard.tsx`.
 private struct ArcUnassignedFlowCard: View {
     let rows: [ArcRow]

@@ -2,7 +2,7 @@ import PAIKit
 import SwiftUI
 
 /// A single report, full page — pushed from a row or block leader's own report chip
-/// (`ArcBlockDetailSheet`'s `ArcReportChip`). Fetches by report uuid alone
+/// (`ArcBlockDetailView`'s `ArcReportChip`). Fetches by report uuid alone
 /// (`GET /api/arc/reports/{uuid}`, which already carries the full content): self-sufficient, so
 /// a navigation path restored after a relaunch needs nothing else about the spec to have loaded
 /// first. Mirrors `ArcReportPage.tsx`; its header's back arrow is this screen's native back
