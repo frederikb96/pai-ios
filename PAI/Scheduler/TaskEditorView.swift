@@ -390,12 +390,12 @@ private struct WebhookControlSection: View {
     let environment: String
     let hasWebhook: Bool
 
-    private var isScoped: Bool { environment == "websearch" }
+    private var isScoped: Bool { environment == "websearch" || environment == "confined" }
 
     var body: some View {
         if !isScoped {
             Text(
-                "Only the web search environment accepts a webhook trigger — an untrusted external payload needs a kernel-confined environment that can also report a result."
+                "Only web search and confined accept a webhook trigger — an untrusted external payload needs an environment that scopes what it can reach."
             )
             .font(PaiTypography.caption.font)
             .foregroundStyle(PaiPalette.Semantic.textFaint)

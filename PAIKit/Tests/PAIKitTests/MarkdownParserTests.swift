@@ -67,10 +67,9 @@ final class MarkdownParserTests: XCTestCase {
     }
 
     /// An HTML comment is the one raw-HTML shape that is never meant to be seen, on any HTML
-    /// consumer — a scheduler-fired prompt sandwiches its standing instructions between a pair
-    /// of them the same way this fixture does. Dropping the comment must not touch the
-    /// paragraph it wraps: that is the contrast that shows the block was recognised and
-    /// removed on purpose, not merely lost along with everything around it.
+    /// consumer. Dropping the comment must not touch the paragraph it wraps: that is the
+    /// contrast that shows the block was recognised and removed on purpose, not merely lost
+    /// along with everything around it.
     func testHTMLCommentBlockIsDroppedButWhatItWrapsSurvives() {
         let source = """
             <!-- marker -->
@@ -81,6 +80,21 @@ final class MarkdownParserTests: XCTestCase {
         XCTAssertFalse(blocks.contains { if case .htmlBlock = $0 { return true } else { return false } },
                         "the comment block rendered as visible source: \(blocks)")
         XCTAssertTrue(blocks.plainText.contains("keep-this-text"), "the wrapped paragraph was lost too: \(blocks)")
+    }
+
+    /// The scheduler's standing-instructions marker is three zero-width Unicode characters
+    /// (U+200B, U+2060, U+200C) rather than markup — invisible by construction, not by any
+    /// renderer's choice, so unlike the HTML-comment case above it must reach `plainText`
+    /// completely unchanged for the backend's own substring detection (`_standing_instructions_
+    /// need_resend`) to keep working. A parser upgrade that started normalising or trimming
+    /// zero-width format characters as whitespace would silently make every fire resend the
+    /// instructions, with nothing in this app's own UI ever showing a symptom.
+    func testZeroWidthSchedulerMarkerSurvivesParsingIntact() {
+        let marker = "\u{200B}\u{2060}\u{200C}"
+        let source = "\(marker)\ninstructions\n\(marker)\n\ntask prompt"
+
+        let text = MarkdownParser.parse(source).plainText
+        XCTAssertEqual(text.components(separatedBy: marker).count - 1, 2, "expected the marker twice, unchanged: \(text.unicodeScalars.map(\.value))")
     }
 
     /// A catch-all for the failure this model is most exposed to: a case added, reordered or
