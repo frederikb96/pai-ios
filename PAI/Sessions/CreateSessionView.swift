@@ -128,6 +128,8 @@ struct CreateSessionView: View {
 
                         if let dir = createSession.workingDir {
                             workingDirRow(dir, createSession)
+                        } else if let sunkType = selectedSunkType(createSession) {
+                            sunkTypeRow(sunkType)
                         }
 
                         if !createSession.availableSessionTypes.isEmpty {
@@ -242,9 +244,9 @@ struct CreateSessionView: View {
 
     // MARK: - Session type picker
 
-    /// Only the top-level pair (home/fast) plus Custom — everything else a machine offers lives
-    /// inside the Custom directory browser instead, below its favourites
-    /// (`CreateSessionStore.primarySessionTypeIds`'s doc comment).
+    /// Only the top-level types (home, fast, and any other ConfigMap-defined type) plus Custom —
+    /// a built-in environment sinks into the Custom directory browser instead, below its
+    /// favourites (`CreateSessionStore.sunkSessionTypeIds`'s doc comment).
     private func sessionTypePicker(_ createSession: CreateSessionStore) -> some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 8)], spacing: 8) {
             ForEach(createSession.primarySessionTypes) { type in
@@ -268,9 +270,9 @@ struct CreateSessionView: View {
 
     // MARK: - Model picker
 
-    /// Mirrors the web's `ModelPicker.tsx`: a row of aliases, disabled (with the same reason
-    /// shown beneath it) whenever `fast` is selected, since that sandbox always hardcodes its
-    /// own model.
+    /// Mirrors the web's shared `ModelSelect.tsx`: a row of aliases, disabled (with the same
+    /// reason shown beneath it) whenever `fast` is selected, since that sandbox always hardcodes
+    /// its own model.
     private func modelPicker(_ createSession: CreateSessionStore) -> some View {
         let disabled = createSession.selectedSessionTypeId == CreateSessionStore.preselectedSessionTypeId
         return VStack(spacing: 4) {
@@ -326,6 +328,25 @@ struct CreateSessionView: View {
             }
             .buttonStyle(.borderless)
             .font(PaiTypography.caption.font)
+        }
+    }
+
+    /// A sunk environment (picked from inside the Custom browser) has no pill of its own — the
+    /// Custom pill reads as selected for it too, and this row is what shows which one, mirroring
+    /// the web's own row for the same case.
+    private func selectedSunkType(_ createSession: CreateSessionStore) -> SessionType? {
+        createSession.environmentSessionTypes.first { $0.id == createSession.selectedSessionTypeId }
+    }
+
+    private func sunkTypeRow(_ type: SessionType) -> some View {
+        HStack {
+            Text("\(type.icon) \(type.name)")
+                .font(PaiTypography.monoLabel.font)
+                .foregroundStyle(PaiPalette.Semantic.textMuted)
+            Spacer()
+            Button("Change") { isPresentingDirectoryBrowser = true }
+                .buttonStyle(.borderless)
+                .font(PaiTypography.caption.font)
         }
     }
 

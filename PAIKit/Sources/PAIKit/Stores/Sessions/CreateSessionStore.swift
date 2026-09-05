@@ -37,16 +37,17 @@ public final class CreateSessionStore {
     /// "Fast" selected while the request that would actually fire launches "Home".
     public static let preselectedSessionTypeId = "fast"
 
-    /// The types the top-level picker shows — Freddy's own wording: "the top-level type row
-    /// keeps only home / fast / custom." Everything else a machine offers (`websearch`, and any
-    /// environment added after it) surfaces inside the Custom directory browser instead, below
-    /// its favourites, matching the web's identical `SessionTypePicker` change. A client-only
-    /// distinction, the same way `preselectedSessionTypeId` above is: the wire carries no
-    /// "primary" flag on a `SessionType`.
-    public static let primarySessionTypeIds: Set<String> = ["home", CreateSessionStore.preselectedSessionTypeId]
+    /// Session types built into the pod rather than the ConfigMap (see
+    /// `backend/src/pai_cloud/config.py`'s `WEBSEARCH_SESSION_TYPE_ID`) sink under Custom rather
+    /// than sitting at the top level next to home and fast — Freddy's own wording: the top-level
+    /// list stays short as environments are added, and Custom's directory browser gets a section
+    /// below Favourites listing these instead. A deny list rather than an allow list, mirroring
+    /// the web's own `sessionTypes.ts` exactly: every ConfigMap-defined type (not just `home`)
+    /// stays at the top level automatically, so adding a second one there needs no change here.
+    public static let sunkSessionTypeIds: Set<String> = ["websearch"]
 
-    /// `claude --model` aliases the picker offers, in display order. Mirrors the web's
-    /// `ModelPicker.tsx` `MODEL_OPTIONS` — short aliases only, so there is no id table here to
+    /// `claude --model` aliases the picker offers, in display order. Mirrors the web's shared
+    /// `ModelSelect.tsx` `MODEL_OPTIONS` — short aliases only, so there is no id table here to
     /// fall out of date as Anthropic reassigns what each tier resolves to.
     public static let modelOptions: [(id: String?, label: String)] = [
         (nil, "Default"), ("haiku", "Haiku"), ("sonnet", "Sonnet"), ("opus", "Opus"), ("fable", "Fable"),
@@ -84,15 +85,15 @@ public final class CreateSessionStore {
         return selectedMachine == MachineStore.defaultMachineSlug ? globalSessionTypes : []
     }
 
-    /// The top-level picker's own pills — see `primarySessionTypeIds`'s doc comment.
+    /// The top-level picker's own pills — see `sunkSessionTypeIds`'s doc comment.
     public var primarySessionTypes: [SessionType] {
-        availableSessionTypes.filter { Self.primarySessionTypeIds.contains($0.id) }
+        availableSessionTypes.filter { !Self.sunkSessionTypeIds.contains($0.id) }
     }
 
     /// Everything else a machine offers, shown inside the Custom directory browser below its
     /// favourites rather than at the top level.
     public var environmentSessionTypes: [SessionType] {
-        availableSessionTypes.filter { !Self.primarySessionTypeIds.contains($0.id) }
+        availableSessionTypes.filter { Self.sunkSessionTypeIds.contains($0.id) }
     }
 
     /// Resets to a fresh visit's state. The machine choice is deliberately never remembered

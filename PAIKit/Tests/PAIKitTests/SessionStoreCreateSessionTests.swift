@@ -148,6 +148,23 @@ final class SessionStoreCreateSessionTests: XCTestCase {
         XCTAssertEqual(store.environmentSessionTypes.map(\.id), ["websearch"])
     }
 
+    /// A deny list, not an allow list — a second ConfigMap-defined type (anything other than the
+    /// one built-in id this sinks) stays at the top level automatically, with no change needed
+    /// here to admit it.
+    func testASecondConfigMapTypeStaysAtTheTopLevel() async {
+        let machineApi = FakeMachineDirectoryApi()
+        await machineApi.setResult(
+            .success([machine(slug: "vm", types: [type("home"), type("work"), type("fast"), type("websearch")])]))
+        let machines = MachineStore(api: machineApi)
+        await machines.refresh()
+
+        let store = CreateSessionStore(machines: machines, api: FakeCreateSessionApi())
+        await store.start()
+
+        XCTAssertEqual(store.primarySessionTypes.map(\.id), ["home", "work", "fast"])
+        XCTAssertEqual(store.environmentSessionTypes.map(\.id), ["websearch"])
+    }
+
     // MARK: - reset
 
     func testResetReturnsToDefaultMachineWithNoTypeOrDirectory() {
