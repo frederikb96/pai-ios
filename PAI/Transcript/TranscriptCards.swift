@@ -477,9 +477,10 @@ struct ToolBodyText: View {
     /// The word-level pass inside a changed line — `EditDiff.changedLinePairs` finds a removed
     /// line immediately followed by the added line it turned into, and this tints only the
     /// tokens that actually differ within that pair, on top of the whole-line colouring above.
-    /// Background colour only: it never changes the text or its length, so it can never move a
-    /// row's measured height (`native.md`'s "paint-only" rule for a highlight applied as text
-    /// attributes).
+    /// Background colour only, applied as a text attribute over the same characters already
+    /// there: it never changes the text or its length, so it can never move a row's measured
+    /// height, which is computed from the string's own line count rather than from how any of
+    /// it is painted.
     private func applyWordLevelDiffHighlight(
         rawLines: [String], lineRanges: [NSRange], code: String, colorHint: ToolBodyColorHint,
         into attributed: inout AttributedString
