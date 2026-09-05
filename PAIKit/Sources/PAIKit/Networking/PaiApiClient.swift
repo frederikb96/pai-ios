@@ -678,6 +678,94 @@ public struct PaiApiClient: Sendable {
         try await send(path: "/api/arc/reports/\(uuid)")
     }
 
+    // MARK: Scheduler
+
+    public func listSchedulerTasks(limit: Int? = nil, offset: Int? = nil) async throws -> SchedulerTaskListResponse {
+        var query: [URLQueryItem] = []
+        if let limit { query.append(URLQueryItem(name: "limit", value: String(limit))) }
+        if let offset { query.append(URLQueryItem(name: "offset", value: String(offset))) }
+        return try await send(path: "/api/scheduler/tasks", query: query)
+    }
+
+    public func getSchedulerTask(taskId: String) async throws -> ScheduledTaskDetail {
+        try await send(path: "/api/scheduler/tasks/\(taskId)")
+    }
+
+    public func createSchedulerTask(fields: TaskWriteFields) async throws -> ScheduledTaskDetail {
+        try await send(path: "/api/scheduler/tasks", method: "POST", body: try Self.jsonBody(fields))
+    }
+
+    public func updateSchedulerTask(taskId: String, fields: TaskWriteFields) async throws -> ScheduledTaskDetail {
+        try await send(path: "/api/scheduler/tasks/\(taskId)", method: "PATCH", body: try Self.jsonBody(fields))
+    }
+
+    public func deleteSchedulerTask(taskId: String) async throws {
+        try await sendDiscardingResponse(path: "/api/scheduler/tasks/\(taskId)", method: "DELETE")
+    }
+
+    /// There is no dedicated enable/disable route — `enabled` is an ordinary writable field on
+    /// the same PATCH every other edit uses.
+    public func setSchedulerTaskEnabled(taskId: String, fields: TaskWriteFields) async throws -> ScheduledTaskDetail {
+        try await updateSchedulerTask(taskId: taskId, fields: fields)
+    }
+
+    /// Runs the task right now, bypassing `enabled` (but not `stopped`) — for exercising a task
+    /// before it is ever armed. The gate script, if any, still runs and can still decline.
+    public func runSchedulerTaskNow(taskId: String) async throws -> TaskRun {
+        try await send(path: "/api/scheduler/tasks/\(taskId)/run-now", method: "POST")
+    }
+
+    /// Closes the task's current session if still open and clears its link — the old conversation
+    /// stays intact and readable, but the next fire starts fresh.
+    public func resetSchedulerTask(taskId: String) async throws -> ScheduledTaskDetail {
+        try await send(path: "/api/scheduler/tasks/\(taskId)/reset", method: "POST")
+    }
+
+    /// Lifts a supervisor's stop — one call clears both the task's refusal to fire and the
+    /// supervision's refusal to let the session resume; there is no way to lift either alone.
+    public func clearSchedulerTaskStop(taskId: String) async throws -> ScheduledTaskDetail {
+        try await send(path: "/api/scheduler/tasks/\(taskId)/clear-stop", method: "POST")
+    }
+
+    public func listSchedulerTaskRuns(
+        taskId: String, limit: Int? = nil, offset: Int? = nil
+    ) async throws -> SchedulerTaskRunsResponse {
+        var query: [URLQueryItem] = []
+        if let limit { query.append(URLQueryItem(name: "limit", value: String(limit))) }
+        if let offset { query.append(URLQueryItem(name: "offset", value: String(offset))) }
+        return try await send(path: "/api/scheduler/tasks/\(taskId)/runs", query: query)
+    }
+
+    /// Runs the gate script once against an already-saved task, sending the editor's current,
+    /// possibly-unsaved source rather than the task's own saved one — what makes writing a gate
+    /// iterative instead of costing a real fire.
+    public func testRunSchedulerGate(
+        taskId: String, gateSource: String, gateRuntime: TaskGateRuntime
+    ) async throws -> SchedulerTestRunResult {
+        struct Body: Encodable {
+            let gateSource: String
+            let gateRuntime: TaskGateRuntime
+            enum CodingKeys: String, CodingKey {
+                case gateSource = "gate_source"
+                case gateRuntime = "gate_runtime"
+            }
+        }
+        return try await send(
+            path: "/api/scheduler/tasks/\(taskId)/test-run", method: "POST",
+            body: try Self.jsonBody(Body(gateSource: gateSource, gateRuntime: gateRuntime))
+        )
+    }
+
+    /// Mints or rotates the task's webhook token — shown once in the response and never again.
+    /// Refused (400) unless the task's own environment is one the backend considers scoped.
+    public func createSchedulerWebhook(taskId: String) async throws -> SchedulerWebhookToken {
+        try await send(path: "/api/scheduler/tasks/\(taskId)/webhook", method: "POST")
+    }
+
+    public func revokeSchedulerWebhook(taskId: String) async throws {
+        try await sendDiscardingResponse(path: "/api/scheduler/tasks/\(taskId)/webhook", method: "DELETE")
+    }
+
     // MARK: Supervision
 
     /// The supervision watching a session, if any — a session-menu button reads this to decide

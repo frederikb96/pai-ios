@@ -83,6 +83,13 @@ public enum Route: Hashable, Sendable {
     /// sheet from `ArcSpecView`'s own header button. `RootView` reproduces that sheet
     /// presentation here for the same reason those three do.
     case arcOverview(specUuid: String)
+    /// PAI's own scheduler — reached from Apps' "Scheduler" row. Carries no identity concern of
+    /// its own, the same reason `.arcSpecList` does not.
+    case schedulerList
+    /// One scheduled task's own form — `nil` for the create flow, an id for editing an existing
+    /// one. Mirrors the web's `SchedulerApp.tsx`, whose three routes (list/new/id) are the same
+    /// shape with `nil` standing in for its `new` segment.
+    case schedulerTask(id: String?)
 
     /// Ignores `session`'s `messageID` — see that case's doc comment. Everything else is a plain
     /// per-case comparison, same as the synthesized version this replaces.
@@ -104,6 +111,8 @@ public enum Route: Hashable, Sendable {
         case (.arcSpecList, .arcSpecList): return true
         case (.arcReport(let a1, let a2), .arcReport(let b1, let b2)): return a1 == b1 && a2 == b2
         case (.arcOverview(let a), .arcOverview(let b)): return a == b
+        case (.schedulerList, .schedulerList): return true
+        case (.schedulerTask(let a), .schedulerTask(let b)): return a == b
         default: return false
         }
     }
@@ -153,6 +162,11 @@ public enum Route: Hashable, Sendable {
         case .arcOverview(let specUuid):
             hasher.combine(15)
             hasher.combine(specUuid)
+        case .schedulerList:
+            hasher.combine(16)
+        case .schedulerTask(let id):
+            hasher.combine(17)
+            hasher.combine(id)
         }
     }
 }
@@ -168,6 +182,7 @@ extension Route {
     public static let namedScreens: [String] = [
         "session", "terminal", "settings", "createSession", "subagents", "notes", "note", "noteContainers",
         "notePreview", "notifications", "recordings", "arcSpec", "apps", "arcSpecList", "arcReport", "arcOverview",
+        "schedulerList", "schedulerTask",
     ]
 
     /// Every spec-scoped fixture route answers under, regardless of which uuid the request
@@ -209,6 +224,8 @@ extension Route {
         case "arcSpecList": return .arcSpecList
         case "arcReport": return .arcReport(specUuid: fixtureArcSpecUuid, reportUuid: fixtureArcReportUuid)
         case "arcOverview": return .arcOverview(specUuid: fixtureArcSpecUuid)
+        case "schedulerList": return .schedulerList
+        case "schedulerTask": return .schedulerTask(id: nil)
         default: return nil
         }
     }
@@ -345,7 +362,8 @@ public final class Router {
             case .session(let id, _): return id
             case .terminal(let sessionID): return sessionID
             case .settings, .createSession, .subagents, .notes, .note, .noteContainers, .notePreview,
-                .notifications, .recordings, .arcSpec, .apps, .arcSpecList, .arcReport, .arcOverview:
+                .notifications, .recordings, .arcSpec, .apps, .arcSpecList, .arcReport, .arcOverview,
+                .schedulerList, .schedulerTask:
                 continue
             }
         }
@@ -359,7 +377,8 @@ public final class Router {
             switch route {
             case .note(let id), .notePreview(let id): return id
             case .session, .terminal, .settings, .createSession, .subagents, .notes, .noteContainers,
-                .notifications, .recordings, .arcSpec, .apps, .arcSpecList, .arcReport, .arcOverview:
+                .notifications, .recordings, .arcSpec, .apps, .arcSpecList, .arcReport, .arcOverview,
+                .schedulerList, .schedulerTask:
                 continue
             }
         }

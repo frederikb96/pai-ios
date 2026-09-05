@@ -696,3 +696,154 @@ public struct SupervisionBySessionResponse: Codable, Sendable, Equatable {
         self.supervision = supervision
     }
 }
+
+// MARK: - Scheduler write fields and list/run response wrappers
+
+/// Every field a task's own editor writes — everything `ScheduledTask` carries except what only
+/// the server ever sets (id, timestamps, the derived `has_gate`/`has_webhook` flags, `session_id`,
+/// the fire/success clocks, `stopped`/`stopped_reason`). `gate_source` rides alongside it rather
+/// than in `ScheduledTaskDetail` only, since a create call has no detail response yet to have
+/// read it from. Mirrors the web's `TaskWriteFields` exactly — the API refuses any key outside
+/// its own writable set with a 400, so a field here the server does not accept breaks saving
+/// outright rather than being quietly ignored.
+public struct TaskWriteFields: Encodable, Sendable, Equatable {
+    public var name: String
+    public var environment: String
+    public var workingDir: String?
+    public var prompt: String
+    public var appendSystemPrompt: String?
+    public var cadence: String?
+    public var timezone: String
+    public var gateSource: String?
+    public var gateRuntime: TaskGateRuntime?
+    public var gateTimeoutSeconds: Int
+    public var sessionPolicy: TaskSessionPolicy
+    public var quietPeriodMinutes: Int
+    public var model: String?
+    public var supervisionEnabled: Bool
+    public var supervisionModel: String?
+    public var supervisionAppendPrompt: String?
+    public var supervisionCompactionThresholdTokens: Int?
+    public var supervisionChunkIntervalSeconds: Int?
+    public var supervisionChunkTokenThreshold: Int?
+    public var enabled: Bool
+
+    public init(
+        name: String, environment: String, workingDir: String?, prompt: String,
+        appendSystemPrompt: String?, cadence: String?, timezone: String, gateSource: String?,
+        gateRuntime: TaskGateRuntime?, gateTimeoutSeconds: Int, sessionPolicy: TaskSessionPolicy,
+        quietPeriodMinutes: Int, model: String?, supervisionEnabled: Bool, supervisionModel: String?,
+        supervisionAppendPrompt: String? = nil, supervisionCompactionThresholdTokens: Int? = nil,
+        supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
+        enabled: Bool
+    ) {
+        self.name = name
+        self.environment = environment
+        self.workingDir = workingDir
+        self.prompt = prompt
+        self.appendSystemPrompt = appendSystemPrompt
+        self.cadence = cadence
+        self.timezone = timezone
+        self.gateSource = gateSource
+        self.gateRuntime = gateRuntime
+        self.gateTimeoutSeconds = gateTimeoutSeconds
+        self.sessionPolicy = sessionPolicy
+        self.quietPeriodMinutes = quietPeriodMinutes
+        self.model = model
+        self.supervisionEnabled = supervisionEnabled
+        self.supervisionModel = supervisionModel
+        self.supervisionAppendPrompt = supervisionAppendPrompt
+        self.supervisionCompactionThresholdTokens = supervisionCompactionThresholdTokens
+        self.supervisionChunkIntervalSeconds = supervisionChunkIntervalSeconds
+        self.supervisionChunkTokenThreshold = supervisionChunkTokenThreshold
+        self.enabled = enabled
+    }
+
+    /// The default a brand-new, not-yet-saved task starts from — mirrors the web's own
+    /// `defaultFields()`, including the 60-minute quiet period: it must keep mirroring the
+    /// server's own default, since a value shorter than the server's would silently make a
+    /// phone-made task behave differently from an API-made one at exactly the field that decides
+    /// how often a task really runs.
+    public static func fresh(timezone: String) -> TaskWriteFields {
+        TaskWriteFields(
+            name: "", environment: "default", workingDir: nil, prompt: "", appendSystemPrompt: nil,
+            cadence: nil, timezone: timezone, gateSource: nil, gateRuntime: .bun, gateTimeoutSeconds: 30,
+            sessionPolicy: .fresh, quietPeriodMinutes: 60, model: nil, supervisionEnabled: false,
+            supervisionModel: nil, enabled: true)
+    }
+
+    public static func from(_ task: ScheduledTaskDetail) -> TaskWriteFields {
+        TaskWriteFields(
+            name: task.name, environment: task.environment, workingDir: task.workingDir, prompt: task.prompt,
+            appendSystemPrompt: task.appendSystemPrompt, cadence: task.cadence, timezone: task.timezone,
+            gateSource: task.gateSource, gateRuntime: task.gateRuntime ?? .bun,
+            gateTimeoutSeconds: task.gateTimeoutSeconds, sessionPolicy: task.sessionPolicy,
+            quietPeriodMinutes: task.quietPeriodMinutes, model: task.model,
+            supervisionEnabled: task.supervisionEnabled, supervisionModel: task.supervisionModel,
+            enabled: task.enabled)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name, environment, prompt, cadence, timezone, model, enabled
+        case workingDir = "working_dir"
+        case appendSystemPrompt = "append_system_prompt"
+        case gateSource = "gate_source"
+        case gateRuntime = "gate_runtime"
+        case gateTimeoutSeconds = "gate_timeout_seconds"
+        case sessionPolicy = "session_policy"
+        case quietPeriodMinutes = "quiet_period_minutes"
+        case supervisionEnabled = "supervision_enabled"
+        case supervisionModel = "supervision_model"
+        case supervisionAppendPrompt = "supervision_append_prompt"
+        case supervisionCompactionThresholdTokens = "supervision_compaction_threshold_tokens"
+        case supervisionChunkIntervalSeconds = "supervision_chunk_interval_seconds"
+        case supervisionChunkTokenThreshold = "supervision_chunk_token_threshold"
+    }
+}
+
+/// `GET /api/scheduler/tasks` — a page of the list, `nextOffset` absent once there is no further
+/// page.
+public struct SchedulerTaskListResponse: Codable, Sendable, Equatable {
+    public let tasks: [ScheduledTask]
+    public let nextOffset: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case tasks
+        case nextOffset = "next_offset"
+    }
+}
+
+/// `GET /api/scheduler/tasks/{id}/runs` — one page of a task's own fire history.
+public struct SchedulerTaskRunsResponse: Codable, Sendable, Equatable {
+    public let runs: [TaskRun]
+    public let nextOffset: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case runs
+        case nextOffset = "next_offset"
+    }
+}
+
+/// `POST /api/scheduler/tasks/{id}/test-run` — runs the gate script once against no session at
+/// all, so writing one is iterative rather than costing a real fire. `proceed` is the same
+/// verdict a real fire would derive (`exit_code == 0 and not timed_out`) — read it directly
+/// rather than re-deriving it from the other two fields.
+public struct SchedulerTestRunResult: Codable, Sendable, Equatable {
+    public let stdout: String
+    public let stderr: String
+    public let exitCode: Int
+    public let timedOut: Bool
+    public let proceed: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case stdout, stderr, proceed
+        case exitCode = "exit_code"
+        case timedOut = "timed_out"
+    }
+}
+
+/// `POST /api/scheduler/tasks/{id}/webhook` — shown exactly once; the task itself only ever
+/// carries `has_webhook` afterwards.
+public struct SchedulerWebhookToken: Codable, Sendable, Equatable {
+    public let token: String
+}

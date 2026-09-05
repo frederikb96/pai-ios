@@ -1,14 +1,13 @@
 import PAIKit
 import SwiftUI
 
-/// Where the top bar's "Apps" button leads — a small picker over the two things that used to
-/// have their own toolbar icon or are being added here: Arc and Notes. Mirrors the web's own
-/// `AppsFlyout`/`AppsHome` pairing (a modal listing every registered app), minus Memory and
-/// Notifications: PAI Cloud's Memory app is notes plus projects/phases/search, and this repo
-/// never built a separate Memory screen — the note index (`.notes`) is the one entry point this
-/// app already has for it, so it is what "memory, reachable under Apps" means here. Notifications
-/// keeps its own always-visible top bar icon (row 87's note): unlike Arc and Notes, it carries a
-/// live unread badge that would otherwise be hidden a tap deeper.
+/// Where the top bar's "Apps" button leads — a small picker over Arc, Notes and the Scheduler.
+/// Mirrors the web's own `AppsFlyout`/`AppsHome` pairing (a modal listing every registered app),
+/// minus Memory and Notifications: PAI Cloud's Memory app is notes plus projects/phases/search,
+/// and this repo never built a separate Memory screen — the note index (`.notes`) is the one
+/// entry point this app already has for it, so it is what "memory, reachable under Apps" means
+/// here. Notifications keeps its own always-visible top bar icon (row 87's note): unlike the
+/// three apps here, it carries a live unread badge that would otherwise be hidden a tap deeper.
 struct AppsHomeSheet: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.dismiss) private var dismiss
@@ -24,6 +23,10 @@ struct AppsHomeSheet: View {
                     Label("Notes", systemImage: "note.text")
                 }
                 .accessibilityIdentifier("apps-open-notes")
+                Button(action: openScheduler) {
+                    Label("Scheduler", systemImage: "clock.badge.checkmark")
+                }
+                .accessibilityIdentifier("apps-open-scheduler")
             }
             .listStyle(.plain)
             .navigationTitle("Apps")
@@ -50,6 +53,11 @@ struct AppsHomeSheet: View {
 
     private func openNotes() {
         environment.router.push(.notes)
+        dismiss()
+    }
+
+    private func openScheduler() {
+        environment.router.push(.schedulerList)
         dismiss()
     }
 }

@@ -268,6 +268,10 @@ struct RootView: View {
             ArcReportScreen(specUuid: specUuid, reportUuid: reportUuid)
         case .arcOverview(let specUuid):
             ArcOverviewRouteScreen(specUuid: specUuid)
+        case .schedulerList:
+            SchedulerListView()
+        case .schedulerTask(let id):
+            TaskEditorView(taskId: id)
         }
     }
 
