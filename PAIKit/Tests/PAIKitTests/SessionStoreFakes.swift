@@ -409,3 +409,56 @@ enum SessionFixture {
         )
     }
 }
+
+// MARK: - SupervisionApiClient
+
+actor FakeSupervisionApi: SupervisionApiClient {
+    private(set) var attachCalls: [(sessionId: String, model: String?)] = []
+    private(set) var deleteCalls: [String] = []
+
+    var bySessionResult: Result<SupervisionBySessionResponse, PaiError> = .success(
+        SupervisionBySessionResponse(supervision: nil))
+    var detailResult: Result<SupervisionDetail, PaiError>?
+    var attachResult: Result<Supervision, PaiError>?
+    var deleteResult: Result<PaiSupervisionDetachResult, PaiError> = .success(
+        PaiSupervisionDetachResult(detached: true))
+
+    func getSupervisionBySession(sessionId: String) async throws -> SupervisionBySessionResponse {
+        switch bySessionResult {
+        case let .success(response): return response
+        case let .failure(error): throw error
+        }
+    }
+
+    func getSupervision(supervisionId: String) async throws -> SupervisionDetail {
+        guard let detailResult else {
+            throw PaiError.transport("no detailResult scripted")
+        }
+        switch detailResult {
+        case let .success(detail): return detail
+        case let .failure(error): throw error
+        }
+    }
+
+    func attachSupervision(
+        sessionId: String, model: String?, appendPrompt: String?, compactionThresholdTokens: Int?,
+        chunkIntervalSeconds: Int?, chunkTokenThreshold: Int?
+    ) async throws -> Supervision {
+        attachCalls.append((sessionId: sessionId, model: model))
+        guard let attachResult else {
+            throw PaiError.transport("no attachResult scripted")
+        }
+        switch attachResult {
+        case let .success(supervision): return supervision
+        case let .failure(error): throw error
+        }
+    }
+
+    func deleteSupervision(supervisionId: String) async throws -> PaiSupervisionDetachResult {
+        deleteCalls.append(supervisionId)
+        switch deleteResult {
+        case let .success(result): return result
+        case let .failure(error): throw error
+        }
+    }
+}

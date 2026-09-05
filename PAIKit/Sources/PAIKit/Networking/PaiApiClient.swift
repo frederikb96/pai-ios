@@ -67,6 +67,10 @@ public struct PaiFavoriteRemovalResult: Codable, Sendable, Equatable {
     public let removed: Bool
 }
 
+public struct PaiSupervisionDetachResult: Codable, Sendable, Equatable {
+    public let detached: Bool
+}
+
 public struct PaiVmShellHandle: Codable, Sendable, Equatable {
     public let sessionId: String
 
@@ -672,6 +676,60 @@ public struct PaiApiClient: Sendable {
     /// screen needs nothing else about the spec to have loaded first.
     public func getArcReport(uuid: String) async throws -> ArcReport {
         try await send(path: "/api/arc/reports/\(uuid)")
+    }
+
+    // MARK: Supervision
+
+    /// The supervision watching a session, if any — a session-menu button reads this to decide
+    /// whether to open an existing supervisor read-only or offer to attach one.
+    public func getSupervisionBySession(sessionId: String) async throws -> SupervisionBySessionResponse {
+        try await send(path: "/api/supervisions/by-session/\(sessionId)")
+    }
+
+    /// A supervision's own configuration, state, and verdict history.
+    public func getSupervision(supervisionId: String) async throws -> SupervisionDetail {
+        try await send(path: "/api/supervisions/\(supervisionId)")
+    }
+
+    /// Attaches a supervisor to any session — the one write this router offers. `appendPrompt`
+    /// left `nil` stores the module's own default text server-side rather than an empty box.
+    public func attachSupervision(
+        sessionId: String, model: String? = nil, appendPrompt: String? = nil,
+        compactionThresholdTokens: Int? = nil, chunkIntervalSeconds: Int? = nil,
+        chunkTokenThreshold: Int? = nil
+    ) async throws -> Supervision {
+        struct Body: Encodable {
+            let sessionId: String
+            let model: String?
+            let appendPrompt: String?
+            let compactionThresholdTokens: Int?
+            let chunkIntervalSeconds: Int?
+            let chunkTokenThreshold: Int?
+            enum CodingKeys: String, CodingKey {
+                case sessionId = "session_id"
+                case model
+                case appendPrompt = "append_prompt"
+                case compactionThresholdTokens = "compaction_threshold_tokens"
+                case chunkIntervalSeconds = "chunk_interval_seconds"
+                case chunkTokenThreshold = "chunk_token_threshold"
+            }
+        }
+        return try await send(
+            path: "/api/supervisions",
+            method: "POST",
+            body: try Self.jsonBody(
+                Body(
+                    sessionId: sessionId, model: model, appendPrompt: appendPrompt,
+                    compactionThresholdTokens: compactionThresholdTokens,
+                    chunkIntervalSeconds: chunkIntervalSeconds, chunkTokenThreshold: chunkTokenThreshold))
+        )
+    }
+
+    /// Detaches a supervisor: stops its own session and ends the binding, but keeps the
+    /// supervision row, its verdict history and its transcript — so what it decided stays
+    /// readable even after detaching.
+    public func deleteSupervision(supervisionId: String) async throws -> PaiSupervisionDetachResult {
+        try await send(path: "/api/supervisions/\(supervisionId)", method: "DELETE", body: nil, contentType: nil)
     }
 
     // MARK: Auth

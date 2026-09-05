@@ -621,3 +621,78 @@ public struct Supervision: Codable, Sendable, Equatable, Identifiable {
         case updatedAtMs = "updated_at_ms"
     }
 }
+
+/// `GET /api/supervisions/by-session/{id}` and `GET /api/supervisions/{id}` — a `Supervision`
+/// plus the two fields only those two routes add: which session the supervisor's own transcript
+/// lives under (`nil` until its first chunk, since that session is created lazily), and its
+/// verdict history. A separate type rather than widening `Supervision` itself, matching this
+/// file's own `ScheduledTask`/`ScheduledTaskDetail` split — `POST /api/supervisions` returns a
+/// plain `Supervision`, with neither field meaningful on a binding that was just created.
+/// `verdicts` is absent entirely from the by-session route's own payload, decoding to `nil` there
+/// rather than `[]`, so a caller reads `verdicts ?? []` rather than trusting an empty array to
+/// mean "checked and found none."
+public struct SupervisionDetail: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let workerSessionId: String
+    public let taskId: String?
+    public let state: SupervisionState
+    public let memo: String?
+    public let cursorMessageId: Int?
+    public let model: String?
+    public let appendPrompt: String?
+    public let compactionThresholdTokens: Int?
+    public let chunkIntervalSeconds: Int?
+    public let chunkTokenThreshold: Int?
+    public let createdAtMs: Int
+    public let updatedAtMs: Int
+    public let supervisorSessionId: String?
+    public let verdicts: [SupervisionVerdict]?
+
+    public init(
+        id: String, workerSessionId: String, taskId: String?, state: SupervisionState,
+        memo: String?, cursorMessageId: Int?, model: String? = nil, appendPrompt: String? = nil,
+        compactionThresholdTokens: Int? = nil, chunkIntervalSeconds: Int? = nil,
+        chunkTokenThreshold: Int? = nil, createdAtMs: Int, updatedAtMs: Int,
+        supervisorSessionId: String? = nil, verdicts: [SupervisionVerdict]? = nil
+    ) {
+        self.id = id
+        self.workerSessionId = workerSessionId
+        self.taskId = taskId
+        self.state = state
+        self.memo = memo
+        self.cursorMessageId = cursorMessageId
+        self.model = model
+        self.appendPrompt = appendPrompt
+        self.compactionThresholdTokens = compactionThresholdTokens
+        self.chunkIntervalSeconds = chunkIntervalSeconds
+        self.chunkTokenThreshold = chunkTokenThreshold
+        self.createdAtMs = createdAtMs
+        self.updatedAtMs = updatedAtMs
+        self.supervisorSessionId = supervisorSessionId
+        self.verdicts = verdicts
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, state, memo, model, verdicts
+        case workerSessionId = "worker_session_id"
+        case taskId = "task_id"
+        case cursorMessageId = "cursor_message_id"
+        case appendPrompt = "append_prompt"
+        case compactionThresholdTokens = "compaction_threshold_tokens"
+        case chunkIntervalSeconds = "chunk_interval_seconds"
+        case chunkTokenThreshold = "chunk_token_threshold"
+        case createdAtMs = "created_at_ms"
+        case updatedAtMs = "updated_at_ms"
+        case supervisorSessionId = "supervisor_session_id"
+    }
+}
+
+/// `GET /api/supervisions/by-session/{id}` — `{"supervision": null}` is not an error; most
+/// sessions have none.
+public struct SupervisionBySessionResponse: Codable, Sendable, Equatable {
+    public let supervision: SupervisionDetail?
+
+    public init(supervision: SupervisionDetail?) {
+        self.supervision = supervision
+    }
+}

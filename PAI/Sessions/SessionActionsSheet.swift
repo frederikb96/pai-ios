@@ -111,12 +111,14 @@ struct SessionActionsSheet: View {
             IdleTimeoutActionView(actions: actions, toasts: toasts)
         case .export:
             ExportActionView(actions: actions)
+        case .supervision:
+            SupervisionView(sessionId: sessionId)
         }
     }
 }
 
 private enum ActionsRoute: Hashable {
-    case rename, timeout, export
+    case rename, timeout, export, supervision
 }
 
 // MARK: - Root list
@@ -162,6 +164,14 @@ private struct RootActionsList: View {
                 // swipe both already use for this exact question.
                 Button(action: onOpenSpec) {
                     Label("Spec", systemImage: "shippingbox")
+                }
+
+                // Open, read-only, whether or not one is attached yet — `SupervisionView` itself
+                // decides between an attach offer and a read-only view once it has asked.
+                Button {
+                    path.append(.supervision)
+                } label: {
+                    Label("Supervisor", systemImage: "eye")
                 }
 
                 if let url = SessionListDomain.claudeCodeUrl(cseId: session.cseId) {
