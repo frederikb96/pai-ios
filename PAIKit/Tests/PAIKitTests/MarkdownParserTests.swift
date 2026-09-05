@@ -77,8 +77,9 @@ final class MarkdownParserTests: XCTestCase {
             <!-- marker -->
             """
         let blocks = MarkdownParser.parse(source)
-        XCTAssertFalse(blocks.contains { if case .htmlBlock = $0 { return true } else { return false } },
-                        "the comment block rendered as visible source: \(blocks)")
+        XCTAssertFalse(
+            blocks.contains { if case .htmlBlock = $0 { return true } else { return false } },
+            "the comment block rendered as visible source: \(blocks)")
         XCTAssertTrue(blocks.plainText.contains("keep-this-text"), "the wrapped paragraph was lost too: \(blocks)")
     }
 
@@ -94,7 +95,9 @@ final class MarkdownParserTests: XCTestCase {
         let source = "\(marker)\ninstructions\n\(marker)\n\ntask prompt"
 
         let text = MarkdownParser.parse(source).plainText
-        XCTAssertEqual(text.components(separatedBy: marker).count - 1, 2, "expected the marker twice, unchanged: \(text.unicodeScalars.map(\.value))")
+        XCTAssertEqual(
+            text.components(separatedBy: marker).count - 1, 2,
+            "expected the marker twice, unchanged: \(text.unicodeScalars.map(\.value))")
     }
 
     /// A catch-all for the failure this model is most exposed to: a case added, reordered or

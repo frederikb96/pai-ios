@@ -93,13 +93,17 @@ public final class CreateSessionStore {
 
     /// The top-level picker's own pills — see `sunkSessionTypeIds`'s doc comment.
     public var primarySessionTypes: [SessionType] {
-        availableSessionTypes.filter { !Self.sunkSessionTypeIds.contains($0.id) && !Self.excludedSessionTypeIds.contains($0.id) }
+        availableSessionTypes.filter {
+            !Self.sunkSessionTypeIds.contains($0.id) && !Self.excludedSessionTypeIds.contains($0.id)
+        }
     }
 
     /// Everything else a machine offers, shown inside the Custom directory browser below its
     /// favourites rather than at the top level.
     public var environmentSessionTypes: [SessionType] {
-        availableSessionTypes.filter { Self.sunkSessionTypeIds.contains($0.id) && !Self.excludedSessionTypeIds.contains($0.id) }
+        availableSessionTypes.filter {
+            Self.sunkSessionTypeIds.contains($0.id) && !Self.excludedSessionTypeIds.contains($0.id)
+        }
     }
 
     /// Resets to a fresh visit's state. The machine choice is deliberately never remembered

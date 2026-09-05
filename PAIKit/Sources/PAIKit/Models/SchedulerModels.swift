@@ -491,14 +491,17 @@ public struct TaskRun: Codable, Sendable, Equatable, Identifiable {
     public let sessionId: String?
     public let gateStdout: String?
     public let gateExitCode: Int?
-    public let notified: Bool
+    /// Whether this run has already had its one warning for each budget — the
+    /// guard that stops a warning repeating on every reading.
+    public let runtimeWarned: Bool
+    public let budgetWarned: Bool
     public let startedAtMs: Int
     public let finishedAtMs: Int?
 
     public init(
         id: String, taskId: String, trigger: TaskRunTrigger, disposition: TaskRunDisposition,
         reason: String?, sessionId: String?, gateStdout: String?, gateExitCode: Int?,
-        notified: Bool, startedAtMs: Int, finishedAtMs: Int?
+        runtimeWarned: Bool, budgetWarned: Bool, startedAtMs: Int, finishedAtMs: Int?
     ) {
         self.id = id
         self.taskId = taskId
@@ -508,14 +511,17 @@ public struct TaskRun: Codable, Sendable, Equatable, Identifiable {
         self.sessionId = sessionId
         self.gateStdout = gateStdout
         self.gateExitCode = gateExitCode
-        self.notified = notified
+        self.runtimeWarned = runtimeWarned
+        self.budgetWarned = budgetWarned
         self.startedAtMs = startedAtMs
         self.finishedAtMs = finishedAtMs
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, trigger, disposition, reason, notified
+        case id, trigger, disposition, reason
         case taskId = "task_id"
+        case runtimeWarned = "runtime_warned"
+        case budgetWarned = "budget_warned"
         case sessionId = "session_id"
         case gateStdout = "gate_stdout"
         case gateExitCode = "gate_exit_code"

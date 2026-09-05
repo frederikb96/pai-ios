@@ -8,7 +8,8 @@ final class RunHistoryStoreTests: XCTestCase {
     private func run(id: String) -> TaskRun {
         TaskRun(
             id: id, taskId: "t1", trigger: .schedule, disposition: .fired, reason: nil, sessionId: nil,
-            gateStdout: nil, gateExitCode: nil, notified: false, startedAtMs: 0, finishedAtMs: nil)
+            gateStdout: nil, gateExitCode: nil, runtimeWarned: false, budgetWarned: false,
+            startedAtMs: 0, finishedAtMs: nil)
     }
 
     /// A page exactly at the page size means there might be more — the boundary the pagination
