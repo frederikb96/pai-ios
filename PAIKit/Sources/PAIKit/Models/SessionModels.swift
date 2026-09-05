@@ -296,6 +296,9 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     public let phaseId: String?
     /// The project's own name, denormalized here so the session list's search can match on it.
     public let projectName: String?
+    /// The scheduled task that launched this conversation, if any — what the scheduled
+    /// session filter matches on. `nil` for an ordinary session.
+    public let taskId: String?
     /// What this session has running right now — subagents and background shells/monitors.
     /// `nil` from an agent too old to report it, read the same as "nothing known", never as zero.
     public let activityCounts: ActivityCounts?
@@ -335,6 +338,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         case projectId = "project_id"
         case phaseId = "phase_id"
         case projectName = "project_name"
+        case taskId = "task_id"
         case activityCounts = "activity_counts"
     }
 
@@ -378,6 +382,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         projectId: String?,
         phaseId: String?,
         projectName: String?,
+        taskId: String? = nil,
         activityCounts: ActivityCounts? = nil
     ) {
         self.id = id
@@ -419,6 +424,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.projectId = projectId
         self.phaseId = phaseId
         self.projectName = projectName
+        self.taskId = taskId
         self.activityCounts = activityCounts
     }
 

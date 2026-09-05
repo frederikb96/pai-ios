@@ -273,8 +273,33 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
     /// while being anything but.
     public let quietPeriodMinutes: Int
     public let autocompactTokens: Int?
+    /// The `claude --model` alias the worker session launches with. `nil` lets Claude Code
+    /// pick the plan's own default. Absent on a backend that predates it.
+    public let model: String?
+    /// A run's own runtime ceiling in minutes, watched at the next reading rather than at an
+    /// exact instant. `nil`/absent means no ceiling.
+    public let maxRuntimeMinutes: Int?
+    /// A run's own token budget, covering the worker and every subagent it spawns.
+    public let maxTokenBudget: Int?
+    /// Above this, a reusing task's worker session is compacted before the task considers the
+    /// run over. Replaces `autocompactTokens`, which nothing reads.
+    public let compactionThresholdTokens: Int?
+    /// A fire is skipped once the 5-hour plan window is at or above this percentage.
+    public let sessionUsageGatePercent: Int?
+    /// A fire is skipped once the 7-day plan window is at or above this percentage.
+    public let weeklyUsageGatePercent: Int?
+    /// Whether a gate-percentage skip raises an alert. Off by default.
+    public let notifyOnGateSkip: Bool?
     public let supervisionEnabled: Bool
     public let supervisionModel: String?
+    /// Pre-filled onto every `Supervision` this task's own fires create.
+    public let supervisionAppendPrompt: String?
+    public let supervisionCompactionThresholdTokens: Int?
+    /// How often the worker's transcript is flushed to the supervisor.
+    public let supervisionChunkIntervalSeconds: Int?
+    /// The token size of accumulated worker output that forces an early flush regardless of
+    /// the interval above.
+    public let supervisionChunkTokenThreshold: Int?
     public let notifyPolicy: TaskNotifyPolicy
     /// An urgent task is never deferred when the plan window runs low.
     public let urgent: Bool
@@ -296,7 +321,12 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         prompt: String, appendSystemPrompt: String?, cadence: String?, timezone: String,
         hasGate: Bool, gateRuntime: TaskGateRuntime?, gateTimeoutSeconds: Int,
         sessionPolicy: TaskSessionPolicy, sessionId: String?, quietPeriodMinutes: Int,
-        autocompactTokens: Int?, supervisionEnabled: Bool, supervisionModel: String?,
+        autocompactTokens: Int?, model: String? = nil, maxRuntimeMinutes: Int? = nil,
+        maxTokenBudget: Int? = nil, compactionThresholdTokens: Int? = nil,
+        sessionUsageGatePercent: Int? = nil, weeklyUsageGatePercent: Int? = nil,
+        notifyOnGateSkip: Bool? = nil, supervisionEnabled: Bool, supervisionModel: String?,
+        supervisionAppendPrompt: String? = nil, supervisionCompactionThresholdTokens: Int? = nil,
+        supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
         notifyPolicy: TaskNotifyPolicy, urgent: Bool, hasWebhook: Bool, stopped: Bool,
         stoppedReason: String?, lastFireAtMs: Int?, lastSuccessAtMs: Int?, nextFireAtMs: Int?,
         createdAtMs: Int, updatedAtMs: Int
@@ -317,8 +347,19 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         self.sessionId = sessionId
         self.quietPeriodMinutes = quietPeriodMinutes
         self.autocompactTokens = autocompactTokens
+        self.model = model
+        self.maxRuntimeMinutes = maxRuntimeMinutes
+        self.maxTokenBudget = maxTokenBudget
+        self.compactionThresholdTokens = compactionThresholdTokens
+        self.sessionUsageGatePercent = sessionUsageGatePercent
+        self.weeklyUsageGatePercent = weeklyUsageGatePercent
+        self.notifyOnGateSkip = notifyOnGateSkip
         self.supervisionEnabled = supervisionEnabled
         self.supervisionModel = supervisionModel
+        self.supervisionAppendPrompt = supervisionAppendPrompt
+        self.supervisionCompactionThresholdTokens = supervisionCompactionThresholdTokens
+        self.supervisionChunkIntervalSeconds = supervisionChunkIntervalSeconds
+        self.supervisionChunkTokenThreshold = supervisionChunkTokenThreshold
         self.notifyPolicy = notifyPolicy
         self.urgent = urgent
         self.hasWebhook = hasWebhook
@@ -332,7 +373,7 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, enabled, environment, prompt, cadence, timezone, urgent, stopped
+        case id, name, enabled, environment, prompt, cadence, timezone, urgent, stopped, model
         case workingDir = "working_dir"
         case appendSystemPrompt = "append_system_prompt"
         case hasGate = "has_gate"
@@ -342,8 +383,18 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         case sessionId = "session_id"
         case quietPeriodMinutes = "quiet_period_minutes"
         case autocompactTokens = "autocompact_tokens"
+        case maxRuntimeMinutes = "max_runtime_minutes"
+        case maxTokenBudget = "max_token_budget"
+        case compactionThresholdTokens = "compaction_threshold_tokens"
+        case sessionUsageGatePercent = "session_usage_gate_percent"
+        case weeklyUsageGatePercent = "weekly_usage_gate_percent"
+        case notifyOnGateSkip = "notify_on_gate_skip"
         case supervisionEnabled = "supervision_enabled"
         case supervisionModel = "supervision_model"
+        case supervisionAppendPrompt = "supervision_append_prompt"
+        case supervisionCompactionThresholdTokens = "supervision_compaction_threshold_tokens"
+        case supervisionChunkIntervalSeconds = "supervision_chunk_interval_seconds"
+        case supervisionChunkTokenThreshold = "supervision_chunk_token_threshold"
         case notifyPolicy = "notify_policy"
         case hasWebhook = "has_webhook"
         case stoppedReason = "stopped_reason"
@@ -373,8 +424,33 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
     public let sessionId: String?
     public let quietPeriodMinutes: Int
     public let autocompactTokens: Int?
+    /// The `claude --model` alias the worker session launches with. `nil` lets Claude Code
+    /// pick the plan's own default. Absent on a backend that predates it.
+    public let model: String?
+    /// A run's own runtime ceiling in minutes, watched at the next reading rather than at an
+    /// exact instant. `nil`/absent means no ceiling.
+    public let maxRuntimeMinutes: Int?
+    /// A run's own token budget, covering the worker and every subagent it spawns.
+    public let maxTokenBudget: Int?
+    /// Above this, a reusing task's worker session is compacted before the task considers the
+    /// run over. Replaces `autocompactTokens`, which nothing reads.
+    public let compactionThresholdTokens: Int?
+    /// A fire is skipped once the 5-hour plan window is at or above this percentage.
+    public let sessionUsageGatePercent: Int?
+    /// A fire is skipped once the 7-day plan window is at or above this percentage.
+    public let weeklyUsageGatePercent: Int?
+    /// Whether a gate-percentage skip raises an alert. Off by default.
+    public let notifyOnGateSkip: Bool?
     public let supervisionEnabled: Bool
     public let supervisionModel: String?
+    /// Pre-filled onto every `Supervision` this task's own fires create.
+    public let supervisionAppendPrompt: String?
+    public let supervisionCompactionThresholdTokens: Int?
+    /// How often the worker's transcript is flushed to the supervisor.
+    public let supervisionChunkIntervalSeconds: Int?
+    /// The token size of accumulated worker output that forces an early flush regardless of
+    /// the interval above.
+    public let supervisionChunkTokenThreshold: Int?
     public let notifyPolicy: TaskNotifyPolicy
     public let urgent: Bool
     public let hasWebhook: Bool
@@ -392,7 +468,12 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         prompt: String, appendSystemPrompt: String?, cadence: String?, timezone: String,
         hasGate: Bool, gateRuntime: TaskGateRuntime?, gateTimeoutSeconds: Int,
         sessionPolicy: TaskSessionPolicy, sessionId: String?, quietPeriodMinutes: Int,
-        autocompactTokens: Int?, supervisionEnabled: Bool, supervisionModel: String?,
+        autocompactTokens: Int?, model: String? = nil, maxRuntimeMinutes: Int? = nil,
+        maxTokenBudget: Int? = nil, compactionThresholdTokens: Int? = nil,
+        sessionUsageGatePercent: Int? = nil, weeklyUsageGatePercent: Int? = nil,
+        notifyOnGateSkip: Bool? = nil, supervisionEnabled: Bool, supervisionModel: String?,
+        supervisionAppendPrompt: String? = nil, supervisionCompactionThresholdTokens: Int? = nil,
+        supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
         notifyPolicy: TaskNotifyPolicy, urgent: Bool, hasWebhook: Bool, stopped: Bool,
         stoppedReason: String?, lastFireAtMs: Int?, lastSuccessAtMs: Int?, nextFireAtMs: Int?,
         createdAtMs: Int, updatedAtMs: Int, gateSource: String?
@@ -413,8 +494,19 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         self.sessionId = sessionId
         self.quietPeriodMinutes = quietPeriodMinutes
         self.autocompactTokens = autocompactTokens
+        self.model = model
+        self.maxRuntimeMinutes = maxRuntimeMinutes
+        self.maxTokenBudget = maxTokenBudget
+        self.compactionThresholdTokens = compactionThresholdTokens
+        self.sessionUsageGatePercent = sessionUsageGatePercent
+        self.weeklyUsageGatePercent = weeklyUsageGatePercent
+        self.notifyOnGateSkip = notifyOnGateSkip
         self.supervisionEnabled = supervisionEnabled
         self.supervisionModel = supervisionModel
+        self.supervisionAppendPrompt = supervisionAppendPrompt
+        self.supervisionCompactionThresholdTokens = supervisionCompactionThresholdTokens
+        self.supervisionChunkIntervalSeconds = supervisionChunkIntervalSeconds
+        self.supervisionChunkTokenThreshold = supervisionChunkTokenThreshold
         self.notifyPolicy = notifyPolicy
         self.urgent = urgent
         self.hasWebhook = hasWebhook
@@ -429,7 +521,7 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, enabled, environment, prompt, cadence, timezone, urgent, stopped
+        case id, name, enabled, environment, prompt, cadence, timezone, urgent, stopped, model
         case workingDir = "working_dir"
         case appendSystemPrompt = "append_system_prompt"
         case hasGate = "has_gate"
@@ -439,8 +531,18 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         case sessionId = "session_id"
         case quietPeriodMinutes = "quiet_period_minutes"
         case autocompactTokens = "autocompact_tokens"
+        case maxRuntimeMinutes = "max_runtime_minutes"
+        case maxTokenBudget = "max_token_budget"
+        case compactionThresholdTokens = "compaction_threshold_tokens"
+        case sessionUsageGatePercent = "session_usage_gate_percent"
+        case weeklyUsageGatePercent = "weekly_usage_gate_percent"
+        case notifyOnGateSkip = "notify_on_gate_skip"
         case supervisionEnabled = "supervision_enabled"
         case supervisionModel = "supervision_model"
+        case supervisionAppendPrompt = "supervision_append_prompt"
+        case supervisionCompactionThresholdTokens = "supervision_compaction_threshold_tokens"
+        case supervisionChunkIntervalSeconds = "supervision_chunk_interval_seconds"
+        case supervisionChunkTokenThreshold = "supervision_chunk_token_threshold"
         case notifyPolicy = "notify_policy"
         case hasWebhook = "has_webhook"
         case stoppedReason = "stopped_reason"
@@ -554,12 +656,27 @@ public struct Supervision: Codable, Sendable, Equatable, Identifiable {
     public let state: SupervisionState
     public let memo: String?
     public let cursorMessageId: Int?
+    /// This attach's own configuration — set once at attach time, from a scheduled task's
+    /// `supervision*` fields or from the session-menu configuration UI, and independent of any
+    /// task afterwards. Absent on a backend that predates it.
+    public let model: String?
+    public let appendPrompt: String?
+    /// Above this, the supervisor's own conversation is rotated to a fresh thread — never the
+    /// worker's, which has no compaction setting here.
+    public let compactionThresholdTokens: Int?
+    /// How often the worker's transcript is flushed to the supervisor.
+    public let chunkIntervalSeconds: Int?
+    /// The token size of accumulated worker output that forces an early flush regardless of
+    /// the interval above.
+    public let chunkTokenThreshold: Int?
     public let createdAtMs: Int
     public let updatedAtMs: Int
 
     public init(
         id: String, workerSessionId: String, taskId: String?, state: SupervisionState,
-        memo: String?, cursorMessageId: Int?, createdAtMs: Int, updatedAtMs: Int
+        memo: String?, cursorMessageId: Int?, model: String? = nil, appendPrompt: String? = nil,
+        compactionThresholdTokens: Int? = nil, chunkIntervalSeconds: Int? = nil,
+        chunkTokenThreshold: Int? = nil, createdAtMs: Int, updatedAtMs: Int
     ) {
         self.id = id
         self.workerSessionId = workerSessionId
@@ -567,15 +684,24 @@ public struct Supervision: Codable, Sendable, Equatable, Identifiable {
         self.state = state
         self.memo = memo
         self.cursorMessageId = cursorMessageId
+        self.model = model
+        self.appendPrompt = appendPrompt
+        self.compactionThresholdTokens = compactionThresholdTokens
+        self.chunkIntervalSeconds = chunkIntervalSeconds
+        self.chunkTokenThreshold = chunkTokenThreshold
         self.createdAtMs = createdAtMs
         self.updatedAtMs = updatedAtMs
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, state, memo
+        case id, state, memo, model
         case workerSessionId = "worker_session_id"
         case taskId = "task_id"
         case cursorMessageId = "cursor_message_id"
+        case appendPrompt = "append_prompt"
+        case compactionThresholdTokens = "compaction_threshold_tokens"
+        case chunkIntervalSeconds = "chunk_interval_seconds"
+        case chunkTokenThreshold = "chunk_token_threshold"
         case createdAtMs = "created_at_ms"
         case updatedAtMs = "updated_at_ms"
     }
