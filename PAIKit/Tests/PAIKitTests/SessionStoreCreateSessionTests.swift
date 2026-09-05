@@ -165,6 +165,40 @@ final class SessionStoreCreateSessionTests: XCTestCase {
         XCTAssertEqual(store.environmentSessionTypes.map(\.id), ["websearch"])
     }
 
+    /// The confined environment sinks the same way websearch does, alongside it — it is
+    /// selectable by directory, not disposable like `fast`, so it belongs in the Custom browser
+    /// rather than at the top level.
+    func testConfinedSinksAlongsideWebsearch() async {
+        let machineApi = FakeMachineDirectoryApi()
+        await machineApi.setResult(
+            .success([machine(slug: "vm", types: [type("home"), type("fast"), type("websearch"), type("confined")])]))
+        let machines = MachineStore(api: machineApi)
+        await machines.refresh()
+
+        let store = CreateSessionStore(machines: machines, api: FakeCreateSessionApi())
+        await store.start()
+
+        XCTAssertEqual(store.primarySessionTypes.map(\.id), ["home", "fast"])
+        XCTAssertEqual(store.environmentSessionTypes.map(\.id), ["websearch", "confined"])
+    }
+
+    /// The supervisor is opened only from the session it watches — a pill for it here would let
+    /// it be launched like an ordinary session. It must never appear, top-level or sunk, even if
+    /// the backend lists it as a type.
+    func testSupervisorIsNeverOfferedEvenIfTheBackendListsIt() async {
+        let machineApi = FakeMachineDirectoryApi()
+        await machineApi.setResult(
+            .success([machine(slug: "vm", types: [type("home"), type("fast"), type("supervisor")])]))
+        let machines = MachineStore(api: machineApi)
+        await machines.refresh()
+
+        let store = CreateSessionStore(machines: machines, api: FakeCreateSessionApi())
+        await store.start()
+
+        XCTAssertEqual(store.primarySessionTypes.map(\.id), ["home", "fast"])
+        XCTAssertEqual(store.environmentSessionTypes, [])
+    }
+
     // MARK: - reset
 
     func testResetReturnsToDefaultMachineWithNoTypeOrDirectory() {

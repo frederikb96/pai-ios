@@ -203,11 +203,12 @@ struct TaskEditorView: View {
                 Text("Default").tag("default")
                 Text("Fast").tag("fast")
                 Text("Web Search").tag("websearch")
+                Text("Confined").tag("confined")
             }
             .pickerStyle(.navigationLink)
 
             switch store.fields.environment {
-            case "default":
+            case "default", "confined":
                 HStack {
                     Text(store.fields.workingDir ?? "No directory selected")
                         .font(PaiTypography.monoLabel.font)
@@ -240,7 +241,10 @@ struct TaskEditorView: View {
             get: { store.fields.environment },
             set: { newValue in
                 store.fields.environment = newValue
-                if newValue != "default" { store.fields.workingDir = nil }
+                // Only "default" and "confined" let Freddy pick a directory — everything else
+                // clears whatever was carried over from a previous choice rather than silently
+                // keeping a stale value the new environment's own field never shows.
+                if newValue != "default" && newValue != "confined" { store.fields.workingDir = nil }
             }
         )
     }
@@ -391,7 +395,7 @@ private struct WebhookControlSection: View {
     var body: some View {
         if !isScoped {
             Text(
-                "Only the web search environment accepts a webhook trigger — an untrusted external payload needs a confined environment that can also report a result."
+                "Only the web search environment accepts a webhook trigger — an untrusted external payload needs a kernel-confined environment that can also report a result."
             )
             .font(PaiTypography.caption.font)
             .foregroundStyle(PaiPalette.Semantic.textFaint)
