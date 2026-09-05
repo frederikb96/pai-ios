@@ -154,18 +154,15 @@ public final class SessionListStore {
     /// from `syncedSessions`/`serverFilteredResults` on every read rather than caching it keeps
     /// the source-of-truth arrays as the only state that can go stale — this is always derived.
     public var rows: [SessionListRow] {
-        let base: [Session]
-        if scheduledOnly {
-            base = syncedSessions.filter { $0.taskId != nil }
-        } else if isServerFiltered {
-            base = thresholdFilteredServerResults.map(\.session)
-        } else {
-            base = syncedSessions
-        }
+        let source: [Session] = isServerFiltered ? thresholdFilteredServerResults.map(\.session) : syncedSessions
+        // Exclusive, not an extra narrowing on top of the ordinary list — a scheduled session
+        // shows under this toggle and nowhere else, whether or not a search is also active.
+        // Matches the web's `Sidebar.tsx` (`scopedToView`).
+        let scoped = source.filter { scheduledOnly ? $0.taskId != nil : $0.taskId == nil }
         // A subagent (opened from its parent's own subagents screen) or a supervisor (opened
         // from its worker's own menu) lands in this same synced store so a chat view can find it
         // by id — neither may ever surface as a row of its own here.
-        let withoutSubagents = base.filter { $0.kind != .subagent && $0.kind != .supervisor }
+        let withoutSubagents = scoped.filter { $0.kind != .subagent && $0.kind != .supervisor }
         let matched =
             isIdQuery
             ? withoutSubagents.filter { SessionFilterMatch.sessionIdMatches(filterQueryText, session: $0) }

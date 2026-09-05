@@ -726,6 +726,25 @@ final class SessionStoreListStoreTests: XCTestCase {
         XCTAssertEqual(store.rows.map(\.id), ["scheduled"])
     }
 
+    /// The exclusion is the other half of the same guarantee: a scheduled session must not also
+    /// surface in the ordinary list, matching the web's `Sidebar.tsx` (`scopedToView` is
+    /// exclusive both ways, never an extra narrowing only on top of the toggle being on).
+    func testOrdinaryListExcludesScheduledSessions() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(
+                SessionsPage(
+                    sessions: [
+                        SessionFixture.make(id: "ordinary"),
+                        SessionFixture.make(id: "scheduled", taskId: "task-1"),
+                    ], nextCursor: nil))
+        }
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        XCTAssertEqual(store.rows.map(\.id), ["ordinary"])
+    }
+
     /// "Scheduled" and a machine chip are exclusive, the same way "All" and a machine chip are —
     /// selecting one clears the other rather than the two combining.
     func testScheduledOnlyAndAMachineFilterAreMutuallyExclusive() async {
