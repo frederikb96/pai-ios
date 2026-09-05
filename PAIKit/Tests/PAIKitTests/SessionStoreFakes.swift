@@ -413,7 +413,7 @@ enum SessionFixture {
 // MARK: - SupervisionApiClient
 
 actor FakeSupervisionApi: SupervisionApiClient {
-    private(set) var attachCalls: [(sessionId: String, model: String?)] = []
+    private(set) var attachCalls: [(sessionId: String, config: SupervisionConfigFields)] = []
     private(set) var deleteCalls: [String] = []
 
     var bySessionResult: Result<SupervisionBySessionResponse, PaiError> = .success(
@@ -440,11 +440,8 @@ actor FakeSupervisionApi: SupervisionApiClient {
         }
     }
 
-    func attachSupervision(
-        sessionId: String, model: String?, appendPrompt: String?, compactionThresholdTokens: Int?,
-        chunkIntervalSeconds: Int?, chunkTokenThreshold: Int?
-    ) async throws -> Supervision {
-        attachCalls.append((sessionId: sessionId, model: model))
+    func attachSupervision(sessionId: String, config: SupervisionConfigFields) async throws -> Supervision {
+        attachCalls.append((sessionId: sessionId, config: config))
         guard let attachResult else {
             throw PaiError.transport("no attachResult scripted")
         }

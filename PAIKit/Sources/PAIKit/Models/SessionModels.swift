@@ -145,12 +145,17 @@ extension BlockerKind: Codable {
 /// the full warning. See `SessionStatus`'s doc comment for why `.unrecognized` exists.
 public enum SessionKind: Sendable, Hashable {
     case conversation, subagent
+    /// A session watching another one — a real process and a real conversation, but deliberately
+    /// never drivable: Freddy reads its verdicts, he never types into it. Attached from any
+    /// session's own menu, and excluded from the session list and every one of its filters the
+    /// same way a subagent already is.
+    case supervisor
     case unrecognized(String)
 }
 
 extension SessionKind: Codable {
     private static let knownValues: [String: SessionKind] = [
-        "conversation": .conversation, "subagent": .subagent,
+        "conversation": .conversation, "subagent": .subagent, "supervisor": .supervisor,
     ]
 
     public init(from decoder: Decoder) throws {
@@ -163,6 +168,7 @@ extension SessionKind: Codable {
         switch self {
         case .conversation: try container.encode("conversation")
         case .subagent: try container.encode("subagent")
+        case .supervisor: try container.encode("supervisor")
         case let .unrecognized(raw): try container.encode(raw)
         }
     }

@@ -21,6 +21,18 @@ struct NonDrivableComposerBar: View {
                 Text("This is a subagent's transcript — read-only.")
                     .font(PaiTypography.body.font)
                     .foregroundStyle(PaiPalette.Semantic.textMuted)
+                // Neither a subagent nor a supervisor has a process of its own to resume — the
+                // only way back is to its parent conversation.
+                if let parentSessionId = session.parentSessionId {
+                    Button("Open parent conversation") {
+                        environment.router.push(.session(id: parentSessionId))
+                    }
+                }
+
+            case .supervisor:
+                Text("This is a supervisor's own conversation — read-only.")
+                    .font(PaiTypography.body.font)
+                    .foregroundStyle(PaiPalette.Semantic.textMuted)
                 if let parentSessionId = session.parentSessionId {
                     Button("Open parent conversation") {
                         environment.router.push(.session(id: parentSessionId))
@@ -75,6 +87,7 @@ struct NonDrivableComposerBar: View {
 
     private enum Variant {
         case subagent
+        case supervisor
         case machineOffline(String)
         case collideConfirm
         case plainResume
@@ -82,6 +95,7 @@ struct NonDrivableComposerBar: View {
 
     private var variant: Variant {
         if session.kind == .subagent { return .subagent }
+        if session.kind == .supervisor { return .supervisor }
         let machineSlug = session.agent ?? MachineStore.defaultMachineSlug
         if let machine = machines.allMachines.first(where: { $0.slug == machineSlug }), !machine.online {
             return .machineOffline(machine.displayName)

@@ -277,6 +277,26 @@ final class PaiApiClientTests: XCTestCase {
         XCTAssertTrue(body.contains(#""purpose":"batch""#), body)
     }
 
+    /// `attachSupervision`'s body flattens `session_id` and the config's own fields into ONE
+    /// JSON object (the web's `{ session_id: sessionId, ...config }`), not `session_id` alongside
+    /// a nested `config` key — the two custom `Encodable` calls sharing one `Encoder` is what
+    /// makes that work, and is exactly the kind of thing that silently nests instead if written
+    /// wrong.
+    func testAttachSupervisionFlattensSessionIdAndConfigIntoOneObject() async throws {
+        stubJSON(
+            #"{"id":"sup1","worker_session_id":"s1","task_id":null,"state":"active","memo":null,"cursor_message_id":null,"created_at_ms":0,"updated_at_ms":0}"#
+        )
+        let client = try makeClient()
+        _ = try await client.attachSupervision(
+            sessionId: "s1", config: SupervisionConfigFields(model: "opus", appendPrompt: "watch closely"))
+
+        let body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains(#""session_id":"s1""#), body)
+        XCTAssertTrue(body.contains(#""model":"opus""#), body)
+        XCTAssertTrue(body.contains(#""append_prompt":"watch closely""#), body)
+        XCTAssertFalse(body.contains("\"config\""), "config should be flattened, not nested: \(body)")
+    }
+
     /// The wire contract the terminal's Return key depends on: `literal: true` has to reach the
     /// backend under exactly that field name, or a line break silently becomes a submit with
     /// nothing to notice it client-side.

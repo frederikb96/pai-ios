@@ -726,6 +726,62 @@ public struct SupervisionBySessionResponse: Codable, Sendable, Equatable {
     }
 }
 
+/// The configuration `POST /api/supervisions` accepts beyond `session_id` — the same fields a
+/// scheduled task pre-fills onto every `Supervision` its own fires create
+/// (`ScheduledTask.supervision_*`), so the task form and the session-menu attach form share this
+/// one shape rather than each inventing its own. `nil` throughout means "the supervisor module's
+/// own default" — never rendered as a placeholder value, since a blank box reads as unset rather
+/// than as a deliberate choice to leave it at the default.
+public struct SupervisionConfigFields: Codable, Sendable, Equatable {
+    public var model: String?
+    public var appendPrompt: String?
+    public var compactionThresholdTokens: Int?
+    public var chunkIntervalSeconds: Int?
+    public var chunkTokenThreshold: Int?
+
+    public init(
+        model: String? = nil, appendPrompt: String? = nil, compactionThresholdTokens: Int? = nil,
+        chunkIntervalSeconds: Int? = nil, chunkTokenThreshold: Int? = nil
+    ) {
+        self.model = model
+        self.appendPrompt = appendPrompt
+        self.compactionThresholdTokens = compactionThresholdTokens
+        self.chunkIntervalSeconds = chunkIntervalSeconds
+        self.chunkTokenThreshold = chunkTokenThreshold
+    }
+
+    public static let empty = SupervisionConfigFields()
+
+    /// Pre-fills the attach form from an existing (possibly `ended`) supervision — re-attaching
+    /// after a detach starts from the previous configuration rather than a blank form.
+    public static func from(_ supervision: Supervision) -> SupervisionConfigFields {
+        SupervisionConfigFields(
+            model: supervision.model, appendPrompt: supervision.appendPrompt,
+            compactionThresholdTokens: supervision.compactionThresholdTokens,
+            chunkIntervalSeconds: supervision.chunkIntervalSeconds,
+            chunkTokenThreshold: supervision.chunkTokenThreshold)
+    }
+
+    /// Same as above, from the detail shape — `SupervisionDetail` has no inheritance relationship
+    /// to `Supervision` in Swift (unlike the web's `extends`), so this is a second overload
+    /// rather than the two structs sharing one.
+    public static func from(_ detail: SupervisionDetail) -> SupervisionConfigFields {
+        SupervisionConfigFields(
+            model: detail.model, appendPrompt: detail.appendPrompt,
+            compactionThresholdTokens: detail.compactionThresholdTokens,
+            chunkIntervalSeconds: detail.chunkIntervalSeconds,
+            chunkTokenThreshold: detail.chunkTokenThreshold)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case model
+        case appendPrompt = "append_prompt"
+        case compactionThresholdTokens = "compaction_threshold_tokens"
+        case chunkIntervalSeconds = "chunk_interval_seconds"
+        case chunkTokenThreshold = "chunk_token_threshold"
+    }
+}
+
 // MARK: - Scheduler write fields and list/run response wrappers
 
 /// Every field a task's own editor writes — everything `ScheduledTask` carries except what only

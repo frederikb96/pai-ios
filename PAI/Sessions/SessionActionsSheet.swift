@@ -158,20 +158,24 @@ private struct RootActionsList: View {
                     }
                 }
 
+                // Attaching a supervisor to itself makes no sense, and a subagent has no menu of
+                // its own here worth offering this on — matches the web's identical guard.
+                // Open, read-only, whether or not one is attached yet — `SupervisionView` itself
+                // decides between an attach offer and a read-only view once it has asked.
+                if session.kind != .subagent && session.kind != .supervisor {
+                    Button {
+                        path.append(.supervision)
+                    } label: {
+                        Label("Supervisor", systemImage: "eye")
+                    }
+                }
+
                 // Unlike the web, which hides this until a fetch confirms a bound spec exists,
                 // this always shows and resolves on tap — the same "just ask, then say so if
                 // there is nothing" shape the list's own swipe action and the transcript's edge
                 // swipe both already use for this exact question.
                 Button(action: onOpenSpec) {
                     Label("Spec", systemImage: "shippingbox")
-                }
-
-                // Open, read-only, whether or not one is attached yet — `SupervisionView` itself
-                // decides between an attach offer and a read-only view once it has asked.
-                Button {
-                    path.append(.supervision)
-                } label: {
-                    Label("Supervisor", systemImage: "eye")
                 }
 
                 if let url = SessionListDomain.claudeCodeUrl(cseId: session.cseId) {

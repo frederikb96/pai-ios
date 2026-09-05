@@ -1,10 +1,16 @@
 import PAIKit
 import SwiftUI
 
-/// A session's own supervisor, read-only — open from its actions menu. Offers to attach one when
-/// none is watching yet, and reads (never edits) an existing one's configuration, state and
-/// verdict history otherwise; editing an attached supervisor's own configuration belongs to the
-/// scheduler's own configuration screen, not this menu.
+/// A session's own supervisor — open from its actions menu. Offers to attach one (sharing the
+/// same controls the scheduler task editor pre-fills a fresh `Supervision` from) when nothing is
+/// watching yet, or shows an existing one's state, configuration summary and verdict history,
+/// with a link to its own conversation and a two-step detach. Swift port of the web's
+/// `SupervisorPanel`.
+///
+/// Read-only once attached: this view never edits a LIVE supervision's own configuration — that
+/// stays the scheduler's own configuration screen's job. Re-attaching after a detach is offered
+/// again here, pre-filled from the previous configuration, since the backend allows it and
+/// refuses only while one is genuinely active.
 struct SupervisionView: View {
     let sessionId: String
 
@@ -34,39 +40,70 @@ struct SupervisionView: View {
     private func content(_ store: SupervisionStore) -> some View {
         if store.isLoading {
             ProgressView()
+        } else if store.needsAttach {
+            attachOfferView(store)
         } else if let detail = store.detail {
             attachedView(store, detail)
-        } else {
-            attachOfferView(store)
         }
     }
 
-    // MARK: - No supervisor yet
+    // MARK: - Attach (or re-attach)
 
     private func attachOfferView(_ store: SupervisionStore) -> some View {
         List {
             Section {
-                Text("Nothing is watching this session yet.")
-                    .font(PaiTypography.body.font)
-                    .foregroundStyle(PaiPalette.Semantic.textMuted)
+                Text(
+                    store.detail != nil
+                        ? "The previous supervisor was detached. Attaching a new one starts fresh — its own conversation and verdict history are separate from the one before."
+                        : "No supervisor attached. It watches this conversation as it runs and can stop it if something goes wrong — configure it the same way a scheduled task does."
+                )
+                .font(PaiTypography.body.font)
+                .foregroundStyle(PaiPalette.Semantic.textMuted)
             }
+
             Section("Model") {
                 ForEach(CreateSessionStore.modelOptions, id: \.label) { option in
+                    let isSelected = store.config.model == option.id
                     Button {
-                        Task { await store.attach(model: option.id) }
+                        store.config.model = option.id
                     } label: {
                         HStack {
                             Text(option.label)
                                 .foregroundStyle(PaiPalette.Semantic.textPrimary)
                             Spacer()
-                            if store.isBusy {
-                                ProgressView()
+                            if isSelected {
+                                Image(systemName: "checkmark")
                             }
                         }
                     }
-                    .disabled(store.isBusy)
                 }
             }
+
+            Section {
+                TextEditor(text: appendPromptBinding(store))
+                    .frame(minHeight: 60)
+            } header: {
+                Text("Appended prompt (optional — default if left blank)")
+            }
+
+            Section("Compaction and flushing") {
+                LabeledContent("Compaction threshold (tokens)") {
+                    TextField("default", text: intFieldBinding(store, \.compactionThresholdTokens))
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                }
+                LabeledContent("Flush interval (seconds)") {
+                    TextField("default", text: intFieldBinding(store, \.chunkIntervalSeconds))
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                }
+                LabeledContent("Flush threshold (tokens)") {
+                    TextField("default", text: intFieldBinding(store, \.chunkTokenThreshold))
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                }
+            }
+
             if let error = store.errorMessage {
                 Section {
                     Text(error)
@@ -74,55 +111,101 @@ struct SupervisionView: View {
                         .foregroundStyle(PaiPalette.Semantic.errorText)
                 }
             }
+
+            Section {
+                Button {
+                    Task { await store.attach() }
+                } label: {
+                    HStack {
+                        if store.isBusy { ProgressView() }
+                        Text("Attach supervisor")
+                    }
+                }
+                .disabled(store.isBusy)
+                .accessibilityIdentifier("supervisor-attach")
+            }
         }
     }
 
-    // MARK: - An existing supervisor
+    /// `SupervisionConfigFields`'s numeric fields are all `Int?`, with `nil` meaning "the
+    /// module's own default" — never rendered as a placeholder value. A blank box round-trips to
+    /// `nil` rather than `0`, matching that.
+    private func intFieldBinding(_ store: SupervisionStore, _ keyPath: WritableKeyPath<SupervisionConfigFields, Int?>)
+        -> Binding<String>
+    {
+        Binding(
+            get: { store.config[keyPath: keyPath].map(String.init) ?? "" },
+            set: { store.config[keyPath: keyPath] = Int($0) }
+        )
+    }
+
+    private func appendPromptBinding(_ store: SupervisionStore) -> Binding<String> {
+        Binding(
+            get: { store.config.appendPrompt ?? "" },
+            set: { store.config.appendPrompt = $0.isEmpty ? nil : $0 }
+        )
+    }
+
+    // MARK: - An existing, active supervisor
 
     private func attachedView(_ store: SupervisionStore, _ detail: SupervisionDetail) -> some View {
         List {
             Section {
                 LabeledContent("State") { Text(stateLabel(detail.state)) }
-                if let model = detail.model {
-                    LabeledContent("Model") { Text(model) }
+                LabeledContent("Model") { Text(detail.model ?? "default") }
+                LabeledContent("Compaction threshold") {
+                    Text(detail.compactionThresholdTokens.map(String.init) ?? "default")
                 }
-                if let memo = detail.memo, !memo.isEmpty {
-                    LabeledContent("Memo") { Text(memo) }
+                LabeledContent("Flush interval") {
+                    Text(detail.chunkIntervalSeconds.map(String.init) ?? "default")
+                }
+                LabeledContent("Flush threshold") {
+                    Text(detail.chunkTokenThreshold.map(String.init) ?? "default")
                 }
             }
-            if let verdicts = detail.verdicts, !verdicts.isEmpty {
-                Section("Verdicts") {
-                    ForEach(verdicts) { verdict in
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack {
-                                Text(verdictLabel(verdict.verdict))
-                                    .font(PaiTypography.bodyEmphasized.font)
-                                    .foregroundStyle(verdictColor(verdict.verdict))
-                                Spacer()
-                            }
-                            if let reason = verdict.reason, !reason.isEmpty {
-                                Text(reason)
-                                    .font(PaiTypography.caption.font)
-                                    .foregroundStyle(PaiPalette.Semantic.textMuted)
+
+            Section {
+                if let supervisorSessionId = detail.supervisorSessionId {
+                    Button("Open supervisor's conversation (read-only)") {
+                        environment.router.push(.session(id: supervisorSessionId))
+                    }
+                } else {
+                    Text(
+                        "The supervisor has not flushed anything yet — its own conversation starts on the first chunk there is something to watch."
+                    )
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Semantic.textFaint)
+                }
+            }
+
+            Section("Verdicts") {
+                if let verdicts = detail.verdicts {
+                    if verdicts.isEmpty {
+                        Text("Nothing recorded yet.")
+                            .font(PaiTypography.caption.font)
+                            .foregroundStyle(PaiPalette.Semantic.textFaint)
+                    } else {
+                        ForEach(verdicts) { verdict in
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    Text(verdictLabel(verdict.verdict))
+                                        .font(PaiTypography.bodyEmphasized.font)
+                                        .foregroundStyle(verdictColor(verdict.verdict))
+                                    Spacer()
+                                }
+                                if let reason = verdict.reason, !reason.isEmpty {
+                                    Text(reason)
+                                        .font(PaiTypography.caption.font)
+                                        .foregroundStyle(PaiPalette.Semantic.textMuted)
+                                }
                             }
                         }
                     }
+                } else {
+                    ProgressView()
                 }
             }
-            Section {
-                Button(role: .destructive) {
-                    confirmingDetach = true
-                } label: {
-                    if store.isBusy {
-                        ProgressView()
-                    } else {
-                        Text("Detach")
-                    }
-                }
-                .disabled(store.isBusy)
-            } footer: {
-                Text("The supervisor's own transcript and verdict history are kept even after detaching.")
-            }
+
             if let error = store.errorMessage {
                 Section {
                     Text(error)
@@ -130,10 +213,33 @@ struct SupervisionView: View {
                         .foregroundStyle(PaiPalette.Semantic.errorText)
                 }
             }
-        }
-        .confirmationDialog("Detach the supervisor?", isPresented: $confirmingDetach, titleVisibility: .visible) {
-            Button("Detach", role: .destructive) { Task { await store.detach() } }
-            Button("Cancel", role: .cancel) {}
+
+            Section {
+                if confirmingDetach {
+                    HStack {
+                        Button("Cancel") { confirmingDetach = false }
+                        Spacer()
+                        Button(role: .destructive) {
+                            Task { await store.detach() }
+                        } label: {
+                            HStack {
+                                if store.isBusy { ProgressView() }
+                                Text("Confirm detach")
+                            }
+                        }
+                        .disabled(store.isBusy)
+                    }
+                } else {
+                    Button(role: .destructive) {
+                        confirmingDetach = true
+                    } label: {
+                        Text("Detach")
+                    }
+                    .accessibilityIdentifier("supervisor-detach")
+                }
+            } footer: {
+                Text("The supervisor's own transcript and verdict history are kept even after detaching.")
+            }
         }
     }
 

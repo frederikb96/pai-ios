@@ -307,7 +307,7 @@ final class SessionStoreListStoreTests: XCTestCase {
 
     // MARK: - rows: subagent filtering, id-query on top of a server-filtered source
 
-    func testRowsExcludeSubagentsFromTheSyncedList() async {
+    func testRowsExcludeSubagentsAndSupervisorsFromTheSyncedList() async {
         let api = FakeSessionListApi()
         await api.setGetSessionsResult { call in
             guard call.since == nil else { return .success(SessionsPage(sessions: [], nextCursor: nil)) }
@@ -316,6 +316,7 @@ final class SessionStoreListStoreTests: XCTestCase {
                     sessions: [
                         SessionFixture.make(id: "convo", kind: .conversation),
                         SessionFixture.make(id: "sub", kind: .subagent),
+                        SessionFixture.make(id: "sup", kind: .supervisor),
                     ], nextCursor: nil
                 )
             )

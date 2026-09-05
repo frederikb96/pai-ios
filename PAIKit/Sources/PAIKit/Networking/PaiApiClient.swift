@@ -306,6 +306,7 @@ public struct PaiApiClient: Sendable {
             switch kind {
             case .conversation: raw = "conversation"
             case .subagent: raw = "subagent"
+            case .supervisor: raw = "supervisor"
             case let .unrecognized(value): raw = value
             }
             query.append(URLQueryItem(name: "kind", value: raw))
@@ -781,35 +782,27 @@ public struct PaiApiClient: Sendable {
 
     /// Attaches a supervisor to any session — the one write this router offers. `appendPrompt`
     /// left `nil` stores the module's own default text server-side rather than an empty box.
-    public func attachSupervision(
-        sessionId: String, model: String? = nil, appendPrompt: String? = nil,
-        compactionThresholdTokens: Int? = nil, chunkIntervalSeconds: Int? = nil,
-        chunkTokenThreshold: Int? = nil
-    ) async throws -> Supervision {
+    public func attachSupervision(sessionId: String, config: SupervisionConfigFields) async throws -> Supervision {
         struct Body: Encodable {
             let sessionId: String
-            let model: String?
-            let appendPrompt: String?
-            let compactionThresholdTokens: Int?
-            let chunkIntervalSeconds: Int?
-            let chunkTokenThreshold: Int?
+            let config: SupervisionConfigFields
             enum CodingKeys: String, CodingKey {
                 case sessionId = "session_id"
-                case model
-                case appendPrompt = "append_prompt"
-                case compactionThresholdTokens = "compaction_threshold_tokens"
-                case chunkIntervalSeconds = "chunk_interval_seconds"
-                case chunkTokenThreshold = "chunk_token_threshold"
+                // `config`'s own fields ride at the top level alongside `session_id` (the web's
+                // `{ session_id: sessionId, ...config }`) — encoded by delegating to it directly
+                // rather than nesting, since `SupervisionConfigFields` already owns the right key
+                // names.
+            }
+
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(sessionId, forKey: .sessionId)
+                try config.encode(to: encoder)
             }
         }
         return try await send(
-            path: "/api/supervisions",
-            method: "POST",
-            body: try Self.jsonBody(
-                Body(
-                    sessionId: sessionId, model: model, appendPrompt: appendPrompt,
-                    compactionThresholdTokens: compactionThresholdTokens,
-                    chunkIntervalSeconds: chunkIntervalSeconds, chunkTokenThreshold: chunkTokenThreshold))
+            path: "/api/supervisions", method: "POST",
+            body: try Self.jsonBody(Body(sessionId: sessionId, config: config))
         )
     }
 

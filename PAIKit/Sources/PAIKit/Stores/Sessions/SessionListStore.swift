@@ -162,9 +162,10 @@ public final class SessionListStore {
         } else {
             base = syncedSessions
         }
-        // A subagent opened elsewhere lands in the same synced store so a chat view can find it
-        // by id — it must never surface as a row of its own here.
-        let withoutSubagents = base.filter { $0.kind != .subagent }
+        // A subagent (opened from its parent's own subagents screen) or a supervisor (opened
+        // from its worker's own menu) lands in this same synced store so a chat view can find it
+        // by id — neither may ever surface as a row of its own here.
+        let withoutSubagents = base.filter { $0.kind != .subagent && $0.kind != .supervisor }
         let matched =
             isIdQuery
             ? withoutSubagents.filter { SessionFilterMatch.sessionIdMatches(filterQueryText, session: $0) }

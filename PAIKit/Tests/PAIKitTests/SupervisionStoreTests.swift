@@ -5,10 +5,12 @@ import XCTest
 @MainActor
 final class SupervisionStoreTests: XCTestCase {
 
-    private func detail(id: String = "sup1", state: SupervisionState = .active) -> SupervisionDetail {
+    private func detail(
+        id: String = "sup1", state: SupervisionState = .active, model: String? = nil
+    ) -> SupervisionDetail {
         SupervisionDetail(
             id: id, workerSessionId: "s1", taskId: nil, state: state, memo: nil, cursorMessageId: nil,
-            createdAtMs: 0, updatedAtMs: 0)
+            model: model, createdAtMs: 0, updatedAtMs: 0)
     }
 
     // MARK: - load
@@ -21,6 +23,7 @@ final class SupervisionStoreTests: XCTestCase {
 
         XCTAssertNil(store.detail)
         XCTAssertNil(store.errorMessage)
+        XCTAssertTrue(store.needsAttach)
     }
 
     /// `by-session` answers "is there one at all" cheaply; the full detail — including verdicts,
@@ -42,6 +45,7 @@ final class SupervisionStoreTests: XCTestCase {
 
         XCTAssertEqual(store.detail?.memo, "watching")
         XCTAssertEqual(store.detail?.verdicts?.count, 1)
+        XCTAssertFalse(store.needsAttach)
     }
 
     func testLoadSurfacesAFailureAsAnErrorMessage() async {
@@ -55,9 +59,38 @@ final class SupervisionStoreTests: XCTestCase {
         XCTAssertNil(store.detail)
     }
 
+    /// A detached supervision is not deleted server-side — its row survives with `state ==
+    /// .ended`. The backend allows re-attaching and only refuses (409) while one is genuinely
+    /// active, so `needsAttach` — not `detail == nil` — is what a view must branch on.
+    func testAnEndedSupervisionStillNeedsAttach() async {
+        let api = FakeSupervisionApi()
+        await api.setBySessionResult(.success(SupervisionBySessionResponse(supervision: detail(state: .ended))))
+        await api.setDetailResult(.success(detail(state: .ended)))
+        let store = SupervisionStore(sessionId: "s1", api: api)
+
+        await store.load()
+
+        XCTAssertNotNil(store.detail)
+        XCTAssertTrue(store.needsAttach)
+    }
+
+    /// Re-attaching after a detach starts from the previous configuration rather than a blank
+    /// form — the config draft is pre-filled from whatever `load()` fetched, ended or not.
+    func testLoadPreFillsTheConfigDraftFromTheFetchedDetail() async {
+        let api = FakeSupervisionApi()
+        await api.setBySessionResult(
+            .success(SupervisionBySessionResponse(supervision: detail(state: .ended, model: "opus"))))
+        await api.setDetailResult(.success(detail(state: .ended, model: "opus")))
+        let store = SupervisionStore(sessionId: "s1", api: api)
+
+        await store.load()
+
+        XCTAssertEqual(store.config.model, "opus")
+    }
+
     // MARK: - attach
 
-    func testAttachStoresWhatComesBackAndSendsTheChosenModel() async {
+    func testAttachSendsTheCurrentConfigDraftAndStoresWhatComesBack() async {
         let api = FakeSupervisionApi()
         await api.setAttachResult(
             .success(
@@ -65,14 +98,16 @@ final class SupervisionStoreTests: XCTestCase {
                     id: "sup1", workerSessionId: "s1", taskId: nil, state: .active, memo: nil,
                     cursorMessageId: nil, model: "opus", createdAtMs: 0, updatedAtMs: 0)))
         let store = SupervisionStore(sessionId: "s1", api: api)
+        store.config = SupervisionConfigFields(model: "opus")
 
-        let ok = await store.attach(model: "opus")
+        let ok = await store.attach()
 
         XCTAssertTrue(ok)
         XCTAssertEqual(store.detail?.model, "opus")
+        XCTAssertFalse(store.needsAttach)
         let calls = await api.attachCalls
         XCTAssertEqual(calls.map(\.sessionId), ["s1"])
-        XCTAssertEqual(calls.map(\.model), ["opus"])
+        XCTAssertEqual(calls.map(\.config.model), ["opus"])
     }
 
     func testAttachFailureLeavesNoDetailAndSurfacesTheError() async {
@@ -80,7 +115,7 @@ final class SupervisionStoreTests: XCTestCase {
         await api.setAttachResult(.failure(.detail("already supervised", statusCode: 409)))
         let store = SupervisionStore(sessionId: "s1", api: api)
 
-        let ok = await store.attach(model: nil)
+        let ok = await store.attach()
 
         XCTAssertFalse(ok)
         XCTAssertNil(store.detail)
@@ -89,18 +124,24 @@ final class SupervisionStoreTests: XCTestCase {
 
     // MARK: - detach
 
-    func testDetachClearsTheDetailOnSuccess() async {
+    /// Detaching reloads rather than clearing `detail` locally — the backend keeps the row
+    /// (`ended`), and the reload is what picks that up and flips `needsAttach` back on.
+    func testDetachReloadsAndEndsUpNeedingAttachAgain() async {
         let api = FakeSupervisionApi()
-        await api.setBySessionResult(.success(SupervisionBySessionResponse(supervision: detail())))
-        await api.setDetailResult(.success(detail()))
+        await api.setBySessionResult(.success(SupervisionBySessionResponse(supervision: detail(state: .active))))
+        await api.setDetailResult(.success(detail(state: .active)))
         let store = SupervisionStore(sessionId: "s1", api: api)
         await store.load()
-        XCTAssertNotNil(store.detail)
+        XCTAssertFalse(store.needsAttach)
+
+        // The server now reports the same row as ended, the way it would after a real detach.
+        await api.setBySessionResult(.success(SupervisionBySessionResponse(supervision: detail(state: .ended))))
+        await api.setDetailResult(.success(detail(state: .ended)))
 
         let ok = await store.detach()
 
         XCTAssertTrue(ok)
-        XCTAssertNil(store.detail)
+        XCTAssertTrue(store.needsAttach)
         let calls = await api.deleteCalls
         XCTAssertEqual(calls, ["sup1"])
     }

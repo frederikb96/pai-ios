@@ -42,6 +42,14 @@ final class SessionStoreRowStateTests: XCTestCase {
         XCTAssertEqual(SessionListDomain.dotState(for: session), .grey)
     }
 
+    /// A supervisor DOES have its own live process — unlike a subagent, `isDrivable` cannot lean
+    /// on "no process at all" for it, so this is the one case a refactor could plausibly drop.
+    func testSupervisorIsGreyEvenWithAReadyState() {
+        let session = SessionFixture.make(state: .ready, kind: .supervisor)
+        XCTAssertFalse(SessionListDomain.isDrivable(session))
+        XCTAssertEqual(SessionListDomain.dotState(for: session), .grey)
+    }
+
     /// The sharpest divergence risk in this file: an unrecognized state string is not `nil` and
     /// is not the literal `.closed`, so it reads as drivable — offering a composer for it is
     /// correct, not a bug, because the web (no closed union at runtime) would do the same.
@@ -141,6 +149,9 @@ final class SessionStoreRowStateTests: XCTestCase {
 
         let ordinary = SessionFixture.make(state: nil, kind: .conversation)
         XCTAssertEqual(SessionListDomain.sessionLabel(for: ordinary), "Not driven by PAI")
+
+        let supervisor = SessionFixture.make(state: nil, kind: .supervisor)
+        XCTAssertEqual(SessionListDomain.sessionLabel(for: supervisor), "Supervisor")
     }
 
     func testSessionLabelFallsBackToThePlainStateNameWhenNotWorking() {
