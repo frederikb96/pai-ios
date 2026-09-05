@@ -34,9 +34,7 @@ final class SupervisionStoreTests: XCTestCase {
                     id: "sup1", workerSessionId: "s1", taskId: nil, state: .active, memo: "watching",
                     cursorMessageId: nil, createdAtMs: 0, updatedAtMs: 0,
                     verdicts: [
-                        SupervisionVerdict(
-                            id: "v1", supervisionId: "sup1", verdict: .ok, reason: nil, fromMessageId: nil,
-                            toMessageId: nil, tokens: nil, createdAtMs: 0)
+                        SupervisionVerdictSummary(id: "v1", verdict: .ok, reason: nil, tokens: nil, createdAtMs: 0)
                     ])))
         let store = SupervisionStore(sessionId: "s1", api: api)
 

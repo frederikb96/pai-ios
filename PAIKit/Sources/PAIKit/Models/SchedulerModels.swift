@@ -584,6 +584,10 @@ public struct Supervision: Codable, Sendable, Equatable, Identifiable {
     /// The token size of accumulated worker output that forces an early flush regardless of
     /// the interval above.
     public let chunkTokenThreshold: Int?
+    /// The supervisor's own `Session` row — `nil` until its first flush creates one, and absent
+    /// entirely from `POST /api/supervisions`'s own response, which returns before either GET
+    /// route has a session to look up (so `nil` there too, via the default below).
+    public let supervisorSessionId: String?
     public let createdAtMs: Int
     public let updatedAtMs: Int
 
@@ -591,7 +595,8 @@ public struct Supervision: Codable, Sendable, Equatable, Identifiable {
         id: String, workerSessionId: String, taskId: String?, state: SupervisionState,
         memo: String?, cursorMessageId: Int?, model: String? = nil, appendPrompt: String? = nil,
         compactionThresholdTokens: Int? = nil, chunkIntervalSeconds: Int? = nil,
-        chunkTokenThreshold: Int? = nil, createdAtMs: Int, updatedAtMs: Int
+        chunkTokenThreshold: Int? = nil, supervisorSessionId: String? = nil, createdAtMs: Int,
+        updatedAtMs: Int
     ) {
         self.id = id
         self.workerSessionId = workerSessionId
@@ -604,6 +609,7 @@ public struct Supervision: Codable, Sendable, Equatable, Identifiable {
         self.compactionThresholdTokens = compactionThresholdTokens
         self.chunkIntervalSeconds = chunkIntervalSeconds
         self.chunkTokenThreshold = chunkTokenThreshold
+        self.supervisorSessionId = supervisorSessionId
         self.createdAtMs = createdAtMs
         self.updatedAtMs = updatedAtMs
     }
@@ -617,20 +623,43 @@ public struct Supervision: Codable, Sendable, Equatable, Identifiable {
         case compactionThresholdTokens = "compaction_threshold_tokens"
         case chunkIntervalSeconds = "chunk_interval_seconds"
         case chunkTokenThreshold = "chunk_token_threshold"
+        case supervisorSessionId = "supervisor_session_id"
         case createdAtMs = "created_at_ms"
         case updatedAtMs = "updated_at_ms"
     }
 }
 
+/// The reduced shape `GET /api/supervisions/{id}` embeds per verdict — deliberately narrower
+/// than `SupervisionVerdict`: this route never serialises `supervision_id` (redundant with the
+/// id in the URL) or the message-range fields, so declaring the full type here would claim
+/// fields this response does not actually carry.
+public struct SupervisionVerdictSummary: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let verdict: SupervisionVerdictValue
+    public let reason: String?
+    public let tokens: Int?
+    public let createdAtMs: Int
+
+    public init(id: String, verdict: SupervisionVerdictValue, reason: String?, tokens: Int?, createdAtMs: Int) {
+        self.id = id
+        self.verdict = verdict
+        self.reason = reason
+        self.tokens = tokens
+        self.createdAtMs = createdAtMs
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, verdict, reason, tokens
+        case createdAtMs = "created_at_ms"
+    }
+}
+
 /// `GET /api/supervisions/by-session/{id}` and `GET /api/supervisions/{id}` — a `Supervision`
-/// plus the two fields only those two routes add: which session the supervisor's own transcript
-/// lives under (`nil` until its first chunk, since that session is created lazily), and its
-/// verdict history. A separate type rather than widening `Supervision` itself, matching this
-/// file's own `ScheduledTask`/`ScheduledTaskDetail` split — `POST /api/supervisions` returns a
-/// plain `Supervision`, with neither field meaningful on a binding that was just created.
-/// `verdicts` is absent entirely from the by-session route's own payload, decoding to `nil` there
-/// rather than `[]`, so a caller reads `verdicts ?? []` rather than trusting an empty array to
-/// mean "checked and found none."
+/// plus its verdict history, the one field only the by-id route adds. A separate type rather
+/// than widening `Supervision` itself, matching this file's own `ScheduledTask`/
+/// `ScheduledTaskDetail` split. `verdicts` is absent entirely from the by-session route's own
+/// payload, decoding to `nil` there rather than `[]`, so a caller reads `verdicts ?? []` rather
+/// than trusting an empty array to mean "checked and found none."
 public struct SupervisionDetail: Codable, Sendable, Equatable, Identifiable {
     public let id: String
     public let workerSessionId: String
@@ -643,17 +672,17 @@ public struct SupervisionDetail: Codable, Sendable, Equatable, Identifiable {
     public let compactionThresholdTokens: Int?
     public let chunkIntervalSeconds: Int?
     public let chunkTokenThreshold: Int?
+    public let supervisorSessionId: String?
     public let createdAtMs: Int
     public let updatedAtMs: Int
-    public let supervisorSessionId: String?
-    public let verdicts: [SupervisionVerdict]?
+    public let verdicts: [SupervisionVerdictSummary]?
 
     public init(
         id: String, workerSessionId: String, taskId: String?, state: SupervisionState,
         memo: String?, cursorMessageId: Int?, model: String? = nil, appendPrompt: String? = nil,
         compactionThresholdTokens: Int? = nil, chunkIntervalSeconds: Int? = nil,
-        chunkTokenThreshold: Int? = nil, createdAtMs: Int, updatedAtMs: Int,
-        supervisorSessionId: String? = nil, verdicts: [SupervisionVerdict]? = nil
+        chunkTokenThreshold: Int? = nil, supervisorSessionId: String? = nil, createdAtMs: Int,
+        updatedAtMs: Int, verdicts: [SupervisionVerdictSummary]? = nil
     ) {
         self.id = id
         self.workerSessionId = workerSessionId
@@ -666,9 +695,9 @@ public struct SupervisionDetail: Codable, Sendable, Equatable, Identifiable {
         self.compactionThresholdTokens = compactionThresholdTokens
         self.chunkIntervalSeconds = chunkIntervalSeconds
         self.chunkTokenThreshold = chunkTokenThreshold
+        self.supervisorSessionId = supervisorSessionId
         self.createdAtMs = createdAtMs
         self.updatedAtMs = updatedAtMs
-        self.supervisorSessionId = supervisorSessionId
         self.verdicts = verdicts
     }
 

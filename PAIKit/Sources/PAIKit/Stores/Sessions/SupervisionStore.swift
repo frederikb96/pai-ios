@@ -72,8 +72,9 @@ public final class SupervisionStore {
                 model: created.model, appendPrompt: created.appendPrompt,
                 compactionThresholdTokens: created.compactionThresholdTokens,
                 chunkIntervalSeconds: created.chunkIntervalSeconds,
-                chunkTokenThreshold: created.chunkTokenThreshold, createdAtMs: created.createdAtMs,
-                updatedAtMs: created.updatedAtMs, supervisorSessionId: nil, verdicts: nil)
+                chunkTokenThreshold: created.chunkTokenThreshold,
+                supervisorSessionId: created.supervisorSessionId, createdAtMs: created.createdAtMs,
+                updatedAtMs: created.updatedAtMs, verdicts: nil)
             return true
         } catch {
             errorMessage = (error as? PaiError)?.userMessage ?? "Could not attach a supervisor"
