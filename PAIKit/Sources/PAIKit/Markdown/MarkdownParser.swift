@@ -69,7 +69,13 @@ public enum MarkdownParser {
             return .thematicBreak
 
         case let html as HTMLBlock:
-            return .htmlBlock(withoutTrailingNewline(html.rawHTML))
+            let raw = withoutTrailingNewline(html.rawHTML)
+            // A block that is nothing but an HTML comment carries no visible meaning in any
+            // HTML consumer — showing it as literal source (the general rule for raw HTML,
+            // above) is showing a reader something an author never meant them to see. Dropping
+            // it here also means it is never measured, which the general rendering fix alone
+            // would not have covered.
+            return isHTMLCommentOnly(raw) ? nil : .htmlBlock(raw)
 
         default:
             // Block directives, Doxygen commands and custom blocks are unreachable under the
@@ -85,6 +91,15 @@ public enum MarkdownParser {
     /// every code block in the transcript.
     private static func withoutTrailingNewline(_ text: String) -> String {
         text.hasSuffix("\n") ? String(text.dropLast()) : text
+    }
+
+    /// cmark's comment HTML block (type 2) starts and ends on the same or a later line
+    /// containing `-->`, so a marker written as one full line is its own block, never fused
+    /// with the paragraph before or after it — checking prefix/suffix on the trimmed block is
+    /// therefore enough, with no risk of also matching a block that carries real content.
+    private static func isHTMLCommentOnly(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.hasPrefix("<!--") && trimmed.hasSuffix("-->")
     }
 
     // MARK: - Lists

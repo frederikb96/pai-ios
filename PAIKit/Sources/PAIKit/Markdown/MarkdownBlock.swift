@@ -25,6 +25,11 @@ public enum MarkdownBlock: Hashable, Sendable {
     /// reaches no component and disappears. That is a side effect of its plugin set rather than
     /// a decision, and a transcript is a record: dropping a line of it because it happened to
     /// start with `<` is a defect. Showing the source is the honest degradation.
+    ///
+    /// A block that is nothing but an HTML comment never reaches this case at all —
+    /// `MarkdownParser`'s `isHTMLCommentOnly` drops it, since a comment has no visible meaning
+    /// in any HTML consumer and showing one as "source" would not be an honest degradation of
+    /// anything a reader was meant to see.
     case htmlBlock(String)
 }
 

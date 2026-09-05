@@ -66,6 +66,23 @@ final class MarkdownParserTests: XCTestCase {
         XCTAssertTrue(raw.contains("<summary>"))
     }
 
+    /// An HTML comment is the one raw-HTML shape that is never meant to be seen, on any HTML
+    /// consumer — a scheduler-fired prompt sandwiches its standing instructions between a pair
+    /// of them the same way this fixture does. Dropping the comment must not touch the
+    /// paragraph it wraps: that is the contrast that shows the block was recognised and
+    /// removed on purpose, not merely lost along with everything around it.
+    func testHTMLCommentBlockIsDroppedButWhatItWrapsSurvives() {
+        let source = """
+            <!-- marker -->
+            keep-this-text
+            <!-- marker -->
+            """
+        let blocks = MarkdownParser.parse(source)
+        XCTAssertFalse(blocks.contains { if case .htmlBlock = $0 { return true } else { return false } },
+                        "the comment block rendered as visible source: \(blocks)")
+        XCTAssertTrue(blocks.plainText.contains("keep-this-text"), "the wrapped paragraph was lost too: \(blocks)")
+    }
+
     /// A catch-all for the failure this model is most exposed to: a case added, reordered or
     /// rewritten later that silently contributes nothing. Each marker word appears in exactly
     /// one block kind, so a dropped kind is a missing word.
