@@ -37,36 +37,6 @@ extension TaskSessionPolicy: Codable {
     }
 }
 
-/// When a run's declared result should reach the phone. `.onError` is the task-creation default
-/// server-side: a watcher failing quietly is the failure the whole result contract exists to
-/// prevent.
-public enum TaskNotifyPolicy: Sendable, Hashable {
-    case always, onFind, onError, never
-    case unrecognized(String)
-}
-
-extension TaskNotifyPolicy: Codable {
-    private static let knownValues: [String: TaskNotifyPolicy] = [
-        "always": .always, "on_find": .onFind, "on_error": .onError, "never": .never,
-    ]
-
-    public init(from decoder: Decoder) throws {
-        let raw = try decoder.singleValueContainer().decode(String.self)
-        self = Self.knownValues[raw] ?? .unrecognized(raw)
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        switch self {
-        case .always: try container.encode("always")
-        case .onFind: try container.encode("on_find")
-        case .onError: try container.encode("on_error")
-        case .never: try container.encode("never")
-        case let .unrecognized(raw): try container.encode(raw)
-        }
-    }
-}
-
 /// Which runtime executes a gate script on the VM. Both resolve their own dependencies on
 /// first use, so a script is one self-contained file and a new one never needs a container
 /// rebuild.
@@ -123,36 +93,6 @@ extension TaskRunDisposition: Codable {
         case .deferred: try container.encode("deferred")
         case .refused: try container.encode("refused")
         case .error: try container.encode("error")
-        case let .unrecognized(raw): try container.encode(raw)
-        }
-    }
-}
-
-/// What the AGENT declared at the end of its run. `.unknown` means the run ended without
-/// declaring anything — its own outcome, which notifies once and then stays quiet, because a
-/// broken watcher must never look like a patient one.
-public enum TaskResultStatus: Sendable, Hashable {
-    case found, nothing, error, unknown
-    case unrecognized(String)
-}
-
-extension TaskResultStatus: Codable {
-    private static let knownValues: [String: TaskResultStatus] = [
-        "found": .found, "nothing": .nothing, "error": .error, "unknown": .unknown,
-    ]
-
-    public init(from decoder: Decoder) throws {
-        let raw = try decoder.singleValueContainer().decode(String.self)
-        self = Self.knownValues[raw] ?? .unrecognized(raw)
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        switch self {
-        case .found: try container.encode("found")
-        case .nothing: try container.encode("nothing")
-        case .error: try container.encode("error")
-        case .unknown: try container.encode("unknown")
         case let .unrecognized(raw): try container.encode(raw)
         }
     }
@@ -272,7 +212,6 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
     /// transcript, never on a wall clock: an agent waiting on a background job looks idle
     /// while being anything but.
     public let quietPeriodMinutes: Int
-    public let autocompactTokens: Int?
     /// The `claude --model` alias the worker session launches with. `nil` lets Claude Code
     /// pick the plan's own default. Absent on a backend that predates it.
     public let model: String?
@@ -282,7 +221,7 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
     /// A run's own token budget, covering the worker and every subagent it spawns.
     public let maxTokenBudget: Int?
     /// Above this, a reusing task's worker session is compacted before the task considers the
-    /// run over. Replaces `autocompactTokens`, which nothing reads.
+    /// run over.
     public let compactionThresholdTokens: Int?
     /// A fire is skipped once the 5-hour plan window is at or above this percentage.
     public let sessionUsageGatePercent: Int?
@@ -300,9 +239,6 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
     /// The token size of accumulated worker output that forces an early flush regardless of
     /// the interval above.
     public let supervisionChunkTokenThreshold: Int?
-    public let notifyPolicy: TaskNotifyPolicy
-    /// An urgent task is never deferred when the plan window runs low.
-    public let urgent: Bool
     public let hasWebhook: Bool
     /// Set by a supervisor stop, and terminal: the scheduler refuses to fire a stopped task
     /// until a person clears it.
@@ -321,13 +257,13 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         prompt: String, appendSystemPrompt: String?, cadence: String?, timezone: String,
         hasGate: Bool, gateRuntime: TaskGateRuntime?, gateTimeoutSeconds: Int,
         sessionPolicy: TaskSessionPolicy, sessionId: String?, quietPeriodMinutes: Int,
-        autocompactTokens: Int?, model: String? = nil, maxRuntimeMinutes: Int? = nil,
+        model: String? = nil, maxRuntimeMinutes: Int? = nil,
         maxTokenBudget: Int? = nil, compactionThresholdTokens: Int? = nil,
         sessionUsageGatePercent: Int? = nil, weeklyUsageGatePercent: Int? = nil,
         notifyOnGateSkip: Bool? = nil, supervisionEnabled: Bool, supervisionModel: String?,
         supervisionAppendPrompt: String? = nil, supervisionCompactionThresholdTokens: Int? = nil,
         supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
-        notifyPolicy: TaskNotifyPolicy, urgent: Bool, hasWebhook: Bool, stopped: Bool,
+        hasWebhook: Bool, stopped: Bool,
         stoppedReason: String?, lastFireAtMs: Int?, lastSuccessAtMs: Int?, nextFireAtMs: Int?,
         createdAtMs: Int, updatedAtMs: Int
     ) {
@@ -346,7 +282,6 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         self.sessionPolicy = sessionPolicy
         self.sessionId = sessionId
         self.quietPeriodMinutes = quietPeriodMinutes
-        self.autocompactTokens = autocompactTokens
         self.model = model
         self.maxRuntimeMinutes = maxRuntimeMinutes
         self.maxTokenBudget = maxTokenBudget
@@ -360,8 +295,6 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         self.supervisionCompactionThresholdTokens = supervisionCompactionThresholdTokens
         self.supervisionChunkIntervalSeconds = supervisionChunkIntervalSeconds
         self.supervisionChunkTokenThreshold = supervisionChunkTokenThreshold
-        self.notifyPolicy = notifyPolicy
-        self.urgent = urgent
         self.hasWebhook = hasWebhook
         self.stopped = stopped
         self.stoppedReason = stoppedReason
@@ -373,7 +306,7 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, enabled, environment, prompt, cadence, timezone, urgent, stopped, model
+        case id, name, enabled, environment, prompt, cadence, timezone, stopped, model
         case workingDir = "working_dir"
         case appendSystemPrompt = "append_system_prompt"
         case hasGate = "has_gate"
@@ -382,7 +315,6 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         case sessionPolicy = "session_policy"
         case sessionId = "session_id"
         case quietPeriodMinutes = "quiet_period_minutes"
-        case autocompactTokens = "autocompact_tokens"
         case maxRuntimeMinutes = "max_runtime_minutes"
         case maxTokenBudget = "max_token_budget"
         case compactionThresholdTokens = "compaction_threshold_tokens"
@@ -395,7 +327,6 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         case supervisionCompactionThresholdTokens = "supervision_compaction_threshold_tokens"
         case supervisionChunkIntervalSeconds = "supervision_chunk_interval_seconds"
         case supervisionChunkTokenThreshold = "supervision_chunk_token_threshold"
-        case notifyPolicy = "notify_policy"
         case hasWebhook = "has_webhook"
         case stoppedReason = "stopped_reason"
         case lastFireAtMs = "last_fire_at_ms"
@@ -423,7 +354,6 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
     public let sessionPolicy: TaskSessionPolicy
     public let sessionId: String?
     public let quietPeriodMinutes: Int
-    public let autocompactTokens: Int?
     /// The `claude --model` alias the worker session launches with. `nil` lets Claude Code
     /// pick the plan's own default. Absent on a backend that predates it.
     public let model: String?
@@ -433,7 +363,7 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
     /// A run's own token budget, covering the worker and every subagent it spawns.
     public let maxTokenBudget: Int?
     /// Above this, a reusing task's worker session is compacted before the task considers the
-    /// run over. Replaces `autocompactTokens`, which nothing reads.
+    /// run over.
     public let compactionThresholdTokens: Int?
     /// A fire is skipped once the 5-hour plan window is at or above this percentage.
     public let sessionUsageGatePercent: Int?
@@ -451,8 +381,6 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
     /// The token size of accumulated worker output that forces an early flush regardless of
     /// the interval above.
     public let supervisionChunkTokenThreshold: Int?
-    public let notifyPolicy: TaskNotifyPolicy
-    public let urgent: Bool
     public let hasWebhook: Bool
     public let stopped: Bool
     public let stoppedReason: String?
@@ -468,13 +396,13 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         prompt: String, appendSystemPrompt: String?, cadence: String?, timezone: String,
         hasGate: Bool, gateRuntime: TaskGateRuntime?, gateTimeoutSeconds: Int,
         sessionPolicy: TaskSessionPolicy, sessionId: String?, quietPeriodMinutes: Int,
-        autocompactTokens: Int?, model: String? = nil, maxRuntimeMinutes: Int? = nil,
+        model: String? = nil, maxRuntimeMinutes: Int? = nil,
         maxTokenBudget: Int? = nil, compactionThresholdTokens: Int? = nil,
         sessionUsageGatePercent: Int? = nil, weeklyUsageGatePercent: Int? = nil,
         notifyOnGateSkip: Bool? = nil, supervisionEnabled: Bool, supervisionModel: String?,
         supervisionAppendPrompt: String? = nil, supervisionCompactionThresholdTokens: Int? = nil,
         supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
-        notifyPolicy: TaskNotifyPolicy, urgent: Bool, hasWebhook: Bool, stopped: Bool,
+        hasWebhook: Bool, stopped: Bool,
         stoppedReason: String?, lastFireAtMs: Int?, lastSuccessAtMs: Int?, nextFireAtMs: Int?,
         createdAtMs: Int, updatedAtMs: Int, gateSource: String?
     ) {
@@ -493,7 +421,6 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         self.sessionPolicy = sessionPolicy
         self.sessionId = sessionId
         self.quietPeriodMinutes = quietPeriodMinutes
-        self.autocompactTokens = autocompactTokens
         self.model = model
         self.maxRuntimeMinutes = maxRuntimeMinutes
         self.maxTokenBudget = maxTokenBudget
@@ -507,8 +434,6 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         self.supervisionCompactionThresholdTokens = supervisionCompactionThresholdTokens
         self.supervisionChunkIntervalSeconds = supervisionChunkIntervalSeconds
         self.supervisionChunkTokenThreshold = supervisionChunkTokenThreshold
-        self.notifyPolicy = notifyPolicy
-        self.urgent = urgent
         self.hasWebhook = hasWebhook
         self.stopped = stopped
         self.stoppedReason = stoppedReason
@@ -521,7 +446,7 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, enabled, environment, prompt, cadence, timezone, urgent, stopped, model
+        case id, name, enabled, environment, prompt, cadence, timezone, stopped, model
         case workingDir = "working_dir"
         case appendSystemPrompt = "append_system_prompt"
         case hasGate = "has_gate"
@@ -530,7 +455,6 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         case sessionPolicy = "session_policy"
         case sessionId = "session_id"
         case quietPeriodMinutes = "quiet_period_minutes"
-        case autocompactTokens = "autocompact_tokens"
         case maxRuntimeMinutes = "max_runtime_minutes"
         case maxTokenBudget = "max_token_budget"
         case compactionThresholdTokens = "compaction_threshold_tokens"
@@ -543,7 +467,6 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         case supervisionCompactionThresholdTokens = "supervision_compaction_threshold_tokens"
         case supervisionChunkIntervalSeconds = "supervision_chunk_interval_seconds"
         case supervisionChunkTokenThreshold = "supervision_chunk_token_threshold"
-        case notifyPolicy = "notify_policy"
         case hasWebhook = "has_webhook"
         case stoppedReason = "stopped_reason"
         case lastFireAtMs = "last_fire_at_ms"
@@ -565,9 +488,6 @@ public struct TaskRun: Codable, Sendable, Equatable, Identifiable {
     public let disposition: TaskRunDisposition
     /// Why, for every disposition that is not a plain fire.
     public let reason: String?
-    public let resultStatus: TaskResultStatus?
-    public let resultTitle: String?
-    public let resultBody: String?
     public let sessionId: String?
     public let gateStdout: String?
     public let gateExitCode: Int?
@@ -577,8 +497,7 @@ public struct TaskRun: Codable, Sendable, Equatable, Identifiable {
 
     public init(
         id: String, taskId: String, trigger: TaskRunTrigger, disposition: TaskRunDisposition,
-        reason: String?, resultStatus: TaskResultStatus?, resultTitle: String?,
-        resultBody: String?, sessionId: String?, gateStdout: String?, gateExitCode: Int?,
+        reason: String?, sessionId: String?, gateStdout: String?, gateExitCode: Int?,
         notified: Bool, startedAtMs: Int, finishedAtMs: Int?
     ) {
         self.id = id
@@ -586,9 +505,6 @@ public struct TaskRun: Codable, Sendable, Equatable, Identifiable {
         self.trigger = trigger
         self.disposition = disposition
         self.reason = reason
-        self.resultStatus = resultStatus
-        self.resultTitle = resultTitle
-        self.resultBody = resultBody
         self.sessionId = sessionId
         self.gateStdout = gateStdout
         self.gateExitCode = gateExitCode
@@ -600,9 +516,6 @@ public struct TaskRun: Codable, Sendable, Equatable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id, trigger, disposition, reason, notified
         case taskId = "task_id"
-        case resultStatus = "result_status"
-        case resultTitle = "result_title"
-        case resultBody = "result_body"
         case sessionId = "session_id"
         case gateStdout = "gate_stdout"
         case gateExitCode = "gate_exit_code"
@@ -663,6 +576,8 @@ public struct Supervision: Codable, Sendable, Equatable, Identifiable {
     public let appendPrompt: String?
     /// Above this, the supervisor's own conversation is rotated to a fresh thread — never the
     /// worker's, which has no compaction setting here.
+    /// Above this, a reusing task's worker session is compacted before the task considers the
+    /// run over.
     public let compactionThresholdTokens: Int?
     /// How often the worker's transcript is flushed to the supervisor.
     public let chunkIntervalSeconds: Int?
