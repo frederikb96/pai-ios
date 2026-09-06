@@ -570,6 +570,11 @@ private struct RunRow: View {
             if let reason = run.reason, !reason.isEmpty {
                 Text(reason).font(PaiTypography.caption.font).foregroundStyle(PaiPalette.Semantic.textMuted)
             }
+            if run.runtimeWarned || run.budgetWarned {
+                Label(budgetWarningText, systemImage: "exclamationmark.triangle")
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Semantic.warningText)
+            }
             if let sessionId = run.sessionId {
                 Button("Open session") {
                     environment.router.push(.session(id: sessionId))
@@ -583,6 +588,18 @@ private struct RunRow: View {
     private var formattedStartedAt: String {
         Date(timeIntervalSince1970: Double(run.startedAtMs) / 1000)
             .formatted(date: .abbreviated, time: .shortened)
+    }
+
+    /// `runtimeWarned`/`budgetWarned` are the run's one-shot guard against repeating a budget
+    /// warning, not a disposition — a `.fired` run can carry either regardless of how it ended,
+    /// so this reads as "passed a warning during this run" rather than "was stopped". There is
+    /// no field on the wire yet that tells the two apart; see `RunHistory.tsx`'s own
+    /// `BudgetWarning` for the same wording.
+    private var budgetWarningText: String {
+        let kinds = [
+            run.runtimeWarned ? "runtime" : nil, run.budgetWarned ? "token" : nil,
+        ].compactMap { $0 }.joined(separator: " and ")
+        return "Passed its \(kinds) budget warning during this run — see the alerts list for whether it was stopped."
     }
 
     private var dispositionLabel: String {

@@ -7,13 +7,21 @@ public enum SchedulerTaskDisplay {
         case never, ok, attention, stopped
     }
 
-    /// A proxy for "how did the last fire go", built from the two timestamps a task actually
-    /// carries — there is no per-task last-disposition field on the wire, only on each individual
-    /// `TaskRun`.
+    /// What actually happened to the task's last run, from `lastRun` — the same shape the
+    /// run-history list gives one run, computed at read time rather than a status the task
+    /// itself holds. Replaces the old `lastFireAtMs`/`lastSuccessAtMs` proxy, which read a fire
+    /// that had merely STARTED as a success regardless of how it ended (a budget stop, above
+    /// all). Swift port of `TaskTable.tsx`'s `lastRunStatus` — kept to this same four-word
+    /// vocabulary rather than a full disposition badge: `declined`/`skipped`/`deferred` are the
+    /// scheduler working as designed, not a health signal, so they read as `.ok` here; only a
+    /// hard `refused`/`error`, or a `fired` run that passed a runtime/token warning (and so may
+    /// have been stopped), earns `.attention`.
     public static func lastRunStatus(_ task: ScheduledTask) -> LastRunStatus {
         if task.stopped { return .stopped }
-        if task.lastFireAtMs == nil { return .never }
-        return task.lastSuccessAtMs == task.lastFireAtMs ? .ok : .attention
+        guard let run = task.lastRun else { return .never }
+        if run.disposition == .refused || run.disposition == .error { return .attention }
+        if run.disposition == .fired && (run.runtimeWarned || run.budgetWarned) { return .attention }
+        return .ok
     }
 
     /// A cadence fires at most once per interval it implies; a task heard from less recently than

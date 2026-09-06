@@ -251,6 +251,11 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
     public let nextFireAtMs: Int?
     public let createdAtMs: Int
     public let updatedAtMs: Int
+    /// The same shape the run-history list gives one run — computed at read time from
+    /// `task_runs`, not a status the task itself holds. `nil` for a task that has never fired,
+    /// not a failure. This is what actually happened to the last run; `lastFireAtMs`/
+    /// `lastSuccessAtMs` above are a proxy that reads a fire that merely STARTED as a success.
+    public let lastRun: TaskRun?
 
     public init(
         id: String, name: String, enabled: Bool, environment: String, workingDir: String?,
@@ -265,7 +270,7 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
         hasWebhook: Bool, stopped: Bool,
         stoppedReason: String?, lastFireAtMs: Int?, lastSuccessAtMs: Int?, nextFireAtMs: Int?,
-        createdAtMs: Int, updatedAtMs: Int
+        createdAtMs: Int, updatedAtMs: Int, lastRun: TaskRun? = nil
     ) {
         self.id = id
         self.name = name
@@ -303,6 +308,7 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         self.nextFireAtMs = nextFireAtMs
         self.createdAtMs = createdAtMs
         self.updatedAtMs = updatedAtMs
+        self.lastRun = lastRun
     }
 
     enum CodingKeys: String, CodingKey {
@@ -334,6 +340,7 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         case nextFireAtMs = "next_fire_at_ms"
         case createdAtMs = "created_at_ms"
         case updatedAtMs = "updated_at_ms"
+        case lastRun = "last_run"
     }
 }
 
@@ -390,6 +397,9 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
     public let createdAtMs: Int
     public let updatedAtMs: Int
     public let gateSource: String?
+    /// The same shape the run-history list gives one run — see `ScheduledTask.lastRun`'s own
+    /// doc comment.
+    public let lastRun: TaskRun?
 
     public init(
         id: String, name: String, enabled: Bool, environment: String, workingDir: String?,
@@ -404,7 +414,7 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
         hasWebhook: Bool, stopped: Bool,
         stoppedReason: String?, lastFireAtMs: Int?, lastSuccessAtMs: Int?, nextFireAtMs: Int?,
-        createdAtMs: Int, updatedAtMs: Int, gateSource: String?
+        createdAtMs: Int, updatedAtMs: Int, gateSource: String?, lastRun: TaskRun? = nil
     ) {
         self.id = id
         self.name = name
@@ -443,6 +453,7 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         self.createdAtMs = createdAtMs
         self.updatedAtMs = updatedAtMs
         self.gateSource = gateSource
+        self.lastRun = lastRun
     }
 
     enum CodingKeys: String, CodingKey {
@@ -475,6 +486,7 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         case createdAtMs = "created_at_ms"
         case updatedAtMs = "updated_at_ms"
         case gateSource = "gate_source"
+        case lastRun = "last_run"
     }
 }
 
