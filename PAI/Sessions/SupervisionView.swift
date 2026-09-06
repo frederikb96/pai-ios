@@ -36,94 +36,106 @@ struct SupervisionView: View {
         }
     }
 
+    /// One list combining whatever applies: a finished or active supervision's own read-only
+    /// summary (state, configuration, verdict history, conversation link — shown for `.ended`
+    /// too, not just while active, so the record Freddy would go looking for after a run stays
+    /// reachable) plus the attach form, which only ever offers a NEW attach and renders whenever
+    /// there is nothing currently watching (`needsAttach`) — never both branches collapsed into
+    /// one, which is what previously made `.ended` show only the form and lose the history.
     @ViewBuilder
     private func content(_ store: SupervisionStore) -> some View {
         if store.isLoading {
             ProgressView()
-        } else if store.needsAttach {
-            attachOfferView(store)
-        } else if let detail = store.detail {
-            attachedView(store, detail)
+        } else {
+            List {
+                if let detail = store.detail {
+                    attachedInfoSections(detail)
+                    if detail.state != .ended {
+                        detachSection(store)
+                    }
+                }
+                if let error = store.errorMessage {
+                    Section {
+                        Text(error)
+                            .font(PaiTypography.caption.font)
+                            .foregroundStyle(PaiPalette.Semantic.errorText)
+                    }
+                }
+                if store.needsAttach {
+                    attachFormSections(store)
+                }
+            }
         }
     }
 
     // MARK: - Attach (or re-attach)
 
-    private func attachOfferView(_ store: SupervisionStore) -> some View {
-        List {
-            Section {
-                Text(
-                    store.detail != nil
-                        ? "The previous supervisor was detached. Attaching a new one starts fresh — its own conversation and verdict history are separate from the one before."
-                        : "No supervisor attached. It watches this conversation as it runs and can stop it if something goes wrong — configure it the same way a scheduled task does."
-                )
-                .font(PaiTypography.body.font)
-                .foregroundStyle(PaiPalette.Semantic.textMuted)
-            }
+    @ViewBuilder
+    private func attachFormSections(_ store: SupervisionStore) -> some View {
+        Section {
+            Text(
+                store.detail != nil
+                    ? "This supervision has ended. Attaching a new one starts fresh — its own conversation and verdict history are separate from the one above."
+                    : "No supervisor attached. It watches this conversation as it runs and can stop it if something goes wrong — configure it the same way a scheduled task does."
+            )
+            .font(PaiTypography.body.font)
+            .foregroundStyle(PaiPalette.Semantic.textMuted)
+        }
 
-            Section("Model") {
-                ForEach(CreateSessionStore.modelOptions, id: \.label) { option in
-                    let isSelected = store.config.model == option.id
-                    Button {
-                        store.config.model = option.id
-                    } label: {
-                        HStack {
-                            Text(option.label)
-                                .foregroundStyle(PaiPalette.Semantic.textPrimary)
-                            Spacer()
-                            if isSelected {
-                                Image(systemName: "checkmark")
-                            }
+        Section("Model") {
+            ForEach(CreateSessionStore.modelOptions, id: \.label) { option in
+                let isSelected = store.config.model == option.id
+                Button {
+                    store.config.model = option.id
+                } label: {
+                    HStack {
+                        Text(option.label)
+                            .foregroundStyle(PaiPalette.Semantic.textPrimary)
+                        Spacer()
+                        if isSelected {
+                            Image(systemName: "checkmark")
                         }
                     }
                 }
             }
+        }
 
-            Section {
-                TextEditor(text: appendPromptBinding(store))
-                    .frame(minHeight: 60)
-            } header: {
-                Text("Appended prompt (optional — default if left blank)")
-            }
+        Section {
+            TextEditor(text: appendPromptBinding(store))
+                .frame(minHeight: 60)
+        } header: {
+            Text("Appended prompt (optional — default if left blank)")
+        }
 
-            Section("Compaction and flushing") {
-                LabeledContent("Compaction threshold (tokens)") {
-                    TextField("default", text: intFieldBinding(store, \.compactionThresholdTokens))
-                        .keyboardType(.numberPad)
-                        .multilineTextAlignment(.trailing)
-                }
-                LabeledContent("Flush interval (seconds)") {
-                    TextField("default", text: intFieldBinding(store, \.chunkIntervalSeconds))
-                        .keyboardType(.numberPad)
-                        .multilineTextAlignment(.trailing)
-                }
-                LabeledContent("Flush threshold (tokens)") {
-                    TextField("default", text: intFieldBinding(store, \.chunkTokenThreshold))
-                        .keyboardType(.numberPad)
-                        .multilineTextAlignment(.trailing)
-                }
+        Section("Compaction and flushing") {
+            LabeledContent("Compaction threshold (tokens)") {
+                TextField("default", text: intFieldBinding(store, \.compactionThresholdTokens))
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.trailing)
             }
+            LabeledContent("Flush interval (seconds)") {
+                TextField("default", text: intFieldBinding(store, \.chunkIntervalSeconds))
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.trailing)
+            }
+            LabeledContent("Flush threshold (tokens)") {
+                TextField("default", text: intFieldBinding(store, \.chunkTokenThreshold))
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.trailing)
+            }
+        }
 
-            if let error = store.errorMessage {
-                Section {
-                    Text(error)
-                        .font(PaiTypography.caption.font)
-                        .foregroundStyle(PaiPalette.Semantic.errorText)
+        Section {
+            Button {
+                Task { await store.attach() }
+            } label: {
+                HStack {
+                    if store.isBusy { ProgressView() }
+                    Text("Attach supervisor")
                 }
             }
-
-            Section {
-                Button {
-                    Task { await store.attach() }
-                } label: {
-                    HStack {
-                        if store.isBusy { ProgressView() }
-                        Text("Attach supervisor")
-                    }
-                }
-                .disabled(store.isBusy)
-                .accessibilityIdentifier("supervisor-attach")
-            }
+            .disabled(store.isBusy)
+            .accessibilityIdentifier("supervisor-attach")
         }
     }
 
@@ -146,100 +158,98 @@ struct SupervisionView: View {
         )
     }
 
-    // MARK: - An existing, active supervisor
+    // MARK: - A supervision's own read-only summary — active, degraded, stopped, or ended
 
-    private func attachedView(_ store: SupervisionStore, _ detail: SupervisionDetail) -> some View {
-        List {
-            Section {
-                LabeledContent("State") { Text(stateLabel(detail.state)) }
-                LabeledContent("Model") { Text(detail.model ?? "default") }
-                LabeledContent("Compaction threshold") {
-                    Text(detail.compactionThresholdTokens.map(String.init) ?? "default")
-                }
-                LabeledContent("Flush interval") {
-                    Text(detail.chunkIntervalSeconds.map(String.init) ?? "default")
-                }
-                LabeledContent("Flush threshold") {
-                    Text(detail.chunkTokenThreshold.map(String.init) ?? "default")
-                }
+    @ViewBuilder
+    private func attachedInfoSections(_ detail: SupervisionDetail) -> some View {
+        Section {
+            LabeledContent("State") { Text(stateLabel(detail.state)) }
+            LabeledContent("Model") { Text(detail.model ?? "default") }
+            LabeledContent("Compaction threshold") {
+                Text(detail.compactionThresholdTokens.map(String.init) ?? "default")
             }
-
-            Section {
-                if let supervisorSessionId = detail.supervisorSessionId {
-                    Button("Open supervisor's conversation (read-only)") {
-                        environment.router.push(.session(id: supervisorSessionId))
-                    }
-                } else {
-                    Text(
-                        "The supervisor has not flushed anything yet — its own conversation starts on the first chunk there is something to watch."
-                    )
-                    .font(PaiTypography.caption.font)
-                    .foregroundStyle(PaiPalette.Semantic.textFaint)
-                }
+            LabeledContent("Flush interval") {
+                Text(detail.chunkIntervalSeconds.map(String.init) ?? "default")
             }
-
-            Section("Verdicts") {
-                if let verdicts = detail.verdicts {
-                    if verdicts.isEmpty {
-                        Text("Nothing recorded yet.")
-                            .font(PaiTypography.caption.font)
-                            .foregroundStyle(PaiPalette.Semantic.textFaint)
-                    } else {
-                        ForEach(verdicts) { verdict in
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack {
-                                    Text(verdictLabel(verdict.verdict))
-                                        .font(PaiTypography.bodyEmphasized.font)
-                                        .foregroundStyle(verdictColor(verdict.verdict))
-                                    Spacer()
-                                }
-                                if let reason = verdict.reason, !reason.isEmpty {
-                                    Text(reason)
-                                        .font(PaiTypography.caption.font)
-                                        .foregroundStyle(PaiPalette.Semantic.textMuted)
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    ProgressView()
-                }
+            LabeledContent("Flush threshold") {
+                Text(detail.chunkTokenThreshold.map(String.init) ?? "default")
             }
+        }
 
-            if let error = store.errorMessage {
-                Section {
-                    Text(error)
+        Section {
+            if let supervisorSessionId = detail.supervisorSessionId {
+                Button("Open supervisor's conversation (read-only)") {
+                    environment.router.push(.session(id: supervisorSessionId))
+                }
+            } else {
+                Text(
+                    "The supervisor has not flushed anything yet — its own conversation starts on the first chunk there is something to watch."
+                )
+                .font(PaiTypography.caption.font)
+                .foregroundStyle(PaiPalette.Semantic.textFaint)
+            }
+        }
+
+        Section("Verdicts") {
+            if let verdicts = detail.verdicts {
+                if verdicts.isEmpty {
+                    Text("Nothing recorded yet.")
                         .font(PaiTypography.caption.font)
-                        .foregroundStyle(PaiPalette.Semantic.errorText)
-                }
-            }
-
-            Section {
-                if confirmingDetach {
-                    HStack {
-                        Button("Cancel") { confirmingDetach = false }
-                        Spacer()
-                        Button(role: .destructive) {
-                            Task { await store.detach() }
-                        } label: {
+                        .foregroundStyle(PaiPalette.Semantic.textFaint)
+                } else {
+                    ForEach(verdicts) { verdict in
+                        VStack(alignment: .leading, spacing: 2) {
                             HStack {
-                                if store.isBusy { ProgressView() }
-                                Text("Confirm detach")
+                                Text(verdictLabel(verdict.verdict))
+                                    .font(PaiTypography.bodyEmphasized.font)
+                                    .foregroundStyle(verdictColor(verdict.verdict))
+                                Spacer()
+                            }
+                            if let reason = verdict.reason, !reason.isEmpty {
+                                Text(reason)
+                                    .font(PaiTypography.caption.font)
+                                    .foregroundStyle(PaiPalette.Semantic.textMuted)
                             }
                         }
-                        .disabled(store.isBusy)
                     }
-                } else {
-                    Button(role: .destructive) {
-                        confirmingDetach = true
-                    } label: {
-                        Text("Detach")
-                    }
-                    .accessibilityIdentifier("supervisor-detach")
                 }
-            } footer: {
-                Text("The supervisor's own transcript and verdict history are kept even after detaching.")
+            } else {
+                ProgressView()
             }
+        }
+
+    }
+
+    /// Detaching only makes sense while a supervision is genuinely watching — once `.ended`
+    /// there is nothing left to detach, and re-attaching is what `attachFormSections` offers
+    /// instead.
+    @ViewBuilder
+    private func detachSection(_ store: SupervisionStore) -> some View {
+        Section {
+            if confirmingDetach {
+                HStack {
+                    Button("Cancel") { confirmingDetach = false }
+                    Spacer()
+                    Button(role: .destructive) {
+                        Task { await store.detach() }
+                    } label: {
+                        HStack {
+                            if store.isBusy { ProgressView() }
+                            Text("Confirm detach")
+                        }
+                    }
+                    .disabled(store.isBusy)
+                }
+            } else {
+                Button(role: .destructive) {
+                    confirmingDetach = true
+                } label: {
+                    Text("Detach")
+                }
+                .accessibilityIdentifier("supervisor-detach")
+            }
+        } footer: {
+            Text("The supervisor's own transcript and verdict history are kept even after detaching.")
         }
     }
 

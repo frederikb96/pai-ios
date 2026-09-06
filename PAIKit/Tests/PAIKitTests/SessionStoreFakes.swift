@@ -416,14 +416,13 @@ actor FakeSupervisionApi: SupervisionApiClient {
     private(set) var attachCalls: [(sessionId: String, config: SupervisionConfigFields)] = []
     private(set) var deleteCalls: [String] = []
 
-    var bySessionResult: Result<SupervisionBySessionResponse, PaiError> = .success(
-        SupervisionBySessionResponse(supervision: nil))
+    var bySessionResult: Result<Supervision?, PaiError> = .success(nil)
     var detailResult: Result<SupervisionDetail, PaiError>?
     var attachResult: Result<Supervision, PaiError>?
     var deleteResult: Result<PaiSupervisionDetachResult, PaiError> = .success(
         PaiSupervisionDetachResult(detached: true))
 
-    func getSupervisionBySession(sessionId: String) async throws -> SupervisionBySessionResponse {
+    func getSupervisionBySession(sessionId: String) async throws -> Supervision? {
         switch bySessionResult {
         case let .success(response): return response
         case let .failure(error): throw error

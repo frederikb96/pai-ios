@@ -3,7 +3,7 @@ import Observation
 
 /// The narrow slice of `PaiApiClient` this store needs.
 public protocol SupervisionApiClient: Sendable {
-    func getSupervisionBySession(sessionId: String) async throws -> SupervisionBySessionResponse
+    func getSupervisionBySession(sessionId: String) async throws -> Supervision?
     func getSupervision(supervisionId: String) async throws -> SupervisionDetail
     func attachSupervision(sessionId: String, config: SupervisionConfigFields) async throws -> Supervision
     func deleteSupervision(supervisionId: String) async throws -> PaiSupervisionDetachResult
@@ -56,8 +56,7 @@ public final class SupervisionStore {
         errorMessage = nil
         defer { isLoading = false }
         do {
-            let response = try await api.getSupervisionBySession(sessionId: sessionId)
-            guard let supervision = response.supervision else {
+            guard let supervision = try await api.getSupervisionBySession(sessionId: sessionId) else {
                 detail = nil
                 return
             }

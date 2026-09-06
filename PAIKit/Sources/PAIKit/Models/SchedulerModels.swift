@@ -722,16 +722,6 @@ public struct SupervisionDetail: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
-/// `GET /api/supervisions/by-session/{id}` — `{"supervision": null}` is not an error; most
-/// sessions have none.
-public struct SupervisionBySessionResponse: Codable, Sendable, Equatable {
-    public let supervision: SupervisionDetail?
-
-    public init(supervision: SupervisionDetail?) {
-        self.supervision = supervision
-    }
-}
-
 /// The configuration `POST /api/supervisions` accepts beyond `session_id` — the same fields a
 /// scheduled task pre-fills onto every `Supervision` its own fires create
 /// (`ScheduledTask.supervision_*`), so the task form and the session-menu attach form share this
@@ -811,6 +801,12 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
     public var sessionPolicy: TaskSessionPolicy
     public var quietPeriodMinutes: Int
     public var model: String?
+    public var maxRuntimeMinutes: Int?
+    public var maxTokenBudget: Int?
+    public var compactionThresholdTokens: Int?
+    public var sessionUsageGatePercent: Int
+    public var weeklyUsageGatePercent: Int
+    public var notifyOnGateSkip: Bool
     public var supervisionEnabled: Bool
     public var supervisionModel: String?
     public var supervisionAppendPrompt: String?
@@ -823,7 +819,10 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         name: String, environment: String, workingDir: String?, prompt: String,
         appendSystemPrompt: String?, cadence: String?, timezone: String, gateSource: String?,
         gateRuntime: TaskGateRuntime?, gateTimeoutSeconds: Int, sessionPolicy: TaskSessionPolicy,
-        quietPeriodMinutes: Int, model: String?, supervisionEnabled: Bool, supervisionModel: String?,
+        quietPeriodMinutes: Int, model: String?, maxRuntimeMinutes: Int? = nil,
+        maxTokenBudget: Int? = nil, compactionThresholdTokens: Int? = nil,
+        sessionUsageGatePercent: Int = 60, weeklyUsageGatePercent: Int = 80,
+        notifyOnGateSkip: Bool = false, supervisionEnabled: Bool, supervisionModel: String?,
         supervisionAppendPrompt: String? = nil, supervisionCompactionThresholdTokens: Int? = nil,
         supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
         enabled: Bool
@@ -841,6 +840,12 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         self.sessionPolicy = sessionPolicy
         self.quietPeriodMinutes = quietPeriodMinutes
         self.model = model
+        self.maxRuntimeMinutes = maxRuntimeMinutes
+        self.maxTokenBudget = maxTokenBudget
+        self.compactionThresholdTokens = compactionThresholdTokens
+        self.sessionUsageGatePercent = sessionUsageGatePercent
+        self.weeklyUsageGatePercent = weeklyUsageGatePercent
+        self.notifyOnGateSkip = notifyOnGateSkip
         self.supervisionEnabled = supervisionEnabled
         self.supervisionModel = supervisionModel
         self.supervisionAppendPrompt = supervisionAppendPrompt
@@ -851,10 +856,11 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
     }
 
     /// The default a brand-new, not-yet-saved task starts from — mirrors the web's own
-    /// `defaultFields()`, including the 60-minute quiet period: it must keep mirroring the
-    /// server's own default, since a value shorter than the server's would silently make a
-    /// phone-made task behave differently from an API-made one at exactly the field that decides
-    /// how often a task really runs.
+    /// `defaultFields()`, including the 60-minute quiet period and the 60/80 usage gates: these
+    /// must keep mirroring the server's own defaults (`ScheduledTask.sessionUsageGatePercent`/
+    /// `weeklyUsageGatePercent` — Freddy's own numbers), since a value that disagreed would
+    /// silently make a phone-made task behave differently from an API-made one at exactly the
+    /// field that decides how often a task really runs.
     public static func fresh(timezone: String) -> TaskWriteFields {
         TaskWriteFields(
             name: "", environment: "default", workingDir: nil, prompt: "", appendSystemPrompt: nil,
@@ -870,6 +876,11 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
             gateSource: task.gateSource, gateRuntime: task.gateRuntime ?? .bun,
             gateTimeoutSeconds: task.gateTimeoutSeconds, sessionPolicy: task.sessionPolicy,
             quietPeriodMinutes: task.quietPeriodMinutes, model: task.model,
+            maxRuntimeMinutes: task.maxRuntimeMinutes, maxTokenBudget: task.maxTokenBudget,
+            compactionThresholdTokens: task.compactionThresholdTokens,
+            sessionUsageGatePercent: task.sessionUsageGatePercent ?? 60,
+            weeklyUsageGatePercent: task.weeklyUsageGatePercent ?? 80,
+            notifyOnGateSkip: task.notifyOnGateSkip ?? false,
             supervisionEnabled: task.supervisionEnabled, supervisionModel: task.supervisionModel,
             enabled: task.enabled)
     }
@@ -883,6 +894,12 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         case gateTimeoutSeconds = "gate_timeout_seconds"
         case sessionPolicy = "session_policy"
         case quietPeriodMinutes = "quiet_period_minutes"
+        case maxRuntimeMinutes = "max_runtime_minutes"
+        case maxTokenBudget = "max_token_budget"
+        case compactionThresholdTokens = "compaction_threshold_tokens"
+        case sessionUsageGatePercent = "session_usage_gate_percent"
+        case weeklyUsageGatePercent = "weekly_usage_gate_percent"
+        case notifyOnGateSkip = "notify_on_gate_skip"
         case supervisionEnabled = "supervision_enabled"
         case supervisionModel = "supervision_model"
         case supervisionAppendPrompt = "supervision_append_prompt"

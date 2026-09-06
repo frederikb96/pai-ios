@@ -153,6 +153,54 @@ struct TaskEditorView: View {
                 }
 
                 Section {
+                    LabeledContent("Max runtime (minutes)") {
+                        TextField("no ceiling", text: intFieldBinding(store, \.maxRuntimeMinutes))
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    Text("Twenty minutes for a small web search, hours for a Kubernetes job.")
+                        .font(PaiTypography.caption.font)
+                        .foregroundStyle(PaiPalette.Semantic.textFaint)
+                    LabeledContent("Max token budget") {
+                        TextField("no ceiling", text: intFieldBinding(store, \.maxTokenBudget))
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    Text(
+                        "Around 500k for a web search, up to 2M for a large job. Covers the worker and every subagent it spawns."
+                    )
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Semantic.textFaint)
+                    LabeledContent("Compact this task's session above (tokens)") {
+                        TextField("default", text: intFieldBinding(store, \.compactionThresholdTokens))
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    Text(
+                        "This task's own worker session — not the supervisor's, which has its own threshold below. Only applies to a task that reuses its conversation between fires."
+                    )
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Semantic.textFaint)
+                    LabeledContent("Skip a fire once the 5-hour plan window is at (%)") {
+                        TextField(
+                            "60", value: sessionGatePercentBinding(store), format: .number
+                        )
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                    }
+                    LabeledContent("Skip a fire once the 7-day plan window is at (%)") {
+                        TextField(
+                            "80", value: weeklyGatePercentBinding(store), format: .number
+                        )
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                    }
+                    Toggle("Alert when a plan-usage gate skips a fire", isOn: notifyOnGateSkipBinding(store))
+                } header: {
+                    Text("This task's own limits")
+                }
+
+                Section {
                     Toggle("Supervised", isOn: supervisionEnabledBinding(store))
                     if store.fields.supervisionEnabled {
                         supervisionModelPicker(store)
@@ -368,6 +416,30 @@ struct TaskEditorView: View {
     }
     private func supervisionEnabledBinding(_ store: TaskEditorStore) -> Binding<Bool> {
         Binding(get: { store.fields.supervisionEnabled }, set: { store.fields.supervisionEnabled = $0 })
+    }
+    /// `nil` means "no ceiling"/"default" throughout this task's own limits — never rendered as a
+    /// placeholder value, matching `SupervisionView`'s identical `Int?` fields. A blank box
+    /// round-trips to `nil` rather than `0`.
+    private func intFieldBinding(_ store: TaskEditorStore, _ keyPath: WritableKeyPath<TaskWriteFields, Int?>)
+        -> Binding<String>
+    {
+        Binding(
+            get: { store.fields[keyPath: keyPath].map(String.init) ?? "" },
+            set: { store.fields[keyPath: keyPath] = Int($0) }
+        )
+    }
+    private func sessionGatePercentBinding(_ store: TaskEditorStore) -> Binding<Int> {
+        Binding(
+            get: { store.fields.sessionUsageGatePercent },
+            set: { store.fields.sessionUsageGatePercent = $0 })
+    }
+    private func weeklyGatePercentBinding(_ store: TaskEditorStore) -> Binding<Int> {
+        Binding(
+            get: { store.fields.weeklyUsageGatePercent },
+            set: { store.fields.weeklyUsageGatePercent = $0 })
+    }
+    private func notifyOnGateSkipBinding(_ store: TaskEditorStore) -> Binding<Bool> {
+        Binding(get: { store.fields.notifyOnGateSkip }, set: { store.fields.notifyOnGateSkip = $0 })
     }
     private func hasGateBinding(_ store: TaskEditorStore) -> Binding<Bool> {
         Binding(get: { store.hasGate }, set: { store.setHasGate($0) })

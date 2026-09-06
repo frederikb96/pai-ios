@@ -770,8 +770,10 @@ public struct PaiApiClient: Sendable {
     // MARK: Supervision
 
     /// The supervision watching a session, if any — a session-menu button reads this to decide
-    /// whether to open an existing supervisor read-only or offer to attach one.
-    public func getSupervisionBySession(sessionId: String) async throws -> SupervisionBySessionResponse {
+    /// whether to open an existing supervisor read-only or offer to attach one. Returned
+    /// unwrapped (a bare `Supervision` or `null`), the same shape `GET /api/supervisions/{id}`
+    /// carries minus its `verdicts` — this cheaper check has no reason to fetch those.
+    public func getSupervisionBySession(sessionId: String) async throws -> Supervision? {
         try await send(path: "/api/supervisions/by-session/\(sessionId)")
     }
 

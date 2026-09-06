@@ -13,6 +13,17 @@ final class SupervisionStoreTests: XCTestCase {
             model: model, createdAtMs: 0, updatedAtMs: 0)
     }
 
+    /// `GET /api/supervisions/by-session/{id}` answers with a bare `Supervision` (or `null`), not
+    /// the full `SupervisionDetail` a second, by-id fetch provides — same fields as `detail()`
+    /// above, minus the verdicts that route has no reason to carry.
+    private func binding(
+        id: String = "sup1", state: SupervisionState = .active, model: String? = nil
+    ) -> Supervision {
+        Supervision(
+            id: id, workerSessionId: "s1", taskId: nil, state: state, memo: nil, cursorMessageId: nil,
+            model: model, createdAtMs: 0, updatedAtMs: 0)
+    }
+
     // MARK: - load
 
     func testLoadLeavesDetailNilWhenNoSupervisionExists() async {
@@ -30,7 +41,7 @@ final class SupervisionStoreTests: XCTestCase {
     /// which that first call never carries — is a second fetch by the supervision's own id.
     func testLoadFetchesTheFullDetailWhenABindingExists() async {
         let api = FakeSupervisionApi()
-        await api.setBySessionResult(.success(SupervisionBySessionResponse(supervision: detail())))
+        await api.setBySessionResult(.success(binding()))
         await api.setDetailResult(
             .success(
                 SupervisionDetail(
@@ -64,7 +75,7 @@ final class SupervisionStoreTests: XCTestCase {
     /// active, so `needsAttach` — not `detail == nil` — is what a view must branch on.
     func testAnEndedSupervisionStillNeedsAttach() async {
         let api = FakeSupervisionApi()
-        await api.setBySessionResult(.success(SupervisionBySessionResponse(supervision: detail(state: .ended))))
+        await api.setBySessionResult(.success(binding(state: .ended)))
         await api.setDetailResult(.success(detail(state: .ended)))
         let store = SupervisionStore(sessionId: "s1", api: api)
 
@@ -79,7 +90,7 @@ final class SupervisionStoreTests: XCTestCase {
     func testLoadPreFillsTheConfigDraftFromTheFetchedDetail() async {
         let api = FakeSupervisionApi()
         await api.setBySessionResult(
-            .success(SupervisionBySessionResponse(supervision: detail(state: .ended, model: "opus"))))
+            .success(binding(state: .ended, model: "opus")))
         await api.setDetailResult(.success(detail(state: .ended, model: "opus")))
         let store = SupervisionStore(sessionId: "s1", api: api)
 
@@ -128,14 +139,14 @@ final class SupervisionStoreTests: XCTestCase {
     /// (`ended`), and the reload is what picks that up and flips `needsAttach` back on.
     func testDetachReloadsAndEndsUpNeedingAttachAgain() async {
         let api = FakeSupervisionApi()
-        await api.setBySessionResult(.success(SupervisionBySessionResponse(supervision: detail(state: .active))))
+        await api.setBySessionResult(.success(binding(state: .active)))
         await api.setDetailResult(.success(detail(state: .active)))
         let store = SupervisionStore(sessionId: "s1", api: api)
         await store.load()
         XCTAssertFalse(store.needsAttach)
 
         // The server now reports the same row as ended, the way it would after a real detach.
-        await api.setBySessionResult(.success(SupervisionBySessionResponse(supervision: detail(state: .ended))))
+        await api.setBySessionResult(.success(binding(state: .ended)))
         await api.setDetailResult(.success(detail(state: .ended)))
 
         let ok = await store.detach()
@@ -160,7 +171,7 @@ final class SupervisionStoreTests: XCTestCase {
 }
 
 extension FakeSupervisionApi {
-    func setBySessionResult(_ result: Result<SupervisionBySessionResponse, PaiError>) {
+    func setBySessionResult(_ result: Result<Supervision?, PaiError>) {
         bySessionResult = result
     }
 
