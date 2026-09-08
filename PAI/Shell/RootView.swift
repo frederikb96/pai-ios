@@ -234,7 +234,12 @@ struct RootView: View {
             // `isTitleFocused` is still (stalely) true, and the next commit renames note B using
             // note A's half-typed title. `.id(id)` removes the whole class rather than patching
             // that one field.
-            NoteEditorScreen(noteID: id)
+            //
+            // `startsInPreview` reads the stored preference rather than defaulting to edit: this
+            // route names no mode of its own, so the last mode Freddy actively chose (the
+            // editor's own toggle — see `NotesBrowseStore.previewMode`) decides, the same way the
+            // web falls back to its stored preference whenever the address says nothing.
+            NoteEditorScreen(noteID: id, startsInPreview: environment.connection?.notesBrowse.previewMode ?? false)
                 .id(id)
         case .noteContainers:
             NoteContainersScreen()

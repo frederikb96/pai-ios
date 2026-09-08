@@ -7,11 +7,14 @@ struct NoteEditorScreen: View {
 
     @Environment(AppEnvironment.self) private var environment
     @Environment(NotesStore.self) private var notes
+    @Environment(NotesBrowseStore.self) private var browse
     @Environment(ToastCenter.self) private var toasts
     @Environment(\.scenePhase) private var scenePhase
 
     /// Edit and preview are exclusive modes, as they are on the web. Not a live preview — see
     /// `MarkdownSourceHighlighter` for why the editor styles the markup instead of replacing it.
+    /// Seeded from `startsInPreview` at `init` — see `NotesBrowseStore.previewMode` for where
+    /// that comes from and why only the toggle below writes it back.
     @State private var isPreviewing: Bool
     /// Also gate the editor's own focus while either is presented — see
     /// `NoteEditorSurface/isCoveredBySheet`. Neither sheet resigns the editor on its own, and a
@@ -161,6 +164,9 @@ struct NoteEditorScreen: View {
                 // than whatever the debounce last happened to save.
                 Task { await notes.flush(id: noteID) }
                 isPreviewing.toggle()
+                // The one place Freddy actively chooses a mode, so the one place that updates the
+                // sticky preference the next note with no mode of its own falls back to.
+                browse.setPreviewMode(isPreviewing)
             } label: {
                 Image(systemName: isPreviewing ? "pencil" : "eye")
             }

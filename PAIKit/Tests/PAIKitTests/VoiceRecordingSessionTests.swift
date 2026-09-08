@@ -530,9 +530,12 @@ final class VoiceRecordingSessionTests: XCTestCase {
         XCTAssertEqual(session.lastProtocolErrorMessage, "quota exceeded")
     }
 
-    // MARK: Silence-triggered auto-stop, end to end
+    // MARK: Silence gating, end to end
 
-    func testContinuousSilencePastGraceAndDurationAutoStopsTheRecording() async {
+    /// The regression this guards: silence used to auto-stop the take outright. It must now gate
+    /// the audio off — the take stays `.recording` and nothing new reaches the transport — rather
+    /// than ending it.
+    func testContinuousSilencePastGraceAndDurationGatesTheAudioWithoutEndingTheTake() async {
         let transport = FakeVoiceRealtimeTransport()
         let settings = VoiceSettings(
             silenceDetectionEnabled: true, silenceThreshold: 0.01, silenceDurationMs: 1000
@@ -547,13 +550,71 @@ final class VoiceRecordingSessionTests: XCTestCase {
         session.ingestLevel(rms: 0.0)
         clock.current = clock.current.addingTimeInterval(1.0)
         session.ingestLevel(rms: 0.0)
+        await Task.yield()
+
+        XCTAssertEqual(session.state, .recording)
+        XCTAssertNil(session.lastEndReason)
+
+        // Gated: a chunk fed now must not reach ElevenLabs at all.
+        await session.ingestAudioChunk(pcm16le: [Int16.max, Int16.max, Int16.max])
+        let sentWhileGated = await transport.sentTexts
+        XCTAssertEqual(sentWhileGated.count, 0)
+    }
+
+    /// Speech resuming lifts the gate immediately — no sustained duration required, unlike
+    /// engaging it — and sending picks back up.
+    func testSpeechResumingLiftsTheGateAndSendingResumes() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let settings = VoiceSettings(
+            silenceDetectionEnabled: true, silenceThreshold: 0.01, silenceDurationMs: 1000
+        )
+        let session = makeSession(transport: transport, settings: settings)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        // Default grace is 3000ms -- advance past it, then feed 1000ms of continuous quiet.
+        clock.current = clock.current.addingTimeInterval(3.0)
+        session.ingestLevel(rms: 0.0)
+        clock.current = clock.current.addingTimeInterval(1.0)
+        session.ingestLevel(rms: 0.0)
+        await session.ingestAudioChunk(pcm16le: [1, 2, 3])
+        let sentWhileGated = await transport.sentTexts
+        XCTAssertEqual(sentWhileGated.count, 0)
+
+        session.ingestLevel(rms: 0.5)
+        await session.ingestAudioChunk(pcm16le: [1, 2, 3])
+        let sentAfterResuming = await transport.sentTexts
+        XCTAssertEqual(sentAfterResuming.count, 1)
+    }
+
+    /// A gate that never lifts must still end the take, or this is an open, silent socket for as
+    /// long as nobody notices.
+    func testAGateThatNeverLiftsEventuallyEndsTheTake() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let settings = VoiceSettings(
+            silenceDetectionEnabled: true, silenceThreshold: 0.01, silenceDurationMs: 1000
+        )
+        let session = makeSession(transport: transport, settings: settings)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        // Default grace is 3000ms -- advance past it, then feed 1000ms of continuous quiet to
+        // actually engage the gate before the backstop's own clock can start.
+        clock.current = clock.current.addingTimeInterval(3.0)
+        session.ingestLevel(rms: 0.0)
+        clock.current = clock.current.addingTimeInterval(1.0)
+        session.ingestLevel(rms: 0.0)
+        // Past the default 120s backstop, still quiet.
+        clock.current = clock.current.addingTimeInterval(121.0)
+        session.ingestLevel(rms: 0.0)
 
         await waitUntil { session.state == .idle }
-
         XCTAssertEqual(session.lastEndReason, .silence)
     }
 
-    func testLoudAudioNeverTriggersAutoStop() async {
+    func testLoudAudioNeverGatesOrEndsTheTake() async {
         let transport = FakeVoiceRealtimeTransport()
         let settings = VoiceSettings(
             silenceDetectionEnabled: true, silenceThreshold: 0.01, silenceDurationMs: 1000
@@ -565,8 +626,10 @@ final class VoiceRecordingSessionTests: XCTestCase {
 
         clock.current = clock.current.addingTimeInterval(10.0)
         session.ingestLevel(rms: 0.5)
-        await Task.yield()
+        await session.ingestAudioChunk(pcm16le: [1, 2, 3])
 
         XCTAssertEqual(session.state, .recording)
+        let sent = await transport.sentTexts
+        XCTAssertEqual(sent.count, 1)
     }
 }

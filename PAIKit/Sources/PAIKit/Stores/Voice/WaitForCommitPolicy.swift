@@ -26,16 +26,22 @@ public struct VoiceRecordingResult: Sendable, Equatable {
     public let endedBy: RecordingEndReason
     public let durationMs: Int
     public let mutedMs: Int
+    /// Total time spent gated off due to detected silence, across every time it fired this take.
+    /// Whether silence ever gated the audio is `silenceGatedMs > 0` — it no longer implies
+    /// `endedBy == .silence`, since a gate resumes on its own once speech returns.
+    public let silenceGatedMs: Int
     public let sampleRate: Int
     public let narrowband: Bool
 
     public init(
-        text: String, endedBy: RecordingEndReason, durationMs: Int, mutedMs: Int, sampleRate: Int, narrowband: Bool
+        text: String, endedBy: RecordingEndReason, durationMs: Int, mutedMs: Int, silenceGatedMs: Int = 0,
+        sampleRate: Int, narrowband: Bool
     ) {
         self.text = text
         self.endedBy = endedBy
         self.durationMs = durationMs
         self.mutedMs = mutedMs
+        self.silenceGatedMs = silenceGatedMs
         self.sampleRate = sampleRate
         self.narrowband = narrowband
     }

@@ -743,7 +743,8 @@ final class VoiceRecorderController {
             endedBy: result.endedBy,
             silence: SilenceMeta(
                 enabled: settings.silenceDetectionEnabled, threshold: settings.silenceThreshold,
-                durationMs: Double(settings.silenceDurationMs), triggered: result.endedBy == .silence
+                durationMs: Double(settings.silenceDurationMs), triggered: result.silenceGatedMs > 0,
+                gatedMs: Double(result.silenceGatedMs)
             ),
             stt: SttMeta(
                 model: VoiceRealtimeProtocol.modelId, language: settings.sttLanguage.rawValue,

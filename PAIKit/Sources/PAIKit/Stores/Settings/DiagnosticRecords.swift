@@ -69,19 +69,26 @@ public struct LevelStats: Codable, Sendable, Equatable {
     }
 }
 
-/// Silence detection as it stood for one recording, and whether it is what ended it. Port of
-/// `stores/settings.ts`'s `SilenceMeta`.
+/// Silence detection as it stood for one recording, and what it did. Port of
+/// `stores/settings.ts`'s `SilenceMeta` — detected silence gates the audio off rather than
+/// ending the take, so `triggered` no longer implies `endedBy == .silence` on the enclosing
+/// `RecordingMeta`: a take can be gated, resume once speech returns, and still end by any other
+/// reason.
 public struct SilenceMeta: Codable, Sendable, Equatable {
     public let enabled: Bool
     public let threshold: Double
     public let durationMs: Double
+    /// Whether silence ever gated the audio off during this take.
     public let triggered: Bool
+    /// Total time spent gated off due to silence, across every time it fired.
+    public let gatedMs: Double
 
-    public init(enabled: Bool, threshold: Double, durationMs: Double, triggered: Bool) {
+    public init(enabled: Bool, threshold: Double, durationMs: Double, triggered: Bool, gatedMs: Double = 0) {
         self.enabled = enabled
         self.threshold = threshold
         self.durationMs = durationMs
         self.triggered = triggered
+        self.gatedMs = gatedMs
     }
 }
 

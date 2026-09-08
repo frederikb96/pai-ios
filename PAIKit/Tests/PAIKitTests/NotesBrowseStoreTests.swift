@@ -34,6 +34,23 @@ final class NotesBrowseStoreTests: XCTestCase {
         XCTAssertEqual(second.sortOrder, .favouritesFirst)
     }
 
+    func testPreviewModeDefaultsToEditOnAFreshInstall() {
+        let store = NotesBrowseStore(api: FakeNotesBrowseApi(), storage: SettingsInMemoryKeyValueStore())
+        XCTAssertFalse(store.previewMode)
+    }
+
+    /// The reading-mode equivalent of `testSortOrderPersistsAcrossStoreInstances` — this is what
+    /// makes a note opened with no mode of its own (`Route.note`) fall back to what Freddy last
+    /// chose rather than always resetting to edit.
+    func testPreviewModePersistsAcrossStoreInstances() {
+        let storage = SettingsInMemoryKeyValueStore()
+        let first = NotesBrowseStore(api: FakeNotesBrowseApi(), storage: storage)
+        first.setPreviewMode(true)
+
+        let second = NotesBrowseStore(api: FakeNotesBrowseApi(), storage: storage)
+        XCTAssertTrue(second.previewMode)
+    }
+
     func testSearchSemanticPassesTheQueryThrough() async throws {
         let api = FakeNotesBrowseApi()
         api.searchResult = [NoteSemanticHit(noteId: "n1", score: 0.9)]

@@ -202,8 +202,11 @@ private struct RecordingRow: View {
         if let muted = meta.mutedMs, muted > 0 {
             parts.append("\(Int(muted / 1000))s muted")
         }
-        if meta.silence?.triggered == true {
-            parts.append("silence")
+        // `triggered` no longer means the take ended by silence -- a gate now resumes on its
+        // own once speech returns, so this shows how long it actually withheld audio, the same
+        // shape the muted line above already uses.
+        if let silence = meta.silence, silence.triggered, silence.gatedMs > 0 {
+            parts.append("\(Int(silence.gatedMs / 1000))s silence-gated")
         }
         if meta.rawStored == false {
             parts.append("no raw kept")

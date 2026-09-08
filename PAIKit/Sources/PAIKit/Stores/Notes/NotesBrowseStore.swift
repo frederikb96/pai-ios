@@ -9,7 +9,8 @@ public protocol NotesBrowseApiClient: Sendable {
 extension PaiApiClient: NotesBrowseApiClient {}
 
 /// List-browsing state that sits beside `NotesStore`'s index rather than inside it: the persisted
-/// sort order, and the one call semantic search needs.
+/// sort order, whether Freddy was last reading rendered or as source, and the one call semantic
+/// search needs.
 ///
 /// Semantic search answers with a note id and a score only — `embed_note`'s job handler stores
 /// `{"note_id": ...}` as a memory row's whole metadata — so, exactly as the web's own
@@ -26,9 +27,17 @@ extension PaiApiClient: NotesBrowseApiClient {}
 public final class NotesBrowseStore {
     private enum Keys {
         static let sortOrder = "notesSortOrder"
+        static let previewMode = "notesPreviewMode"
     }
 
     public private(set) var sortOrder: NoteSortOrder
+    /// Whether a note opened with no mode of its own — `Route.note`, reached by picking a note
+    /// from the list or by anything else that does not name a mode — should start rendered. A
+    /// reading preference, not account state, so it is a device default rather than something the
+    /// backend carries: `Route.notePreview` (a wikilink, a shared link, the fixture workflow)
+    /// still always starts rendered regardless of this, the same way the web's own address wins
+    /// over its stored preference whenever the address actually names a mode.
+    public private(set) var previewMode: Bool
 
     private let api: NotesBrowseApiClient
     private let storage: SettingsKeyValueStore
@@ -37,11 +46,20 @@ public final class NotesBrowseStore {
         self.api = api
         self.storage = storage
         sortOrder = storage.value(forKey: Keys.sortOrder) ?? .modified
+        previewMode = storage.value(forKey: Keys.previewMode) ?? false
     }
 
     public func setSortOrder(_ order: NoteSortOrder) {
         sortOrder = order
         storage.setValue(order, forKey: Keys.sortOrder)
+    }
+
+    /// Called from the editor's own toggle — the one place Freddy actively chooses a mode, as
+    /// opposed to merely landing on one via `Route.notePreview`. See `previewMode`'s own doc
+    /// comment for why only the toggle updates this.
+    public func setPreviewMode(_ preview: Bool) {
+        previewMode = preview
+        storage.setValue(preview, forKey: Keys.previewMode)
     }
 
     public func searchSemantic(q: String) async throws -> [NoteSemanticHit] {

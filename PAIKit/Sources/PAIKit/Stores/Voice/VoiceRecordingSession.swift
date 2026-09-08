@@ -73,6 +73,14 @@ public final class VoiceRecordingSession {
     private var reconnectAttempt = 0
     private var preconnectBuffer = PreconnectAudioBuffer<RealtimeUplinkChunk>()
     private var silenceDetector: SilenceDetector?
+    /// Whether detected silence is currently withholding audio from the socket — distinct from
+    /// `isMuted`, which is Freddy's own hand mute. See `ingestAudioChunk`'s own comment for why
+    /// this withholds the chunk entirely rather than zeroing it the way `isMuted` does.
+    private var isSilenceGated = false
+    private var silenceGateStart: Date?
+    /// Total time spent gated off due to silence, across every time it fired this take — the
+    /// silence equivalent of `mutedMs` below.
+    private var silenceGatedMs = 0
     private var committedSegments: [String] = []
     private var partial = ""
     private var recordingStart: Date?
@@ -96,11 +104,17 @@ public final class VoiceRecordingSession {
     public var transportSampleRateHz: Int { transportRateHz }
 
     public var result: VoiceRecordingResult {
-        VoiceRecordingResult(
+        // A gate still open when the take ends (the backstop firing, or an explicit stop while
+        // gated) has not been folded into `silenceGatedMs` yet — same shape as `mutedMs` below.
+        let gatedMs =
+            silenceGatedMs
+            + (silenceGateStart.map { Int(dependencies.now().timeIntervalSince($0) * 1000) } ?? 0)
+        return VoiceRecordingResult(
             text: transcribedText,
             endedBy: lastEndReason ?? .user,
             durationMs: recordingStart.map { Int(dependencies.now().timeIntervalSince($0) * 1000) } ?? 0,
             mutedMs: mutedMs,
+            silenceGatedMs: gatedMs,
             sampleRate: transportRateHz,
             narrowband: narrowband
         )
@@ -142,6 +156,9 @@ public final class VoiceRecordingSession {
         mutedMs = 0
         isMuted = false
         lastMuteToggle = nil
+        isSilenceGated = false
+        silenceGateStart = nil
+        silenceGatedMs = 0
         preconnectBuffer = PreconnectAudioBuffer()
         reconnectAttempt = 0
         reconnectTask?.cancel()
@@ -320,17 +337,35 @@ public final class VoiceRecordingSession {
     /// with. Drives silence detection only; never sent anywhere.
     ///
     /// Deliberately not fed during `.reconnecting`, unlike `ingestAudioChunk` — a network gap
-    /// reads as quiet on no evidence about the room at all, and firing an auto-stop from that
-    /// would end a take purely because the socket dropped, exactly what reconnecting exists to
-    /// prevent.
+    /// reads as quiet on no evidence about the room at all, and gating (or worse, the backstop
+    /// eventually firing) from that would react to the socket dropping, exactly what reconnecting
+    /// exists to prevent.
     public func ingestLevel(rms: Double) {
         guard state == .recording || state == .connecting,
             let recordingStart, var detector = silenceDetector
         else { return }
-        let elapsedMs = Int(dependencies.now().timeIntervalSince(recordingStart) * 1000)
-        let fired = detector.observe(rms: rms, elapsedMs: elapsedMs, muted: isMuted)
+        let now = dependencies.now()
+        let elapsedMs = Int(now.timeIntervalSince(recordingStart) * 1000)
+        let action = detector.observe(rms: rms, elapsedMs: elapsedMs, muted: isMuted)
         silenceDetector = detector
-        if fired {
+        switch action {
+        case .none:
+            break
+        case .gate:
+            isSilenceGated = true
+            silenceGateStart = now
+        case .resume:
+            if let silenceGateStart {
+                silenceGatedMs += Int(now.timeIntervalSince(silenceGateStart) * 1000)
+            }
+            isSilenceGated = false
+            silenceGateStart = nil
+        case .stop:
+            if let silenceGateStart {
+                silenceGatedMs += Int(now.timeIntervalSince(silenceGateStart) * 1000)
+            }
+            isSilenceGated = false
+            silenceGateStart = nil
             Task { await self.stop(reason: .silence) }
         }
     }
@@ -343,9 +378,14 @@ public final class VoiceRecordingSession {
     /// `session_started` otherwise.
     ///
     /// While muted, the content actually sent is replaced with digital silence regardless of
-    /// what was passed in — silence detection's `muted` guard only suppresses auto-stop, so this
-    /// is the actual privacy guarantee, and it holds even if a bug elsewhere leaves the app's own
-    /// track un-silenced.
+    /// what was passed in — silence detection's `muted` guard only suppresses gating and the
+    /// backstop, so this is the actual privacy guarantee, and it holds even if a bug elsewhere
+    /// leaves the app's own track un-silenced.
+    ///
+    /// A silence gate withholds the chunk entirely instead — the saving this feature exists for
+    /// is real only if nothing reaches ElevenLabs while it holds, not merely zero-content audio
+    /// still counted as a message sent. The locally saved recording is unaffected either way: it
+    /// mirrors what was actually captured, not what this method decided to transmit.
     ///
     /// `.reconnecting` buffers here exactly as `.connecting` does before the first
     /// `session_started` — speech spoken during a network gap is not lost, only delayed until the
@@ -353,6 +393,7 @@ public final class VoiceRecordingSession {
     /// audio interruption, so nothing should be arriving to buffer in the first place.
     public func ingestAudioChunk(pcm16le samples: [Int16]) async {
         guard state == .recording || state == .connecting || state == .reconnecting else { return }
+        guard !isSilenceGated else { return }
         let effectiveSamples = isMuted ? [Int16](repeating: 0, count: samples.count) : samples
         let chunk = RealtimeUplinkChunk(
             audioBase64: RealtimeUplinkChunk.audioBase64(fromPCM16LE: effectiveSamples),
