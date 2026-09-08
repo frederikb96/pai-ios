@@ -297,3 +297,18 @@ field's own directory browser and "other environments" section reuse `DirectoryB
 unmodified, so their own risk is only in wiring, not rendering; and the gate script editor is a
 plain `TextEditor` with no syntax highlighting at all, a deliberate scope cut against the web's
 CodeMirror-based one, never confirmed to be an acceptable trade in practice on a phone keyboard.
+
+### Port: the "Message not delivered" banner — pai-cloud anchor: web/src/components/ChatView.tsx
+Needs `PAI/` because: this is a view that does not exist here at all, only a value with nowhere to
+go. `SseStatusEvent.lastError` is decoded and carried all the way into the transcript store
+(`TranscriptStore+Streaming.swift` calls `setDelivery` with it), and then no screen reads it — so a
+send that permanently failed shows on the phone as a bubble and silence, which is exactly what the
+web banner exists to remove. Web renders a red block naming the reason with an "Open terminal"
+button beside it.
+
+This matters more than it did: a terminal failure used to be unreportable on *both* clients,
+because the pod excluded abandoned rows from the delivery snapshot — a launch that failed outright
+produced no `last_error` for anyone. That is fixed pod-side (`outgoing_messages.failed_at`), so the
+reason now arrives on this event and the phone is the only client dropping it. The case that
+prompted it: a fast session that could not launch, showing as an ordinary idle session for minutes
+with nothing anywhere saying why.
