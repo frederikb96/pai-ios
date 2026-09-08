@@ -124,15 +124,9 @@ struct TaskEditorView: View {
                 }
 
                 Section("Schedule") {
-                    TextField("Cadence (5-field cron, blank = manual/webhook only)", text: cadenceBinding(store))
+                    TextField("Cadence (5-field cron, blank = manual only)", text: cadenceBinding(store))
                         .font(PaiTypography.monoLabel.font)
                     TextField("Timezone", text: timezoneBinding(store))
-                }
-
-                if let task = store.task {
-                    Section {
-                        WebhookControlSection(store: store, environment: task.environment, hasWebhook: task.hasWebhook)
-                    }
                 }
 
                 Section("Session policy") {
@@ -452,58 +446,6 @@ struct TaskEditorView: View {
     }
     private func gateSourceBinding(_ store: TaskEditorStore) -> Binding<String> {
         Binding(get: { store.fields.gateSource ?? "" }, set: { store.fields.gateSource = $0 })
-    }
-}
-
-/// Mint or revoke a task's webhook token — a session-menu-scale control, not a full port of the
-/// web's own copy: the "shown once" token and the scoped-environment refusal both carry over.
-private struct WebhookControlSection: View {
-    let store: TaskEditorStore
-    let environment: String
-    let hasWebhook: Bool
-
-    private var isScoped: Bool { environment == "websearch" || environment == "confined" }
-
-    var body: some View {
-        if !isScoped {
-            Text(
-                "Only web search and confined accept a webhook trigger — an untrusted external payload needs an environment that scopes what it can reach."
-            )
-            .font(PaiTypography.caption.font)
-            .foregroundStyle(PaiPalette.Semantic.textFaint)
-        } else if let token = store.mintedWebhookToken {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Shown once — copy it now, it cannot be shown again:")
-                    .font(PaiTypography.captionEmphasized.font)
-                    .foregroundStyle(PaiPalette.Semantic.warningText)
-                HStack {
-                    Text(token).font(PaiTypography.monoLabel.font).lineLimit(1).truncationMode(.middle)
-                    Button {
-                        UIPasteboard.general.string = token
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                    }
-                }
-                Button("Dismiss") { store.dismissMintedWebhookToken() }
-                    .font(PaiTypography.caption.font)
-            }
-        } else if hasWebhook {
-            HStack {
-                Text("Configured").font(PaiTypography.caption.font).foregroundStyle(PaiPalette.Semantic.textMuted)
-                Spacer()
-                Button("Revoke") { Task { await store.revokeWebhook() } }
-            }
-        } else {
-            Button {
-                Task { await store.createWebhook() }
-            } label: {
-                HStack {
-                    if store.isBusy { ProgressView() }
-                    Text("Generate webhook")
-                }
-            }
-            .disabled(store.isBusy)
-        }
     }
 }
 

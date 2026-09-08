@@ -187,9 +187,8 @@ extension SupervisionVerdictValue: Codable {
 
 /// `GET /api/scheduler/tasks` — one scheduled task.
 ///
-/// `hasGate` and `hasWebhook` are booleans rather than the values themselves: a task list
-/// would otherwise ship every script to render a table, and a webhook token is shown once at
-/// creation and never again. `gateSource` arrives only on ``ScheduledTaskDetail``.
+/// `hasGate` is a boolean rather than the script itself: a task list would otherwise ship
+/// every gate script to render a table. `gateSource` arrives only on ``ScheduledTaskDetail``.
 public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
     public let id: String
     public let name: String
@@ -200,7 +199,7 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
     /// Applied at launch, so it cannot reach a conversation already running — editing it on a
     /// reusing task changes nothing until the task is reset.
     public let appendSystemPrompt: String?
-    /// Five-field cron. `nil` means the task fires only by webhook or by hand.
+    /// Five-field cron. `nil` means the task only fires by hand.
     public let cadence: String?
     public let timezone: String
     public let hasGate: Bool
@@ -239,7 +238,6 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
     /// The token size of accumulated worker output that forces an early flush regardless of
     /// the interval above.
     public let supervisionChunkTokenThreshold: Int?
-    public let hasWebhook: Bool
     /// Set by a supervisor stop, and terminal: the scheduler refuses to fire a stopped task
     /// until a person clears it.
     public let stopped: Bool
@@ -268,7 +266,7 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         notifyOnGateSkip: Bool? = nil, supervisionEnabled: Bool, supervisionModel: String?,
         supervisionAppendPrompt: String? = nil, supervisionCompactionThresholdTokens: Int? = nil,
         supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
-        hasWebhook: Bool, stopped: Bool,
+        stopped: Bool,
         stoppedReason: String?, lastFireAtMs: Int?, lastSuccessAtMs: Int?, nextFireAtMs: Int?,
         createdAtMs: Int, updatedAtMs: Int, lastRun: TaskRun? = nil
     ) {
@@ -300,7 +298,6 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         self.supervisionCompactionThresholdTokens = supervisionCompactionThresholdTokens
         self.supervisionChunkIntervalSeconds = supervisionChunkIntervalSeconds
         self.supervisionChunkTokenThreshold = supervisionChunkTokenThreshold
-        self.hasWebhook = hasWebhook
         self.stopped = stopped
         self.stoppedReason = stoppedReason
         self.lastFireAtMs = lastFireAtMs
@@ -333,7 +330,6 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         case supervisionCompactionThresholdTokens = "supervision_compaction_threshold_tokens"
         case supervisionChunkIntervalSeconds = "supervision_chunk_interval_seconds"
         case supervisionChunkTokenThreshold = "supervision_chunk_token_threshold"
-        case hasWebhook = "has_webhook"
         case stoppedReason = "stopped_reason"
         case lastFireAtMs = "last_fire_at_ms"
         case lastSuccessAtMs = "last_success_at_ms"
@@ -388,7 +384,6 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
     /// The token size of accumulated worker output that forces an early flush regardless of
     /// the interval above.
     public let supervisionChunkTokenThreshold: Int?
-    public let hasWebhook: Bool
     public let stopped: Bool
     public let stoppedReason: String?
     public let lastFireAtMs: Int?
@@ -412,7 +407,7 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         notifyOnGateSkip: Bool? = nil, supervisionEnabled: Bool, supervisionModel: String?,
         supervisionAppendPrompt: String? = nil, supervisionCompactionThresholdTokens: Int? = nil,
         supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
-        hasWebhook: Bool, stopped: Bool,
+        stopped: Bool,
         stoppedReason: String?, lastFireAtMs: Int?, lastSuccessAtMs: Int?, nextFireAtMs: Int?,
         createdAtMs: Int, updatedAtMs: Int, gateSource: String?, lastRun: TaskRun? = nil
     ) {
@@ -444,7 +439,6 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         self.supervisionCompactionThresholdTokens = supervisionCompactionThresholdTokens
         self.supervisionChunkIntervalSeconds = supervisionChunkIntervalSeconds
         self.supervisionChunkTokenThreshold = supervisionChunkTokenThreshold
-        self.hasWebhook = hasWebhook
         self.stopped = stopped
         self.stoppedReason = stoppedReason
         self.lastFireAtMs = lastFireAtMs
@@ -478,7 +472,6 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         case supervisionCompactionThresholdTokens = "supervision_compaction_threshold_tokens"
         case supervisionChunkIntervalSeconds = "supervision_chunk_interval_seconds"
         case supervisionChunkTokenThreshold = "supervision_chunk_token_threshold"
-        case hasWebhook = "has_webhook"
         case stoppedReason = "stopped_reason"
         case lastFireAtMs = "last_fire_at_ms"
         case lastSuccessAtMs = "last_success_at_ms"
@@ -503,6 +496,10 @@ public struct TaskRun: Codable, Sendable, Equatable, Identifiable {
     public let sessionId: String?
     public let gateStdout: String?
     public let gateExitCode: Int?
+    /// Whether this fire's own gate script was deliberately skipped (`run-now`'s `skipGate`
+    /// option) rather than run and passed — the two would otherwise be indistinguishable, since
+    /// both leave `gateStdout`/`gateExitCode` empty.
+    public let gateSkipped: Bool
     /// Whether this run has already had its one warning for each budget — the
     /// guard that stops a warning repeating on every reading.
     public let runtimeWarned: Bool
@@ -513,7 +510,8 @@ public struct TaskRun: Codable, Sendable, Equatable, Identifiable {
     public init(
         id: String, taskId: String, trigger: TaskRunTrigger, disposition: TaskRunDisposition,
         reason: String?, sessionId: String?, gateStdout: String?, gateExitCode: Int?,
-        runtimeWarned: Bool, budgetWarned: Bool, startedAtMs: Int, finishedAtMs: Int?
+        gateSkipped: Bool = false, runtimeWarned: Bool, budgetWarned: Bool, startedAtMs: Int,
+        finishedAtMs: Int?
     ) {
         self.id = id
         self.taskId = taskId
@@ -523,6 +521,7 @@ public struct TaskRun: Codable, Sendable, Equatable, Identifiable {
         self.sessionId = sessionId
         self.gateStdout = gateStdout
         self.gateExitCode = gateExitCode
+        self.gateSkipped = gateSkipped
         self.runtimeWarned = runtimeWarned
         self.budgetWarned = budgetWarned
         self.startedAtMs = startedAtMs
@@ -537,6 +536,7 @@ public struct TaskRun: Codable, Sendable, Equatable, Identifiable {
         case sessionId = "session_id"
         case gateStdout = "gate_stdout"
         case gateExitCode = "gate_exit_code"
+        case gateSkipped = "gate_skipped"
         case startedAtMs = "started_at_ms"
         case finishedAtMs = "finished_at_ms"
     }
@@ -960,10 +960,4 @@ public struct SchedulerTestRunResult: Codable, Sendable, Equatable {
         case exitCode = "exit_code"
         case timedOut = "timed_out"
     }
-}
-
-/// `POST /api/scheduler/tasks/{id}/webhook` — shown exactly once; the task itself only ever
-/// carries `has_webhook` afterwards.
-public struct SchedulerWebhookToken: Codable, Sendable, Equatable {
-    public let token: String
 }

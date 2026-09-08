@@ -36,8 +36,6 @@ actor FakeTaskEditorApi: TaskEditorApiClient {
     var resetResult: Result<ScheduledTaskDetail, PaiError>?
     var clearStopResult: Result<ScheduledTaskDetail, PaiError>?
     var testRunResult: Result<SchedulerTestRunResult, PaiError>?
-    var createWebhookResult: Result<SchedulerWebhookToken, PaiError>?
-    var revokeWebhookResult: Result<Void, PaiError> = .success(())
 
     func setGetResult(_ result: Result<ScheduledTaskDetail, PaiError>) { getResult = result }
     func setCreateResult(_ result: Result<ScheduledTaskDetail, PaiError>) { createResult = result }
@@ -111,17 +109,6 @@ actor FakeTaskEditorApi: TaskEditorApiClient {
         }
     }
 
-    func createSchedulerWebhook(taskId: String) async throws -> SchedulerWebhookToken {
-        guard let createWebhookResult else { throw PaiError.transport("no createWebhookResult scripted") }
-        switch createWebhookResult {
-        case let .success(token): return token
-        case let .failure(error): throw error
-        }
-    }
-
-    func revokeSchedulerWebhook(taskId: String) async throws {
-        if case let .failure(error) = revokeWebhookResult { throw error }
-    }
 }
 
 actor FakeRunHistoryApi: RunHistoryApiClient {

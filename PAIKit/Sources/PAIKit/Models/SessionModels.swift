@@ -204,6 +204,10 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// Claude Code pick the plan's own default. Fixed at creation; choosing a model for one
     /// session never changes what the next one defaults to.
     public let model: String?
+    /// The `claude --effort` level this conversation was launched with, re-passed on every
+    /// resume — same fixed-at-creation treatment as `model` above. `nil`/absent lets Claude Code
+    /// pick the plan's own default.
+    public let thinking: String?
     public let status: SessionStatus
     /// Absent on a row written before its first agent round-trip — the UI falls back to
     /// `status` in that window. See `docs/ARCHITECTURE.md` "Session lifecycle" for the five
@@ -312,7 +316,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id
         case sessionType = "session_type"
-        case model
+        case model, thinking
         case status, state, blocker, working, title
         case presenceState = "presence_state"
         case titleLocked = "title_locked"
@@ -352,6 +356,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         id: String,
         sessionType: String,
         model: String? = nil,
+        thinking: String? = nil,
         status: SessionStatus,
         state: SessionState?,
         blocker: Blocker?,
@@ -394,6 +399,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.id = id
         self.sessionType = sessionType
         self.model = model
+        self.thinking = thinking
         self.status = status
         self.state = state
         self.blocker = blocker
@@ -446,7 +452,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         activityCounts: ActivityCounts?
     ) -> Session {
         Session(
-            id: id, sessionType: sessionType, model: model, status: status, state: state, blocker: blocker,
+            id: id, sessionType: sessionType, model: model, thinking: thinking, status: status, state: state,
+            blocker: blocker,
             working: working, presenceState: presenceState,
             title: title, titleLocked: titleLocked, initialMessage: initialMessage,
             sessionTokens: sessionTokens, claudeSessionId: claudeSessionId, idleTimeoutMinutes: idleTimeoutMinutes,

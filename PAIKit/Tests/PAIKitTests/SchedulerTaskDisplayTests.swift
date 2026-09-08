@@ -9,7 +9,7 @@ final class SchedulerTaskDisplayTests: XCTestCase {
             id: "t1", name: "t", enabled: true, environment: "default", workingDir: nil, prompt: "p",
             appendSystemPrompt: nil, cadence: "0 9 * * *", timezone: "UTC", hasGate: false, gateRuntime: nil,
             gateTimeoutSeconds: 30, sessionPolicy: .fresh, sessionId: nil, quietPeriodMinutes: 60,
-            supervisionEnabled: false, supervisionModel: nil, hasWebhook: false, stopped: stopped,
+            supervisionEnabled: false, supervisionModel: nil, stopped: stopped,
             stoppedReason: nil, lastFireAtMs: nil, lastSuccessAtMs: nil,
             nextFireAtMs: nil, createdAtMs: 0, updatedAtMs: 0, lastRun: lastRun)
     }

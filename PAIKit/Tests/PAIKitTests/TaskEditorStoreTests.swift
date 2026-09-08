@@ -14,7 +14,7 @@ final class TaskEditorStoreTests: XCTestCase {
             prompt: "check things", appendSystemPrompt: nil, cadence: "0 9 * * *", timezone: "UTC",
             hasGate: gateSource != nil, gateRuntime: .bun, gateTimeoutSeconds: 30, sessionPolicy: sessionPolicy,
             sessionId: sessionId, quietPeriodMinutes: 60, supervisionEnabled: false, supervisionModel: nil,
-            hasWebhook: false, stopped: false, stoppedReason: nil, lastFireAtMs: nil, lastSuccessAtMs: nil,
+            stopped: false, stoppedReason: nil, lastFireAtMs: nil, lastSuccessAtMs: nil,
             nextFireAtMs: nil, createdAtMs: 0, updatedAtMs: 0, gateSource: gateSource)
     }
 

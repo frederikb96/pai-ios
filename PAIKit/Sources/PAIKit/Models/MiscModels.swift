@@ -22,25 +22,29 @@ public struct Draft: Codable, Sendable, Equatable, Identifiable {
     /// `"new"` draft, alongside `sessionType`/`workingDir`. `nil` lets Claude Code pick the
     /// plan's own default rather than naming one.
     public let model: String?
+    /// The `claude --effort` level this draft's session will launch with — same "new" draft-only
+    /// scoping as `model` above. `nil` lets Claude Code pick the plan's own default.
+    public let thinking: String?
     public let updatedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case key, text
         case sessionType = "session_type"
         case workingDir = "working_dir"
-        case model
+        case model, thinking
         case updatedAt = "updated_at"
     }
 
     public init(
         key: String, text: String, sessionType: String?, workingDir: String?, model: String? = nil,
-        updatedAt: String?
+        thinking: String? = nil, updatedAt: String?
     ) {
         self.key = key
         self.text = text
         self.sessionType = sessionType
         self.workingDir = workingDir
         self.model = model
+        self.thinking = thinking
         self.updatedAt = updatedAt
     }
 }

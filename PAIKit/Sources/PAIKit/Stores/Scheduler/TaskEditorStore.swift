@@ -12,8 +12,6 @@ public protocol TaskEditorApiClient: Sendable {
     func testRunSchedulerGate(
         taskId: String, gateSource: String, gateRuntime: TaskGateRuntime
     ) async throws -> SchedulerTestRunResult
-    func createSchedulerWebhook(taskId: String) async throws -> SchedulerWebhookToken
-    func revokeSchedulerWebhook(taskId: String) async throws
 }
 
 extension PaiApiClient: TaskEditorApiClient {}
@@ -35,9 +33,6 @@ public final class TaskEditorStore {
     public private(set) var isSaving = false
     public private(set) var isBusy = false
     public private(set) var errorMessage: String?
-    /// Shown exactly once, right after minting — never shown again, matching the backend's own
-    /// "the task itself only ever carries `has_webhook` afterwards" rule.
-    public private(set) var mintedWebhookToken: String?
 
     public let taskId: String?
     private let api: TaskEditorApiClient
@@ -162,37 +157,6 @@ public final class TaskEditorStore {
             errorMessage = (error as? PaiError)?.userMessage ?? "Test run failed"
             return nil
         }
-    }
-
-    public func createWebhook() async {
-        guard let taskId else { return }
-        isBusy = true
-        errorMessage = nil
-        defer { isBusy = false }
-        do {
-            mintedWebhookToken = try await api.createSchedulerWebhook(taskId: taskId).token
-            await load()
-        } catch {
-            errorMessage = (error as? PaiError)?.userMessage ?? "Could not create a webhook"
-        }
-    }
-
-    public func revokeWebhook() async {
-        guard let taskId else { return }
-        isBusy = true
-        errorMessage = nil
-        defer { isBusy = false }
-        do {
-            try await api.revokeSchedulerWebhook(taskId: taskId)
-            mintedWebhookToken = nil
-            await load()
-        } catch {
-            errorMessage = (error as? PaiError)?.userMessage ?? "Could not revoke this webhook"
-        }
-    }
-
-    public func dismissMintedWebhookToken() {
-        mintedWebhookToken = nil
     }
 
     /// Every already-saved action (run now, reset, clear stop, enable/disable) shares the same

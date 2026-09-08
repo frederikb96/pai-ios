@@ -10,7 +10,7 @@ final class SchedulerListStoreTests: XCTestCase {
             id: id, name: "Task \(id)", enabled: true, environment: "default", workingDir: nil, prompt: "p",
             appendSystemPrompt: nil, cadence: nil, timezone: "UTC", hasGate: false, gateRuntime: nil,
             gateTimeoutSeconds: 30, sessionPolicy: .fresh, sessionId: nil, quietPeriodMinutes: 60,
-            supervisionEnabled: false, supervisionModel: nil, hasWebhook: false, stopped: false,
+            supervisionEnabled: false, supervisionModel: nil, stopped: false,
             stoppedReason: nil, lastFireAtMs: nil, lastSuccessAtMs: nil, nextFireAtMs: nil, createdAtMs: 0,
             updatedAtMs: 0)
     }

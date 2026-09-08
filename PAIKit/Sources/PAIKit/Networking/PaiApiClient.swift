@@ -757,16 +757,6 @@ public struct PaiApiClient: Sendable {
         )
     }
 
-    /// Mints or rotates the task's webhook token — shown once in the response and never again.
-    /// Refused (400) unless the task's own environment is one the backend considers scoped.
-    public func createSchedulerWebhook(taskId: String) async throws -> SchedulerWebhookToken {
-        try await send(path: "/api/scheduler/tasks/\(taskId)/webhook", method: "POST")
-    }
-
-    public func revokeSchedulerWebhook(taskId: String) async throws {
-        try await sendDiscardingResponse(path: "/api/scheduler/tasks/\(taskId)/webhook", method: "DELETE")
-    }
-
     // MARK: Supervision
 
     /// The supervision watching a session, if any — a session-menu button reads this to decide
