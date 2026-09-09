@@ -111,10 +111,12 @@ final class TaskEditorStoreTests: XCTestCase {
 
     func testRunNowPassesSkipGateThrough() async {
         let api = FakeTaskEditorApi()
-        await api.setRunNowResult(.success(TaskRun(
-            id: "r1", taskId: "t1", trigger: .manual, disposition: .fired, reason: nil,
-            sessionId: nil, gateStdout: nil, gateExitCode: nil, gateSkipped: true,
-            runtimeWarned: false, budgetWarned: false, startedAtMs: 0, finishedAtMs: nil)))
+        await api.setRunNowResult(
+            .success(
+                TaskRun(
+                    id: "r1", taskId: "t1", trigger: .manual, disposition: .fired, reason: nil,
+                    sessionId: nil, gateStdout: nil, gateExitCode: nil, gateSkipped: true,
+                    runtimeWarned: false, budgetWarned: false, startedAtMs: 0, finishedAtMs: nil)))
         await api.setGetResult(.success(detail(id: "t1")))
         let store = TaskEditorStore(taskId: "t1", api: api, timezone: "UTC")
 
@@ -127,10 +129,12 @@ final class TaskEditorStoreTests: XCTestCase {
 
     func testRunNowDefaultsToNotSkippingTheGate() async {
         let api = FakeTaskEditorApi()
-        await api.setRunNowResult(.success(TaskRun(
-            id: "r1", taskId: "t1", trigger: .manual, disposition: .fired, reason: nil,
-            sessionId: nil, gateStdout: nil, gateExitCode: nil, gateSkipped: false,
-            runtimeWarned: false, budgetWarned: false, startedAtMs: 0, finishedAtMs: nil)))
+        await api.setRunNowResult(
+            .success(
+                TaskRun(
+                    id: "r1", taskId: "t1", trigger: .manual, disposition: .fired, reason: nil,
+                    sessionId: nil, gateStdout: nil, gateExitCode: nil, gateSkipped: false,
+                    runtimeWarned: false, budgetWarned: false, startedAtMs: 0, finishedAtMs: nil)))
         await api.setGetResult(.success(detail(id: "t1")))
         let store = TaskEditorStore(taskId: "t1", api: api, timezone: "UTC")
 
