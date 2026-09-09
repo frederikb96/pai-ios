@@ -30,6 +30,7 @@ struct CreateSessionView: View {
 
     @State private var createSession: CreateSessionStore?
     @State private var isPresentingDirectoryBrowser = false
+    @State private var isPresentingModelPicker = false
     @State private var errorMessage: String?
 
     // MARK: - Composer state
@@ -97,6 +98,7 @@ struct CreateSessionView: View {
                 store.selectSessionType(sessionType)
             }
             store.selectModel(persisted.model)
+            store.selectThinking(persisted.thinking)
             // The point of this screen is the text field — true whether it was reached by tapping
             // "+" or by a home-screen shortcut built to land here ready to type.
             isComposerFocused = true
@@ -133,7 +135,7 @@ struct CreateSessionView: View {
                         }
 
                         if !createSession.availableSessionTypes.isEmpty {
-                            modelPicker(createSession)
+                            modelButton(createSession)
                         }
 
                         if let errorMessage {
@@ -166,6 +168,22 @@ struct CreateSessionView: View {
                     drafts.selectSessionType(typeID)
                     isComposerFocused = true
                 }
+            }
+            .sheet(isPresented: $isPresentingModelPicker) {
+                ModelPickerSheet(
+                    createSession: createSession,
+                    onSelectModel: { id in
+                        createSession.selectModel(id)
+                        // `drafts.selectModel` clears any thinking level of its own — the same
+                        // "a level is a property of the model just picked" rule `createSession`
+                        // enforces above.
+                        drafts.selectModel(id)
+                    },
+                    onSelectThinking: { id in
+                        createSession.selectThinking(id)
+                        drafts.selectThinking(id)
+                    }
+                )
             }
             .sheet(isPresented: $showingPhotoPicker) {
                 PhotoAttachmentPicker { staged in stageAttachments(staged) }
@@ -268,47 +286,34 @@ struct CreateSessionView: View {
         }
     }
 
-    // MARK: - Model picker
+    // MARK: - Model button
 
-    /// Mirrors the web's shared `ModelSelect.tsx`: a row of aliases, disabled (with the same
-    /// reason shown beneath it) whenever `fast` is selected, since that sandbox always hardcodes
-    /// its own model.
-    private func modelPicker(_ createSession: CreateSessionStore) -> some View {
-        let disabled = createSession.selectedSessionTypeId == CreateSessionStore.preselectedSessionTypeId
-        return VStack(spacing: 4) {
-            HStack(spacing: 8) {
-                ForEach(CreateSessionStore.modelOptions, id: \.label) { option in
-                    let isSelected = createSession.selectedModel == option.id
-                    Button {
-                        createSession.selectModel(option.id)
-                        drafts.selectModel(option.id)
-                        isComposerFocused = true
-                    } label: {
-                        Text(option.label)
-                            .font(PaiTypography.captionEmphasized.font)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                isSelected ? PaiPalette.Semantic.accentBackground : PaiPalette.Semantic.raisedSurface,
-                                in: Capsule()
-                            )
-                            .foregroundStyle(
-                                isSelected ? PaiPalette.Semantic.accentText : PaiPalette.Semantic.textPrimary
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(disabled)
-                    .opacity(disabled ? 0.5 : 1)
-                    .accessibilityAddTraits(isSelected ? [.isSelected] : [])
-                    .accessibilityIdentifier("create-session-model-\(option.label.lowercased())")
-                }
+    /// Opens a picker for the model, then — once one is known — that model's own thinking
+    /// levels, mirroring the web's own `ModelPicker.tsx`. Shows what will actually launch: a
+    /// fast session with nothing chosen still reads "Sonnet · Low" rather than "Default", the
+    /// same resolution `CreateSessionStore.resolvedModel`/`resolvedThinking` compute for the
+    /// sheet itself.
+    private func modelButton(_ createSession: CreateSessionStore) -> some View {
+        let modelLabel =
+            createSession.resolvedModel.map { CreateSessionStore.modelDisplayLabels[$0] ?? $0 }
+            ?? "Default"
+        let thinkingLabel = createSession.resolvedThinking.map { CreateSessionStore.effortLevelLabels[$0] ?? $0 }
+        return Button {
+            isPresentingModelPicker = true
+        } label: {
+            HStack(spacing: 6) {
+                Text(thinkingLabel.map { "\(modelLabel) · \($0)" } ?? modelLabel)
+                    .font(PaiTypography.captionEmphasized.font)
+                Image(systemName: "chevron.down")
+                    .font(.caption2)
             }
-            if disabled {
-                Text("Fast sessions always run Sonnet.")
-                    .font(PaiTypography.caption.font)
-                    .foregroundStyle(PaiPalette.Semantic.textMuted)
-            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(PaiPalette.Semantic.raisedSurface, in: Capsule())
+            .foregroundStyle(PaiPalette.Semantic.textPrimary)
         }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("create-session-model-button")
     }
 
     private func workingDirRow(_ dir: String, _ createSession: CreateSessionStore) -> some View {

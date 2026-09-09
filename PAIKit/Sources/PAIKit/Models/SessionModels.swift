@@ -539,6 +539,28 @@ public struct SessionType: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+/// One `claude --model` alias and the `claude --effort` levels it supports — `GET
+/// /api/session-models`, the one declaration a model picker reads rather than hand-mirroring its
+/// own copy (`pai_cloud.config.SESSION_MODEL_EFFORT_LEVELS`).
+public struct SessionModelInfo: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let effortLevels: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case effortLevels = "effort_levels"
+    }
+
+    public init(id: String, effortLevels: [String]) {
+        self.id = id
+        self.effortLevels = effortLevels
+    }
+}
+
+struct SessionModelsResponse: Codable, Sendable {
+    let models: [SessionModelInfo]
+}
+
 // --- Machines ---
 
 /// A machine PAI can watch or drive — the VM, or Freddy's laptop while it is logged in. `types.ts`

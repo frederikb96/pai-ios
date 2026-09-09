@@ -60,20 +60,20 @@ private final class FakeDraftsFetching: DraftsFetching, @unchecked Sendable {
     }
 
     func putDraft(
-        key: String, text: String, sessionType: String?, workingDir: String?, model: String?
+        key: String, text: String, sessionType: String?, workingDir: String?, model: String?, thinking: String?
     ) async throws -> PutDraftResult {
         record("putDraft:start:\(key)")
         if let putGate {
             await putGate.wait()
         }
         record("putDraft:done:\(key)")
-        if text.isEmpty && sessionType == nil && workingDir == nil && model == nil {
+        if text.isEmpty && sessionType == nil && workingDir == nil && model == nil && thinking == nil {
             return .deleted(key: key)
         }
         return .saved(
             Draft(
                 key: key, text: text, sessionType: sessionType, workingDir: workingDir, model: model,
-                updatedAt: "server-\(text)")
+                thinking: thinking, updatedAt: "server-\(text)")
         )
     }
 
@@ -145,6 +145,20 @@ final class DraftStoreTests: XCTestCase {
         let entry = store.draft(for: DraftKey.newSession)
         XCTAssertEqual(entry.sessionType, "fast")
         XCTAssertEqual(entry.model, "opus")
+    }
+
+    /// The set of thinking levels a model accepts is a property of that model — a level chosen
+    /// for the previous one is not necessarily valid for a new choice, so changing the model
+    /// clears it rather than risk sending a combination the launch would reject.
+    func testChoosingADifferentModelClearsAPreviouslyChosenThinkingLevel() async {
+        let store = DraftStore(api: FakeDraftsFetching(), scheduler: InstantDraftScheduler())
+        store.selectModel("sonnet")
+        store.selectThinking("high")
+        XCTAssertEqual(store.draft(for: DraftKey.newSession).thinking, "high")
+
+        store.selectModel("opus")
+
+        XCTAssertNil(store.draft(for: DraftKey.newSession).thinking)
     }
 
     func testClearDraftRemovesTheLocalEntryImmediately() async {

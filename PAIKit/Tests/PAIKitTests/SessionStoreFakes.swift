@@ -224,9 +224,10 @@ actor FakeCreateSessionApi: CreateSessionApiClient {
     private(set) var postMessageCalls:
         [(
             sessionId: String?, message: String, sessionType: String?, workingDir: String?, agent: String?,
-            model: String?
+            model: String?, thinking: String?
         )] = []
     var sessionTypesResult: Result<[SessionType], PaiError> = .success([])
+    var sessionModelsResult: Result<[SessionModelInfo], PaiError> = .success([])
     var postMessageResult: Result<PostMessageResponse, PaiError> = .success(
         PostMessageResponse(sessionId: "new-session-id", messageId: 1)
     )
@@ -238,14 +239,21 @@ actor FakeCreateSessionApi: CreateSessionApiClient {
         }
     }
 
+    func getSessionModels() async throws -> [SessionModelInfo] {
+        switch sessionModelsResult {
+        case let .success(models): return models
+        case let .failure(error): throw error
+        }
+    }
+
     func postMessage(
         sessionId: String?, message: String, files: [PaiFileUpload], sessionType: String?, workingDir: String?,
-        agent: String?, model: String?
+        agent: String?, model: String?, thinking: String?
     ) async throws -> PostMessageResponse {
         postMessageCalls.append(
             (
                 sessionId: sessionId, message: message, sessionType: sessionType, workingDir: workingDir,
-                agent: agent, model: model
+                agent: agent, model: model, thinking: thinking
             )
         )
         switch postMessageResult {

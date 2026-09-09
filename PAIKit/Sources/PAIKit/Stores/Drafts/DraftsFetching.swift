@@ -5,7 +5,7 @@ import Foundation
 public protocol DraftsFetching: Sendable {
     func getDrafts() async throws -> [Draft]
     func putDraft(
-        key: String, text: String, sessionType: String?, workingDir: String?, model: String?
+        key: String, text: String, sessionType: String?, workingDir: String?, model: String?, thinking: String?
     ) async throws -> PutDraftResult
     func deleteDraft(key: String) async throws -> PaiDraftDeleteResult
 }

@@ -275,6 +275,11 @@ public struct PaiApiClient: Sendable {
         try await send(path: "/api/session-types")
     }
 
+    public func getSessionModels() async throws -> [SessionModelInfo] {
+        let response: SessionModelsResponse = try await send(path: "/api/session-models")
+        return response.models
+    }
+
     // MARK: Sessions
 
     /// `since` and `cursor` are two different ways to page this endpoint, never combined:
@@ -429,7 +434,8 @@ public struct PaiApiClient: Sendable {
         sessionType: String? = nil,
         workingDir: String? = nil,
         agent: String? = nil,
-        model: String? = nil
+        model: String? = nil,
+        thinking: String? = nil
     ) async throws -> PostMessageResponse {
         let boundary = "PAIKit-\(UUID().uuidString)"
         var body = Data()
@@ -447,6 +453,7 @@ public struct PaiApiClient: Sendable {
         if let agent { Self.appendFormField(&body, boundary: boundary, name: "agent", value: agent) }
         // Fixed at creation — ignored server-side once `sessionId` names an existing one.
         if let model { Self.appendFormField(&body, boundary: boundary, name: "model", value: model) }
+        if let thinking { Self.appendFormField(&body, boundary: boundary, name: "thinking", value: thinking) }
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 
         return try await send(
@@ -585,15 +592,17 @@ public struct PaiApiClient: Sendable {
         text: String,
         sessionType: String? = nil,
         workingDir: String? = nil,
-        model: String? = nil
+        model: String? = nil,
+        thinking: String? = nil
     ) async throws -> PutDraftResult {
         struct Body: Encodable {
             let text: String
             let sessionType: String?
             let workingDir: String?
             let model: String?
+            let thinking: String?
             enum CodingKeys: String, CodingKey {
-                case text
+                case text, thinking
                 case sessionType = "session_type"
                 case workingDir = "working_dir"
                 case model
@@ -602,7 +611,8 @@ public struct PaiApiClient: Sendable {
         return try await send(
             path: "/api/drafts/\(Self.encodeDraftKey(key))",
             method: "PUT",
-            body: try Self.jsonBody(Body(text: text, sessionType: sessionType, workingDir: workingDir, model: model))
+            body: try Self.jsonBody(
+                Body(text: text, sessionType: sessionType, workingDir: workingDir, model: model, thinking: thinking))
         )
     }
 

@@ -287,6 +287,85 @@ final class SessionStoreCreateSessionTests: XCTestCase {
         XCTAssertNil(calls[0].model)
     }
 
+    // MARK: - thinking
+
+    func testCreateSendsTheSelectedThinkingLevel() async {
+        let api = FakeCreateSessionApi()
+        let store = CreateSessionStore(machines: MachineStore(api: FakeMachineDirectoryApi()), api: api)
+        store.selectModel("opus")
+        store.selectThinking("high")
+
+        _ = await store.create(message: "hello")
+
+        let calls = await api.postMessageCalls
+        XCTAssertEqual(calls[0].thinking, "high")
+    }
+
+    func testChoosingADifferentModelClearsAPreviouslyChosenThinkingLevel() {
+        let store = CreateSessionStore(
+            machines: MachineStore(api: FakeMachineDirectoryApi()), api: FakeCreateSessionApi())
+        store.selectModel("sonnet")
+        store.selectThinking("high")
+
+        store.selectModel("opus")
+
+        XCTAssertNil(store.selectedThinking)
+    }
+
+    func testResolvedModelAndThinkingAreNilByDefaultOnAnOrdinarySession() {
+        let store = CreateSessionStore(
+            machines: MachineStore(api: FakeMachineDirectoryApi()), api: FakeCreateSessionApi())
+        store.selectSessionType("home")
+
+        XCTAssertNil(store.resolvedModel)
+        XCTAssertNil(store.resolvedThinking)
+    }
+
+    /// A fast session's own default — mid-sized model, low effort — must be what a picker shows
+    /// pre-selected, without ever being written into `selectedModel`/`selectedThinking` unless
+    /// Freddy actually picks it: "a fast session created with no choice still runs as it does
+    /// today" depends on the launch flags staying omitted.
+    func testResolvedModelAndThinkingFallBackToTheFastDefaultOnAFastSessionWithNoChoiceMade() {
+        let store = CreateSessionStore(
+            machines: MachineStore(api: FakeMachineDirectoryApi()), api: FakeCreateSessionApi())
+        store.selectSessionType("fast")
+
+        XCTAssertEqual(store.resolvedModel, CreateSessionStore.fastDefaultModel)
+        XCTAssertEqual(store.resolvedThinking, CreateSessionStore.fastDefaultThinking)
+        XCTAssertNil(store.selectedModel)
+        XCTAssertNil(store.selectedThinking)
+    }
+
+    func testAnExplicitChoiceOnAFastSessionOverridesTheDefaultAndIsWhatGetsSent() async {
+        let api = FakeCreateSessionApi()
+        let store = CreateSessionStore(machines: MachineStore(api: FakeMachineDirectoryApi()), api: api)
+        store.selectSessionType("fast")
+        store.selectModel("opus")
+
+        XCTAssertEqual(store.resolvedModel, "opus")
+        _ = await store.create(message: "hello")
+
+        let calls = await api.postMessageCalls
+        XCTAssertEqual(calls[0].model, "opus")
+    }
+
+    func testEffortLevelsForResolvedModelReadsTheDeclaredVocabularyRatherThanAHandMirroredList() async {
+        let api = FakeCreateSessionApi()
+        await api.setSessionModelsResult(
+            .success([
+                SessionModelInfo(id: "haiku", effortLevels: []),
+                SessionModelInfo(id: "sonnet", effortLevels: ["low", "medium", "high", "xhigh", "max"]),
+            ]))
+        let store = CreateSessionStore(machines: MachineStore(api: FakeMachineDirectoryApi()), api: api)
+        await store.start()
+
+        store.selectModel("sonnet")
+        XCTAssertEqual(store.effortLevelsForResolvedModel, ["low", "medium", "high", "xhigh", "max"])
+
+        store.selectModel("haiku")
+        XCTAssertEqual(store.effortLevelsForResolvedModel, [])
+    }
+
     func testIsCreatingIsTrueOnlyWhileTheRequestIsInFlight() async {
         let api = FakeCreateSessionApi()
         let store = CreateSessionStore(machines: MachineStore(api: FakeMachineDirectoryApi()), api: api)
@@ -301,5 +380,9 @@ final class SessionStoreCreateSessionTests: XCTestCase {
 extension FakeCreateSessionApi {
     func setPostMessageResult(_ result: Result<PostMessageResponse, PaiError>) {
         postMessageResult = result
+    }
+
+    func setSessionModelsResult(_ result: Result<[SessionModelInfo], PaiError>) {
+        sessionModelsResult = result
     }
 }

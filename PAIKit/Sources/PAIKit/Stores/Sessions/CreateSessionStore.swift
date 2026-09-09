@@ -4,9 +4,10 @@ import Observation
 /// The narrow slice of `PaiApiClient` this store needs.
 public protocol CreateSessionApiClient: Sendable {
     func getSessionTypes() async throws -> [SessionType]
+    func getSessionModels() async throws -> [SessionModelInfo]
     func postMessage(
         sessionId: String?, message: String, files: [PaiFileUpload], sessionType: String?, workingDir: String?,
-        agent: String?, model: String?
+        agent: String?, model: String?, thinking: String?
     ) async throws -> PostMessageResponse
 }
 
@@ -54,10 +55,31 @@ public final class CreateSessionStore {
 
     /// `claude --model` aliases the picker offers, in display order. Mirrors the web's shared
     /// `ModelSelect.tsx` `MODEL_OPTIONS` — short aliases only, so there is no id table here to
-    /// fall out of date as Anthropic reassigns what each tier resolves to.
+    /// fall out of date as Anthropic reassigns what each tier resolves to. Also the model-only
+    /// pickers that have no thinking dimension of their own (`SupervisionView`, the scheduler's
+    /// `TaskEditorView`) — the model + thinking picker below reads it for display labels only,
+    /// never for which models actually exist (that always comes from `sessionModels`).
     public static let modelOptions: [(id: String?, label: String)] = [
         (nil, "Default"), ("haiku", "Haiku"), ("sonnet", "Sonnet"), ("opus", "Opus"), ("fable", "Fable"),
     ]
+
+    /// Presentation only — the set of levels a model actually accepts always comes from
+    /// `sessionModels` below (`GET /api/session-models`), never from this map. A level this map
+    /// doesn't know falls back to its own id rather than disappearing.
+    public static let effortLevelLabels: [String: String] = [
+        "low": "Low", "medium": "Medium", "high": "High", "xhigh": "Extra High", "max": "Max",
+    ]
+
+    /// `modelOptions` above, keyed for a lookup by id — every real alias (`Default`'s `nil` id
+    /// dropped, since that case is spelled out at each call site instead).
+    public static let modelDisplayLabels: [String: String] = Dictionary(
+        uniqueKeysWithValues: modelOptions.compactMap { option in option.id.map { ($0, option.label) } })
+
+    /// What the fast sandbox launches with when nothing is chosen (`agent/src/fast-sandbox.ts`) —
+    /// held here so the picker never claims "Default" for a launch that is anything but. An
+    /// explicit choice always overrides this; it is purely what gets pre-selected and displayed.
+    public static let fastDefaultModel = "sonnet"
+    public static let fastDefaultThinking = "low"
 
     public private(set) var selectedMachine: String
     /// `nil` until preselection or an explicit choice has run — never left displaying a type the
@@ -65,7 +87,33 @@ public final class CreateSessionStore {
     public private(set) var selectedSessionTypeId: String?
     public private(set) var workingDir: String?
     public private(set) var selectedModel: String?
+    /// A `claude --effort` level — only meaningful alongside `selectedModel`. `nil` lets Claude
+    /// Code pick the plan's own default.
+    public private(set) var selectedThinking: String?
+    /// Every `claude --model` alias and the `claude --effort` levels it supports — the model
+    /// picker's own data, fetched once by `start()` so it never hand-mirrors
+    /// `config.SESSION_MODEL_EFFORT_LEVELS`.
+    public private(set) var sessionModels: [SessionModelInfo] = []
     public private(set) var isCreating = false
+
+    /// Whether `selectedSessionTypeId` is the fast sandbox — the one type whose launch defaults
+    /// to a model and thinking level of its own rather than the plan's.
+    public var isFastSelected: Bool { selectedSessionTypeId == Self.preselectedSessionTypeId }
+
+    /// What will actually launch if nothing more is chosen — an explicit selection always wins;
+    /// unset falls back to the fast sandbox's own default on a fast session, and to the plan's
+    /// own default (`nil`) everywhere else. For display only: leaving this untouched still sends
+    /// no flag, exactly as before this picker offered a fast session any choice at all.
+    public var resolvedModel: String? { selectedModel ?? (isFastSelected ? Self.fastDefaultModel : nil) }
+    public var resolvedThinking: String? {
+        selectedThinking ?? (isFastSelected && resolvedModel == Self.fastDefaultModel ? Self.fastDefaultThinking : nil)
+    }
+    /// The effort levels the currently active model accepts — empty for "Default" (no model
+    /// resolved) or for a model that declares none of its own.
+    public var effortLevelsForResolvedModel: [String] {
+        guard let resolvedModel else { return [] }
+        return sessionModels.first { $0.id == resolvedModel }?.effortLevels ?? []
+    }
 
     /// The legacy flat `/api/session-types` list — a fallback for `selectedMachine ==
     /// MachineStore.defaultMachineSlug` only, for a deployment that predates `/api/agents`.
@@ -119,6 +167,7 @@ public final class CreateSessionStore {
     /// when the screen appears.
     public func start() async {
         globalSessionTypes = (try? await api.getSessionTypes()) ?? globalSessionTypes
+        sessionModels = (try? await api.getSessionModels()) ?? sessionModels
         applyPreselectionIfNeeded()
     }
 
@@ -151,6 +200,14 @@ public final class CreateSessionStore {
 
     public func selectModel(_ id: String?) {
         selectedModel = id
+        // The set of thinking levels a model accepts is a property of that model
+        // (`sessionModels`), so a level chosen for the previous one is not necessarily valid for
+        // this one — clear it rather than risk sending a combination the launch would reject.
+        selectedThinking = nil
+    }
+
+    public func selectThinking(_ id: String?) {
+        selectedThinking = id
     }
 
     /// A chosen directory is what makes a session custom, so the two always move together.
@@ -175,16 +232,18 @@ public final class CreateSessionStore {
         let dir = workingDir
         let machine = selectedMachine
         let model = selectedModel
+        let thinking = selectedThinking
         do {
             let result = try await api.postMessage(
                 sessionId: nil, message: message, files: files, sessionType: type, workingDir: dir, agent: machine,
-                model: model
+                model: model, thinking: thinking
             )
             let now = ISO8601DateFormatter().string(from: Date())
             let optimistic = Session(
                 id: result.sessionId,
                 sessionType: type ?? globalSessionTypes.first?.id ?? "default",
                 model: model,
+                thinking: thinking,
                 status: .pending,
                 state: .starting,
                 blocker: nil,

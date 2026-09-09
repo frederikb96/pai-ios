@@ -15,6 +15,9 @@ public struct DraftEntry: Equatable, Sendable {
     /// A `claude --model` alias for the next session — only meaningful on ``DraftKey/newSession``,
     /// alongside `sessionType`/`workingDir`. `nil` lets Claude Code pick the plan's own default.
     public var model: String?
+    /// A `claude --effort` level for the next session — only meaningful alongside `model` above.
+    /// `nil` lets Claude Code pick the plan's own default.
+    public var thinking: String?
     /// `updated_at` of the server version this entry was last reconciled with.
     ///
     /// Compared for **inequality, never ordered**, in ``DraftStore/syncFromServer()`` — the
@@ -22,12 +25,14 @@ public struct DraftEntry: Equatable, Sendable {
     public var remoteUpdatedAt: String?
 
     public init(
-        text: String, sessionType: String?, workingDir: String?, model: String? = nil, remoteUpdatedAt: String?
+        text: String, sessionType: String?, workingDir: String?, model: String? = nil, thinking: String? = nil,
+        remoteUpdatedAt: String?
     ) {
         self.text = text
         self.sessionType = sessionType
         self.workingDir = workingDir
         self.model = model
+        self.thinking = thinking
         self.remoteUpdatedAt = remoteUpdatedAt
     }
 

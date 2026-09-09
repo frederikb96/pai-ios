@@ -99,6 +99,18 @@ public final class DraftStore {
     public func selectModel(_ id: String?) {
         var entry = draft(for: DraftKey.newSession)
         entry.model = id
+        // The set of thinking levels a model accepts is a property of that model
+        // (`GET /api/session-models`), so a level chosen for the previous one is not necessarily
+        // valid for this one — clear it rather than risk sending a combination the launch would
+        // reject.
+        entry.thinking = nil
+        drafts[DraftKey.newSession] = entry
+        scheduleFlush(DraftKey.newSession)
+    }
+
+    public func selectThinking(_ id: String?) {
+        var entry = draft(for: DraftKey.newSession)
+        entry.thinking = id
         drafts[DraftKey.newSession] = entry
         scheduleFlush(DraftKey.newSession)
     }
@@ -154,7 +166,7 @@ public final class DraftStore {
             do {
                 let result = try await api.putDraft(
                     key: key, text: entry.text, sessionType: entry.sessionType, workingDir: entry.workingDir,
-                    model: entry.model
+                    model: entry.model, thinking: entry.thinking
                 )
                 let updatedAt: String? = {
                     switch result {
@@ -207,7 +219,7 @@ public final class DraftStore {
             if let local = drafts[row.key], local.remoteUpdatedAt == row.updatedAt { continue }
             drafts[row.key] = DraftEntry(
                 text: row.text, sessionType: row.sessionType, workingDir: row.workingDir, model: row.model,
-                remoteUpdatedAt: row.updatedAt
+                thinking: row.thinking, remoteUpdatedAt: row.updatedAt
             )
         }
 

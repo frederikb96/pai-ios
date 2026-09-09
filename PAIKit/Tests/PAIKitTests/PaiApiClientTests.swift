@@ -429,6 +429,16 @@ final class PaiApiClientTests: XCTestCase {
         XCTAssertTrue(body.contains("opus"), body)
     }
 
+    func testPostMessageIncludesThinkingFieldWhenProvided() async throws {
+        stubJSON(#"{"session_id":"s1","message_id":9}"#)
+        let client = try makeClient()
+        _ = try await client.postMessage(message: "hello", model: "opus", thinking: "high")
+
+        let body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains("name=\"thinking\""), body)
+        XCTAssertTrue(body.contains("high"), body)
+    }
+
     func testErrorResponseSurfacesServerDetailThroughTheRealDecodePath() async throws {
         stubJSON(#"{"detail":"session not found"}"#, statusCode: 404)
         let client = try makeClient()
