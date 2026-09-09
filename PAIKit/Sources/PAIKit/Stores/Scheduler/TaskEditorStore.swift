@@ -6,7 +6,7 @@ public protocol TaskEditorApiClient: Sendable {
     func createSchedulerTask(fields: TaskWriteFields) async throws -> ScheduledTaskDetail
     func updateSchedulerTask(taskId: String, fields: TaskWriteFields) async throws -> ScheduledTaskDetail
     func deleteSchedulerTask(taskId: String) async throws
-    func runSchedulerTaskNow(taskId: String) async throws -> TaskRun
+    func runSchedulerTaskNow(taskId: String, skipGate: Bool) async throws -> TaskRun
     func resetSchedulerTask(taskId: String) async throws -> ScheduledTaskDetail
     func clearSchedulerTaskStop(taskId: String) async throws -> ScheduledTaskDetail
     func testRunSchedulerGate(
@@ -121,9 +121,9 @@ public final class TaskEditorStore {
     }
 
     @discardableResult
-    public func runNow() async -> Bool {
+    public func runNow(skipGate: Bool = false) async -> Bool {
         await withBusy { taskId in
-            _ = try await self.api.runSchedulerTaskNow(taskId: taskId)
+            _ = try await self.api.runSchedulerTaskNow(taskId: taskId, skipGate: skipGate)
             return try await self.api.getSchedulerTask(taskId: taskId)
         }
     }

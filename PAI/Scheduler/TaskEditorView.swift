@@ -13,6 +13,9 @@ struct TaskEditorView: View {
     @State private var hasReplacedRoute = false
     @State private var confirmingDelete = false
     @State private var testRunResult: SchedulerTestRunResult?
+    /// Bypasses the gate script for the *next* "Run now" only — not persisted, matching
+    /// `TaskEditor.tsx`'s own `skipGate` state, which resets on remount rather than surviving it.
+    @State private var skipGate = false
 
     var body: some View {
         Group {
@@ -59,7 +62,7 @@ struct TaskEditorView: View {
                     Task { await store.setEnabled(!task.enabled) }
                 }
                 Button {
-                    Task { await store.runNow() }
+                    Task { await store.runNow(skipGate: skipGate) }
                 } label: {
                     Image(systemName: "play")
                 }
@@ -358,6 +361,9 @@ struct TaskEditorView: View {
                     Text("Save the task first to test its gate.")
                         .font(PaiTypography.caption.font)
                         .foregroundStyle(PaiPalette.Semantic.textFaint)
+                } else {
+                    Toggle("Skip gate on next \u{201c}Run now\u{201d}", isOn: $skipGate)
+                        .font(PaiTypography.caption.font)
                 }
                 if let result = testRunResult {
                     VStack(alignment: .leading, spacing: 4) {
@@ -511,6 +517,11 @@ private struct RunRow: View {
             }
             if let reason = run.reason, !reason.isEmpty {
                 Text(reason).font(PaiTypography.caption.font).foregroundStyle(PaiPalette.Semantic.textMuted)
+            }
+            if run.gateSkipped {
+                Label("Gate skipped — fired without running the check.", systemImage: "forward.fill")
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Semantic.textMuted)
             }
             if run.runtimeWarned || run.budgetWarned {
                 Label(budgetWarningText, systemImage: "exclamationmark.triangle")

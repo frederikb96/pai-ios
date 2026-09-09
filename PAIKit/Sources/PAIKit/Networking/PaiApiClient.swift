@@ -722,8 +722,16 @@ public struct PaiApiClient: Sendable {
 
     /// Runs the task right now, bypassing `enabled` (but not `stopped`) — for exercising a task
     /// before it is ever armed. The gate script, if any, still runs and can still decline.
-    public func runSchedulerTaskNow(taskId: String) async throws -> TaskRun {
-        try await send(path: "/api/scheduler/tasks/\(taskId)/run-now", method: "POST")
+    public func runSchedulerTaskNow(taskId: String, skipGate: Bool = false) async throws -> TaskRun {
+        struct Body: Encodable {
+            let skipGate: Bool
+            enum CodingKeys: String, CodingKey { case skipGate = "skip_gate" }
+        }
+        return try await send(
+            path: "/api/scheduler/tasks/\(taskId)/run-now",
+            method: "POST",
+            body: try Self.jsonBody(Body(skipGate: skipGate))
+        )
     }
 
     /// Closes the task's current session if still open and clears its link — the old conversation

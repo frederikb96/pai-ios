@@ -107,6 +107,39 @@ final class TaskEditorStoreTests: XCTestCase {
         XCTAssertFalse(store.promptStaleOnEdit)
     }
 
+    // MARK: - runNow passes skip-gate through, matching TaskEditor.tsx's own checkbox
+
+    func testRunNowPassesSkipGateThrough() async {
+        let api = FakeTaskEditorApi()
+        await api.setRunNowResult(.success(TaskRun(
+            id: "r1", taskId: "t1", trigger: .manual, disposition: .fired, reason: nil,
+            sessionId: nil, gateStdout: nil, gateExitCode: nil, gateSkipped: true,
+            runtimeWarned: false, budgetWarned: false, startedAtMs: 0, finishedAtMs: nil)))
+        await api.setGetResult(.success(detail(id: "t1")))
+        let store = TaskEditorStore(taskId: "t1", api: api, timezone: "UTC")
+
+        _ = await store.runNow(skipGate: true)
+
+        let calls = await api.runNowCalls
+        XCTAssertEqual(calls.map(\.taskId), ["t1"])
+        XCTAssertEqual(calls.map(\.skipGate), [true])
+    }
+
+    func testRunNowDefaultsToNotSkippingTheGate() async {
+        let api = FakeTaskEditorApi()
+        await api.setRunNowResult(.success(TaskRun(
+            id: "r1", taskId: "t1", trigger: .manual, disposition: .fired, reason: nil,
+            sessionId: nil, gateStdout: nil, gateExitCode: nil, gateSkipped: false,
+            runtimeWarned: false, budgetWarned: false, startedAtMs: 0, finishedAtMs: nil)))
+        await api.setGetResult(.success(detail(id: "t1")))
+        let store = TaskEditorStore(taskId: "t1", api: api, timezone: "UTC")
+
+        _ = await store.runNow()
+
+        let calls = await api.runNowCalls
+        XCTAssertEqual(calls.map(\.skipGate), [false])
+    }
+
     // MARK: - delete / runNow are no-ops while creating
 
     func testDeleteIsANoOpWithNoTaskIdYet() async {

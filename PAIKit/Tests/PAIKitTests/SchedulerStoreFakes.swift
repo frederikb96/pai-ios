@@ -24,7 +24,7 @@ actor FakeTaskEditorApi: TaskEditorApiClient {
     private(set) var createCalls: [TaskWriteFields] = []
     private(set) var updateCalls: [(taskId: String, fields: TaskWriteFields)] = []
     private(set) var deleteCalls: [String] = []
-    private(set) var runNowCalls: [String] = []
+    private(set) var runNowCalls: [(taskId: String, skipGate: Bool)] = []
     private(set) var resetCalls: [String] = []
     private(set) var clearStopCalls: [String] = []
 
@@ -40,6 +40,7 @@ actor FakeTaskEditorApi: TaskEditorApiClient {
     func setGetResult(_ result: Result<ScheduledTaskDetail, PaiError>) { getResult = result }
     func setCreateResult(_ result: Result<ScheduledTaskDetail, PaiError>) { createResult = result }
     func setUpdateResult(_ result: Result<ScheduledTaskDetail, PaiError>) { updateResult = result }
+    func setRunNowResult(_ result: Result<TaskRun, PaiError>) { runNowResult = result }
 
     func getSchedulerTask(taskId: String) async throws -> ScheduledTaskDetail {
         guard let getResult else { throw PaiError.transport("no getResult scripted") }
@@ -72,8 +73,8 @@ actor FakeTaskEditorApi: TaskEditorApiClient {
         if case let .failure(error) = deleteResult { throw error }
     }
 
-    func runSchedulerTaskNow(taskId: String) async throws -> TaskRun {
-        runNowCalls.append(taskId)
+    func runSchedulerTaskNow(taskId: String, skipGate: Bool) async throws -> TaskRun {
+        runNowCalls.append((taskId: taskId, skipGate: skipGate))
         guard let runNowResult else { throw PaiError.transport("no runNowResult scripted") }
         switch runNowResult {
         case let .success(run): return run
