@@ -1139,4 +1139,18 @@ public struct PaiApiClient: Sendable {
         )
         return response.marked
     }
+
+    /// Marks every unread notification belonging to one session read — what reaching that
+    /// session, by any route, clears in one call rather than walking the feed for its ids.
+    @discardableResult
+    public func markSessionNotificationsRead(sessionId: String) async throws -> Int {
+        struct Body: Encodable {
+            let sessionId: String
+            enum CodingKeys: String, CodingKey { case sessionId = "session_id" }
+        }
+        let response: MarkNotificationsReadResponse = try await send(
+            path: "/api/notifications/read", method: "POST", body: try Self.jsonBody(Body(sessionId: sessionId))
+        )
+        return response.marked
+    }
 }

@@ -54,6 +54,18 @@ struct RootView: View {
             // the app is open, the link is last; tapped from cold, the gate opening is last.
             .onChange(of: deepLinks.pending) { _, _ in consumeDeepLink() }
             .onChange(of: environment.router.gate) { _, _ in consumeDeepLink() }
+            // Reaching a session — by any route other than tapping the notification itself,
+            // which already marks its own row read on the way in
+            // (`resolveAndOpenNotification`) — clears whatever is still waiting for it. Read
+            // from the router rather than tracked separately, the same reason `openSessionID`
+            // itself is derived: the session list, a deep link, and a freshly created session
+            // all funnel through this one value changing. The live-arrival case (a notification
+            // for the session already on screen) is handled where it arrives, in
+            // `connectNotificationStream`'s `onNotification`.
+            .onChange(of: environment.router.openSessionID) { _, sessionID in
+                guard let sessionID, let store = environment.connection?.notifications else { return }
+                Task { await store.markSessionRead(sessionID) }
+            }
             // The URL half — a shortcut or widget that opens the app by URL rather than through
             // an App Intent. Parked through the same inbox so there is one path to a screen from
             // outside, not two that can disagree.
@@ -359,6 +371,12 @@ struct RootView: View {
             callbacks: PaiNotificationStreamClient.Callbacks(
                 onNotification: { [weak store] event in
                     store?.applyLiveUnread(event.unread)
+                    // Arriving for the session already on screen — being on screen is the
+                    // condition, not being routed to, so this clears it the same way reaching
+                    // the session does above, just without a navigation to react to.
+                    if let sessionId = event.notification.sessionId, sessionId == environment.router.openSessionID {
+                        Task { [weak store] in await store?.markSessionRead(sessionId) }
+                    }
                 },
                 onRead: { [weak store] event in
                     store?.applyLiveUnread(event.unread)

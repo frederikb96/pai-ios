@@ -8,6 +8,7 @@ private actor FakeNotificationCenterApi: NotificationCenterApiClient {
     var summaryResult: Result<NotificationSummary, PaiError> = .success(NotificationSummary(unread: 0, latestId: nil))
     var markReadResult: Result<Int, PaiError> = .success(1)
     var markAllReadResult: Result<Int, PaiError> = .success(0)
+    var markSessionReadResult: Result<Int, PaiError> = .success(0)
     var getNotificationResult: Result<PaiNotification, PaiError> = .failure(.transport("not configured"))
     var clearAlertsResult: Result<Int, PaiError> = .success(1)
     /// Per-id overrides for `getNotification`, checked before the single shared
@@ -18,6 +19,7 @@ private actor FakeNotificationCenterApi: NotificationCenterApiClient {
     private(set) var listCalls: [(limit: Int?, beforeId: String?, kind: PaiNotificationKind?)] = []
     private(set) var markReadCalls: [[String]] = []
     private(set) var markAllReadCallCount = 0
+    private(set) var markSessionReadCalls: [String] = []
     private(set) var getNotificationCalls: [String] = []
     private(set) var clearAlertsCalls: [[String]] = []
 
@@ -59,6 +61,15 @@ private actor FakeNotificationCenterApi: NotificationCenterApiClient {
     func markAllNotificationsRead() async throws -> Int {
         markAllReadCallCount += 1
         switch markAllReadResult {
+        case let .success(count): return count
+        case let .failure(error): throw error
+        }
+    }
+
+    @discardableResult
+    func markSessionNotificationsRead(sessionId: String) async throws -> Int {
+        markSessionReadCalls.append(sessionId)
+        switch markSessionReadResult {
         case let .success(count): return count
         case let .failure(error): throw error
         }
@@ -246,6 +257,19 @@ final class NotificationCenterStoreTests: XCTestCase {
         let calls = await api.markReadCalls
         XCTAssertEqual(calls, [["not-loaded"]])
         XCTAssertTrue(store.rows.isEmpty)
+    }
+
+    /// What reaching a session, by any route, or one arriving while it is already on screen,
+    /// both call — the session-scoped form the backend's own `/api/notifications/read` takes,
+    /// rather than walking a locally loaded row list this store may not even have.
+    func testMarkSessionReadCallsTheSessionScopedEndpoint() async {
+        let api = FakeNotificationCenterApi()
+        let store = NotificationCenterStore(api: api)
+
+        await store.markSessionRead("s1")
+
+        let calls = await api.markSessionReadCalls
+        XCTAssertEqual(calls, ["s1"])
     }
 
     /// A row's anchor is often still null at tap time -- resolution is lazy-on-read on the

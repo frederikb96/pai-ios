@@ -41,6 +41,7 @@ public protocol NotificationCenterApiClient: Sendable {
     func getNotificationsSummary() async throws -> NotificationSummary
     @discardableResult func markNotificationsRead(ids: [String]) async throws -> Int
     @discardableResult func markAllNotificationsRead() async throws -> Int
+    @discardableResult func markSessionNotificationsRead(sessionId: String) async throws -> Int
     @discardableResult func clearAlerts(ids: [String]) async throws -> Int
 }
 
@@ -181,6 +182,16 @@ public final class NotificationCenterStore {
             rows[index] = previous
             unread += 1
         }
+    }
+
+    /// Marks every unread notification belonging to one session read — what reaching that
+    /// session, by any route, or one arriving while it is already on screen, both call. Never
+    /// touches `rows`: nothing reads that list outside the centre screen, which reloads its own
+    /// page on entry regardless (see this type's own doc comment), so there is nothing local
+    /// worth reconciling here — only `unread`, which the live `read` broadcast this triggers
+    /// already corrects everywhere, including this store, through `applyLiveUnread`.
+    public func markSessionRead(_ sessionId: String) async {
+        try? await api.markSessionNotificationsRead(sessionId: sessionId)
     }
 
     public func markAllRead() async {
