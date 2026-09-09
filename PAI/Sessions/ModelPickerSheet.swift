@@ -40,16 +40,9 @@ struct ModelPickerSheet: View {
 
                 if createSession.isFastSelected {
                     Section {
-                        Text(
-                            "Fast sessions run "
-                                + (CreateSessionStore.modelDisplayLabels[createSession.fastDefaultModel]
-                                    ?? createSession.fastDefaultModel) + " at "
-                                + (CreateSessionStore.effortLevelLabels[createSession.fastDefaultThinking]
-                                    ?? createSession.fastDefaultThinking)
-                                + " thinking unless you choose otherwise here."
-                        )
-                        .font(PaiTypography.caption.font)
-                        .foregroundStyle(PaiPalette.Semantic.textMuted)
+                        Text(fastDefaultCaption)
+                            .font(PaiTypography.caption.font)
+                            .foregroundStyle(PaiPalette.Semantic.textMuted)
                     }
                 }
             }
@@ -62,6 +55,19 @@ struct ModelPickerSheet: View {
                 }
             }
         }
+    }
+
+    /// Built outside the view builder on purpose: the concatenation and its two
+    /// dictionary lookups are more than the SwiftUI type-checker will accept inline,
+    /// and it fails only on a real Xcode build of the app target.
+    private var fastDefaultCaption: String {
+        let model: String =
+            CreateSessionStore.modelDisplayLabels[createSession.fastDefaultModel]
+            ?? createSession.fastDefaultModel
+        let thinking: String =
+            CreateSessionStore.effortLevelLabels[createSession.fastDefaultThinking]
+            ?? createSession.fastDefaultThinking
+        return "Fast sessions run \(model) at \(thinking) thinking unless you choose otherwise here."
     }
 
     private func modelRow(id: String?, label: String) -> some View {
