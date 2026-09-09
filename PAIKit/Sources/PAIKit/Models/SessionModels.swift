@@ -557,8 +557,21 @@ public struct SessionModelInfo: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
-struct SessionModelsResponse: Codable, Sendable {
-    let models: [SessionModelInfo]
+public struct SessionModelsResponse: Codable, Sendable {
+    public let models: [SessionModelInfo]
+    /// What a fast session launches with when nobody names a choice —
+    /// `pai_cloud.config.FAST_SESSION_DEFAULT_MODEL`/`_EFFORT`, mirroring the agent's own
+    /// `FAST_DEFAULT_MODEL`/`FAST_DEFAULT_EFFORT` by convention. Read this rather than
+    /// hardcoding the pair, or the picker pre-selects and displays a value that has drifted
+    /// from what actually launches.
+    public let fastDefaultModel: String
+    public let fastDefaultThinking: String
+
+    enum CodingKeys: String, CodingKey {
+        case models
+        case fastDefaultModel = "fast_default_model"
+        case fastDefaultThinking = "fast_default_thinking"
+    }
 }
 
 // --- Machines ---

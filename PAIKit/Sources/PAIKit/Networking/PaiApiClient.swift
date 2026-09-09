@@ -275,9 +275,8 @@ public struct PaiApiClient: Sendable {
         try await send(path: "/api/session-types")
     }
 
-    public func getSessionModels() async throws -> [SessionModelInfo] {
-        let response: SessionModelsResponse = try await send(path: "/api/session-models")
-        return response.models
+    public func getSessionModels() async throws -> SessionModelsResponse {
+        try await send(path: "/api/session-models")
     }
 
     // MARK: Sessions

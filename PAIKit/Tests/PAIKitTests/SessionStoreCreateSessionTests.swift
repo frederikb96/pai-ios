@@ -330,10 +330,27 @@ final class SessionStoreCreateSessionTests: XCTestCase {
             machines: MachineStore(api: FakeMachineDirectoryApi()), api: FakeCreateSessionApi())
         store.selectSessionType("fast")
 
-        XCTAssertEqual(store.resolvedModel, CreateSessionStore.fastDefaultModel)
-        XCTAssertEqual(store.resolvedThinking, CreateSessionStore.fastDefaultThinking)
+        XCTAssertEqual(store.resolvedModel, store.fastDefaultModel)
+        XCTAssertEqual(store.resolvedThinking, store.fastDefaultThinking)
         XCTAssertNil(store.selectedModel)
         XCTAssertNil(store.selectedThinking)
+    }
+
+    /// The default pair rides `GET /api/session-models` rather than a hardcoded value — a picker
+    /// that hand-mirrored it would show the old default and write nothing to the draft the
+    /// moment the agent's actual default changed underneath it.
+    func testFastDefaultPairComesFromTheFetchedResponseNotAHardcodedValue() async {
+        let api = FakeCreateSessionApi()
+        await api.setSessionModelsResult(.success([]), fastDefaultModel: "opus", fastDefaultThinking: "high")
+        let store = CreateSessionStore(machines: MachineStore(api: FakeMachineDirectoryApi()), api: api)
+        store.selectSessionType("fast")
+
+        await store.start()
+
+        XCTAssertEqual(store.fastDefaultModel, "opus")
+        XCTAssertEqual(store.fastDefaultThinking, "high")
+        XCTAssertEqual(store.resolvedModel, "opus")
+        XCTAssertEqual(store.resolvedThinking, "high")
     }
 
     func testAnExplicitChoiceOnAFastSessionOverridesTheDefaultAndIsWhatGetsSent() async {
@@ -382,7 +399,13 @@ extension FakeCreateSessionApi {
         postMessageResult = result
     }
 
-    func setSessionModelsResult(_ result: Result<[SessionModelInfo], PaiError>) {
-        sessionModelsResult = result
+    func setSessionModelsResult(
+        _ result: Result<[SessionModelInfo], PaiError>,
+        fastDefaultModel: String = "sonnet", fastDefaultThinking: String = "low"
+    ) {
+        sessionModelsResult = result.map {
+            SessionModelsResponse(
+                models: $0, fastDefaultModel: fastDefaultModel, fastDefaultThinking: fastDefaultThinking)
+        }
     }
 }

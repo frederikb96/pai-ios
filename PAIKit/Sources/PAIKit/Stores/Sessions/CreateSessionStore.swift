@@ -4,7 +4,7 @@ import Observation
 /// The narrow slice of `PaiApiClient` this store needs.
 public protocol CreateSessionApiClient: Sendable {
     func getSessionTypes() async throws -> [SessionType]
-    func getSessionModels() async throws -> [SessionModelInfo]
+    func getSessionModels() async throws -> SessionModelsResponse
     func postMessage(
         sessionId: String?, message: String, files: [PaiFileUpload], sessionType: String?, workingDir: String?,
         agent: String?, model: String?, thinking: String?
@@ -75,12 +75,6 @@ public final class CreateSessionStore {
     public static let modelDisplayLabels: [String: String] = Dictionary(
         uniqueKeysWithValues: modelOptions.compactMap { option in option.id.map { ($0, option.label) } })
 
-    /// What the fast sandbox launches with when nothing is chosen (`agent/src/fast-sandbox.ts`) —
-    /// held here so the picker never claims "Default" for a launch that is anything but. An
-    /// explicit choice always overrides this; it is purely what gets pre-selected and displayed.
-    public static let fastDefaultModel = "sonnet"
-    public static let fastDefaultThinking = "low"
-
     public private(set) var selectedMachine: String
     /// `nil` until preselection or an explicit choice has run — never left displaying a type the
     /// create request would not actually send.
@@ -94,6 +88,12 @@ public final class CreateSessionStore {
     /// picker's own data, fetched once by `start()` so it never hand-mirrors
     /// `config.SESSION_MODEL_EFFORT_LEVELS`.
     public private(set) var sessionModels: [SessionModelInfo] = []
+    /// What the fast sandbox launches with when nothing is chosen — read from `start()`'s own
+    /// `GET /api/session-models` rather than hardcoded, so the picker never drifts from
+    /// `agent/src/fast-sandbox.ts`'s actual default. These two are only what shows before that
+    /// first fetch lands.
+    public private(set) var fastDefaultModel = "sonnet"
+    public private(set) var fastDefaultThinking = "low"
     public private(set) var isCreating = false
 
     /// Whether `selectedSessionTypeId` is the fast sandbox — the one type whose launch defaults
@@ -104,9 +104,9 @@ public final class CreateSessionStore {
     /// unset falls back to the fast sandbox's own default on a fast session, and to the plan's
     /// own default (`nil`) everywhere else. For display only: leaving this untouched still sends
     /// no flag, exactly as before this picker offered a fast session any choice at all.
-    public var resolvedModel: String? { selectedModel ?? (isFastSelected ? Self.fastDefaultModel : nil) }
+    public var resolvedModel: String? { selectedModel ?? (isFastSelected ? fastDefaultModel : nil) }
     public var resolvedThinking: String? {
-        selectedThinking ?? (isFastSelected && resolvedModel == Self.fastDefaultModel ? Self.fastDefaultThinking : nil)
+        selectedThinking ?? (isFastSelected && resolvedModel == fastDefaultModel ? fastDefaultThinking : nil)
     }
     /// The effort levels the currently active model accepts — empty for "Default" (no model
     /// resolved) or for a model that declares none of its own.
@@ -167,7 +167,11 @@ public final class CreateSessionStore {
     /// when the screen appears.
     public func start() async {
         globalSessionTypes = (try? await api.getSessionTypes()) ?? globalSessionTypes
-        sessionModels = (try? await api.getSessionModels()) ?? sessionModels
+        if let response = try? await api.getSessionModels() {
+            sessionModels = response.models
+            fastDefaultModel = response.fastDefaultModel
+            fastDefaultThinking = response.fastDefaultThinking
+        }
         applyPreselectionIfNeeded()
     }
 

@@ -227,7 +227,9 @@ actor FakeCreateSessionApi: CreateSessionApiClient {
             model: String?, thinking: String?
         )] = []
     var sessionTypesResult: Result<[SessionType], PaiError> = .success([])
-    var sessionModelsResult: Result<[SessionModelInfo], PaiError> = .success([])
+    var sessionModelsResult: Result<SessionModelsResponse, PaiError> = .success(
+        SessionModelsResponse(models: [], fastDefaultModel: "sonnet", fastDefaultThinking: "low")
+    )
     var postMessageResult: Result<PostMessageResponse, PaiError> = .success(
         PostMessageResponse(sessionId: "new-session-id", messageId: 1)
     )
@@ -239,9 +241,9 @@ actor FakeCreateSessionApi: CreateSessionApiClient {
         }
     }
 
-    func getSessionModels() async throws -> [SessionModelInfo] {
+    func getSessionModels() async throws -> SessionModelsResponse {
         switch sessionModelsResult {
-        case let .success(models): return models
+        case let .success(response): return response
         case let .failure(error): throw error
         }
     }

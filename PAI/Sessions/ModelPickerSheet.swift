@@ -7,9 +7,10 @@ import SwiftUI
 /// a hand-mirrored copy of the vocabulary.
 ///
 /// A model is always known here even before Freddy picks one: `createSession.resolvedModel`
-/// already falls back to the fast sandbox's own default (Sonnet, Low) on a fast session, so the
-/// row that default resolves to reads as selected without either flag ever being written until
-/// he actually taps something.
+/// already falls back to the fast sandbox's own default (`createSession.fastDefaultModel`/
+/// `fastDefaultThinking`, read from `GET /api/session-models`) on a fast session, so the row
+/// that default resolves to reads as selected without either flag ever being written until he
+/// actually taps something.
 struct ModelPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     let createSession: CreateSessionStore
@@ -39,9 +40,16 @@ struct ModelPickerSheet: View {
 
                 if createSession.isFastSelected {
                     Section {
-                        Text("Fast sessions run Sonnet at Low thinking unless you choose otherwise here.")
-                            .font(PaiTypography.caption.font)
-                            .foregroundStyle(PaiPalette.Semantic.textMuted)
+                        Text(
+                            "Fast sessions run "
+                                + (CreateSessionStore.modelDisplayLabels[createSession.fastDefaultModel]
+                                    ?? createSession.fastDefaultModel) + " at "
+                                + (CreateSessionStore.effortLevelLabels[createSession.fastDefaultThinking]
+                                    ?? createSession.fastDefaultThinking)
+                                + " thinking unless you choose otherwise here."
+                        )
+                        .font(PaiTypography.caption.font)
+                        .foregroundStyle(PaiPalette.Semantic.textMuted)
                     }
                 }
             }
