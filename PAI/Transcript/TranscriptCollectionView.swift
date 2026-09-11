@@ -1118,6 +1118,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         collectionView.setContentOffset(CGPoint(x: 0, y: target), animated: animated)
         edgeFollow = EdgeFollowLatch(isPinned: false)
         updateJumpToLatestVisibility()
+        return true
     }
 
     private func clearSearchHighlighting() {
