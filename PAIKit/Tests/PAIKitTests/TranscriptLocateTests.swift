@@ -99,6 +99,25 @@ final class TranscriptLocateTests: XCTestCase {
         XCTAssertTrue(store.isLoaded(1000, sessionId: "s1"), "a miss must leave the tail the open lands on intact")
     }
 
+    /// Opening the same notification again, after the first open replaced the window with a page
+    /// far from the tail: the fresh bootstrap drops that page rather than keeping it as a gapped
+    /// island, and the landing fetches it back — landing on the target in one unbroken run.
+    func testASecondDeepLinkedOpenLandsAgainInAWindowWithNoGap() async {
+        let server = FakeServer(ids: Array(1...1000))
+        let store = bootstrappedStore(server: server)
+        _ = await store.deepLinkLanding(for: 100, sessionId: "s1", fetchAround: server.around)
+
+        store.applyBootstrap(
+            sessionId: "s1", entries: server.ids.suffix(TranscriptStore.tailLimit).map { FakeServer.message(id: $0) },
+            requestedLimit: TranscriptStore.tailLimit)
+        let landing = await store.deepLinkLanding(for: 100, sessionId: "s1", fetchAround: server.around)
+
+        XCTAssertEqual(landing, .deepLink(id: 100))
+        let ids = store.messages["s1"]?.map(\.id) ?? []
+        XCTAssertTrue(ids.contains(100))
+        XCTAssertEqual(ids, Array((ids.first ?? 0)...(ids.last ?? 0)), "the loaded messages must be one unbroken run")
+    }
+
     // MARK: - locate
 
     /// A page that reaches the tail is folded into it, keeping the reader's context and the

@@ -65,6 +65,36 @@ final class TranscriptStoreTests: XCTestCase {
         XCTAssertFalse(store2.window(for: "s1").hasOlder)
     }
 
+    /// A session revisited after a jump far into its history still holds that distant page. A
+    /// fresh tail that does not reach it must replace it — merged, the two would render as one
+    /// run of rows under a window claiming a contiguity the store does not have.
+    func testBootstrapReplacesACachedWindowThatDoesNotReachTheTail() async {
+        let store = TranscriptStore()
+        store.applyBootstrap(sessionId: "s1", entries: (701...1000).map { message(id: $0) }, requestedLimit: 300)
+        store.replaceWindow(sessionId: "s1", entries: (26...175).map { message(id: $0) }, aroundId: 100, limit: 150)
+
+        store.applyBootstrap(sessionId: "s1", entries: (701...1000).map { message(id: $0) }, requestedLimit: 300)
+
+        XCTAssertEqual(store.messages["s1"]?.map(\.id), Array(701...1000))
+        XCTAssertEqual(store.window(for: "s1").oldestLoadedId, 701)
+    }
+
+    /// Older pages the reader already scrolled through connect to the fresh tail, so they are kept
+    /// — and the window has to say so, or paging older re-fetches what is already loaded and a
+    /// restore anchor in them reads as outside the window.
+    func testBootstrapKeepsCachedOlderPagesThatReachTheTail() async {
+        let store = TranscriptStore()
+        store.applyBootstrap(sessionId: "s1", entries: (701...1000).map { message(id: $0) }, requestedLimit: 300)
+        store.prependOlder(sessionId: "s1", entries: (551...700).map { message(id: $0) }, requestedLimit: 150)
+
+        store.applyBootstrap(sessionId: "s1", entries: (711...1010).map { message(id: $0) }, requestedLimit: 300)
+
+        XCTAssertEqual(store.messages["s1"]?.map(\.id), Array(551...1010))
+        XCTAssertEqual(store.window(for: "s1").oldestLoadedId, 551)
+        XCTAssertTrue(store.window(for: "s1").hasOlder)
+        XCTAssertEqual(store.window(for: "s1").newestLoadedId, 1010)
+    }
+
     /// `oldestLoadedId` must track across pages, not just within one — a second, older page
     /// looking back further must still lower it.
     func testOldestLoadedIdLowersAcrossSuccessivePages() async {

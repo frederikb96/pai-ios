@@ -116,12 +116,30 @@ public final class TranscriptStore {
         windows[sessionId] = win
     }
 
+    /// The cached window is kept only when it runs into this tail (overlaps or abuts it), which is
+    /// what keeps older pages the reader already scrolled through. Anything else — a page a jump
+    /// left far back in the history, or a tail from before the session moved on by more than a
+    /// page — is replaced: merged, it would sit above the tail with a gap between them while the
+    /// window claimed to be one contiguous run.
     public func applyBootstrap(sessionId: String, entries: [Message], requestedLimit: Int) {
         touch(sessionId)
-        merge(entries, into: sessionId)
+        let cached = window(for: sessionId)
+        var oldestLoadedId = Self.oldestId(nil, entries: entries)
+        var hasOlder = entries.count == requestedLimit
+        if let tailMin = entries.map(\.id).min(), let tailMax = entries.map(\.id).max(),
+            Self.overlapsOrAbuts(cached, pageMin: tailMin, pageMax: tailMax)
+        {
+            merge(entries, into: sessionId)
+            if let cachedOldest = cached.oldestLoadedId, cachedOldest < tailMin {
+                oldestLoadedId = cachedOldest
+                hasOlder = cached.hasOlder
+            }
+        } else {
+            messages[sessionId] = entries.sorted { $0.id < $1.id }
+        }
         windows[sessionId] = TranscriptWindow(
-            oldestLoadedId: Self.oldestId(nil, entries: entries),
-            hasOlder: entries.count == requestedLimit,
+            oldestLoadedId: oldestLoadedId,
+            hasOlder: hasOlder,
             bootstrapped: true,
             bootstrapping: false,
             bootstrapError: nil,
@@ -170,10 +188,11 @@ public final class TranscriptStore {
     // MARK: - Merge
 
     /// Dedupe-and-sort-by-id merge shared by every path that adds messages to a session: SSE
-    /// init/batch, the tail bootstrap, and an older-page load. All three become the same
-    /// operation because the store holds one contiguous, ascending window per session — appends,
-    /// prepends and overlaps (an SSE reconnect replaying rows already in the store) all just
-    /// fall out of "merge by id, then sort".
+    /// init/batch, the tail bootstrap (when the cached window reaches it — see
+    /// ``applyBootstrap(sessionId:entries:requestedLimit:)``), and an older-page load. All three
+    /// become the same operation because the store holds one contiguous, ascending window per
+    /// session — appends, prepends and overlaps (an SSE reconnect replaying rows already in the
+    /// store) all just fall out of "merge by id, then sort".
     func merge(_ entries: [Message], into sessionId: String) {
         let existing = messages[sessionId] ?? []
         messages[sessionId] = Self.merged(existing, with: entries)
