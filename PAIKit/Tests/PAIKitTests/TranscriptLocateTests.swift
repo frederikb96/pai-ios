@@ -56,10 +56,10 @@ final class TranscriptLocateTests: XCTestCase {
 
     // MARK: - The first landing of a deep-linked open
 
-    /// The reported bug: a notification for a message older than the tail opened the session at
-    /// its bottom and only then went looking for the target. The first landing has to be the
-    /// linked message, already in the window — and the window has to know it is no longer at the
-    /// tail, or live messages would be appended straight under a page from hours earlier.
+    /// A notification for a message older than the tail must not open the session at its bottom
+    /// and only then go looking for the target. The first landing has to be the linked message,
+    /// already in the window — and the window has to know it is not at the tail, or live
+    /// messages would be appended straight under a page from hours earlier.
     func testADeepLinkOlderThanTheTailLandsOnTheLinkedMessageFirst() async {
         let server = FakeServer(ids: Array(1...1000))
         let store = bootstrappedStore(server: server)

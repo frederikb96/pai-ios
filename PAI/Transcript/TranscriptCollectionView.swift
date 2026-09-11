@@ -440,10 +440,10 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         let streamCursor = store.maxMessageId(for: sessionID)
 
         // A notification deep link (row 5.28) is this open's first landing, not a jump made after
-        // it. Landing at the bottom and jumping once the target loaded was a visible jump at best;
-        // at worst the jump ran before the first layout, found no rows to land on and did nothing,
-        // after which the pending bottom landing won. Resolved into a restore target instead,
-        // which `pendingInitialLoad` keeps until the view can lay it out.
+        // it. Landing at the bottom and jumping once the target loads is a visible jump, and a
+        // jump issued before the first layout has no rows to land on, so it does nothing and the
+        // pending bottom landing wins. Resolved into a restore target instead, which
+        // `pendingInitialLoad` keeps until the view can lay it out.
         if let jumpTarget = initialJumpMessageID {
             initialJumpMessageID = nil
             isResolvingDeepLink = true
