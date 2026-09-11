@@ -121,6 +121,18 @@ final class RouterTests: XCTestCase {
         )
         XCTAssertEqual(path, [])
     }
+
+    /// Matched rather than compared: `Route.==` ignores `messageID` by design, so an equality
+    /// assertion would pass with the jump target silently dropped.
+    func testFixtureInitialPathCarriesTheRequestedJumpTarget() {
+        let path = Router.fixtureInitialPath(
+            arguments: ["/app", "-PaiFixtureMode", "-PaiFixtureRoute", "session", "-PaiFixtureJumpMessage", "9020"]
+        )
+        guard case .session(_, let messageID)? = path.first else {
+            return XCTFail("expected a session route, got \(path)")
+        }
+        XCTAssertEqual(messageID, 9020)
+    }
 }
 
 extension RouterTests {

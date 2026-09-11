@@ -217,7 +217,8 @@ Needs `PAI/` because: `locate`'s merge-or-replace decision (`TranscriptStore.ove
 inner/outer stepping decision (`TranscriptSearchState.next(hitCount:)`/`previous(hitCount:)`), the
 payload/seeding math, the nearest-row fallback (`TranscriptLanding`) and a code-block hit's line
 (`CodeBlockHitGeometry`) are all unit-tested, and the `Mac` workflow's own
-`GET /transcript/landing` now asserts the row a `.replaced`-window jump actually lands on — but
+`GET /transcript/landing` now asserts the row a `.replaced`-window jump actually lands on, for a
+search jump and for a notification's cold open (`-PaiFixtureJumpMessage`) alike — but
 the `Menu` picker's real appearance and dismissal, whether 250ms reads as responsive against a
 real network round trip, and whether the horizontal centring inside a code block
 (`CodeBlockScrollView`'s `glyphAdvance`/`viewportEstimate`) actually lands the current hit on

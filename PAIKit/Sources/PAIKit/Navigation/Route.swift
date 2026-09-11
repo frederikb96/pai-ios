@@ -205,10 +205,10 @@ extension Route {
     public static let fixtureNoteID = "6a0b5f2e-9d47-4c1a-8f30-2b7e5c918d64"
 
     public static func named(
-        _ name: String, sessionID: String, noteID: String = Route.fixtureNoteID
+        _ name: String, sessionID: String, noteID: String = Route.fixtureNoteID, messageID: Int? = nil
     ) -> Route? {
         switch name {
-        case "session": return .session(id: sessionID)
+        case "session": return .session(id: sessionID, messageID: messageID)
         case "terminal": return .terminal(sessionID: sessionID)
         case "settings": return .settings
         case "createSession": return .createSession
@@ -302,7 +302,9 @@ public final class Router {
         static func fixtureInitialPath(arguments: [String] = ProcessInfo.processInfo.arguments) -> [Route] {
             guard PaiFixtureLaunch.isEnabled(arguments: arguments),
                 let name = PaiFixtureLaunch.requestedRouteName(arguments: arguments),
-                let route = Route.named(name, sessionID: PaiFixtureLaunch.sessionID)
+                let route = Route.named(
+                    name, sessionID: PaiFixtureLaunch.sessionID,
+                    messageID: PaiFixtureLaunch.requestedJumpMessageID(arguments: arguments))
             else { return [] }
             return [route]
         }

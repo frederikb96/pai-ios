@@ -71,6 +71,11 @@ public struct PersistedReadPosition: Equatable, Sendable {
 public enum TranscriptRestoreTarget: Equatable, Sendable {
     case bottom
     case message(id: Int)
+    /// A deep link's target, already located into the window — landed the way a search hit is,
+    /// with a lead above it and the ring, rather than flush at the top the way a read position is.
+    /// Never produced by ``TranscriptRestore/target(for:loadedMessageIds:)``; see
+    /// `TranscriptStore.deepLinkLanding(for:sessionId:fetchAround:)`.
+    case deepLink(id: Int)
 }
 
 /// Where a session switch (or a remount of the scroll surface on the same session) should land.

@@ -314,6 +314,34 @@ jobs:
           " || { echo "::error::jump-landing: landed far from both boundary targets (9001, 9042) — see landing.json"; fail=1; }
           fi
 
+          # A tapped notification opening a session at a message far older than its tail — the
+          # jump made inside the transcript's own first load, not on a settled screen the way the
+          # search jump above is. 9020 is several hundred ids clear of the fixture tail, so this is
+          # the `.replaced` landing. `deepLinkLandedMessageId` outlives the ring's fade, so polling
+          # it cannot race the ring the way reading `highlightedMessageId` would.
+          screenshot deep-link-landing -PaiFixtureRoute session -PaiFixtureJumpMessage 9020
+          linked=0
+          for attempt in $(seq 1 10); do
+            if curl -sS --max-time 3 "http://127.0.0.1:8765/transcript/landing" -o artifacts/deep-link-landing.json; then
+              got=$(python3 -c "import json; print(json.load(open('artifacts/deep-link-landing.json')).get('deepLinkLandedMessageId'))")
+              if [ "$got" != "None" ]; then linked=1; break; fi
+            fi
+            sleep 2
+          done
+          xcrun simctl terminate "$udid" "$bundle" || true
+          if [ "$linked" -ne 1 ]; then
+            echo "::error::deep-link-landing: no deep-link landing was reported — see deep-link-landing.json"
+            fail=1
+          else
+            python3 -c "
+          import json, sys
+          s = json.load(open('artifacts/deep-link-landing.json'))
+          top = s['topVisibleRowId'] or 0
+          print('landed on', s['deepLinkLandedMessageId'], 'with top row', top)
+          sys.exit(0 if s['deepLinkLandedMessageId'] == 9020 and 9001 <= top <= 9020 else 1)
+          " || { echo "::error::deep-link-landing: did not land on 9020 — see deep-link-landing.json"; fail=1; }
+          fi
+
           [ "$fail" -eq 0 ] || { echo 'one or more screens failed — see the warnings above'; exit 1; }
 
       # No fixture mode and no debug bridge in Release — this is the plain "does it draw

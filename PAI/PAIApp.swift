@@ -132,7 +132,7 @@ struct PAIApp: App {
                             return .encoding(
                                 TranscriptCollectionViewController.LandingSnapshot(
                                     topVisibleRowId: nil, contentOffsetY: 0, currentMessageId: nil,
-                                    highlightedMessageId: nil))
+                                    highlightedMessageId: nil, deepLinkLandedMessageId: nil))
                         }
                         return .encoding(controller.landingSnapshot())
                     }

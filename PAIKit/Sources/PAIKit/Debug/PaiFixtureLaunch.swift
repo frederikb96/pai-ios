@@ -17,6 +17,7 @@
         static let authStateFlag = "-PaiFixtureAuthState"
         static let searchKindFlag = "-PaiFixtureSearchKind"
         static let openImageFlag = "-PaiFixtureOpenImage"
+        static let jumpMessageFlag = "-PaiFixtureJumpMessage"
 
         /// The session id every session-scoped fixture route answers under, regardless of which
         /// id the request actually named — fixed so a screenshot workflow can always ask for this
@@ -50,6 +51,14 @@
         /// Absent means an ordinary open with no search — every other screenshot's behaviour.
         public static func requestedSearchKind(arguments: [String] = ProcessInfo.processInfo.arguments) -> String? {
             value(for: searchKindFlag, in: arguments)
+        }
+
+        /// A message id to open `-PaiFixtureRoute session` at, via `-PaiFixtureJumpMessage <id>` —
+        /// the route a tapped notification produces, so the Mac workflow can drive a deep link
+        /// into a transcript that has not loaded yet with no device interaction. Absent, or not
+        /// an integer, means an ordinary open.
+        public static func requestedJumpMessageID(arguments: [String] = ProcessInfo.processInfo.arguments) -> Int? {
+            value(for: jumpMessageFlag, in: arguments).flatMap(Int.init)
         }
 
         /// Whether `-PaiFixtureOpenImage` was passed — how the Mac workflow reaches

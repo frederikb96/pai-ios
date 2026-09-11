@@ -192,10 +192,20 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     private var lastSearchedQuery: String?
     private var lastSearchedKind: MessageKind?
 
-    /// Where to jump once bootstrap has loaded — row 5.28. Consumed once: bootstrap reads it,
-    /// pages backward if the message is not already in the loaded window, and clears it, so a
+    /// Where to jump once bootstrap has loaded — row 5.28. Consumed once: bootstrap resolves it
+    /// into this open's first landing (`TranscriptStore.deepLinkLanding`) and clears it, so a
     /// later reconnect or width change never re-triggers the jump.
     private var initialJumpMessageID: Int?
+    /// True while bootstrap is resolving a deep link into its first landing. Nothing may lay out
+    /// the tail in that gap — the landing is about to replace it, and a tail painted first is
+    /// exactly the bottom-then-jump this resolution exists to avoid. The landing itself
+    /// recomputes every row from live state, so nothing held back meanwhile is lost.
+    private var isResolvingDeepLink = false
+    #if DEBUG
+        /// The last message a deep link landed on, kept after the ring fades — read only by the
+        /// debug bridge, so a check can confirm a landing without racing the fade.
+        private var lastDeepLinkLandingId: Int?
+    #endif
     /// A later jump request for this exact session, while this controller is already alive — see
     /// `TranscriptJumpRequests`'s own doc comment. `observeJumpRequests()` subscribes to it once,
     /// in `viewDidLoad`, independent of anything SwiftUI decides about the wrapping view.
@@ -425,22 +435,45 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             }
         }
         store.applyBootstrap(sessionId: sessionID, entries: entries, requestedLimit: TranscriptStore.tailLimit)
+        // Taken before any `locate` below: once a deep link replaces the window, its newest id is
+        // no longer the session's, and resuming the stream from there replays everything after it.
+        let streamCursor = store.maxMessageId(for: sessionID)
 
-        // A notification deep link (row 5.28) overrides the ordinary restore-to-last-anchor
-        // below — the target is almost certainly not in the tail just loaded, so this lands at
-        // the bottom first (the same fallback an unresolvable anchor already uses) and refines
-        // once the target page is actually loaded, rather than blocking the first paint on it.
+        // A notification deep link (row 5.28) is this open's first landing, not a jump made after
+        // it. Landing at the bottom and jumping once the target loaded was a visible jump at best;
+        // at worst the jump ran before the first layout, found no rows to land on and did nothing,
+        // after which the pending bottom landing won. Resolved into a restore target instead,
+        // which `pendingInitialLoad` keeps until the view can lay it out.
         if let jumpTarget = initialJumpMessageID {
             initialJumpMessageID = nil
-            pendingInitialLoad = .bottom
-            recomputeRows(applying: .initialLoad(.bottom))
-            connectStream(initialCursor: store.maxMessageId(for: sessionID))
-            await jumpToInitialMessage(jumpTarget)
+            isResolvingDeepLink = true
+            connectStream(initialCursor: streamCursor)
+            let landing = await store.deepLinkLanding(
+                for: jumpTarget, sessionId: sessionID, fetchAround: fetchAroundPage)
+            isResolvingDeepLink = false
+            guard !Task.isCancelled else { return }
+            if let landing {
+                land(on: landing)
+            } else {
+                fallBackToReadPosition()
+                await jumpToInitialMessage(jumpTarget)
+            }
             return
         }
 
         fallBackToReadPosition()
-        connectStream(initialCursor: store.maxMessageId(for: sessionID))
+        connectStream(initialCursor: streamCursor)
+    }
+
+    /// Lands this open on `target` — right away when the view already has a width to lay rows out
+    /// at, otherwise the moment `viewDidLayoutSubviews` first gives it one.
+    private func land(on target: TranscriptRestoreTarget) {
+        pendingInitialLoad = target
+        recomputeRows(applying: .initialLoad(target))
+    }
+
+    private func fetchAroundPage(_ messageId: Int, limit: Int) async throws -> MessagesAroundResult {
+        try await apiClient.messages(around: messageId, limit: limit, sessionId: sessionID)
     }
 
     /// The ordinary open's own target resolution (search-virtualization design: a deep link's
@@ -453,15 +486,15 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             Self.lastAnchors[sessionID] = seeded
         }
         let loadedIds = TranscriptStore.displayMessages(store.messages[sessionID] ?? []).map(\.id)
-        let target = TranscriptRestore.target(for: Self.lastAnchors[sessionID], loadedMessageIds: loadedIds)
-        pendingInitialLoad = target
-        recomputeRows(applying: .initialLoad(target))
+        land(on: TranscriptRestore.target(for: Self.lastAnchors[sessionID], loadedMessageIds: loadedIds))
     }
 
-    /// `locate`s the deep link's target with the retry ladder a deep link needs — the id may not
-    /// be ingested yet, arriving a moment after the link was generated — and rings the row once
-    /// it lands. Degrades to ``fallBackToReadPosition()`` once the ladder is exhausted, never to
-    /// silently loading nothing.
+    /// A deep link's jump on a transcript that has already landed — the side channel for the
+    /// session already on screen, and a cold open whose first attempt missed. `locate`s the
+    /// target with the retry ladder a deep link needs — the id may not be ingested yet, arriving
+    /// a moment after the link was generated — and rings the row once it lands. Degrades to
+    /// ``fallBackToReadPosition()`` once the ladder is exhausted, never to silently loading
+    /// nothing.
     private func jumpToInitialMessage(_ targetID: Int) async {
         beginJump()
         let (loaded, replaced) = await locate(targetID, retryLadder: Self.deepLinkRetryDelays)
@@ -476,6 +509,9 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// — `scrollViewWillBeginDragging` clears it early, matching the design's "fading out after
     /// ~4s or on the first deliberate gesture".
     private func beginDeepLinkHighlight(for messageId: Int) {
+        #if DEBUG
+            lastDeepLinkLandingId = messageId
+        #endif
         highlightedMessageId = messageId
         reconfigureVisibleCells()
         highlightClearTask?.cancel()
@@ -659,6 +695,14 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// height synchronously, so this one completion, timed to the actual layout pass rather than
     /// to when the call returns, is all a caller needs.
     private func recomputeRows(applying intent: UpdateIntent, onSettled: (() -> Void)? = nil) {
+        if isResolvingDeepLink {
+            // See `isResolvingDeepLink`. `onSettled` still runs, so a caller waiting on a layout
+            // is never left suspended on one that was skipped.
+            guard case .initialLoad = intent else {
+                onSettled?()
+                return
+            }
+        }
         guard !isApplyingRows else {
             hasPendingRecompute = true
             Task { @MainActor [weak self] in
@@ -947,55 +991,25 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         edgeFollow = EdgeFollowLatch(isPinned: false)
     }
 
-    /// `locate`'s own two stages: already-loaded is a no-op, else fetch `around_id` and merge
-    /// into the window when the page overlaps or abuts it, replace the window outright when it
-    /// doesn't (search-virtualization design — "the around page, and merge-or-replace").
-    /// `retryLadder` turns a 404 from "the row is gone, give up" into "not ingested yet, try
-    /// again" — a deep link's own contract; a server-derived hit never passes one, since a 404
-    /// there means it vanished under a reingest.
+    /// `TranscriptStore.locate` (merge-or-replace, and the retry ladder), plus the one thing only
+    /// this controller can do: settle the rows a merge or replace just changed, so the caller
+    /// reads fresh `rows`/`layout` the moment this returns.
     ///
     /// `replaced` tells the caller whether the window was replaced outright rather than merged —
     /// every row on screen is then fresh and unmeasured a moment ago, so `scrollToTarget` must
     /// write the landing absolutely rather than animate a 20,000pt scroll across content that
     /// just changed out from under it (the flicker the `scrolling` skill's second law forbids).
     private func locate(_ messageId: Int, retryLadder: [Duration] = []) async -> (loaded: Bool, replaced: Bool) {
-        if isLoaded(messageId) { return (true, false) }
-
-        for attempt in 0...retryLadder.count {
-            switch try? await apiClient.messages(
-                around: messageId, limit: TranscriptStore.olderPageLimit, sessionId: sessionID)
-            {
-            case .ok(let entries):
-                guard !entries.isEmpty else { return (false, false) }
-                let replaced = mergeOrReplaceWindow(entries: entries, aroundId: messageId)
-                await settleRows()
-                return (isLoaded(messageId), replaced)
-            case .notFound, nil:
-                guard attempt < retryLadder.count else { return (false, false) }
-                try? await Task.sleep(for: retryLadder[attempt])
-            }
-        }
-        return (false, false)
-    }
-
-    private func isLoaded(_ messageId: Int) -> Bool {
-        store.messages[sessionID]?.contains { $0.id == messageId } ?? false
-    }
-
-    /// Returns whether the window was replaced (`true`) rather than merged (`false`) — see
-    /// `locate`'s own doc comment for why its caller needs to know.
-    @discardableResult
-    private func mergeOrReplaceWindow(entries: [Message], aroundId: Int) -> Bool {
-        guard let pageMin = entries.map(\.id).min(), let pageMax = entries.map(\.id).max() else { return false }
-        let win = store.window(for: sessionID)
-        if TranscriptStore.overlapsOrAbuts(win, pageMin: pageMin, pageMax: pageMax) {
-            store.mergeWindow(
-                sessionId: sessionID, entries: entries, aroundId: aroundId, limit: TranscriptStore.olderPageLimit)
-            return false
-        } else {
-            store.replaceWindow(
-                sessionId: sessionID, entries: entries, aroundId: aroundId, limit: TranscriptStore.olderPageLimit)
-            return true
+        let outcome = await store.locate(
+            messageId, sessionId: sessionID, retryLadder: retryLadder, fetchAround: fetchAroundPage)
+        switch outcome {
+        case .alreadyLoaded:
+            return (true, false)
+        case .notFound:
+            return (false, false)
+        case .merged, .replaced:
+            await settleRows()
+            return (true, outcome == .replaced)
         }
     }
 
@@ -1091,10 +1105,13 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// `.hidden`/`.none` — `TranscriptLanding`'s own doc comment) — landing on the nearest
     /// following row instead of silently doing nothing. `blockOffset` only means anything for the
     /// exact row it was measured against, so a substituted landing ignores it.
-    private func scrollToTarget(messageId: Int, blockOffset: Double, animated: Bool) {
+    ///
+    /// Returns whether it scrolled at all — `false` when nothing loaded sits at or past the target.
+    @discardableResult
+    private func scrollToTarget(messageId: Int, blockOffset: Double, animated: Bool) -> Bool {
         guard let landingId = TranscriptLanding.rowId(forTarget: messageId, in: rows.map(\.id)),
             let rowTop = layout.offsetTop(forRowId: landingId)
-        else { return }
+        else { return false }
         let effectiveBlockOffset = landingId == messageId ? blockOffset : 0
         let lead = collectionView.bounds.height * 0.3
         let target = max(0, min(maxContentOffsetY(), CGFloat(rowTop + effectiveBlockOffset) - lead))
@@ -1147,6 +1164,19 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                     // display filter can drop it even though `loadedMessageIds` at bootstrap said
                     // it was there. The bottom is the same predictable fallback
                     // `TranscriptRestore.target` itself uses when it cannot honour an anchor.
+                    edgeFollow = EdgeFollowLatch(isPinned: true)
+                    scrollToBottom(animated: false)
+                    holdController.begin(.bottom)
+                }
+            case .deepLink(let id):
+                // No hold, for the reason `beginJump()` gives a search landing: every height is
+                // precomputed before this frame, so the one write lands exactly. `scrollToTarget`
+                // also leaves the edge-follow latch released.
+                if scrollToTarget(messageId: id, blockOffset: 0, animated: false) {
+                    beginDeepLinkHighlight(for: id)
+                } else {
+                    // Nothing loaded sits at or past the target — the same predictable bottom an
+                    // unresolvable restore falls back to.
                     edgeFollow = EdgeFollowLatch(isPinned: true)
                     scrollToBottom(animated: false)
                     holdController.begin(.bottom)
@@ -1289,7 +1319,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             collectionView.reloadData()
             // Same fix as the count-mismatch fallback above, and for the identical reason: a
             // `locate` into unloaded history that does not overlap the current window always
-            // lands here (`mergeOrReplaceWindow`'s replace branch), so this was the exact path a
+            // lands here (`TranscriptStore.locate`'s replace branch), so this was the exact path a
             // far jump took to silently fail.
             collectionView.layoutIfNeeded()
             completion?()
@@ -1473,12 +1503,14 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             let contentOffsetY: Double
             let currentMessageId: Int?
             let highlightedMessageId: Int?
+            let deepLinkLandedMessageId: Int?
         }
 
         func landingSnapshot() -> LandingSnapshot {
             LandingSnapshot(
                 topVisibleRowId: topVisibleRowId(), contentOffsetY: Double(collectionView.contentOffset.y),
-                currentMessageId: searchState.currentMessageId, highlightedMessageId: highlightedMessageId)
+                currentMessageId: searchState.currentMessageId, highlightedMessageId: highlightedMessageId,
+                deepLinkLandedMessageId: lastDeepLinkLandingId)
         }
     #endif
 
