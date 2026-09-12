@@ -62,6 +62,10 @@ public final class VoiceRecordingSession {
     /// failure's distinctions (key/service/permission) no longer apply.
     public private(set) var lastStartFailure: VoiceStartFailure?
     public private(set) var lastProtocolErrorMessage: String?
+    /// Why the realtime socket last went away mid-take — a close reason, or the notice ElevenLabs
+    /// sent before closing. The take reconnects either way; this is what a take that eventually
+    /// gave up can still say about why.
+    public private(set) var lastDisconnectDetail: String?
 
     private let dependencies: VoiceRecordingDependencies
     private var transport: VoiceRealtimeTransport?
@@ -81,6 +85,12 @@ public final class VoiceRecordingSession {
     /// Total time spent gated off due to silence, across every time it fired this take — the
     /// silence equivalent of `mutedMs` below.
     private var silenceGatedMs = 0
+    /// The most recent withheld audio, at most `VoiceRealtimeProtocol.gatePrerollMs` of it, sent
+    /// ahead of the first chunk after the gate lifts.
+    private var gatePreroll: [[Int16]] = []
+    /// When a frame last reached the socket — what the keepalive measures against, so any stretch
+    /// without one is covered, whether it began at a gate or a reconnect.
+    private var lastUplinkAt: Date?
     private var committedSegments: [String] = []
     private var partial = ""
     private var recordingStart: Date?
@@ -153,12 +163,15 @@ public final class VoiceRecordingSession {
         lastEndReason = nil
         lastStartFailure = nil
         lastProtocolErrorMessage = nil
+        lastDisconnectDetail = nil
         mutedMs = 0
         isMuted = false
         lastMuteToggle = nil
         isSilenceGated = false
         silenceGateStart = nil
         silenceGatedMs = 0
+        gatePreroll = []
+        lastUplinkAt = nil
         preconnectBuffer = PreconnectAudioBuffer()
         reconnectAttempt = 0
         reconnectTask?.cancel()
@@ -268,7 +281,12 @@ public final class VoiceRecordingSession {
             lastProtocolErrorMessage = message
             await finishStop(reason: .error)
 
-        case .commitThrottled, .insufficientAudioActivity, .unrecognized:
+        case let .sessionEnding(messageType, message):
+            // The close that follows is what reconnects; this only keeps the reason, which the
+            // close itself may not carry.
+            lastDisconnectDetail = message.map { "\(messageType): \($0)" } ?? messageType
+
+        case .commitThrottled, .unrecognized:
             break
         }
     }
@@ -277,13 +295,11 @@ public final class VoiceRecordingSession {
         transcribedText = (committedSegments + [partial]).filter { !$0.isEmpty }.joined(separator: " ")
     }
 
-    /// A dropped socket no longer ends the take by itself — over the length of recording this
-    /// feature is built for, a cellular handoff or a moment of dead signal is likely, and it
-    /// carries no ElevenLabs close reason at all (`reason == nil`), unlike the one documented
-    /// server-initiated close (`resource_exhausted`) `ReconnectPolicy` was ported from Android to
-    /// recognise. Treating "no reason" as "assume transient, try again" is what actually covers
-    /// that likely case; `ReconnectPolicy.shouldReconnect` still gates the case where a reason
-    /// *is* known, so both call sites of that policy are exercised, not just the constructed one.
+    /// A dropped socket does not end the take by itself — over the length of recording this
+    /// feature is built for, a cellular handoff, a moment of dead signal, ElevenLabs shedding load
+    /// or reaching a session limit are all likely, and every one of them is survived by opening a
+    /// fresh session. Only running out of `ReconnectPolicy` attempts ends it; a failure no retry
+    /// can fix has already ended it as `.error` before the close arrives.
     ///
     /// The socket is deliberately left open while `.paused` (an interruption keeps the take, not
     /// the connection, alive), so it can still drop out from under a paused take — an idle
@@ -297,9 +313,8 @@ public final class VoiceRecordingSession {
         guard state == .recording || state == .connecting || state == .paused || state == .reconnecting else {
             return
         }
-        guard closeReason == nil || ReconnectPolicy.shouldReconnect(closeReason: closeReason),
-            let delay = ReconnectPolicy.delaySeconds(forAttempt: reconnectAttempt + 1)
-        else {
+        if let closeReason, !closeReason.isEmpty { lastDisconnectDetail = closeReason }
+        guard let delay = ReconnectPolicy.delaySeconds(forAttempt: reconnectAttempt + 1) else {
             await finishStop(reason: .connectionLost)
             return
         }
@@ -382,10 +397,13 @@ public final class VoiceRecordingSession {
     /// backstop, so this is the actual privacy guarantee, and it holds even if a bug elsewhere
     /// leaves the app's own track un-silenced.
     ///
-    /// A silence gate withholds the chunk entirely instead — the saving this feature exists for
-    /// is real only if nothing reaches ElevenLabs while it holds, not merely zero-content audio
-    /// still counted as a message sent. The locally saved recording is unaffected either way: it
-    /// mirrors what was actually captured, not what this method decided to transmit.
+    /// A silence gate withholds the chunk instead — the saving this feature exists for is real
+    /// only if the audio does not reach ElevenLabs while it holds. Two things still go out while
+    /// gated: a chunk of digital silence whenever the socket has been quiet for
+    /// `VoiceRealtimeProtocol.keepaliveIntervalMs`, because ElevenLabs ends a session that hears
+    /// nothing, and — once the gate lifts — the last `gatePrerollMs` of withheld audio, ahead of
+    /// the chunk that lifted it. The locally saved recording is unaffected either way: it mirrors
+    /// what was actually captured, not what this method decided to transmit.
     ///
     /// `.reconnecting` buffers here exactly as `.connecting` does before the first
     /// `session_started` — speech spoken during a network gap is not lost, only delayed until the
@@ -393,7 +411,22 @@ public final class VoiceRecordingSession {
     /// audio interruption, so nothing should be arriving to buffer in the first place.
     public func ingestAudioChunk(pcm16le samples: [Int16]) async {
         guard state == .recording || state == .connecting || state == .reconnecting else { return }
-        guard !isSilenceGated else { return }
+        guard !isSilenceGated else {
+            // Muted audio is silenced as it is held, not only as it is sent, so unmuting before
+            // the gate lifts can never release what was captured while muted.
+            holdForPreroll(isMuted ? [Int16](repeating: 0, count: samples.count) : samples)
+            await sendKeepaliveIfDue(sampleCount: samples.count)
+            return
+        }
+        let preroll = gatePreroll
+        gatePreroll = []
+        for held in preroll {
+            await transmit(held)
+        }
+        await transmit(samples)
+    }
+
+    private func transmit(_ samples: [Int16]) async {
         let effectiveSamples = isMuted ? [Int16](repeating: 0, count: samples.count) : samples
         let chunk = RealtimeUplinkChunk(
             audioBase64: RealtimeUplinkChunk.audioBase64(fromPCM16LE: effectiveSamples),
@@ -407,6 +440,36 @@ public final class VoiceRecordingSession {
         }
     }
 
+    private func holdForPreroll(_ samples: [Int16]) {
+        gatePreroll.append(samples)
+        let limit = transportRateHz * VoiceRealtimeProtocol.gatePrerollMs / 1000
+        var held = gatePreroll.reduce(0) { $0 + $1.count }
+        while gatePreroll.count > 1, held - gatePreroll[0].count >= limit {
+            held -= gatePreroll.removeFirst().count
+        }
+    }
+
+    /// Only while `.recording`: before `session_started` there is no session to keep alive, and
+    /// a reconnect's first session gets one on the first gated chunk after it starts, since the
+    /// last frame is by then long past the interval.
+    private func sendKeepaliveIfDue(sampleCount: Int) async {
+        guard state == .recording else { return }
+        if let lastUplinkAt,
+            dependencies.now().timeIntervalSince(lastUplinkAt) * 1000
+                < Double(VoiceRealtimeProtocol.keepaliveIntervalMs)
+        {
+            return
+        }
+        let silence = [Int16](repeating: 0, count: sampleCount)
+        await send(
+            RealtimeUplinkChunk(
+                audioBase64: RealtimeUplinkChunk.audioBase64(fromPCM16LE: silence),
+                commit: false,
+                sampleRate: transportRateHz
+            )
+        )
+    }
+
     private func flushPreconnectBuffer() async {
         for chunk in preconnectBuffer.drain() {
             await send(chunk)
@@ -414,8 +477,13 @@ public final class VoiceRecordingSession {
     }
 
     private func send(_ chunk: RealtimeUplinkChunk) async {
-        guard let data = try? chunk.encoded() else { return }
-        try? await transport?.send(text: String(decoding: data, as: UTF8.self))
+        guard let transport, let data = try? chunk.encoded() else { return }
+        do {
+            try await transport.send(text: String(decoding: data, as: UTF8.self))
+            lastUplinkAt = dependencies.now()
+        } catch {
+            // A failed send is reported by the receive loop, which sees the same dead socket.
+        }
     }
 
     // MARK: Mute

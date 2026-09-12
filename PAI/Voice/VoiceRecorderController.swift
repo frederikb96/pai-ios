@@ -762,7 +762,8 @@ final class VoiceRecorderController {
         settingsStore.saveRecording(meta)
 
         if result.endedBy == .connectionLost || result.endedBy == .error {
-            await VoiceInterruptionNotifier.notify(reason: result.endedBy)
+            let detail = voiceSession.lastProtocolErrorMessage ?? voiceSession.lastDisconnectDetail
+            await VoiceInterruptionNotifier.notify(reason: result.endedBy, detail: detail)
         }
     }
 

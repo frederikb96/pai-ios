@@ -479,10 +479,10 @@ final class VoiceRecordingSessionTests: XCTestCase {
         XCTAssertTrue(sent[0].contains(payload))
     }
 
-    /// A close reason `ReconnectPolicy` does not recognise (an ordinary clean close, say, not
-    /// `resource_exhausted`) is the one case that must NOT reconnect — the policy exists
-    /// specifically to distinguish this from the nil-reason case above.
-    func testConnectionLostWithAnUnrecognisedCloseReasonEndsTheTake() async {
+    /// A server close that carries a reason is still a close the take survives — ElevenLabs
+    /// closes healthy sessions for load, time limits and inactivity, and ending the take on any
+    /// reason but one is what turned every silence gate into a lost recording.
+    func testServerCloseWithAReasonReconnectsAndKeepsTheReason() async {
         let transport = FakeVoiceRealtimeTransport()
         let session = makeSession(transport: transport)
         await session.start(hardwareSampleRate: 24000)
@@ -490,9 +490,52 @@ final class VoiceRecordingSessionTests: XCTestCase {
         await waitUntil { session.state == .recording }
 
         await transport.fail(closeReason: "normal closure")
+        await waitUntil { session.state == .reconnecting }
+        XCTAssertNil(session.lastEndReason, "must not have ended the take")
+        XCTAssertEqual(session.lastDisconnectDetail, "normal closure")
+
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+        let connectCalls = await transport.connectCallCount
+        XCTAssertEqual(connectCalls, 2)
+    }
+
+    /// The notice ElevenLabs sends before closing an idle or overloaded session must not end the
+    /// take itself — the close after it reconnects — but it is the only record of why.
+    func testSessionEndingNoticeKeepsTheTakeAndItsReasonUntilTheCloseReconnects() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        await transport.push(#"{"message_type":"insufficient_audio_activity","message":"no audio"}"#)
+        await waitUntil { session.lastDisconnectDetail != nil }
+        XCTAssertEqual(session.state, .recording)
+        XCTAssertEqual(session.lastDisconnectDetail, "insufficient_audio_activity: no audio")
+
+        await transport.fail()
+        await waitUntil { session.state == .reconnecting }
+        XCTAssertNil(session.lastEndReason)
+        XCTAssertEqual(session.lastDisconnectDetail, "insufficient_audio_activity: no audio")
+    }
+
+    /// A failure a retry cannot fix ends the take straight away rather than spending five
+    /// reconnects on a token or quota that will be refused every time.
+    func testQuotaExceededEndsTheTakeAsErrorWithoutReconnecting() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        await transport.push(#"{"message_type":"quota_exceeded","message":"out of credits"}"#)
         await waitUntil { session.state == .idle }
 
-        XCTAssertEqual(session.lastEndReason, .connectionLost)
+        XCTAssertEqual(session.lastEndReason, .error)
+        XCTAssertEqual(session.lastProtocolErrorMessage, "quota_exceeded: out of credits")
+        let connectCalls = await transport.connectCallCount
+        XCTAssertEqual(connectCalls, 1)
     }
 
     /// `ReconnectPolicy.maxAttempts` is 5 — exhausting it must give up rather than retrying
@@ -555,10 +598,120 @@ final class VoiceRecordingSessionTests: XCTestCase {
         XCTAssertEqual(session.state, .recording)
         XCTAssertNil(session.lastEndReason)
 
-        // Gated: a chunk fed now must not reach ElevenLabs at all.
+        // Gated: the chunk's audio must not reach ElevenLabs. Nothing has been sent yet this
+        // take, so the one frame that does go out is a keepalive of the same length, all silence.
         await session.ingestAudioChunk(pcm16le: [Int16.max, Int16.max, Int16.max])
         let sentWhileGated = await transport.sentTexts
-        XCTAssertEqual(sentWhileGated.count, 0)
+        XCTAssertEqual(sentWhileGated.count, 1)
+        XCTAssertTrue(sentWhileGated[0].contains(RealtimeUplinkChunk.audioBase64(fromPCM16LE: [0, 0, 0])))
+    }
+
+    /// The failure this guards: a gate that sends nothing is an idle session, and ElevenLabs
+    /// closes an idle session — so every pause past the silence duration ended the take. A gate
+    /// must send silence often enough to keep the session, and no more often than that.
+    func testAGateKeepsTheSessionAliveWithSilenceAtTheKeepaliveInterval() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let settings = VoiceSettings(
+            silenceDetectionEnabled: true, silenceThreshold: 0.01, silenceDurationMs: 1000
+        )
+        let session = makeSession(transport: transport, settings: settings)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        clock.current = clock.current.addingTimeInterval(3.0)
+        session.ingestLevel(rms: 0.0)
+        await session.ingestAudioChunk(pcm16le: [5, 5, 5])
+        clock.current = clock.current.addingTimeInterval(1.0)
+        session.ingestLevel(rms: 0.0)  // gates, one second after the last real frame
+
+        let interval = TimeInterval(VoiceRealtimeProtocol.keepaliveIntervalMs) / 1000
+        clock.current = clock.current.addingTimeInterval(interval - 1.5)
+        await session.ingestAudioChunk(pcm16le: [9, 9, 9])
+        let beforeInterval = await transport.sentTexts
+        XCTAssertEqual(beforeInterval.count, 1, "only the real frame before the gate")
+
+        clock.current = clock.current.addingTimeInterval(0.5)
+        await session.ingestAudioChunk(pcm16le: [9, 9, 9])
+        let atInterval = await transport.sentTexts
+        XCTAssertEqual(atInterval.count, 2)
+        XCTAssertTrue((atInterval.last ?? "").contains(RealtimeUplinkChunk.audioBase64(fromPCM16LE: [0, 0, 0])))
+
+        clock.current = clock.current.addingTimeInterval(interval - 0.1)
+        await session.ingestAudioChunk(pcm16le: [9, 9, 9])
+        let sent = await transport.sentTexts
+        XCTAssertEqual(sent.count, 2, "the next keepalive is measured from the last one")
+        XCTAssertEqual(session.state, .recording)
+    }
+
+    /// Lifting the gate replays only the most recent `gatePrerollMs` of withheld audio, oldest
+    /// first, ahead of the chunk that lifted it — never the whole pause.
+    func testLiftingTheGateReplaysOnlyTheLastMomentOfWithheldAudioInOrder() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let settings = VoiceSettings(
+            silenceDetectionEnabled: true, silenceThreshold: 0.01, silenceDurationMs: 1000
+        )
+        let session = makeSession(transport: transport, settings: settings)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        clock.current = clock.current.addingTimeInterval(3.0)
+        session.ingestLevel(rms: 0.0)
+        await session.ingestAudioChunk(pcm16le: [1])
+        clock.current = clock.current.addingTimeInterval(1.0)
+        session.ingestLevel(rms: 0.0)
+
+        // 100ms chunks at 24kHz, each marked by its value; the preroll holds 300ms of them.
+        let chunkSamples = 2400
+        for marker in Int16(10)...Int16(14) {
+            await session.ingestAudioChunk(pcm16le: [Int16](repeating: marker, count: chunkSamples))
+        }
+        let sentBeforeResume = await transport.sentTexts.count
+
+        session.ingestLevel(rms: 0.5)
+        await session.ingestAudioChunk(pcm16le: [Int16](repeating: 20, count: chunkSamples))
+
+        let sent = await transport.sentTexts
+        let replayed = Array(sent.dropFirst(sentBeforeResume))
+        let expected: [Int16] = [12, 13, 14, 20]
+        XCTAssertEqual(replayed.count, expected.count)
+        for (frame, marker) in zip(replayed, expected) {
+            let payload = RealtimeUplinkChunk.audioBase64(
+                fromPCM16LE: [Int16](repeating: marker, count: chunkSamples)
+            )
+            XCTAssertTrue(frame.contains(payload), "expected the \(marker) chunk here")
+        }
+    }
+
+    /// Audio held while muted must stay silent when the gate lifts after an unmute — the replay
+    /// must never become a way to release what was captured under mute.
+    func testAudioHeldWhileMutedIsReplayedAsSilenceEvenAfterUnmuting() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let settings = VoiceSettings(
+            silenceDetectionEnabled: true, silenceThreshold: 0.01, silenceDurationMs: 1000
+        )
+        let session = makeSession(transport: transport, settings: settings)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        clock.current = clock.current.addingTimeInterval(3.0)
+        session.ingestLevel(rms: 0.0)
+        await session.ingestAudioChunk(pcm16le: [1])
+        clock.current = clock.current.addingTimeInterval(1.0)
+        session.ingestLevel(rms: 0.0)
+
+        session.toggleMute()
+        await session.ingestAudioChunk(pcm16le: [Int16.max, Int16.max])
+        session.toggleMute()
+        session.ingestLevel(rms: 0.5)
+        await session.ingestAudioChunk(pcm16le: [3, 3])
+
+        let sent = await transport.sentTexts
+        let loud = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [Int16.max, Int16.max])
+        XCTAssertFalse(sent.contains { $0.contains(loud) })
+        XCTAssertTrue(sent.contains { $0.contains(RealtimeUplinkChunk.audioBase64(fromPCM16LE: [0, 0])) })
     }
 
     /// Speech resuming lifts the gate immediately — no sustained duration required, unlike
@@ -579,13 +732,15 @@ final class VoiceRecordingSessionTests: XCTestCase {
         clock.current = clock.current.addingTimeInterval(1.0)
         session.ingestLevel(rms: 0.0)
         await session.ingestAudioChunk(pcm16le: [1, 2, 3])
+        let loud = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [1, 2, 3])
         let sentWhileGated = await transport.sentTexts
-        XCTAssertEqual(sentWhileGated.count, 0)
+        XCTAssertFalse(sentWhileGated.contains { $0.contains(loud) })
 
         session.ingestLevel(rms: 0.5)
-        await session.ingestAudioChunk(pcm16le: [1, 2, 3])
+        await session.ingestAudioChunk(pcm16le: [4, 5, 6])
         let sentAfterResuming = await transport.sentTexts
-        XCTAssertEqual(sentAfterResuming.count, 1)
+        XCTAssertTrue(
+            sentAfterResuming.last?.contains(RealtimeUplinkChunk.audioBase64(fromPCM16LE: [4, 5, 6])) == true)
     }
 
     /// A gate that never lifts must still end the take, or this is an open, silent socket for as

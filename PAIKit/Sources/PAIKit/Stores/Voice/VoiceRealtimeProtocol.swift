@@ -17,6 +17,15 @@ public enum VoiceRealtimeProtocol {
     /// the web's `new Int16Array(240)` sent alongside `commit: true` to flush ElevenLabs' final
     /// segment before the socket closes.
     public static let commitFrameSampleCount = 240
+    /// The longest the socket may go without an uplink frame while a silence gate withholds
+    /// audio. ElevenLabs ends a realtime session that receives nothing for a while — the timeout
+    /// is undocumented, Voxscribe and the Android client keep it alive at 10s, Pipecat at 5s — and
+    /// a gate that sends nothing at all is exactly such a session.
+    public static let keepaliveIntervalMs = 5000
+    /// Audio captured while gated and sent ahead of the chunk that lifts the gate. The level that
+    /// lifts it is smoothed, so the onset of the next word can sit in a chunk the gate already
+    /// withheld; replaying the last moment before resuming keeps that first syllable.
+    public static let gatePrerollMs = 300
 
     /// Builds the connection URL. `languageCode` is omitted entirely when the setting is
     /// `.auto` — sending an empty string is a different request than sending none, and
@@ -95,22 +104,37 @@ public struct RealtimeUplinkChunk: Encodable, Sendable, Equatable {
 /// Server -> client messages. `.unrecognized` rather than throwing on an unknown `message_type`
 /// — ElevenLabs adding a message type someday must not crash a live recording; the state machine
 /// already ignores anything it does not act on.
+///
+/// ElevenLabs reports every failure as its own `message_type`, and they split into two kinds: a
+/// request that can never succeed (a rejected token, an exhausted quota, malformed input) ends the
+/// take as `.error`, while load, a session time limit or an idle session is `.sessionEnding` —
+/// the socket closes after it, and the take reconnects rather than ending.
 public enum RealtimeDownlinkMessage: Sendable, Equatable {
     case sessionStarted
     case partialTranscript(text: String)
     case committedTranscript(text: String)
     case error(message: String)
+    case sessionEnding(messageType: String, message: String?)
     case commitThrottled
-    case insufficientAudioActivity
     case unrecognized(messageType: String)
+
+    static let fatalErrorTypes: Set<String> = [
+        "error", "auth_error", "quota_exceeded", "unaccepted_terms", "invalid_request", "input_error",
+        "chunk_size_exceeded",
+    ]
+    static let sessionEndingTypes: Set<String> = [
+        "rate_limited", "queue_overflow", "resource_exhausted", "session_time_limit_exceeded",
+        "transcriber_error", "insufficient_audio_activity",
+    ]
 
     private struct Envelope: Decodable {
         let messageType: String
         let text: String?
         let message: String?
+        let error: String?
         enum CodingKeys: String, CodingKey {
             case messageType = "message_type"
-            case text, message
+            case text, message, error
         }
     }
 
@@ -121,14 +145,18 @@ public enum RealtimeDownlinkMessage: Sendable, Equatable {
             let envelope = try? JSONDecoder().decode(Envelope.self, from: data)
         else { return nil }
 
+        let detail = envelope.message ?? envelope.error
         switch envelope.messageType {
         case "session_started": return .sessionStarted
         case "partial_transcript": return .partialTranscript(text: envelope.text ?? "")
         case "committed_transcript", "committed_transcript_with_timestamps":
             return .committedTranscript(text: envelope.text ?? "")
-        case "error": return .error(message: envelope.message ?? "Unknown error")
         case "commit_throttled": return .commitThrottled
-        case "insufficient_audio_activity": return .insufficientAudioActivity
+        case let type where fatalErrorTypes.contains(type):
+            if type == "error" { return .error(message: detail ?? "Unknown error") }
+            return .error(message: detail.map { "\(type): \($0)" } ?? type)
+        case let type where sessionEndingTypes.contains(type):
+            return .sessionEnding(messageType: type, message: detail)
         default: return .unrecognized(messageType: envelope.messageType)
         }
     }

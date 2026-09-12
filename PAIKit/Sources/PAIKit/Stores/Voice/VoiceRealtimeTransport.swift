@@ -78,22 +78,17 @@ public actor URLSessionVoiceRealtimeTransport: VoiceRealtimeTransport {
     }
 }
 
-/// Android's ported, hard-won behaviour: ElevenLabs closes the realtime socket with reason
-/// `resource_exhausted` under load, and the web has no reconnect at all for it — a lost
-/// connection there just ends the take. This is the pure decision of whether and how long to
-/// wait before trying again; `VoiceRecordingSession` does not currently call it, because
-/// wiring an actual reconnect (re-mint a token, reconnect, resend
-/// buffered audio, concatenate transcripts across the two connections) was left for a follow-up
-/// rather than folded into an already-large state machine half-tested.
+/// How long `VoiceRecordingSession` waits before each attempt to reopen a lost realtime socket.
+/// Every close during a take is retried, whatever its reason: ElevenLabs closes a healthy take
+/// under load (`resource_exhausted`), at a session time limit and when it has heard nothing for
+/// a while, and a phone losing signal carries no reason at all. The failures a retry cannot fix
+/// arrive as an error message before the close and end the take there — see
+/// `RealtimeDownlinkMessage`.
 public enum ReconnectPolicy {
     /// Seconds, ported from Android; the last delay repeats for any attempt past the array's
     /// length, up to `maxAttempts`.
     public static let backoffSeconds = [5, 10, 20]
     public static let maxAttempts = 5
-
-    public static func shouldReconnect(closeReason: String?) -> Bool {
-        closeReason?.contains("resource_exhausted") ?? false
-    }
 
     /// `nil` once `maxAttempts` is exceeded — the caller gives up and reports connection loss.
     public static func delaySeconds(forAttempt attempt: Int) -> Int? {

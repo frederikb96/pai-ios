@@ -18,14 +18,17 @@ enum VoiceInterruptionNotifier {
     /// error. `VoiceRecorderController` is what decides which reasons qualify; this only renders
     /// whichever one it is given, and only once notifications are actually authorised — silently
     /// no-op otherwise rather than posting a request nothing will ever show.
-    static func notify(reason: RecordingEndReason) async {
+    /// `detail` is what the far end said about it, when it said anything — the one clue to *why*
+    /// a take lost its connection that survives past the moment it happened.
+    static func notify(reason: RecordingEndReason, detail: String? = nil) async {
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
             return
         }
         let content = UNMutableNotificationContent()
         content.title = "Voice recording stopped"
-        content.body = body(for: reason)
+        let summary = body(for: reason)
+        content.body = detail.map { "\(summary) (\($0))" } ?? summary
         content.interruptionLevel = .timeSensitive
         content.sound = .default
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)

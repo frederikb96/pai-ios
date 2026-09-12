@@ -4,15 +4,6 @@ import XCTest
 
 final class VoiceReconnectPolicyTests: XCTestCase {
 
-    func testResourceExhaustedReasonTriggersReconnect() {
-        XCTAssertTrue(ReconnectPolicy.shouldReconnect(closeReason: "resource_exhausted: try again"))
-    }
-
-    func testAnyOtherReasonDoesNotTriggerReconnect() {
-        XCTAssertFalse(ReconnectPolicy.shouldReconnect(closeReason: "normal closure"))
-        XCTAssertFalse(ReconnectPolicy.shouldReconnect(closeReason: nil))
-    }
-
     func testBackoffFollowsThePortedAndroidSchedule() {
         XCTAssertEqual(ReconnectPolicy.delaySeconds(forAttempt: 1), 5)
         XCTAssertEqual(ReconnectPolicy.delaySeconds(forAttempt: 2), 10)

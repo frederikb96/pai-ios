@@ -93,6 +93,32 @@ final class VoiceRealtimeProtocolTests: XCTestCase {
         )
     }
 
+    /// A failure no reconnect can fix must end the take, carrying its type so the reason is
+    /// readable without the message text.
+    func testDecodesFailuresARetryCannotFixAsErrors() {
+        XCTAssertEqual(
+            RealtimeDownlinkMessage.decode(#"{"message_type":"auth_error","message":"expired"}"#),
+            .error(message: "auth_error: expired")
+        )
+        XCTAssertEqual(
+            RealtimeDownlinkMessage.decode(#"{"message_type":"quota_exceeded"}"#),
+            .error(message: "quota_exceeded")
+        )
+    }
+
+    /// Load, time limits and an idle session come before a close the take reconnects from — they
+    /// must never decode to `.error`, which ends it.
+    func testDecodesSessionEndingNoticesSeparatelyFromErrors() {
+        XCTAssertEqual(
+            RealtimeDownlinkMessage.decode(#"{"message_type":"insufficient_audio_activity","error":"idle"}"#),
+            .sessionEnding(messageType: "insufficient_audio_activity", message: "idle")
+        )
+        XCTAssertEqual(
+            RealtimeDownlinkMessage.decode(#"{"message_type":"session_time_limit_exceeded"}"#),
+            .sessionEnding(messageType: "session_time_limit_exceeded", message: nil)
+        )
+    }
+
     /// A message type ElevenLabs adds later must decode to `.unrecognized` rather than `nil` or
     /// a crash — a live recording continuing to run through an unrecognised message is the whole
     /// point of this case existing.
