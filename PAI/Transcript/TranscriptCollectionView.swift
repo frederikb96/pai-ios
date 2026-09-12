@@ -1520,7 +1520,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         recordCurrentAnchor()
         let distance = maxContentOffsetY() - scrollView.contentOffset.y
-        edgeFollow.recordDistanceFromBottom(Double(distance))
+        edgeFollow.recordDistanceFromBottom(Double(distance), hasNewer: store.window(for: sessionID).hasNewer)
         updateJumpToLatestVisibility()
         checkOlderPageTrigger()
         checkNewerPageTrigger()

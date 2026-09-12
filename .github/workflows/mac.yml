@@ -328,7 +328,6 @@ jobs:
             fi
             sleep 2
           done
-          xcrun simctl terminate "$udid" "$bundle" || true
           if [ "$linked" -ne 1 ]; then
             echo "::error::deep-link-landing: no deep-link landing was reported — see deep-link-landing.json"
             fail=1
@@ -340,7 +339,28 @@ jobs:
           print('landed on', s['deepLinkLandedMessageId'], 'with top row', top)
           sys.exit(0 if s['deepLinkLandedMessageId'] == 9020 and 9001 <= top <= 9020 else 1)
           " || { echo "::error::deep-link-landing: did not land on 9020 — see deep-link-landing.json"; fail=1; }
+
+            # The landing's own window is not at the tail (9020 is far short of the corpus's
+            # 9900), so it pages itself forward on its own once the reader's position sits near
+            # its loaded edge — legitimate, and not what this checks. What it checks is whether
+            # the edge-follow latch wrongly treats the bottom of that still-incomplete window as
+            # the live edge while the catch-up runs: it then chases every page `loadNewer()`
+            # brings in with its own `scrollToBottom`, walking the reader toward the corpus's true
+            # tail in several steps — the bug a notification jump into old history hit. A read
+            # right after landing cannot see that drift; only a read after it has had time to
+            # happen can.
+            sleep 5
+            xcrun simctl io "$udid" screenshot artifacts/screen-deep-link-landing-settled.png || true
+            curl -sS --max-time 3 "http://127.0.0.1:8765/transcript/landing" -o artifacts/deep-link-landing-settled.json || true
+            python3 -c "
+          import json, sys
+          s = json.load(open('artifacts/deep-link-landing-settled.json'))
+          top = s['topVisibleRowId'] or 0
+          print('after settle: top row', top)
+          sys.exit(0 if 9001 <= top <= 9020 else 1)
+          " || { echo "::error::deep-link-landing: drifted away from row 9020 during the settle window — see deep-link-landing-settled.json"; fail=1; }
           fi
+          xcrun simctl terminate "$udid" "$bundle" || true
 
           [ "$fail" -eq 0 ] || { echo 'one or more screens failed — see the warnings above'; exit 1; }
 

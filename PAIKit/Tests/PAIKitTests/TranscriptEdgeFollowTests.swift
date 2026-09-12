@@ -23,7 +23,7 @@ final class TranscriptEdgeFollowTests: XCTestCase {
         var latch = EdgeFollowLatch()
         latch.recordScrollAway()
 
-        latch.recordDistanceFromBottom(30)  // < pinThreshold(70), > repinThreshold(4)
+        latch.recordDistanceFromBottom(30, hasNewer: false)  // < pinThreshold(70), > repinThreshold(4)
 
         XCTAssertFalse(latch.isPinned, "a mid-range distance should not have re-armed the latch")
     }
@@ -32,7 +32,7 @@ final class TranscriptEdgeFollowTests: XCTestCase {
         var latch = EdgeFollowLatch()
         latch.recordScrollAway()
 
-        latch.recordDistanceFromBottom(EdgeFollowLatch.repinThreshold)
+        latch.recordDistanceFromBottom(EdgeFollowLatch.repinThreshold, hasNewer: false)
 
         XCTAssertTrue(latch.isPinned)
     }
@@ -42,8 +42,32 @@ final class TranscriptEdgeFollowTests: XCTestCase {
     /// not accidentally look like "coming closer".
     func testAlreadyPinnedIgnoresFurtherDistanceSamples() {
         var latch = EdgeFollowLatch()
-        latch.recordDistanceFromBottom(500)
+        latch.recordDistanceFromBottom(500, hasNewer: false)
         XCTAssertTrue(latch.isPinned, "growth while pinned must never unpin it")
+    }
+
+    /// The bug a notification deep link into old history hit: landing leaves little of the
+    /// window's own "after" half loaded, so the distance to the bottom of what is loaded reads
+    /// small even though real conversation continues well past it. Without this guard, that
+    /// sample re-pins the latch, and every SSE event and newer-page fetch that follows then drags
+    /// the reader toward the true tail in steps.
+    func testHasNewerBlocksRepinEvenWithinTheThreshold() {
+        var latch = EdgeFollowLatch()
+        latch.recordScrollAway()
+
+        latch.recordDistanceFromBottom(0, hasNewer: true)
+
+        XCTAssertFalse(latch.isPinned, "the bottom of an un-caught-up window must not count as the live edge")
+    }
+
+    /// Once paging has caught the window up to the true tail, geometry is trustworthy again.
+    func testRepinsNormallyOnceHasNewerClears() {
+        var latch = EdgeFollowLatch()
+        latch.recordScrollAway()
+
+        latch.recordDistanceFromBottom(0, hasNewer: false)
+
+        XCTAssertTrue(latch.isPinned)
     }
 
     // MARK: - isAtLiveEdge (stateless)

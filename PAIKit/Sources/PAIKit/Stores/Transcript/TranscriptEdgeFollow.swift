@@ -39,12 +39,21 @@ public struct EdgeFollowLatch: Equatable, Sendable {
         isPinned = false
     }
 
-    /// A scroll-position sample, in points of remaining distance to the true bottom. Only
-    /// re-arms the latch — it never un-pins one, and growth while already unpinned does nothing,
-    /// which is also the complete defense against a live append moving content under a reader
-    /// who has scrolled up: nothing here reacts to it.
-    public mutating func recordDistanceFromBottom(_ distance: Double) {
-        guard !isPinned, distance <= Self.repinThreshold else { return }
+    /// A scroll-position sample, in points of remaining distance to the bottom of what is
+    /// currently loaded. Only re-arms the latch — it never un-pins one, and growth while already
+    /// unpinned does nothing, which is also the complete defense against a live append moving
+    /// content under a reader who has scrolled up: nothing here reacts to it.
+    ///
+    /// `hasNewer` is the loaded window's own flag (`TranscriptWindow.hasNewer`) — while more of
+    /// the conversation exists beyond what is loaded, the bottom of the loaded window is not the
+    /// live edge, so a small distance sampled there is not evidence of reaching it
+    /// (search-virtualization design, "a non-tail window has three obligations"). Baked into this
+    /// method rather than left to the caller to check, since a landing far enough into history
+    /// that little of the window's own "after" half is loaded reports the same small distance a
+    /// genuine return to the bottom would, and re-pinning there drags the reader toward the true
+    /// tail in steps as paging catches the window up to it.
+    public mutating func recordDistanceFromBottom(_ distance: Double, hasNewer: Bool) {
+        guard !hasNewer, !isPinned, distance <= Self.repinThreshold else { return }
         isPinned = true
     }
 
