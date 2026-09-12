@@ -351,12 +351,12 @@ public final class VoiceRecordingSession {
     /// Feed one RMS reading, roughly every 100-200ms, on the same clock `start()` was called
     /// with. Drives silence detection only; never sent anywhere.
     ///
-    /// Deliberately not fed during `.reconnecting`, unlike `ingestAudioChunk` — a network gap
-    /// reads as quiet on no evidence about the room at all, and gating (or worse, the backstop
-    /// eventually firing) from that would react to the socket dropping, exactly what reconnecting
-    /// exists to prevent.
+    /// Fed during `.reconnecting` too: the microphone keeps capturing while the socket is
+    /// replaced, so the level still describes the room. A gate that could not lift until the new
+    /// session started would withhold whatever was said during the reconnect instead of buffering
+    /// it for the new session.
     public func ingestLevel(rms: Double) {
-        guard state == .recording || state == .connecting,
+        guard state == .recording || state == .connecting || state == .reconnecting,
             let recordingStart, var detector = silenceDetector
         else { return }
         let now = dependencies.now()

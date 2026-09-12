@@ -684,6 +684,36 @@ final class VoiceRecordingSessionTests: XCTestCase {
         }
     }
 
+    /// Speech that starts while a gated take is reconnecting must lift the gate there and then,
+    /// and reach the new session once it starts — not wait out the reconnect behind a gate.
+    func testSpeechDuringAReconnectLiftsTheGateAndReachesTheNewSession() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let settings = VoiceSettings(
+            silenceDetectionEnabled: true, silenceThreshold: 0.01, silenceDurationMs: 1000
+        )
+        let session = makeSession(transport: transport, settings: settings)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        clock.current = clock.current.addingTimeInterval(3.0)
+        session.ingestLevel(rms: 0.0)
+        clock.current = clock.current.addingTimeInterval(1.0)
+        session.ingestLevel(rms: 0.0)
+
+        await transport.fail(closeReason: "insufficient_audio_activity")
+        await waitUntil { session.state == .reconnecting }
+        session.ingestLevel(rms: 0.5)
+        await session.ingestAudioChunk(pcm16le: [8, 8, 8])
+
+        await transport.push(#"{"message_type":"session_started"}"#)
+        let speech = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [8, 8, 8])
+        await waitUntil(async: { await transport.sentTexts.contains { $0.contains(speech) } })
+        let sent = await transport.sentTexts
+        XCTAssertTrue(sent.contains { $0.contains(speech) })
+        XCTAssertEqual(session.state, .recording)
+    }
+
     /// Audio held while muted must stay silent when the gate lifts after an unmute — the replay
     /// must never become a way to release what was captured under mute.
     func testAudioHeldWhileMutedIsReplayedAsSilenceEvenAfterUnmuting() async {
