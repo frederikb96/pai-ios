@@ -5,7 +5,6 @@ import Observation
 public protocol SessionActionsApiClient: Sendable {
     func renameSession(sessionId: String, title: String) async throws -> Session
     func setTitleLocked(sessionId: String, locked: Bool) async throws -> Session
-    func closeSession(sessionId: String) async throws -> CloseResponse
     func setIdleTimeout(sessionId: String, minutes: Int?) async throws -> Session
     func exportSession(sessionId: String, since: String?) async throws -> PaiExportResult
 }
@@ -85,22 +84,25 @@ public final class SessionActionsStore {
         await run { try await self.api.setTitleLocked(sessionId: self.sessionId, locked: locked) }
     }
 
-    @discardableResult
-    public func close() async -> Bool {
-        guard !isBusy else { return false }
-        isBusy = true
-        defer { isBusy = false }
-        do {
-            let result = try await api.closeSession(sessionId: sessionId)
-            if result.status == .closeError {
-                errorMessage = result.detail ?? "Could not close the session"
-                return false
-            }
-            errorMessage = nil
-            return true
-        } catch {
-            errorMessage = (error as? PaiError)?.userMessage ?? "Could not close the session"
-            return false
+    /// Fires the close and returns at once — see `SessionListStore.closeSession(id:onFailure:)`'s
+    /// doc comment for why. Delegates rather than duplicating, the same shape `deleteNow()`
+    /// already uses for delete: the list owns the row, so it owns writing the outcome back too.
+    ///
+    /// A failure becomes a toast with a Retry action rather than `errorMessage` — by the time the
+    /// request answers, the sheet that asked for this has already dismissed, so there is no
+    /// inline place left to show it. Retry re-fires the same call and, on another failure, shows
+    /// the same toast again — recursive rather than one-shot, the same as any other "undo"-shaped
+    /// overlay that must survive being tapped more than once.
+    public func closeInBackground(toasts: ToastCenter) {
+        sessionList.closeSession(id: sessionId) { [weak self, weak toasts] message in
+            guard let self, let toasts else { return }
+            toasts.show(
+                message, kind: .error,
+                action: ToastMessage.Action(label: "Retry") { [weak self, weak toasts] in
+                    guard let self, let toasts else { return }
+                    self.closeInBackground(toasts: toasts)
+                }
+            )
         }
     }
 

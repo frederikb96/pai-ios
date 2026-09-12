@@ -26,7 +26,7 @@ struct SessionActionsSheet: View {
         NavigationStack(path: $path) {
             Group {
                 if let actions {
-                    RootActionsList(actions: actions, isOwner: me.isOwner, path: $path) {
+                    RootActionsList(actions: actions, isOwner: me.isOwner, toasts: toasts, path: $path) {
                         actions.deleteNow()
                         // This is the one moment a deleted session's staged attachments can be
                         // told apart from one merely not yet loaded — `deleteSession` is the
@@ -45,8 +45,6 @@ struct SessionActionsSheet: View {
                     } onClose: {
                         dismiss()
                         environment.router.dismissSession(id: sessionId)
-                    } onCloseFailed: {
-                        toasts.show(actions.errorMessage ?? "Could not close the session", kind: .error)
                     } onOpenSubagents: {
                         dismiss()
                         environment.router.push(.subagents(parentID: sessionId))
@@ -128,10 +126,10 @@ private struct RootActionsList: View {
 
     let actions: SessionActionsStore
     let isOwner: Bool
+    let toasts: ToastCenter
     @Binding var path: [ActionsRoute]
     let onDelete: () -> Void
     let onClose: () -> Void
-    let onCloseFailed: () -> Void
     let onOpenSubagents: () -> Void
     let onOpenSpec: () -> Void
 
@@ -230,13 +228,13 @@ private struct RootActionsList: View {
 
                     if session.state != nil, session.state != .closed {
                         Button {
-                            Task {
-                                if await actions.close() {
-                                    onClose()
-                                } else {
-                                    onCloseFailed()
-                                }
-                            }
+                            // Fires and dismisses at once — the round trip to the agent can take
+                            // several seconds, and waiting for it here is the whole reason this
+                            // used to feel hung. A failure still reaches the reader as a toast
+                            // with Retry (`SessionActionsStore.closeInBackground`'s doc comment),
+                            // wherever the app is by the time the request answers.
+                            actions.closeInBackground(toasts: toasts)
+                            onClose()
                         } label: {
                             Label("Close session", systemImage: "power")
                         }

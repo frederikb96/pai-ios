@@ -832,6 +832,160 @@ final class SessionStoreListStoreTests: XCTestCase {
         }
         XCTAssertEqual(store.syncedSessions.map(\.id), ["s1"])
     }
+
+    // MARK: - closeSession
+
+    /// The bug report itself: waiting for the close before doing anything else is what made the
+    /// button feel hung. The call must return before the gated request ever answers.
+    func testCloseSessionReturnsWithoutWaitingForTheRequestToAnswer() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1")], nextCursor: nil))
+        }
+        await api.gate.arm("close:s1")
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        store.closeSession(id: "s1")
+
+        XCTAssertNotEqual(store.session(withId: "s1")?.state, .closed, "must not resolve before the gate releases")
+        await api.gate.release("close:s1")
+    }
+
+    /// The counterpart: the real close must actually go out, off the synchronous path.
+    func testCloseSessionFiresTheRealCloseWithoutWaiting() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1")], nextCursor: nil))
+        }
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        store.closeSession(id: "s1")
+
+        let deadline = ContinuousClock().now + .seconds(5)
+        while await api.closeSessionCalls.isEmpty, ContinuousClock().now < deadline {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        let calls = await api.closeSessionCalls
+        XCTAssertEqual(calls, ["s1"])
+    }
+
+    /// Unlike `deleteSession`, there is no optimistic write here — the row only becomes `.closed`
+    /// once the backend actually confirms it, so this is the success path landing at all.
+    func testCloseSessionMarksTheRowClosedOnceTheRequestSucceeds() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1", state: .ready)], nextCursor: nil))
+        }
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        store.closeSession(id: "s1")
+
+        let deadline = ContinuousClock().now + .seconds(5)
+        while store.session(withId: "s1")?.state != .closed, ContinuousClock().now < deadline {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        XCTAssertEqual(store.session(withId: "s1")?.state, .closed)
+    }
+
+    /// `already_closed` is not a thrown error — a caller that only checked `catch` would miss it
+    /// and leave the row reading as still live.
+    func testCloseSessionAlreadyClosedAlsoMarksTheRowClosed() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1", state: .ready)], nextCursor: nil))
+        }
+        await api.setCloseSessionResult(.success(CloseResponse(status: .alreadyClosed, detail: nil)))
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        store.closeSession(id: "s1")
+
+        let deadline = ContinuousClock().now + .seconds(5)
+        while store.session(withId: "s1")?.state != .closed, ContinuousClock().now < deadline {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        XCTAssertEqual(store.session(withId: "s1")?.state, .closed)
+    }
+
+    /// A successful close must not blank fields the response says nothing about — the trap
+    /// `applyLiveStatus`'s SSE-shaped update would fall into if reused here for this.
+    func testCloseSessionPreservesActivityCountsItDidNotTouch() async {
+        let api = FakeSessionListApi()
+        let counts = ActivityCounts(agents: 2, tasks: 1)
+        await api.setGetSessionsResult { _ in
+            .success(
+                SessionsPage(
+                    sessions: [SessionFixture.make(id: "s1", state: .ready, activityCounts: counts)], nextCursor: nil))
+        }
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        store.closeSession(id: "s1")
+
+        let deadline = ContinuousClock().now + .seconds(5)
+        while store.session(withId: "s1")?.state != .closed, ContinuousClock().now < deadline {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        XCTAssertEqual(store.session(withId: "s1")?.activityCounts, counts)
+    }
+
+    /// `close_error` is not a thrown error either — a caller reading only "did it throw" would
+    /// read this as success and leave the row silently, wrongly `.closed`.
+    func testCloseSessionReportsCloseErrorRatherThanMarkingTheRowClosed() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1", state: .ready)], nextCursor: nil))
+        }
+        await api.setCloseSessionResult(.success(CloseResponse(status: .closeError, detail: "agent unreachable")))
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+        let reported = FailureBox()
+
+        store.closeSession(id: "s1") { message in Task { await reported.set(message) } }
+
+        let deadline = ContinuousClock().now + .seconds(5)
+        while await reported.value == nil, ContinuousClock().now < deadline {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        let message = await reported.value
+        XCTAssertEqual(message, "agent unreachable")
+        XCTAssertNotEqual(
+            store.session(withId: "s1")?.state, .closed, "close_error must never read as the row having closed")
+    }
+
+    /// A thrown transport error must leave the row exactly as it was — nothing to roll back,
+    /// since nothing was ever changed optimistically.
+    func testCloseSessionLeavesTheRowUntouchedWhenTheRequestThrows() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1", state: .ready)], nextCursor: nil))
+        }
+        await api.setCloseSessionResult(.failure(.transport("offline")))
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+        let reported = FailureBox()
+
+        store.closeSession(id: "s1") { message in Task { await reported.set(message) } }
+
+        let deadline = ContinuousClock().now + .seconds(5)
+        while await reported.value == nil, ContinuousClock().now < deadline {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        let message = await reported.value
+        XCTAssertNotNil(message)
+        XCTAssertEqual(store.session(withId: "s1")?.state, .ready)
+    }
+}
+
+/// A `String?` set from inside a `@Sendable @MainActor` callback and read back from the test's own
+/// (also main-actor) task — an actor rather than a bare `var` so the write is provably isolated
+/// rather than merely never observed racing in practice.
+private actor FailureBox {
+    private(set) var value: String?
+    func set(_ newValue: String) { value = newValue }
 }
 
 extension FakeSessionListApi {
@@ -846,6 +1000,10 @@ extension FakeSessionListApi {
 
     func setDeleteSessionResult(_ result: Result<DeleteResponse, PaiError>) {
         deleteSessionResult = result
+    }
+
+    func setCloseSessionResult(_ result: Result<CloseResponse, PaiError>) {
+        closeSessionResult = result
     }
 }
 

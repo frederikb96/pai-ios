@@ -27,7 +27,9 @@ actor FakeSessionListApi: SessionListApiClient {
     private(set) var getSessionsCalls: [GetSessionsCall] = []
     private(set) var searchCalls: [SearchCall] = []
     private(set) var deleteSessionCalls: [String] = []
+    private(set) var closeSessionCalls: [String] = []
     var deleteSessionResult: Result<DeleteResponse, PaiError> = .success(DeleteResponse(status: .deleted))
+    var closeSessionResult: Result<CloseResponse, PaiError> = .success(CloseResponse(status: .closed, detail: nil))
 
     /// FIFO per matcher: `getSessions` pulls the next queued page whose predicate matches `since`
     /// being non-nil or nil, letting incremental-poll pages and cold-load/browse pages be scripted
@@ -72,6 +74,15 @@ actor FakeSessionListApi: SessionListApiClient {
         // and hold it there — the shape an undo-races-the-in-flight-DELETE test needs.
         await gate.wait(for: "delete:\(sessionId)")
         switch deleteSessionResult {
+        case let .success(response): return response
+        case let .failure(error): throw error
+        }
+    }
+
+    func closeSession(sessionId: String) async throws -> CloseResponse {
+        closeSessionCalls.append(sessionId)
+        await gate.wait(for: "close:\(sessionId)")
+        switch closeSessionResult {
         case let .success(response): return response
         case let .failure(error): throw error
         }
@@ -313,12 +324,10 @@ actor FakeDirectoryBrowseApi: DirectoryBrowseApiClient {
 actor FakeSessionActionsApi: SessionActionsApiClient {
     private(set) var renameCalls: [(sessionId: String, title: String)] = []
     private(set) var setTitleLockedCalls: [(sessionId: String, locked: Bool)] = []
-    private(set) var closeCalls: [String] = []
     private(set) var setIdleTimeoutCalls: [(sessionId: String, minutes: Int?)] = []
     private(set) var exportCalls: [(sessionId: String, since: String?)] = []
 
     var sessionResult: Result<Session, PaiError> = .success(SessionFixture.make())
-    var closeResult: Result<CloseResponse, PaiError> = .success(CloseResponse(status: .closed, detail: nil))
     var exportResult: Result<PaiExportResult, PaiError> = .success(
         PaiExportResult(data: Data(), filename: "export.json"))
 
@@ -330,11 +339,6 @@ actor FakeSessionActionsApi: SessionActionsApiClient {
     func setTitleLocked(sessionId: String, locked: Bool) async throws -> Session {
         setTitleLockedCalls.append((sessionId, locked))
         return try unwrap(sessionResult)
-    }
-
-    func closeSession(sessionId: String) async throws -> CloseResponse {
-        closeCalls.append(sessionId)
-        return try unwrap(closeResult)
     }
 
     func setIdleTimeout(sessionId: String, minutes: Int?) async throws -> Session {

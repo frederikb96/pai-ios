@@ -13,6 +13,8 @@ public protocol SessionListApiClient: Sendable {
     ) async throws -> [SessionSearchResult]
     /// Only reached through `SessionListStore.deleteSession(id:)` — see its doc comment.
     func deleteSession(sessionId: String) async throws -> DeleteResponse
+    /// Only reached through `SessionListStore.closeSession(id:onFailure:)` — see its doc comment.
+    func closeSession(sessionId: String) async throws -> CloseResponse
 }
 
 extension PaiApiClient: SessionListApiClient {}
@@ -444,6 +446,47 @@ public final class SessionListStore {
                 // The request never reached the backend, so the session still exists there —
                 // leaving it gone from the list would be a lie.
                 self?.upsertSession(session)
+            }
+        }
+    }
+
+    // MARK: - Close
+
+    /// Fires the close and returns at once — the round trip relays to the agent to actually kill
+    /// the tmux process, not merely a database write, so it can take several seconds. A caller
+    /// that awaited this before dismissing (the session actions sheet's own report) left the app
+    /// looking hung for that whole window; this instead matches `deleteSession`'s fire-and-forget
+    /// shape, minus the optimistic removal — a session cannot be shown "closing", only closed or
+    /// not, so there is nothing to roll back on failure. `onFailure` is how a caller several
+    /// seconds and possibly a dismissed screen away still hears about a failure.
+    ///
+    /// The row's `state` only flips to `.closed` once the backend actually confirms it, matching
+    /// the web's own `closeSession` (`session.ts`) — a failed request therefore leaves the row
+    /// exactly as it was, never reading as closed when it is not.
+    public func closeSession(id: String, onFailure: (@Sendable @MainActor (String) -> Void)? = nil) {
+        Task { [weak self, api] in
+            do {
+                let result = try await api.closeSession(sessionId: id)
+                guard let self else { return }
+                switch result.status {
+                case .closed, .alreadyClosed:
+                    // Mirrors the backend's own mutation (`close_session` sets exactly `state`
+                    // and `blocker`) rather than `applyLiveStatus`'s SSE-shaped update, which
+                    // would blank `working`/`presenceState`/`activityCounts` this response says
+                    // nothing about.
+                    if let session = self.session(withId: id) {
+                        self.replaceSession(
+                            session.withLiveStatus(
+                                state: .closed, blocker: nil, working: session.working,
+                                presenceState: session.presenceState, activityCounts: session.activityCounts
+                            )
+                        )
+                    }
+                case .closeError:
+                    onFailure?(result.detail ?? "Could not close the session")
+                }
+            } catch {
+                onFailure?((error as? PaiError)?.userMessage ?? "Could not close the session")
             }
         }
     }
