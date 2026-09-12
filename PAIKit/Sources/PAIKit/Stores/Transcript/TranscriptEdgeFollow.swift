@@ -57,6 +57,16 @@ public struct EdgeFollowLatch: Equatable, Sendable {
         isPinned = true
     }
 
+    /// Releases the latch while the loaded window is not the tail. Refusing to re-pin there (above)
+    /// covers only the geometry path; a latch that was already pinned — by a bottom landing, or
+    /// before the window was replaced — would otherwise keep sticking to a bottom that is not the
+    /// end of the conversation, and every newer page loaded under it would pull the reader down
+    /// one more step. Read at the moment of deciding whether to stick, so nothing pinned survives
+    /// to that decision.
+    public mutating func recordWindow(hasNewer: Bool) {
+        if hasNewer { isPinned = false }
+    }
+
     /// Whether a row this far from the bottom counts as "the live edge" — a stateless geometry
     /// check, independent of ``isPinned``. Two different questions that happen to look
     /// interchangeable at the exact moment a reader is at the bottom: this one has no memory, so

@@ -70,6 +70,17 @@ final class TranscriptEdgeFollowTests: XCTestCase {
         XCTAssertTrue(latch.isPinned)
     }
 
+    /// A latch pinned before the window stopped being the tail must not survive to the next
+    /// stick decision — only a window at the tail may keep it.
+    func testAWindowWithNewerContentReleasesAnAlreadyPinnedLatch() {
+        var latch = EdgeFollowLatch(isPinned: true)
+        latch.recordWindow(hasNewer: false)
+        XCTAssertTrue(latch.isPinned)
+
+        latch.recordWindow(hasNewer: true)
+        XCTAssertFalse(latch.isPinned)
+    }
+
     // MARK: - isAtLiveEdge (stateless)
 
     func testIsAtLiveEdgeIsPureGeometryIndependentOfPinnedState() {

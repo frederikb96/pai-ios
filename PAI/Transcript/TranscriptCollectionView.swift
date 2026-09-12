@@ -1198,6 +1198,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             }
 
         case .stickToBottomIfPinned:
+            edgeFollow.recordWindow(hasNewer: store.window(for: sessionID).hasNewer)
             let shouldStick = edgeFollow.isPinned
             applyDelta(delta, newRows: newRows, oldCount: oldIds.count) { [weak self] in
                 guard let self else { return }
