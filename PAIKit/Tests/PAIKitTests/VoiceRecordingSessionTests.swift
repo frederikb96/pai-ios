@@ -500,6 +500,22 @@ final class VoiceRecordingSessionTests: XCTestCase {
         XCTAssertEqual(connectCalls, 2)
     }
 
+    /// ElevenLabs closes an idle session with code 1000 and an EMPTY reason — present, not
+    /// absent — which is the exact close every silence gate used to turn into a lost take.
+    func testIdleCloseWithAnEmptyReasonReconnects() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        await transport.fail(closeReason: "")
+        await waitUntil { session.state == .reconnecting }
+
+        XCTAssertNil(session.lastEndReason, "must not have ended the take")
+        XCTAssertNil(session.lastDisconnectDetail, "an empty reason says nothing worth showing")
+    }
+
     /// The notice ElevenLabs sends before closing an idle or overloaded session must not end the
     /// take itself — the close after it reconnects — but it is the only record of why.
     func testSessionEndingNoticeKeepsTheTakeAndItsReasonUntilTheCloseReconnects() async {

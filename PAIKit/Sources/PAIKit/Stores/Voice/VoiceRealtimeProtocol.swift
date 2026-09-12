@@ -18,9 +18,9 @@ public enum VoiceRealtimeProtocol {
     /// segment before the socket closes.
     public static let commitFrameSampleCount = 240
     /// The longest the socket may go without an uplink frame while a silence gate withholds
-    /// audio. ElevenLabs ends a realtime session that receives nothing for a while — the timeout
-    /// is undocumented, Voxscribe and the Android client keep it alive at 10s, Pipecat at 5s — and
-    /// a gate that sends nothing at all is exactly such a session.
+    /// audio. ElevenLabs ends a realtime session that receives nothing for about 15 seconds — an
+    /// undocumented timeout, closed with code 1000 and an empty reason — and a gate that sends
+    /// nothing at all is exactly such a session.
     public static let keepaliveIntervalMs = 5000
     /// Audio captured while gated and sent ahead of the chunk that lifts the gate. The level that
     /// lifts it is smoothed, so the onset of the next word can sit in a chunk the gate already
