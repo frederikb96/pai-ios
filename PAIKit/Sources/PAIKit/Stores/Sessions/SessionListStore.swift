@@ -453,10 +453,9 @@ public final class SessionListStore {
     // MARK: - Close
 
     /// Fires the close and returns at once — the round trip relays to the agent to actually kill
-    /// the tmux process, not merely a database write, so it can take several seconds. A caller
-    /// that awaited this before dismissing (the session actions sheet's own report) left the app
-    /// looking hung for that whole window; this instead matches `deleteSession`'s fire-and-forget
-    /// shape, minus the optimistic removal — a session cannot be shown "closing", only closed or
+    /// the tmux process, not merely a database write, so it can take several seconds, and a caller
+    /// awaiting it before dismissing looks hung for that whole window. Same fire-and-forget shape
+    /// as `deleteSession`, minus the optimistic removal — a session cannot be shown "closing", only closed or
     /// not, so there is nothing to roll back on failure. `onFailure` is how a caller several
     /// seconds and possibly a dismissed screen away still hears about a failure.
     ///

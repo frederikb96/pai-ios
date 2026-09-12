@@ -229,9 +229,9 @@ private struct RootActionsList: View {
                     if session.state != nil, session.state != .closed {
                         Button {
                             // Fires and dismisses at once — the round trip to the agent can take
-                            // several seconds, and waiting for it here is the whole reason this
-                            // used to feel hung. A failure still reaches the reader as a toast
-                            // with Retry (`SessionActionsStore.closeInBackground`'s doc comment),
+                            // several seconds, and waiting for it here would hold the sheet open
+                            // that whole time. A failure still reaches the reader as a toast with
+                            // Retry (`SessionActionsStore.closeInBackground`'s doc comment),
                             // wherever the app is by the time the request answers.
                             actions.closeInBackground(toasts: toasts)
                             onClose()
