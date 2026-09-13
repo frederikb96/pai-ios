@@ -397,9 +397,25 @@ public final class Router {
         replace(with: [.notes, .note(id: id)])
     }
 
-    /// Open a session from outside the navigation stack — a tapped notification.
-    public func openSession(id: String) {
-        replace(with: [.session(id: id)])
+    /// Open a session from outside the navigation stack — a tapped notification — and answer
+    /// whether its transcript was already mounted and so must be sent `messageID` through
+    /// `TranscriptJumpRequests` rather than being built with it.
+    ///
+    /// A session already somewhere on the path is brought back to the top by popping what sits
+    /// above it — its terminal, a subagent's transcript — rather than by a replace. `Route.==`
+    /// ignores `messageID`, so replacing the path with an equal `.session` route keeps the mounted
+    /// transcript, which read its jump target once at construction and would never see this one;
+    /// and a replace judged only against the topmost session left a transcript buried under
+    /// another screen jumping where nobody could see it. Anything else replaces the stack, the
+    /// transcript is built fresh with `messageID`, and nothing needs sending.
+    @discardableResult
+    public func openSession(id: String, messageID: Int?) -> Bool {
+        if let index = path.lastIndex(of: .session(id: id)) {
+            path.removeSubrange(path.index(after: index)...)
+            return true
+        }
+        replace(with: [.session(id: id, messageID: messageID)])
+        return false
     }
 
     /// Send the user back to token entry, keeping the backend URL.

@@ -23,7 +23,7 @@ final class TranscriptEdgeFollowTests: XCTestCase {
         var latch = EdgeFollowLatch()
         latch.recordScrollAway()
 
-        latch.recordDistanceFromBottom(30, hasNewer: false)  // < pinThreshold(70), > repinThreshold(4)
+        latch.recordDistanceFromBottom(30, hasNewer: false, byReader: true)  // < pinThreshold(70), > repinThreshold(4)
 
         XCTAssertFalse(latch.isPinned, "a mid-range distance should not have re-armed the latch")
     }
@@ -32,9 +32,53 @@ final class TranscriptEdgeFollowTests: XCTestCase {
         var latch = EdgeFollowLatch()
         latch.recordScrollAway()
 
-        latch.recordDistanceFromBottom(EdgeFollowLatch.repinThreshold, hasNewer: false)
+        latch.recordDistanceFromBottom(4, hasNewer: false, byReader: true)
 
         XCTAssertTrue(latch.isPinned)
+    }
+
+    /// The notification bug: a jump easing away from the bottom samples a distance of zero on its
+    /// first frames, and a jump to a target in the last screen is clamped onto the bottom. Either
+    /// re-armed following, and the next live event carried the reader back down off the message
+    /// they had just been taken to.
+    func testTheAppPassingThroughTheBottomDoesNotRepin() {
+        var latch = EdgeFollowLatch(isPinned: false)
+
+        latch.recordDistanceFromBottom(0, hasNewer: false, byReader: false)
+
+        XCTAssertFalse(latch.isPinned, "only the reader returning to the end may hand following back")
+    }
+
+    /// The whole path a jump takes, through the same two values the transcript feeds: a reader
+    /// who flings to the bottom re-pins; the app's own jump afterwards cannot, even though it
+    /// samples the same distance the moment it starts.
+    func testAJumpAfterAFlingDoesNotInheritTheReadersMotion() {
+        var motion = TranscriptReaderMotion()
+        var latch = EdgeFollowLatch(isPinned: false)
+
+        motion.beganDragging()
+        motion.endedDragging(willDecelerate: true)
+        latch.recordDistanceFromBottom(0, hasNewer: false, byReader: motion.isReaderDriven)
+        XCTAssertTrue(latch.isPinned, "a fling that ends at the bottom is the reader returning")
+
+        latch.recordScrollAway()
+        motion.appScrolled()
+        latch.recordDistanceFromBottom(0, hasNewer: false, byReader: motion.isReaderDriven)
+        XCTAssertFalse(latch.isPinned, "a jump interrupting the fling must not count as the reader")
+    }
+
+    func testReaderMotionEndsOnlyWhenTheDragAndItsDecelerationBothHave() {
+        var motion = TranscriptReaderMotion()
+        motion.beganDragging()
+        motion.endedDragging(willDecelerate: true)
+        XCTAssertTrue(motion.isReaderDriven)
+
+        motion.endedDecelerating()
+        XCTAssertFalse(motion.isReaderDriven)
+
+        motion.beganDragging()
+        motion.endedDragging(willDecelerate: false)
+        XCTAssertFalse(motion.isReaderDriven)
     }
 
     /// Growth alone (content appended while the reader is scrolled up) must never re-pin — only
@@ -42,7 +86,7 @@ final class TranscriptEdgeFollowTests: XCTestCase {
     /// not accidentally look like "coming closer".
     func testAlreadyPinnedIgnoresFurtherDistanceSamples() {
         var latch = EdgeFollowLatch()
-        latch.recordDistanceFromBottom(500, hasNewer: false)
+        latch.recordDistanceFromBottom(500, hasNewer: false, byReader: true)
         XCTAssertTrue(latch.isPinned, "growth while pinned must never unpin it")
     }
 
@@ -55,7 +99,7 @@ final class TranscriptEdgeFollowTests: XCTestCase {
         var latch = EdgeFollowLatch()
         latch.recordScrollAway()
 
-        latch.recordDistanceFromBottom(0, hasNewer: true)
+        latch.recordDistanceFromBottom(0, hasNewer: true, byReader: true)
 
         XCTAssertFalse(latch.isPinned, "the bottom of an un-caught-up window must not count as the live edge")
     }
@@ -65,7 +109,7 @@ final class TranscriptEdgeFollowTests: XCTestCase {
         var latch = EdgeFollowLatch()
         latch.recordScrollAway()
 
-        latch.recordDistanceFromBottom(0, hasNewer: false)
+        latch.recordDistanceFromBottom(0, hasNewer: false, byReader: true)
 
         XCTAssertTrue(latch.isPinned)
     }

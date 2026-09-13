@@ -165,6 +165,50 @@ extension RouterTests {
         XCTAssertEqual(router.path, [.settings])
     }
 
+    /// A notification for the session whose terminal is on top: the transcript underneath stays
+    /// mounted, so the jump has to be sent to it — and the terminal has to go, or the transcript
+    /// jumps where nobody can see it.
+    @MainActor
+    func testOpeningASessionAlreadyOnThePathPopsBackToItsTranscript() async {
+        let router = Router(gate: .ready)
+        router.push(.settings)
+        router.push(.session(id: "a"))
+        router.push(.terminal(sessionID: "a"))
+
+        let sendToMountedTranscript = router.openSession(id: "a", messageID: 42)
+
+        XCTAssertTrue(sendToMountedTranscript)
+        XCTAssertEqual(router.path, [.settings, .session(id: "a")])
+    }
+
+    /// The case judging by the topmost session got wrong: a subagent's transcript on top of its
+    /// parent's, and a notification for the parent. Replacing the path with an equal route kept
+    /// the parent's transcript mounted without ever telling it where to jump.
+    @MainActor
+    func testOpeningASessionBuriedUnderAnotherSessionStillReachesItsMountedTranscript() async {
+        let router = Router(gate: .ready)
+        router.push(.session(id: "parent"))
+        router.push(.session(id: "child"))
+
+        XCTAssertTrue(router.openSession(id: "parent", messageID: 42))
+        XCTAssertEqual(router.path, [.session(id: "parent")])
+    }
+
+    /// Matched rather than compared, for the reason `testFixtureInitialPathCarriesTheRequestedJumpTarget`
+    /// gives: `Route.==` would pass with the jump target dropped.
+    @MainActor
+    func testOpeningASessionNotOnThePathBuildsItWithTheJumpTarget() async {
+        let router = Router(gate: .ready)
+        router.push(.session(id: "other"))
+
+        XCTAssertFalse(router.openSession(id: "a", messageID: 42))
+        guard router.path.count == 1, case .session(let id, let messageID) = router.path[0] else {
+            return XCTFail("expected exactly one session route, got \(router.path)")
+        }
+        XCTAssertEqual(id, "a")
+        XCTAssertEqual(messageID, 42)
+    }
+
     /// Reacting to a session that vanished is not the same as knowing where it was — the screen
     /// may already have been left. Doing nothing beats popping whatever happens to be on top.
     @MainActor

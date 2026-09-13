@@ -362,6 +362,72 @@ jobs:
           fi
           xcrun simctl terminate "$udid" "$bundle" || true
 
+          # A notification tapped while its session is already open and following the live edge
+          # — the path a phone takes coming back from the lock screen. 9850 is inside the fixture
+          # tail, so the jump animates from the bottom rather than replacing the window. The
+          # fixture stream ends after each pass and reconnects every couple of seconds, replaying
+          # its `init`, and every replay asks the transcript to stick to the bottom if it is
+          # following — so a jump that re-armed following on its way out is carried back down
+          # within the settle window. Both the position and the follow state are read, since a
+          # position that holds only because no event arrived in time proves nothing.
+          screenshot warm-jump -PaiFixtureRoute session
+          ready=0
+          for attempt in $(seq 1 10); do
+            if curl -sS --max-time 3 "http://127.0.0.1:8765/transcript/landing" -o artifacts/warm-jump-before.json; then
+              top=$(python3 -c "import json; print(json.load(open('artifacts/warm-jump-before.json')).get('topVisibleRowId'))")
+              if [ "$top" != "None" ]; then ready=1; break; fi
+            fi
+            sleep 2
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "::error::warm-jump: the transcript never reported a row before the jump — see warm-jump-before.json"
+            fail=1
+          else
+            curl -sS --max-time 3 -X POST "http://127.0.0.1:8765/transcript/jump?messageId=9850" || true
+            sleep 10
+            xcrun simctl io "$udid" screenshot artifacts/screen-warm-jump-settled.png || true
+            curl -sS --max-time 3 "http://127.0.0.1:8765/transcript/landing" -o artifacts/warm-jump-settled.json || true
+            python3 -c "
+          import json, sys
+          before = json.load(open('artifacts/warm-jump-before.json'))
+          s = json.load(open('artifacts/warm-jump-settled.json'))
+          top = s['topVisibleRowId'] or 0
+          print('before jump: top row', before['topVisibleRowId'], 'following', before.get('isFollowingLiveEdge'))
+          print('after settle: landed', s['deepLinkLandedMessageId'], 'top row', top, 'following', s.get('isFollowingLiveEdge'))
+          ok = s['deepLinkLandedMessageId'] == 9850 and 9830 <= top <= 9850 and s.get('isFollowingLiveEdge') is False
+          sys.exit(0 if ok else 1)
+          " || { echo "::error::warm-jump: did not stay on row 9850 — see warm-jump-settled.json"; fail=1; }
+          fi
+          xcrun simctl terminate "$udid" "$bundle" || true
+
+          # A cold landing on a target in the last screen is clamped onto the bottom, so the one
+          # scroll sample it produces reads "at the edge". Nothing visibly moves in the fixture —
+          # no new content arrives below — so the follow state is the only witness: the next
+          # message to arrive on a real session would otherwise carry the reader off the target.
+          screenshot clamped-landing -PaiFixtureRoute session -PaiFixtureJumpMessage 9899
+          clamped=0
+          for attempt in $(seq 1 10); do
+            if curl -sS --max-time 3 "http://127.0.0.1:8765/transcript/landing" -o artifacts/clamped-landing.json; then
+              got=$(python3 -c "import json; print(json.load(open('artifacts/clamped-landing.json')).get('deepLinkLandedMessageId'))")
+              if [ "$got" != "None" ]; then clamped=1; break; fi
+            fi
+            sleep 2
+          done
+          if [ "$clamped" -ne 1 ]; then
+            echo "::error::clamped-landing: no deep-link landing was reported — see clamped-landing.json"
+            fail=1
+          else
+            sleep 5
+            curl -sS --max-time 3 "http://127.0.0.1:8765/transcript/landing" -o artifacts/clamped-landing-settled.json || true
+            python3 -c "
+          import json, sys
+          s = json.load(open('artifacts/clamped-landing-settled.json'))
+          print('clamped landing on', s['deepLinkLandedMessageId'], 'following', s.get('isFollowingLiveEdge'))
+          sys.exit(0 if s['deepLinkLandedMessageId'] == 9899 and s.get('isFollowingLiveEdge') is False else 1)
+          " || { echo "::error::clamped-landing: a landing clamped onto the bottom re-armed following — see clamped-landing-settled.json"; fail=1; }
+          fi
+          xcrun simctl terminate "$udid" "$bundle" || true
+
           [ "$fail" -eq 0 ] || { echo 'one or more screens failed — see the warnings above'; exit 1; }
 
       # No fixture mode and no debug bridge in Release — this is the plain "does it draw

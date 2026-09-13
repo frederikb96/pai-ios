@@ -103,6 +103,10 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     private var expandOverrides: [String: Bool] = [:]
 
     private var edgeFollow = EdgeFollowLatch()
+    /// What lets `edgeFollow` tell the reader returning to the end from one of this controller's
+    /// own scrolls passing through it — see `TranscriptReaderMotion`'s doc comment. Every
+    /// programmatic write below calls `appScrolled()` before moving the viewport.
+    private var readerMotion = TranscriptReaderMotion()
     private let holdController = TranscriptHoldController()
     private var lastRecordedAnchor: TranscriptAnchor?
     private var isLoadingOlder = false
@@ -201,6 +205,15 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// exactly the bottom-then-jump this resolution exists to avoid. The landing itself
     /// recomputes every row from live state, so nothing held back meanwhile is lost.
     private var isResolvingDeepLink = false
+    /// False until bootstrap has made this open's first landing. A jump request arriving before
+    /// then is held in `queuedJumpMessageID` rather than run: run early, it would land on a window
+    /// the tail bootstrap then replaces, and the bottom landing that follows would carry the
+    /// reader away from the ring they had just been shown.
+    private var hasLanded = false
+    private var queuedJumpMessageID: Int?
+    /// Bumped by every jump — a deep link, a search landing, a step. A deep link still walking its
+    /// retry ladder when a newer jump begins drops its own result instead of landing over it.
+    private var jumpToken = 0
     #if DEBUG
         /// The last message a deep link landed on, kept after the ring fades — read only by the
         /// debug bridge, so a check can confirm a landing without racing the fade.
@@ -350,21 +363,36 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
 
     /// A tapped push notification for this exact session, arriving while this controller is
     /// already alive — see `TranscriptJumpRequests`'s own doc comment for why `Route` cannot
-    /// deliver this on its own. Reuses `jumpToInitialMessage(_:)`: the stream is already
-    /// connected by the time this fires, so nothing bootstrap-specific is needed.
+    /// deliver this on its own. A request already waiting when this first subscribes is taken
+    /// too, since observation only reports changes made after it starts.
     private func observeJumpRequests() {
+        if let messageID = jumpRequests.consume(sessionID: sessionID) {
+            Task { await receiveJump(messageID) }
+        }
         withObservationTracking {
             _ = jumpRequests.pendingMessageID(for: sessionID)
         } onChange: { [weak self] in
-            Task { @MainActor in
-                guard let self else { return }
-                if let messageID = self.jumpRequests.consume(sessionID: self.sessionID) {
-                    await self.jumpToInitialMessage(messageID)
-                }
-                self.observeJumpRequests()
-            }
+            Task { @MainActor in self?.observeJumpRequests() }
         }
     }
+
+    /// Runs a jump now once this open has landed; before that, hands it to bootstrap — see
+    /// `hasLanded`.
+    private func receiveJump(_ messageID: Int) async {
+        guard hasLanded else {
+            queuedJumpMessageID = messageID
+            return
+        }
+        await jumpToInitialMessage(messageID)
+    }
+
+    #if DEBUG
+        /// The same request `RootView` makes for a notification tapped while this session is
+        /// open, for the debug bridge's `POST /transcript/jump`.
+        func requestJump(messageID: Int) {
+            jumpRequests.request(sessionID: sessionID, messageID: messageID)
+        }
+    #endif
 
     /// The dismiss tap must never be the reason a card's own tap is missed. UIKit resolves two
     /// recognizers competing for the same touch by letting only one win unless asked otherwise,
@@ -443,7 +471,13 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         // it. Landing at the bottom and jumping once the target loads is a visible jump, and a
         // jump issued before the first layout has no rows to land on, so it does nothing and the
         // pending bottom landing wins. Resolved into a restore target instead, which
-        // `pendingInitialLoad` keeps until the view can lay it out.
+        // `pendingInitialLoad` keeps until the view can lay it out. A request that arrived while
+        // the tail was loading is the newer intent, so it takes the construction-time target's
+        // place.
+        if let queued = queuedJumpMessageID {
+            queuedJumpMessageID = nil
+            initialJumpMessageID = queued
+        }
         if let jumpTarget = initialJumpMessageID {
             initialJumpMessageID = nil
             isResolvingDeepLink = true
@@ -454,8 +488,12 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             guard !Task.isCancelled else { return }
             if let landing {
                 land(on: landing)
+                await finishLanding()
             } else {
                 fallBackToReadPosition()
+                // Landed on the fallback, so a request arriving during the retry ladder below
+                // runs straight away and supersedes it.
+                hasLanded = true
                 await jumpToInitialMessage(jumpTarget)
             }
             return
@@ -463,6 +501,16 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
 
         fallBackToReadPosition()
         connectStream(initialCursor: streamCursor)
+        await finishLanding()
+    }
+
+    /// Marks this open as landed and runs whatever jump arrived while it was still landing.
+    private func finishLanding() async {
+        hasLanded = true
+        if let queued = queuedJumpMessageID {
+            queuedJumpMessageID = nil
+            await jumpToInitialMessage(queued)
+        }
     }
 
     /// Lands this open on `target` — right away when the view already has a width to lay rows out
@@ -496,13 +544,17 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// ``fallBackToReadPosition()`` once the ladder is exhausted, never to silently loading
     /// nothing.
     private func jumpToInitialMessage(_ targetID: Int) async {
-        beginJump()
-        let (loaded, replaced) = await locate(targetID, retryLadder: Self.deepLinkRetryDelays)
+        let token = beginJump()
+        let (loaded, _) = await locate(targetID, retryLadder: Self.deepLinkRetryDelays)
+        guard token == jumpToken else { return }  // a newer jump superseded this one
         guard loaded else {
             fallBackToReadPosition()
             return
         }
-        revealRow(targetID, ringAsDeepLink: true, animated: !replaced)
+        // Always one immediate write, as the web's own transcript does: an animation is a stream
+        // of positions nothing can tell apart from the reader scrolling, and it can still be in
+        // flight when the next live event lands.
+        revealRow(targetID, ringAsDeepLink: true, animated: false)
     }
 
     /// Rings `messageId`'s card for a few seconds, or until the reader makes a deliberate gesture
@@ -986,9 +1038,12 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// settle hold" is the whole point of a jump once the layout precomputes every height
     /// synchronously (`native.md`'s own note on this) — `scrollToTarget`'s one write lands exactly,
     /// and a hold left active only fights it.
-    private func beginJump() {
+    @discardableResult
+    private func beginJump() -> Int {
+        jumpToken += 1
         holdController.release()
         edgeFollow = EdgeFollowLatch(isPinned: false)
+        return jumpToken
     }
 
     /// `TranscriptStore.locate` (merge-or-replace, and the retry ladder), plus the one thing only
@@ -1115,8 +1170,11 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         let effectiveBlockOffset = landingId == messageId ? blockOffset : 0
         let lead = collectionView.bounds.height * 0.3
         let target = max(0, min(maxContentOffsetY(), CGFloat(rowTop + effectiveBlockOffset) - lead))
-        collectionView.setContentOffset(CGPoint(x: 0, y: target), animated: animated)
+        // Released before the write, not after: the write itself reports scroll samples, and an
+        // animated one starting at the bottom reports it is still there for its first frames.
         edgeFollow = EdgeFollowLatch(isPinned: false)
+        readerMotion.appScrolled()
+        collectionView.setContentOffset(CGPoint(x: 0, y: target), animated: animated)
         updateJumpToLatestVisibility()
         return true
     }
@@ -1158,6 +1216,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             case .message(let id):
                 if let index = rows.firstIndex(where: { $0.id == id }) {
                     edgeFollow = EdgeFollowLatch(isPinned: false)
+                    readerMotion.appScrolled()
                     collectionView.scrollToItem(at: IndexPath(item: index, section: 0), at: .top, animated: false)
                     holdController.begin(.restore(messageId: id))
                 } else {
@@ -1203,7 +1262,10 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             applyDelta(delta, newRows: newRows, oldCount: oldIds.count) { [weak self] in
                 guard let self else { return }
                 if self.reassertHoldIfNeeded() { return }
-                guard shouldStick else { return }
+                // Not following: the reader stays put, and content growing below them is what
+                // the jump-to-latest control exists to say — without a scroll, nothing else
+                // would re-evaluate it.
+                guard shouldStick else { return self.updateJumpToLatestVisibility() }
                 self.scrollToBottom(animated: true)
             }
         }
@@ -1338,6 +1400,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
 
     private func scrollToBottom(animated: Bool) {
         guard !rows.isEmpty else { return }
+        readerMotion.appScrolled()
         collectionView.scrollToItem(at: IndexPath(item: rows.count - 1, section: 0), at: .bottom, animated: animated)
     }
 
@@ -1392,6 +1455,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             return true
         case .restore(let messageId):
             guard let index = rows.firstIndex(where: { $0.id == messageId }) else { return false }
+            readerMotion.appScrolled()
             collectionView.scrollToItem(at: IndexPath(item: index, section: 0), at: .top, animated: false)
             return true
         }
@@ -1506,13 +1570,16 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             let currentMessageId: Int?
             let highlightedMessageId: Int?
             let deepLinkLandedMessageId: Int?
+            /// `edgeFollow.isPinned` — whether the next live event would carry the reader to the
+            /// bottom. `nil` with no transcript on top.
+            let isFollowingLiveEdge: Bool?
         }
 
         func landingSnapshot() -> LandingSnapshot {
             LandingSnapshot(
                 topVisibleRowId: topVisibleRowId(), contentOffsetY: Double(collectionView.contentOffset.y),
                 currentMessageId: searchState.currentMessageId, highlightedMessageId: highlightedMessageId,
-                deepLinkLandedMessageId: lastDeepLinkLandingId)
+                deepLinkLandedMessageId: lastDeepLinkLandingId, isFollowingLiveEdge: edgeFollow.isPinned)
         }
     #endif
 
@@ -1521,7 +1588,8 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         recordCurrentAnchor()
         let distance = maxContentOffsetY() - scrollView.contentOffset.y
-        edgeFollow.recordDistanceFromBottom(Double(distance), hasNewer: store.window(for: sessionID).hasNewer)
+        edgeFollow.recordDistanceFromBottom(
+            Double(distance), hasNewer: store.window(for: sessionID).hasNewer, byReader: readerMotion.isReaderDriven)
         updateJumpToLatestVisibility()
         checkOlderPageTrigger()
         checkNewerPageTrigger()
@@ -1537,10 +1605,27 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         // lands back within the latch's re-pin threshold reproduces the same end behaviour: a
         // short flick up still does not snap back down, since the distance never gets there.
         edgeFollow.recordScrollAway()
+        readerMotion.beganDragging()
         holdController.release()
         // The deep-link ring's other release path — "fading out after ~4s or on the first
         // deliberate gesture" (row 5.28's design). A drag is exactly that gesture.
         clearDeepLinkHighlight()
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        readerMotion.endedDragging(willDecelerate: decelerate)
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        readerMotion.endedDecelerating()
+    }
+
+    /// A status-bar tap is the reader leaving the edge as surely as a drag is. Left pinned, the
+    /// next live event carried them straight back down from the top they had just asked for.
+    func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
+        edgeFollow.recordScrollAway()
+        holdController.release()
+        return true
     }
 
     // MARK: - UICollectionViewDataSource

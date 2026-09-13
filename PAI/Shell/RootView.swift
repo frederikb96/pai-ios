@@ -338,19 +338,11 @@ struct RootView: View {
                 environment.router.replace(with: [.notifications])
                 return
             }
-            // `Route.==` ignores `messageID` (deliberately — see its own doc comment), so
-            // replacing an already-open `.session(id: sessionId)` with one that only differs by
-            // `messageID` is invisible to `NavigationStack`: the destination is never rebuilt,
-            // and `initialJumpMessageID` — the only thing that ever reads it — is a construction
-            // parameter nothing re-delivers to a screen already on top. `TranscriptJumpRequests`
-            // is the side channel that reaches it anyway, for exactly this case; the ordinary
-            // "open the session at a message" case below is unaffected and unchanged.
-            if environment.router.openSessionID == sessionId {
-                if let messageID = notification.anchor?.messageId {
-                    connection.transcriptJumps.request(sessionID: sessionId, messageID: messageID)
-                }
-            } else {
-                environment.router.replace(with: [.session(id: sessionId, messageID: notification.anchor?.messageId)])
+            // A transcript that stays mounted read its jump target once, at construction, so it
+            // is sent this one through `TranscriptJumpRequests` — see `Router.openSession`.
+            let messageID = notification.anchor?.messageId
+            if environment.router.openSession(id: sessionId, messageID: messageID), let messageID {
+                connection.transcriptJumps.request(sessionID: sessionId, messageID: messageID)
             }
         }
     }

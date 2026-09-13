@@ -52,8 +52,13 @@ public struct EdgeFollowLatch: Equatable, Sendable {
     /// that little of the window's own "after" half is loaded reports the same small distance a
     /// genuine return to the bottom would, and re-pinning there drags the reader toward the true
     /// tail in steps as paging catches the window up to it.
-    public mutating func recordDistanceFromBottom(_ distance: Double, hasNewer: Bool) {
-        guard !hasNewer, !isPinned, distance <= Self.repinThreshold else { return }
+    ///
+    /// `byReader` (``TranscriptReaderMotion/isReaderDriven``) is the other half of the same
+    /// question: only the reader coming back to the end hands following back. A sample taken
+    /// while the app itself is moving the viewport — a jump easing away from the bottom, a jump
+    /// clamped onto it — passes through the edge without meaning anything by it.
+    public mutating func recordDistanceFromBottom(_ distance: Double, hasNewer: Bool, byReader: Bool) {
+        guard byReader, !hasNewer, !isPinned, distance <= Self.repinThreshold else { return }
         isPinned = true
     }
 

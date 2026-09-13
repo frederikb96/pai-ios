@@ -124,10 +124,12 @@ nothing else. Adding `created_at_ms` to the notes-list projection, to `web/src/a
 `NoteSummary` and to this repo's own model would close it.
 
 ### Verify: a push into the session already on screen jumps — pai-cloud anchor: `web/src/components/ChatView.tsx` `?n=` handling
-Needs `PAI/` because: implemented and green on Linux, but nobody has tapped a notification for a
-conversation already open and watched it land. The fix routes the jump through
-`TranscriptJumpRequests` rather than through the navigation path, deliberately, so it does not
-depend on SwiftUI rebuilding an equal route element — but the interactive case itself is unwatched.
+Needs a device because: `Router.openSession(id:messageID:)` pops back to a transcript already on
+the path and says when it must be sent the jump through `TranscriptJumpRequests` (unit-tested), and
+the `Mac` workflow's warm-jump step drives that channel through `POST /transcript/jump` into the
+tail and asserts the reader is still on the target, and no longer following, after several SSE
+`init` replays. What only a phone shows is the real path in: a tap from the lock screen, with the
+stream reconnecting while the jump resolves.
 
 ### Verify: the outline panel keeps keyboard focus — pai-cloud anchor: none, iOS-only
 Needs `PAI/` because: the editor's text view only ever granted first responder and never released

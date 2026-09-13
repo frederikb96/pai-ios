@@ -132,9 +132,29 @@ struct PAIApp: App {
                             return .encoding(
                                 TranscriptCollectionViewController.LandingSnapshot(
                                     topVisibleRowId: nil, contentOffsetY: 0, currentMessageId: nil,
-                                    highlightedMessageId: nil, deepLinkLandedMessageId: nil))
+                                    highlightedMessageId: nil, deepLinkLandedMessageId: nil,
+                                    isFollowingLiveEdge: nil))
                         }
                         return .encoding(controller.landingSnapshot())
+                    }
+                }
+            }
+
+            // A notification tapped while its session is already open — the warm path, which a
+            // cold launch at `-PaiFixtureJumpMessage` never takes. Sends the request through the
+            // same `TranscriptJumpRequests` channel `RootView` uses, so the jump runs exactly the
+            // code a real tap does.
+            router.register("POST", "/transcript/jump") { request in
+                guard let messageID = request.query["messageId"].flatMap(Int.init) else {
+                    return .message("messageId query parameter required")
+                }
+                return DispatchQueue.main.sync {
+                    MainActor.assumeIsolated {
+                        guard let controller = TranscriptCollectionViewController.current else {
+                            return .message("no transcript on screen")
+                        }
+                        controller.requestJump(messageID: messageID)
+                        return .message("requested")
                     }
                 }
             }
