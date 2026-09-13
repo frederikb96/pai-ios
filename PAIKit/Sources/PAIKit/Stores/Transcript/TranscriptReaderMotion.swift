@@ -5,10 +5,11 @@ import Foundation
 /// re-asserting, following new output.
 ///
 /// ``EdgeFollowLatch`` needs this to tell a reader returning to the end from the app passing
-/// through it. An animated jump that starts at the bottom emits its first scroll samples still
-/// within the re-pin distance of the bottom, and a jump to a target in the last screen is clamped
-/// to the bottom outright; both used to re-arm following, so the next live event carried the
-/// reader straight back down from the message a notification had just landed them on.
+/// through it. A jump to a target in the last screen — where a notification's newest message
+/// usually is — is clamped onto the bottom, so the sample it reports reads "at the edge"; taken as
+/// the reader's, that re-armed following, and the next live message carried the reader straight
+/// back down off the one they had just been landed on. Every other programmatic write reports
+/// samples the same way, so none of them may count.
 ///
 /// Fed from the scroll view's own drag and deceleration callbacks rather than read off its
 /// `isDragging`/`isDecelerating` flags, so that a programmatic write interrupting a fling is known

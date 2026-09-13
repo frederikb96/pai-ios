@@ -55,8 +55,8 @@ public struct EdgeFollowLatch: Equatable, Sendable {
     ///
     /// `byReader` (``TranscriptReaderMotion/isReaderDriven``) is the other half of the same
     /// question: only the reader coming back to the end hands following back. A sample taken
-    /// while the app itself is moving the viewport — a jump easing away from the bottom, a jump
-    /// clamped onto it — passes through the edge without meaning anything by it.
+    /// while the app itself is moving the viewport — a jump clamped onto the bottom above all —
+    /// reaches the edge without meaning anything by it.
     public mutating func recordDistanceFromBottom(_ distance: Double, hasNewer: Bool, byReader: Bool) {
         guard byReader, !hasNewer, !isPinned, distance <= Self.repinThreshold else { return }
         isPinned = true

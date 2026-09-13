@@ -1170,8 +1170,8 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         let effectiveBlockOffset = landingId == messageId ? blockOffset : 0
         let lead = collectionView.bounds.height * 0.3
         let target = max(0, min(maxContentOffsetY(), CGFloat(rowTop + effectiveBlockOffset) - lead))
-        // Released before the write, not after: the write itself reports scroll samples, and an
-        // animated one starting at the bottom reports it is still there for its first frames.
+        // Released before the write, not after: the write itself reports scroll samples, and one
+        // clamped onto the bottom reports being at the edge.
         edgeFollow = EdgeFollowLatch(isPinned: false)
         readerMotion.appScrolled()
         collectionView.setContentOffset(CGPoint(x: 0, y: target), animated: animated)

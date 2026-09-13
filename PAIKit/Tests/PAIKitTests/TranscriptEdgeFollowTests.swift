@@ -37,10 +37,9 @@ final class TranscriptEdgeFollowTests: XCTestCase {
         XCTAssertTrue(latch.isPinned)
     }
 
-    /// The notification bug: a jump easing away from the bottom samples a distance of zero on its
-    /// first frames, and a jump to a target in the last screen is clamped onto the bottom. Either
-    /// re-armed following, and the next live event carried the reader back down off the message
-    /// they had just been taken to.
+    /// The notification bug: a jump to a target in the last screen is clamped onto the bottom and
+    /// samples a distance of zero. That re-armed following, and the next live message carried the
+    /// reader back down off the one they had just been taken to.
     func testTheAppPassingThroughTheBottomDoesNotRepin() {
         var latch = EdgeFollowLatch(isPinned: false)
 
