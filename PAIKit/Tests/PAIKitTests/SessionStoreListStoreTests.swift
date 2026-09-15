@@ -439,8 +439,36 @@ final class SessionStoreListStoreTests: XCTestCase {
 
         await api.setGetSessionsResult { call in
             guard call.since != nil else { return .success(SessionsPage(sessions: [], nextCursor: nil)) }
-            return .success(SessionsPage(sessions: [SessionFixture.make(id: "s1", state: .ready)], nextCursor: nil))
+            // A write always moves `updated_at`, so the updated row carries a newer one.
+            return .success(SessionsPage(
+                sessions: [SessionFixture.make(id: "s1", state: .ready, updatedAt: "2026-01-01T00:00:01Z")],
+                nextCursor: nil))
         }
+        await store.pollSyncedSessions()
+
+        XCTAssertEqual(store.syncedSessions.first?.state, .ready)
+    }
+
+    /// A poll that was already in flight when a newer version of the row landed answers with the
+    /// old one; it must not roll the row back. One microsecond apart inside the same millisecond,
+    /// so only an exact comparison can tell the two versions apart.
+    func testIncrementalPollDoesNotRollBackANewerRow() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { call in
+            guard call.since == nil else { return .success(SessionsPage(sessions: [], nextCursor: nil)) }
+            return .success(SessionsPage(
+                sessions: [SessionFixture.make(id: "s1", state: .ready, updatedAt: "2099-01-01T00:00:05.000002+00:00")],
+                nextCursor: nil))
+        }
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+        await api.setGetSessionsResult { call in
+            guard call.since != nil else { return .success(SessionsPage(sessions: [], nextCursor: nil)) }
+            return .success(SessionsPage(
+                sessions: [SessionFixture.make(id: "s1", state: .closed, updatedAt: "2099-01-01T00:00:05.000001+00:00")],
+                nextCursor: nil))
+        }
+
         await store.pollSyncedSessions()
 
         XCTAssertEqual(store.syncedSessions.first?.state, .ready)

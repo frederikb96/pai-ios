@@ -643,6 +643,11 @@ public final class SessionListStore {
                 // `null` or not — verified against the backend, not assumed from the comment.
                 // So the incoming row always wins here, which is what the web's own guard does
                 // in practice despite reading as doing more.
+                //
+                // A poll already in flight when something newer landed (a status push, a resume's
+                // own answer) answers with the row's old version; applying it rolls the screen
+                // back. Only a strictly newer `updated_at` replaces a held row.
+                if let held = byId[session.id], Self.isStaleVersion(held: held, incoming: session) { continue }
                 byId[session.id] = session
             }
         }
@@ -666,6 +671,29 @@ public final class SessionListStore {
             showsTokenCount: session.sessionTokens > 0,
             activityCounts: session.activityCounts
         )
+    }
+
+    /// Whether `incoming` is a version of the row no newer than `held`. Compared as integer
+    /// microseconds, not lexically: Python's `isoformat()` drops the fraction when it is zero, and
+    /// a millisecond-precision `Date` would read two writes inside one millisecond as one version.
+    /// Mirrors the web client's `isStaleVersion` (`web/src/stores/session.ts` in pai-cloud).
+    static func isStaleVersion(held: Session, incoming: Session) -> Bool {
+        guard
+            let heldText = held.updatedAt, let incomingText = incoming.updatedAt,
+            let heldMicros = versionMicros(heldText), let incomingMicros = versionMicros(incomingText)
+        else { return false }
+        return incomingMicros <= heldMicros
+    }
+
+    static func versionMicros(_ text: String) -> Int64? {
+        guard let date = IsoTimestamp.date(from: text) else { return nil }
+        var subMillisecond: Int64 = 0
+        if let dot = text.firstIndex(of: ".") {
+            let digits = text[text.index(after: dot)...].prefix { $0.isNumber }
+            let padded = (String(digits) + "000000").prefix(6)
+            subMillisecond = Int64(padded.suffix(3)) ?? 0
+        }
+        return Int64((date.timeIntervalSince1970 * 1000).rounded()) * 1000 + subMillisecond
     }
 
     /// `updated_at` strings sort lexically — they are all the same ISO/UTC shape.
