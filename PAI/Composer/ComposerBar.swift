@@ -146,16 +146,16 @@ struct ComposerBar: View {
 
                 VoiceRecorderButton(
                     controller: voiceController,
-                    isMine: voiceController.state == .idle || isRecordingHere(voiceController)
+                    isMine: voiceController.state == .idle || isRecordingHere(voiceController),
+                    // A long-press opens call mode for this session — only offered while the
+                    // microphone is genuinely free, the same gate a tap already applies, so this
+                    // never races a microphone-mode take started from another composer.
+                    onLongPress: {
+                        guard voiceController.state == .idle else { return }
+                        showingCallMode = true
+                    }
                 ) {
                     Task { await toggleRecording(draftStore: draftStore, voiceController: voiceController) }
-                }
-                // A long-press opens call mode for this session — only offered while the
-                // microphone is genuinely free, the same gate a tap already applies, so this
-                // never races a microphone-mode take started from another composer.
-                .onLongPressGesture(minimumDuration: 0.5) {
-                    guard voiceController.state == .idle else { return }
-                    showingCallMode = true
                 }
 
                 if isRecordingHere(voiceController) {

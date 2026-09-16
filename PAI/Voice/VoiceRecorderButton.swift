@@ -1,5 +1,6 @@
 import PAIKit
 import SwiftUI
+import UIKit
 
 /// The composer's mic control. A stop **square**, deliberately never a second microphone glyph —
 /// the source report calls out that two mic icons side by side (this button, and the mute button
@@ -12,6 +13,18 @@ struct VoiceRecorderButton: View {
     /// offer to stop a take it does not own — it renders an unavailable microphone instead, which
     /// is what the situation actually is.
     var isMine: Bool = true
+    /// A long press on the same control, offered alongside the tap — the composer's own reach
+    /// into call mode. `nil` everywhere else (the new-session composer has no call mode to
+    /// reach), which renders exactly the plain tap-only button this always was.
+    ///
+    /// Never attached as a plain SwiftUI `.onLongPressGesture`/`.simultaneousGesture` on top of
+    /// `Button` — that combination is documented to double-fire, the long press *and* the
+    /// button's own tap action both, since SwiftUI has no way to make its own gesture require a
+    /// competing one to fail. `UILongPressGestureRecognizer.require(toFail:)` does, so a long
+    /// press is only ever offered through `TapAndLongPressCatcher`, a UIKit-backed layer over the
+    /// button rather than a SwiftUI gesture modifier on it.
+    var onLongPress: (() -> Void)? = nil
+    var longPressMinimumDuration: TimeInterval = 0.5
     var onTap: () -> Void
 
     private var displayState: VoiceRecordingState {
@@ -22,18 +35,38 @@ struct VoiceRecorderButton: View {
         isMine && controller.canStart
     }
 
+    private var isDisabled: Bool {
+        displayState == .connecting || displayState == .stopping
+            || !canStart && displayState == .idle
+    }
+
     var body: some View {
-        Button(action: onTap) {
-            icon
-                .font(.system(size: 22))
-                .frame(width: 32, height: 32)
+        let button =
+            Button(action: onTap) {
+                icon
+                    .font(.system(size: 22))
+                    .frame(width: 32, height: 32)
+            }
+            .disabled(isDisabled)
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityIdentifier("voice-recorder-button")
+
+        if let onLongPress {
+            // The button underneath still renders (icon, dimming, accessibility) but never
+            // itself receives the touch — the catcher owns the gesture and drives `onTap` too, so
+            // there is exactly one path to either action, not two racing ones.
+            button
+                .allowsHitTesting(false)
+                .overlay(
+                    TapAndLongPressCatcher(
+                        isEnabled: !isDisabled,
+                        minimumLongPressDuration: longPressMinimumDuration,
+                        onTap: onTap,
+                        onLongPress: onLongPress)
+                )
+        } else {
+            button
         }
-        .disabled(
-            displayState == .connecting || displayState == .stopping
-                || !canStart && displayState == .idle
-        )
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityIdentifier("voice-recorder-button")
     }
 
     @ViewBuilder
@@ -135,5 +168,64 @@ struct MuteButton: View {
         .accessibilityLabel(controller.isMuted ? "Unmute" : "Mute")
         .accessibilityAddTraits(controller.isMuted ? [.isSelected] : [])
         .accessibilityIdentifier("voice-mute-button")
+    }
+}
+
+/// A transparent touch-catching layer that tells a tap and a long press apart reliably — see
+/// `VoiceRecorderButton.onLongPress`'s own doc comment for why this exists rather than a plain
+/// SwiftUI gesture modifier. `longPress.require(toFail: tap)` is the one thing that actually
+/// prevents the double fire: the long press only succeeds once the tap has already failed to
+/// recognize (i.e., the touch was held past the long-press threshold), so exactly one of the two
+/// closures below ever runs per touch, never both.
+@MainActor
+private struct TapAndLongPressCatcher: UIViewRepresentable {
+    var isEnabled: Bool
+    var minimumLongPressDuration: TimeInterval
+    var onTap: () -> Void
+    var onLongPress: () -> Void
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        let tap = UITapGestureRecognizer(
+            target: context.coordinator, action: #selector(Coordinator.handleTap))
+        let longPress = UILongPressGestureRecognizer(
+            target: context.coordinator, action: #selector(Coordinator.handleLongPress))
+        longPress.minimumPressDuration = minimumLongPressDuration
+        longPress.require(toFail: tap)
+        view.addGestureRecognizer(tap)
+        view.addGestureRecognizer(longPress)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        uiView.isUserInteractionEnabled = isEnabled
+        context.coordinator.onTap = onTap
+        context.coordinator.onLongPress = onLongPress
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onTap: onTap, onLongPress: onLongPress)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var onTap: () -> Void
+        var onLongPress: () -> Void
+
+        init(onTap: @escaping () -> Void, onLongPress: @escaping () -> Void) {
+            self.onTap = onTap
+            self.onLongPress = onLongPress
+        }
+
+        @objc func handleTap() { onTap() }
+
+        /// One of `.began`/`.changed`/`.ended`/`.cancelled` fires per recognized press —
+        /// `.began` is the moment the hold has already lasted `minimumPressDuration`, which is
+        /// the point equivalent to `.onLongPressGesture`'s own `onEnded` firing.
+        @objc func handleLongPress(_ recognizer: UILongPressGestureRecognizer) {
+            guard recognizer.state == .began else { return }
+            onLongPress()
+        }
     }
 }
