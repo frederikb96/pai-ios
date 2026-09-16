@@ -85,4 +85,36 @@ final class ReplyQueueTests: XCTestCase {
         XCTAssertEqual(queue.head?.messageId, 2)
         XCTAssertEqual(queue.head?.remaining, ["c.", "d."])
     }
+
+    // MARK: - Resetting the head after a dropped connection
+
+    func testResetHeadProgressMakesTheWholeReplyRemainingAgain() {
+        var queue = ReplyQueue()
+        queue.enqueue(messageId: 1, sentences: ["a.", "b."])
+        queue.recordSentencesSent(2)
+        XCTAssertTrue(queue.head?.remaining.isEmpty ?? false, "every sentence already handed to the dead context")
+
+        queue.resetHeadProgress()
+
+        XCTAssertEqual(queue.head?.remaining, ["a.", "b."])
+    }
+
+    func testResetHeadProgressOnAnEmptyQueueDoesNotCrash() {
+        var queue = ReplyQueue()
+        queue.resetHeadProgress()
+        XCTAssertTrue(queue.isEmpty)
+    }
+
+    func testResetHeadProgressOnlyEverTouchesTheHeadEntry() {
+        var queue = ReplyQueue()
+        queue.enqueue(messageId: 1, sentences: ["a."])
+        queue.enqueue(messageId: 2, sentences: ["b.", "c."])
+        queue.recordSentencesSent()
+
+        queue.resetHeadProgress()
+        queue.dropHead()
+
+        XCTAssertEqual(
+            queue.head?.remaining, ["b.", "c."], "the second entry was never touched by resetting the first")
+    }
 }

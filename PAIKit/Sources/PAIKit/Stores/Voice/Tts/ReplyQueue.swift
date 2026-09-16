@@ -57,6 +57,18 @@ public struct ReplyQueue: Sendable, Equatable {
         entries[0].sentencesSent = min(entries[0].sentencesSent + count, entries[0].sentences.count)
     }
 
+    /// A context died before finishing — whatever the dead context received means nothing to the
+    /// fresh one a reconnect opens next, so the head's own progress resets to the start of the
+    /// reply. Without this, a reply whose every sentence had already been handed to the dead
+    /// context reports `remaining` as empty on the fresh one, and nothing is ever (re)sent for it
+    /// — the reply, and everything queued behind it, never speaks again. "A repeated sentence is
+    /// the acceptable cost of a reconnect, never a lost one" — `remaining`'s own doc comment,
+    /// which this is what actually makes reachable.
+    public mutating func resetHeadProgress() {
+        guard !entries.isEmpty else { return }
+        entries[0].sentencesSent = 0
+    }
+
     /// "computer skip" — drops the head wherever it had gotten to and returns it, so the caller
     /// can close its wire context and flush whatever audio was already scheduled for it.
     @discardableResult

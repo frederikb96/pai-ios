@@ -128,6 +128,11 @@ public final class SpeechOutputSession {
     private var currentContextId: String?
     private var resendsForCurrentReply = 0
     private var ended = false
+    /// Set the instant a drop is detected, cleared the instant a context afterward actually gets
+    /// content onto the wire — what tells `advance()` when to emit `.ttsReconnected`, the health
+    /// episode `.ttsDropped` opens (`FeedbackPolicy` shares one episode across every connection
+    /// event) has no other way to close in a call with no STT socket of its own to close it for.
+    private var recoveringFromDrop = false
 
     // MARK: Playback pipeline — see the type's own doc comment for why this is separate from
     // `queue`/`currentContextId` above.
@@ -281,7 +286,10 @@ public final class SpeechOutputSession {
         let sentencesToSend = head.remaining
         guard !sentencesToSend.isEmpty else {
             // Every sentence was already handed to the transport before a drop; the reply is
-            // fully in flight and this call is just waiting on its audio to keep arriving.
+            // fully in flight and this call is just waiting on its audio to keep arriving. Only
+            // reachable when nothing was dropped: `handleReplyFailure` resets the head's own
+            // progress the instant a drop is detected, so `remaining` is never empty for a head
+            // whose context just died.
             return
         }
 
@@ -290,6 +298,10 @@ public final class SpeechOutputSession {
             let isLast = index == sentencesToSend.count - 1
             await sendFrame(.sendText(contextId: contextId, text: sentenceText + " ", flush: isLast))
             queue.recordSentencesSent()
+        }
+        if recoveringFromDrop {
+            recoveringFromDrop = false
+            dependencies.feedback(.ttsReconnected)
         }
     }
 
@@ -302,6 +314,12 @@ public final class SpeechOutputSession {
         guard !ended else { return }
         transport = nil
         currentContextId = nil
+        // The dead context's own progress means nothing to the fresh one a reconnect opens next
+        // — without this, a head whose every sentence had already been handed to that context
+        // reports nothing left to send, and neither it nor anything queued behind it ever speaks
+        // again.
+        queue.resetHeadProgress()
+        recoveringFromDrop = true
         dependencies.feedback(.ttsDropped)
 
         guard !queue.isEmpty else {
