@@ -103,6 +103,20 @@ struct CreateSessionView: View {
             // "+" or by a home-screen shortcut built to land here ready to type.
             isComposerFocused = true
         }
+        #if DEBUG
+            .task {
+                // `-PaiFixtureAutoCreateSession` — how the Mac workflow reproduces the push+dismiss
+                // race `send(_:)` below runs, with no device interaction to drive an actual tap.
+                // Waits for the sheet's own presentation to settle first, so this races the sheet's
+                // *exit* the same way a real send does, not its entrance.
+                guard PaiFixtureLaunch.isEnabled(), PaiFixtureLaunch.autoCreatesSession() else { return }
+                try? await Task.sleep(for: .seconds(1))
+                withTransaction(Transaction(animation: nil)) {
+                    environment.router.push(.session(id: PaiFixtureLaunch.sessionID))
+                }
+                dismiss()
+            }
+        #endif
     }
 
     @ViewBuilder
@@ -499,7 +513,17 @@ struct CreateSessionView: View {
                 // middle of dismissing is dropped often enough to be a known iOS trap, and the
                 // failure is silent: the session is created and the user stays on the list,
                 // looking at a row they have to tap again.
-                environment.router.push(.session(id: session.id))
+                //
+                // The push's own transition animation is disabled, on top of that ordering. Left
+                // animated, it competes with the sheet's own dismissal for the same transition
+                // machinery — two transitions racing to draw over each other — and the destination
+                // has been seen to come up rendering nothing at all until the reader backs out and
+                // reopens it, rather than the push being dropped. An unanimated push has nothing of
+                // its own to race: the destination is simply already there, fully laid out, by the
+                // time the sheet finishes animating away and reveals it.
+                withTransaction(Transaction(animation: nil)) {
+                    environment.router.push(.session(id: session.id))
+                }
                 dismiss()
             case .failed(let message):
                 // The draft is kept — text and attachments stay exactly where they were, matching

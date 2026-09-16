@@ -433,6 +433,13 @@ private struct CreateSessionRouteScreen: View {
             }
             .onChange(of: isPresented) { _, presented in
                 guard !presented else { return }
+                // A successful send inside the sheet pushes `.session(id:)` before dismissing
+                // (`CreateSessionView.send`'s own comment says why), so by the time this fires
+                // `.createSession` may no longer be the top of the path — popping unconditionally
+                // then would remove the session just pushed instead of this route, stranding the
+                // reader on a blank, transparent screen with nothing behind it to reveal. Popping
+                // only while this route is still on top leaves an already-newer push alone.
+                guard environment.router.path.last == .createSession else { return }
                 environment.router.pop()
             }
     }

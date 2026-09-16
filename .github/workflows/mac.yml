@@ -277,6 +277,27 @@ jobs:
           screenshot fullscreen-image -PaiFixtureRoute session -PaiFixtureOpenImage
           xcrun simctl terminate "$udid" "$bundle" || true
 
+          # The exact navigation a real "New Session" send button drives — pushing the new
+          # session's transcript onto the stack while its own presenting sheet is mid-dismissal —
+          # with no device interaction to trigger the tap. `/transcript/landing` is the proof that
+          # matters here, not the screenshot: a screen stuck on whatever this race leaves behind
+          # never mounts a transcript at all, so `topVisibleRowId` would stay null forever rather
+          # than merely answering late.
+          screenshot new-session-landing -PaiFixtureRoute createSession -PaiFixtureAutoCreateSession
+          opened=0
+          for attempt in $(seq 1 10); do
+            if curl -sS --max-time 3 "http://127.0.0.1:8765/transcript/landing" -o artifacts/new-session-landing.json; then
+              top=$(python3 -c "import json; print(json.load(open('artifacts/new-session-landing.json')).get('topVisibleRowId'))")
+              if [ "$top" != "None" ]; then opened=1; break; fi
+            fi
+            sleep 2
+          done
+          xcrun simctl terminate "$udid" "$bundle" || true
+          if [ "$opened" -ne 1 ]; then
+            echo "::error::new-session-landing: no transcript ever mounted after the push+dismiss race — see new-session-landing.json"
+            fail=1
+          fi
+
           names=$(python3 -c "import json; print('\n'.join(json.load(open('artifacts/screens.json'))['screens']))")
           while IFS= read -r name; do
             [ -n "$name" ] || continue

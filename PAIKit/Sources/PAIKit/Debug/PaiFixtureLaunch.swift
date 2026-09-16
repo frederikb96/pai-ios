@@ -18,6 +18,7 @@
         static let searchKindFlag = "-PaiFixtureSearchKind"
         static let openImageFlag = "-PaiFixtureOpenImage"
         static let jumpMessageFlag = "-PaiFixtureJumpMessage"
+        static let autoCreateSessionFlag = "-PaiFixtureAutoCreateSession"
 
         /// The session id every session-scoped fixture route answers under, regardless of which
         /// id the request actually named — fixed so a screenshot workflow can always ask for this
@@ -70,6 +71,17 @@
         /// never built by the virtualized transcript at all in an ordinary open.
         public static func opensImageAutomatically(arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
             arguments.contains(openImageFlag)
+        }
+
+        /// Whether `-PaiFixtureAutoCreateSession` was passed — how the Mac workflow reproduces the
+        /// exact navigation race a real "New Session" send button triggers, with no device
+        /// interaction: `CreateSessionView` still presented as a sheet, over the same session list
+        /// the real flow uses, then pushing `.session(id:)` and dismissing the sheet the way its
+        /// own send button does. Bypasses the network round trip a real send makes — fixture mode
+        /// has no `POST /sessions` stub — since what this reproduces is the navigation mechanism,
+        /// not the creation call.
+        public static func autoCreatesSession(arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
+            arguments.contains(autoCreateSessionFlag)
         }
 
         static func value(for flag: String, in arguments: [String]) -> String? {
