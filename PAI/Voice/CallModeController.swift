@@ -168,9 +168,11 @@ final class CallModeController {
     /// microphone-mode take, permission was refused, or the audio session could not be configured.
     /// The caller (the call screen's own `.task`) is expected to show that and dismiss itself.
     func enter(sessionID: String) async -> Bool {
-        // Reopening the call screen for the call already running (dismissed and long-pressed
-        // again, say) reattaches rather than double-entering; a different session while one is
-        // already live is refused, the same as a microphone-mode take would be.
+        // Reopening the call screen for the call already running (left with Back, then reached
+        // again through the plus menu's "Return to Call", say) reattaches rather than
+        // double-entering; a different session while one is already live is refused, the same as
+        // a microphone-mode take would be — the plus menu itself routes a genuine switch through
+        // `exit()` first, never through here.
         if store != nil { return boundSessionID == sessionID }
         guard controller.reserveForCallMode() else { return false }
         guard await controller.ensureMicrophonePermission() else {
@@ -277,7 +279,7 @@ final class CallModeController {
         await connectReplyFeed(sessionID: sessionID)
         // Opens the first cycle before the phase itself flips to `.collecting` — without this,
         // `finishEntering` set the phase but nothing ever called `beginCollectingCycle()`, so
-        // every word Freddy says right after the long-press had nowhere to go: no session to
+        // every word Freddy says right after entering had nowhere to go: no session to
         // transcribe it, no audio file to capture it, and no feedback telling him so.
         await beginCollectingCycle()
         store.finishEntering(atOffset: callTakeCollectedSamples)

@@ -491,8 +491,8 @@ private struct RecordingsRouteScreen: View {
     }
 }
 
-/// What `.callMode` pushes to — reproduces the full-screen cover a composer's own long-press on
-/// the microphone button presents, since `CallModeScreen` has no route of its own to navigate to
+/// What `.callMode` pushes to — reproduces the full-screen cover the composer's own plus menu
+/// presents, since `CallModeScreen` has no route of its own to navigate to
 /// in real usage. Shaped exactly like `CreateSessionRouteScreen` above, for the same reason: only
 /// the fixture screenshot workflow ever pushes this route.
 private struct CallModeRouteScreen: View {

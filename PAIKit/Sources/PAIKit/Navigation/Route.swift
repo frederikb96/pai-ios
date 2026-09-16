@@ -90,8 +90,8 @@ public enum Route: Hashable, Sendable {
     /// one. Mirrors the web's `SchedulerApp.tsx`, whose three routes (list/new/id) are the same
     /// shape with `nil` standing in for its `new` segment.
     case schedulerTask(id: String?)
-    /// Call mode, full-screen, bound to one session — reached by a long-press on the composer's
-    /// microphone button in real usage, and by the fixture screenshot workflow the same way every
+    /// Call mode, full-screen, bound to one session — reached from the composer's plus menu in
+    /// real usage, and by the fixture screenshot workflow the same way every
     /// other full-screen-cover destination is. Carries no separate identity concern of its own
     /// beyond the session id: a call is always freshly entered, never resumed at a different
     /// stack depth.
