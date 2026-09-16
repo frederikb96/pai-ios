@@ -440,9 +440,10 @@ final class SessionStoreListStoreTests: XCTestCase {
         await api.setGetSessionsResult { call in
             guard call.since != nil else { return .success(SessionsPage(sessions: [], nextCursor: nil)) }
             // A write always moves `updated_at`, so the updated row carries a newer one.
-            return .success(SessionsPage(
-                sessions: [SessionFixture.make(id: "s1", state: .ready, updatedAt: "2026-01-01T00:00:01Z")],
-                nextCursor: nil))
+            return .success(
+                SessionsPage(
+                    sessions: [SessionFixture.make(id: "s1", state: .ready, updatedAt: "2026-01-01T00:00:01Z")],
+                    nextCursor: nil))
         }
         await store.pollSyncedSessions()
 
@@ -456,17 +457,23 @@ final class SessionStoreListStoreTests: XCTestCase {
         let api = FakeSessionListApi()
         await api.setGetSessionsResult { call in
             guard call.since == nil else { return .success(SessionsPage(sessions: [], nextCursor: nil)) }
-            return .success(SessionsPage(
-                sessions: [SessionFixture.make(id: "s1", state: .ready, updatedAt: "2099-01-01T00:00:05.000002+00:00")],
-                nextCursor: nil))
+            return .success(
+                SessionsPage(
+                    sessions: [
+                        SessionFixture.make(id: "s1", state: .ready, updatedAt: "2099-01-01T00:00:05.000002+00:00")
+                    ],
+                    nextCursor: nil))
         }
         let store = makeStore(api: api)
         await store.loadInitialSessions()
         await api.setGetSessionsResult { call in
             guard call.since != nil else { return .success(SessionsPage(sessions: [], nextCursor: nil)) }
-            return .success(SessionsPage(
-                sessions: [SessionFixture.make(id: "s1", state: .closed, updatedAt: "2099-01-01T00:00:05.000001+00:00")],
-                nextCursor: nil))
+            return .success(
+                SessionsPage(
+                    sessions: [
+                        SessionFixture.make(id: "s1", state: .closed, updatedAt: "2099-01-01T00:00:05.000001+00:00")
+                    ],
+                    nextCursor: nil))
         }
 
         await store.pollSyncedSessions()
