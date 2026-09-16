@@ -33,6 +33,10 @@ public struct SpeechOutputDependencies: Sendable {
     /// its own turn to play.
     public var stopPlayback: @Sendable () -> Void
     public var feedback: @Sendable (FeedbackEvent) -> Void
+    /// A diagnostics line for the socket's own lifecycle — defaults to discarding everything, so
+    /// a caller that never wires a real sink (a test, or an app build that has not connected one
+    /// yet) pays nothing for it. Same shape as `CallModeDependencies.log`.
+    public var log: @Sendable (VoiceLogLevel, String, String) -> Void
 
     public init(
         mintToken: @escaping @Sendable (VoiceTokenPurpose) async throws -> VoiceToken,
@@ -43,7 +47,8 @@ public struct SpeechOutputDependencies: Sendable {
         playAudio: @escaping @Sendable (_ messageId: Int, _ samples: [Float]) -> Void = { _, _ in },
         markReplyAudioComplete: @escaping @Sendable (_ messageId: Int) -> Void = { _ in },
         stopPlayback: @escaping @Sendable () -> Void = {},
-        feedback: @escaping @Sendable (FeedbackEvent) -> Void = { _ in }
+        feedback: @escaping @Sendable (FeedbackEvent) -> Void = { _ in },
+        log: @escaping @Sendable (VoiceLogLevel, String, String) -> Void = { _, _, _ in }
     ) {
         self.mintToken = mintToken
         self.makeTransport = makeTransport
@@ -54,6 +59,7 @@ public struct SpeechOutputDependencies: Sendable {
         self.markReplyAudioComplete = markReplyAudioComplete
         self.stopPlayback = stopPlayback
         self.feedback = feedback
+        self.log = log
     }
 }
 
@@ -204,9 +210,11 @@ public final class SpeechOutputSession {
         if keepAliveContextId == nil {
             let contextId = UUID().uuidString
             keepAliveContextId = contextId
+            dependencies.log(.debug, "tts", "keep-alive context opened")
             await sendFrame(.initializeContext(contextId: contextId))
         }
         guard let contextId = keepAliveContextId else { return }
+        dependencies.log(.debug, "tts", "keep-alive ping")
         await sendFrame(.keepContextAlive(contextId: contextId))
     }
 
@@ -214,6 +222,7 @@ public final class SpeechOutputSession {
     /// if there is no socket yet) unless something else is already generating, in which case this
     /// one waits its turn on the wire the same way it will for playback.
     public func enqueue(messageId: Int, sentences: [String]) {
+        dependencies.log(.info, "tts", "reply \(messageId) enqueued (\(sentences.count) sentences)")
         let wasIdle = state == .idle
         queue.enqueue(messageId: messageId, sentences: sentences)
         // Claims `state` synchronously, before the `Task` below ever runs — two `enqueue` calls
@@ -235,6 +244,9 @@ public final class SpeechOutputSession {
     /// nearly finished) sending the reply's whole audio — closing its context afterward, if it is
     /// still open, is hygiene, not what actually stops the sound.
     public func skip() {
+        dependencies.log(
+            .info, "tts",
+            "skip (\(currentlyPlayingMessageId.map { "interrupted reply \($0)" } ?? "nothing playing"))")
         dependencies.stopPlayback()
 
         if let interrupted = currentlyPlayingMessageId {
@@ -271,6 +283,7 @@ public final class SpeechOutputSession {
     /// queued or buffered unspoken. Nothing here restarts on its own after this; a fresh call
     /// needs a fresh `SpeechOutputSession`.
     public func end() {
+        if transport != nil { dependencies.log(.info, "tts", "socket closed (code: 1000)") }
         ended = true
         receiveTask?.cancel()
         keepAliveTask?.cancel()
@@ -296,6 +309,7 @@ public final class SpeechOutputSession {
     /// reply's playback window and starts whichever reply is next in line, if any.
     public func playbackFinished(messageId: Int) {
         guard messageId == currentlyPlayingMessageId else { return }
+        dependencies.log(.info, "tts", "reply \(messageId) playback finished")
         finalizePlaybackWindow(for: messageId)
         currentlyPlayingMessageId = nil
         pumpPlayback()
@@ -318,6 +332,7 @@ public final class SpeechOutputSession {
             if currentlyPlayingMessageId == nil { state = .connecting }
             do {
                 let token = try await dependencies.mintToken(.tts)
+                dependencies.log(.info, "tts", "token minted")
                 guard let url = VoiceTtsProtocol.connectionURL(voiceId: dependencies.voiceId(), token: token.token)
                 else {
                     await handleReplyFailure(reason: "invalid TTS connection URL")
@@ -326,6 +341,7 @@ public final class SpeechOutputSession {
                 let newTransport = dependencies.makeTransport()
                 try await newTransport.connect(url: url)
                 transport = newTransport
+                dependencies.log(.info, "tts", "socket opened")
                 startReceiveLoop()
             } catch {
                 await handleReplyFailure(reason: "\(error)")
@@ -346,6 +362,9 @@ public final class SpeechOutputSession {
             return
         }
 
+        if recoveringFromDrop {
+            dependencies.log(.info, "tts", "replaying reply \(head.messageId) on a fresh context")
+        }
         await sendFrame(.initializeContext(contextId: contextId))
         for (index, sentenceText) in sentencesToSend.enumerated() {
             let isLast = index == sentencesToSend.count - 1
@@ -354,6 +373,7 @@ public final class SpeechOutputSession {
         }
         if recoveringFromDrop {
             recoveringFromDrop = false
+            dependencies.log(.info, "tts", "reconnected")
             dependencies.feedback(.ttsReconnected)
         }
     }
@@ -365,6 +385,7 @@ public final class SpeechOutputSession {
     /// only generation is retried; whatever already played, played.
     private func handleReplyFailure(reason: String) async {
         guard !ended else { return }
+        dependencies.log(.warning, "tts", "connection lost: \(reason)")
         transport = nil
         currentContextId = nil
         // The dead socket took every context on it down with it, the idle one included — a fresh
@@ -385,6 +406,9 @@ public final class SpeechOutputSession {
 
         resendsForCurrentReply += 1
         guard resendsForCurrentReply <= TtsReconnectPolicy.maxResendsPerReply else {
+            let droppedDescription = queue.head.map { "reply \($0.messageId)" } ?? "reply"
+            dependencies.log(
+                .warning, "tts", "\(droppedDescription) dropped after \(resendsForCurrentReply) failed attempts")
             dependencies.feedback(.replyNotSpoken)
             let abandonedId = queue.dropHead()?.messageId
             resendsForCurrentReply = 0
@@ -449,6 +473,7 @@ public final class SpeechOutputSession {
                 playbackStart[messageId] = dependencies.now()
                 buffered[messageId] = BufferedReply(text: head.sentences.joined(separator: " "))
                 state = .speaking(messageId: messageId)
+                dependencies.log(.info, "tts", "reply \(messageId) playback started")
             }
 
             if messageId == currentlyPlayingMessageId {
@@ -502,6 +527,7 @@ public final class SpeechOutputSession {
         playbackStart[messageId] = dependencies.now()
         buffered[messageId] = BufferedReply(text: entry.text)
         state = .speaking(messageId: messageId)
+        dependencies.log(.info, "tts", "reply \(messageId) playback started")
         for chunk in entry.chunks { dependencies.playAudio(messageId, chunk) }
         if entry.generationFinished { dependencies.markReplyAudioComplete(messageId) }
     }

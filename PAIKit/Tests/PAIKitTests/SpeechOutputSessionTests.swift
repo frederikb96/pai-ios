@@ -93,6 +93,15 @@ private final class FeedbackRecorder: @unchecked Sendable {
     func record(_ event: FeedbackEvent) { events.append(event) }
 }
 
+/// Records every `dependencies.log` call — same shape as `CallModeStoreTests`' own `LogRecorder`,
+/// without a real `VoiceDiagnosticsLog` or any file I/O.
+private final class LogRecorder: @unchecked Sendable {
+    private(set) var lines: [(level: VoiceLogLevel, category: String, message: String)] = []
+    func record(_ level: VoiceLogLevel, _ category: String, _ message: String) {
+        lines.append((level, category, message))
+    }
+}
+
 @MainActor
 final class SpeechOutputSessionTests: XCTestCase {
 
@@ -102,6 +111,7 @@ final class SpeechOutputSessionTests: XCTestCase {
         transport: FakeVoiceTtsTransport,
         playback: PlaybackSpy = PlaybackSpy(),
         feedbackRecorder: FeedbackRecorder = FeedbackRecorder(),
+        logRecorder: LogRecorder? = nil,
         mintToken: @escaping @Sendable (VoiceTokenPurpose) async throws -> VoiceToken = { _ in
             VoiceToken(token: "tok", expiresIn: 900)
         },
@@ -116,7 +126,8 @@ final class SpeechOutputSessionTests: XCTestCase {
             playAudio: { [playback] messageId, samples in playback.play(messageId, samples) },
             markReplyAudioComplete: { [playback] messageId in playback.markComplete(messageId) },
             stopPlayback: { [playback] in playback.stop() },
-            feedback: { [feedbackRecorder] event in feedbackRecorder.record(event) }
+            feedback: { [feedbackRecorder] event in feedbackRecorder.record(event) },
+            log: { level, category, message in logRecorder?.record(level, category, message) }
         )
         return SpeechOutputSession(dependencies: dependencies)
     }
@@ -597,5 +608,58 @@ final class SpeechOutputSessionTests: XCTestCase {
         await waitUntil { await transport.closeCallCount == 1 }
         XCTAssertTrue(session.queue.isEmpty)
         XCTAssertEqual(session.state, .idle)
+    }
+
+    // MARK: - Diagnostics log
+
+    func testConnectingLogsTheTokenMintAndTheSocketOpenAtInfo() async {
+        let transport = FakeVoiceTtsTransport()
+        let log = LogRecorder()
+        let session = makeSession(transport: transport, logRecorder: log)
+
+        session.enqueue(messageId: 1, sentences: ["hi."])
+        await waitUntil { await transport.connectCallCount == 1 }
+        await waitUntil { log.lines.contains { $0.message.contains("socket opened") } }
+
+        let ttsLines = log.lines.filter { $0.category == "tts" }
+        XCTAssertTrue(ttsLines.contains { $0.level == .info && $0.message.contains("token minted") })
+        XCTAssertTrue(ttsLines.contains { $0.level == .info && $0.message.contains("socket opened") })
+        session.end()
+    }
+
+    func testATransportFailureLogsAWarningNamingTheReason() async {
+        let transport = FakeVoiceTtsTransport()
+        let log = LogRecorder()
+        let session = makeSession(transport: transport, logRecorder: log)
+
+        session.enqueue(messageId: 1, sentences: ["hi."])
+        await waitUntil { await transport.sentTexts.count >= 2 }
+
+        await transport.fail()
+
+        await waitUntil { log.lines.contains { $0.level == .warning } }
+        let warnings = log.lines.filter { $0.category == "tts" && $0.level == .warning }
+        XCTAssertTrue(warnings.contains { $0.message.contains("connection lost") })
+        session.end()
+    }
+
+    func testIdleKeepAliveTicksLogAtDebugNotInfo() async {
+        let transport = FakeVoiceTtsTransport()
+        let log = LogRecorder()
+        let session = makeSession(transport: transport, logRecorder: log)
+
+        session.enqueue(messageId: 1, sentences: ["hi."])
+        await waitUntil { await transport.sentTexts.count >= 2 }
+        await transport.push(#"{"isFinal":true}"#)
+        await waitUntil { session.queue.isEmpty }
+
+        await session.keepAliveTick()
+
+        let ttsLines = log.lines.filter { $0.category == "tts" }
+        XCTAssertTrue(ttsLines.contains { $0.level == .debug && $0.message.contains("keep-alive") })
+        XCTAssertFalse(
+            ttsLines.contains { $0.level != .debug && $0.message.contains("keep-alive") },
+            "a routine idle ping is not worth an info-level line every 60s of a call")
+        session.end()
     }
 }
