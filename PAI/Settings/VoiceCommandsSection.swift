@@ -1,111 +1,75 @@
 import PAIKit
 import SwiftUI
 
-/// The offline command channel's settings: what each spoken command is configured to (a default
-/// plus every built-in variant, `CommandPhraseSet`), and the one-time, at-home download the
-/// on-device model needs before it works offline (`OnDeviceCommandListener.installAssets`) — a
-/// call never triggers that download itself.
+/// The offline command channel's settings: which commands run through the wake-word engine at
+/// all, versus falling back to recognition from the dictated text while recording, and each
+/// loaded command's own bundled-model status. The phrases themselves are no longer shown here —
+/// they are fixed, baked into trained classifiers, never typed.
 struct VoiceCommandsSection: View {
-    let commands: CommandPhrasesStore
-    let settings: SettingsStore
-
-    @State private var assetsInstalled: Bool?
-    @State private var isInstalling = false
-    @State private var installError: String?
+    let wakeWord: WakeWordSettingsStore
 
     var body: some View {
         Section {
             ForEach(CommandKind.allCases, id: \.self) { kind in
-                LabeledContent(label(for: kind)) {
-                    TextField(CommandPhraseSet.defaults.phrases[kind] ?? "", text: phraseBinding(for: kind))
-                        .textInputAutocapitalization(.words)
-                        .autocorrectionDisabled()
-                        .multilineTextAlignment(.trailing)
-                        .accessibilityIdentifier("voice-command-\(kind.rawValue)")
+                Toggle(isOn: offlineBinding(for: kind)) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(label(for: kind))
+                        if wakeWord.config.offlineCommands.contains(kind) {
+                            Text(modelStatusText(for: kind))
+                                .font(PaiTypography.caption.font)
+                                .foregroundStyle(
+                                    modelIsBundled(kind)
+                                        ? PaiPalette.Semantic.textMuted : PaiPalette.Semantic.errorText)
+                        }
+                    }
                 }
+                .accessibilityIdentifier("voice-command-\(kind.rawValue)-offline")
             }
-            Button("Reset to Defaults") { commands.resetToDefaults() }
         } header: {
             Text("Voice Commands")
         } footer: {
             Text(
-                "A pause before the phrase, and nothing spoken after it, is what tells a command apart from just mentioning it."
+                "On: heard by the offline model, even with no connection. Off: recognized from the dictated text instead, only while recording."
             )
         }
 
         Section {
-            assetStatusContent
-        } header: {
-            Text("Offline Model")
+            Button("Use Full Chart") { wakeWord.useFullChart() }
+                .accessibilityIdentifier("voice-commands-use-full-chart")
+            Button("Use Start-Only Fallback") { wakeWord.useStartOnlyFallback() }
+                .accessibilityIdentifier("voice-commands-use-start-only-fallback")
         } footer: {
-            Text("Downloads once, at home — a call never starts this download itself.")
+            Text(
+                "The start-only fallback listens offline for \"Kai start\" alone; every other command is recognized from the dictated text."
+            )
         }
-        .task { await refreshAssetStatus() }
     }
 
-    @ViewBuilder
-    private var assetStatusContent: some View {
-        if isInstalling {
-            HStack {
-                ProgressView()
-                Text("Downloading…")
-            }
-        } else if assetsInstalled == true {
-            Text("Downloaded")
-                .foregroundStyle(PaiPalette.Semantic.textMuted)
-                .accessibilityIdentifier("voice-commands-asset-status")
-        } else {
-            Button("Download Offline Voice Commands") {
-                Task { await install() }
-            }
-            .accessibilityIdentifier("voice-commands-asset-status")
-        }
-        if let installError {
-            Text(installError)
-                .font(PaiTypography.caption.font)
-                .foregroundStyle(PaiPalette.Semantic.errorText)
-        }
+    private func offlineBinding(for kind: CommandKind) -> Binding<Bool> {
+        Binding(
+            get: { wakeWord.config.offlineCommands.contains(kind) },
+            set: { isOn in
+                var commands = wakeWord.config.offlineCommands
+                if isOn { commands.insert(kind) } else { commands.remove(kind) }
+                wakeWord.setOfflineCommands(commands)
+            })
+    }
+
+    private func modelIsBundled(_ kind: CommandKind) -> Bool {
+        WakeWordCommandListener.modelURL(for: kind) != nil
+    }
+
+    private func modelStatusText(for kind: CommandKind) -> String {
+        modelIsBundled(kind) ? "Model ready" : "Model not bundled yet — this command won't fire offline"
     }
 
     private func label(for kind: CommandKind) -> String {
         switch kind {
         case .start: return "Start"
         case .stop: return "Stop"
+        case .send: return "Send"
         case .skip: return "Skip"
-        case .mute: return "Mute"
-        case .unmute: return "Unmute"
         case .end: return "End Call"
-        }
-    }
-
-    private func phraseBinding(for kind: CommandKind) -> Binding<String> {
-        Binding(
-            get: { commands.phraseSet.phrases[kind] ?? "" },
-            set: { commands.setPhrase($0, for: kind) })
-    }
-
-    /// `.auto` maps to `en-US`, matching the STT language picker's own recommended default for
-    /// an unset preference — this type does not invent a second convention for the same choice.
-    private var locale: Locale {
-        switch settings.sttLanguage {
-        case .de: return Locale(identifier: "de-DE")
-        case .en, .auto: return Locale(identifier: "en-US")
-        }
-    }
-
-    private func refreshAssetStatus() async {
-        assetsInstalled = await OnDeviceCommandListener.assetsInstalled(locale: locale)
-    }
-
-    private func install() async {
-        isInstalling = true
-        installError = nil
-        defer { isInstalling = false }
-        do {
-            try await OnDeviceCommandListener.installAssets(locale: locale)
-            assetsInstalled = await OnDeviceCommandListener.assetsInstalled(locale: locale)
-        } catch {
-            installError = "Could not download the offline model: \(error.localizedDescription)"
         }
     }
 }
