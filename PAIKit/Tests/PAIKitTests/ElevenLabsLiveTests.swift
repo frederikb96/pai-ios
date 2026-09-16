@@ -16,6 +16,17 @@ import XCTest
 @MainActor
 final class ElevenLabsLiveTests: XCTestCase {
     private static let sampleRate = 16000
+
+    /// A thrown `URLSession` error carries the failing URL, and a socket URL carries its
+    /// single-use token as a query parameter — so every failure this class records is redacted,
+    /// not only the messages the tests compose themselves.
+    override func recordFailure(
+        withDescription description: String, inFile filePath: String, atLine lineNumber: Int, expected: Bool
+    ) {
+        super.recordFailure(
+            withDescription: ElevenLabsLiveRedacting.redact(description), inFile: filePath, atLine: lineNumber,
+            expected: expected)
+    }
     private static let chunkSize = 1600
 
     private static func tokenKind(for purpose: VoiceTokenPurpose) -> LiveElevenLabsClient.TokenKind {
@@ -49,6 +60,7 @@ final class ElevenLabsLiveTests: XCTestCase {
     /// path except the batch pass this test then drives for real.
     func testFlakyConnectionRecoversEveryWordThroughReconnectAndRealBatchBackfill() async throws {
         let apiKey = try requireLiveElevenLabsApiKey()
+        try requireLiveWebSockets()
         let sampleRate = Self.sampleRate
 
         let textA = "Testing recovery of the earliest words spoken."
@@ -198,6 +210,7 @@ final class ElevenLabsLiveTests: XCTestCase {
     /// the plain one solely to clear the partial, rather than appending both and duplicating text.
     func testCommittedTranscriptAndItsTimestampedTwinCarryMatchingText() async throws {
         let apiKey = try requireLiveElevenLabsApiKey()
+        try requireLiveWebSockets()
         let sampleRate = Self.sampleRate
         let text = "A short phrase for checking both commit messages."
         let samples = try await LiveSpeechFixtureCache.shared.speech(text, apiKey: apiKey)
@@ -313,6 +326,7 @@ final class ElevenLabsLiveTests: XCTestCase {
     /// nothing in this package otherwise ever opens a real connection to it.
     func testTtsWebsocketOpensAContextStreamsAudioAndClosesIt() async throws {
         let apiKey = try requireLiveElevenLabsApiKey()
+        try requireLiveWebSockets()
         let voiceId = try await LiveSpeechFixtureCache.shared.voice(apiKey: apiKey)
         let token = try await LiveElevenLabsClient.mintToken(.tts, apiKey: apiKey)
         guard let url = VoiceTtsProtocol.connectionURL(voiceId: voiceId, token: token.token) else {

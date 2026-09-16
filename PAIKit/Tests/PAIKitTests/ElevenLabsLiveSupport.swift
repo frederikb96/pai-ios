@@ -26,6 +26,15 @@ func requireLiveElevenLabsApiKey() throws -> String {
     return key
 }
 
+/// Linux Foundation's `URLSession` cannot open a WebSocket (it fails with "WebSockets not
+/// supported by libcurl"), so the socket tests only run where Apple's `URLSession` does. The
+/// batch test is plain HTTP and runs everywhere.
+func requireLiveWebSockets() throws {
+    #if !canImport(Darwin)
+        throw XCTSkip("WebSocket live tests need Apple's URLSession; run them on macOS")
+    #endif
+}
+
 /// The one place `xi-api-key` is ever attached to a request — every live test mints its own
 /// tokens and synthesizes its own fixture through this, never through `PaiApiClient`, which talks
 /// to pai-cloud's proxy rather than ElevenLabs directly.
