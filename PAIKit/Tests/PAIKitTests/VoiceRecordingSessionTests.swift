@@ -530,6 +530,68 @@ final class VoiceRecordingSessionTests: XCTestCase {
         XCTAssertTrue(sent[0].contains(payload))
     }
 
+    /// `previous_text` rides only the very first chunk sent after a reconnect — a second chunk
+    /// on the same connection carrying it too has been observed to be rejected outright by
+    /// ElevenLabs, per the protocol's own contract.
+    func testPreviousTextRidesOnlyTheFirstChunkAfterAReconnect() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+        await primeTimeline(session)
+        await pushCommittedWithWords(transport, text: "hello")
+        await waitUntil { session.transcribedText == "hello" }
+
+        let sentBeforeReconnect = await transport.sentTexts.count
+        await transport.fail()
+        await waitUntil { session.state == .reconnecting }
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        await session.ingestAudioChunk(pcm16le: [1, 1, 1], at: 24000)
+        await waitUntil(async: { await transport.sentTexts.count >= sentBeforeReconnect + 1 })
+        await session.ingestAudioChunk(pcm16le: [2, 2, 2], at: 24003)
+        await waitUntil(async: { await transport.sentTexts.count >= sentBeforeReconnect + 2 })
+
+        let sent = await transport.sentTexts
+        XCTAssertTrue(
+            sent[sentBeforeReconnect].contains("previous_text"), "the first chunk after reconnecting must carry it"
+        )
+        XCTAssertFalse(
+            sent[sentBeforeReconnect + 1].contains("previous_text"), "never a second time on the same connection"
+        )
+    }
+
+    /// Observed against a live connection: even unrelated `previous_text` can come back with the
+    /// next commit prefixed by a stray `". "` — stripped once, on whichever commit follows.
+    func testALeadingArtifactFromPreviousTextIsStrippedFromTheNextCommit() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+        await primeTimeline(session)
+        await pushCommittedWithWords(transport, text: "hello")
+        await waitUntil { session.transcribedText == "hello" }
+
+        await transport.fail()
+        await waitUntil { session.state == .reconnecting }
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+        await session.ingestAudioChunk(pcm16le: [1, 1, 1], at: 24000)
+        await waitUntil(async: { await transport.sentTexts.count == 1 })
+
+        await transport.push(
+            #"{"message_type":"committed_transcript_with_timestamps","text":". world","words":[{"text":".","start":0.0,"end":0.01,"type":"word"},{"text":"world","start":0.01,"end":0.5,"type":"word"}]}"#
+        )
+        await waitUntil { session.transcribedText == "hello world" }
+
+        XCTAssertEqual(session.transcribedText, "hello world", "the stray leading \". \" must not survive")
+        XCTAssertEqual(
+            session.committedSegments.last?.words?.first?.text, "world", "the stray \".\" word is dropped too")
+    }
+
     /// A server close that carries a reason is still a close the take survives — ElevenLabs
     /// closes healthy sessions for load, time limits and inactivity, and ending the take on any
     /// reason but one is what turned every silence gate into a lost recording.

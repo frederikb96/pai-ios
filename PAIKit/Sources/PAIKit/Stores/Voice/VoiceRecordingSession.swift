@@ -160,8 +160,16 @@ public final class VoiceRecordingSession {
     private var pendingBurstAttempts = 0
     /// Set right after a reconnect's `session_started` arrives, consumed by whichever chunk `send`
     /// actually transmits next — ElevenLabs accepts `previous_text` only on a reconnect's very
-    /// first chunk, so this must ride whatever goes out first, burst or live.
+    /// first chunk, so this must ride whatever goes out first, burst or live. Built from committed
+    /// text ending at `coveredUpTo`, attached to audio starting at `coveredUpTo` or later — never
+    /// overlapping content, which matters: `previous_text` sharing words with the audio it
+    /// precedes has been observed to make ElevenLabs treat that audio as already covered and drop
+    /// it from the transcript entirely, not merely provide context.
     private var pendingPreviousTextForNextChunk: String?
+    /// Set alongside the moment above actually gets consumed by `send` — even unrelated
+    /// `previous_text` has been observed to prefix the next committed segment with a stray
+    /// `". "` artifact; `recordCommittedSegment` strips it once, on whichever commit follows.
+    private var shouldStripLeadingArtifactFromNextCommit = false
     private var silenceDetector: SilenceDetector?
     /// Whether detected silence is currently withholding audio from the socket — distinct from
     /// `isMuted`, which is Freddy's own hand mute. See `ingestAudioChunk`'s own comment for why
@@ -430,7 +438,18 @@ public final class VoiceRecordingSession {
     /// Turns one `committed_transcript_with_timestamps` message into a take-relative `Segment`
     /// and folds it into coverage — the point where a connection-relative word timestamp becomes
     /// an address in the take, via `SessionTimeline`.
+    ///
+    /// A commit whose first chunk carried `previous_text` has been observed to come back with a
+    /// stray leading `". "` even when the context was unrelated to the audio — stripped here,
+    /// once, on whichever commit follows.
     private func recordCommittedSegment(text: String, words: [RealtimeWordTimestamp]) {
+        var words = words
+        var text = text
+        if shouldStripLeadingArtifactFromNextCommit {
+            shouldStripLeadingArtifactFromNextCommit = false
+            if text.hasPrefix(". ") { text = String(text.dropFirst(2)) }
+            if words.first?.text == "." { words.removeFirst() }
+        }
         let takeWords: [Word] = words.compactMap { word in
             guard
                 let range = sessionTimeline.takeRange(
@@ -776,17 +795,20 @@ public final class VoiceRecordingSession {
     private func send(_ chunk: RealtimeUplinkChunk, offset: Int? = nil, sampleCount: Int = 0) async {
         guard let transport else { return }
         var outgoing = chunk
+        var carriesPreviousText = false
         if let previousText = pendingPreviousTextForNextChunk {
             outgoing = RealtimeUplinkChunk(
                 audioBase64: chunk.audioBase64, commit: chunk.commit, sampleRate: chunk.sampleRate,
                 previousText: previousText
             )
             pendingPreviousTextForNextChunk = nil
+            carriesPreviousText = true
         }
         guard let data = try? outgoing.encoded() else { return }
         do {
             try await transport.send(text: String(decoding: data, as: UTF8.self))
             lastUplinkAt = dependencies.now()
+            if carriesPreviousText { shouldStripLeadingArtifactFromNextCommit = true }
             if let offset, sampleCount > 0 {
                 let sessionStart = sessionTimeline.nextSessionSampleStart
                 sessionTimeline.recordTransmittedChunk(
