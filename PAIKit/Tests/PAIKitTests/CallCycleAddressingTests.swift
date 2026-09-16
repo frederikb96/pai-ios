@@ -146,4 +146,61 @@ final class CallCycleAddressingTests: XCTestCase {
             ledger.derivedGaps(capturedUpTo: 1500).isEmpty,
             "documents the trap this feature exists to avoid — collecting must be kept current")
     }
+
+    // MARK: - Translating the offline engine's own offset into the call ledger's addressing
+
+    func testTranslateWakeWordOffsetIsHowFarIntoTheCycleThePlusHowFarTheCallHadAlreadyGone() {
+        let translated = CallCycleAddressing.translateWakeWordOffset(
+            50_000, wakeOffsetAtCycleStart: 20_000, callTakeCollectedSamples: 100_000)
+        // 30,000 samples into the cycle, landing at 130,000 in the call's own addressing.
+        XCTAssertEqual(translated, 130_000)
+    }
+
+    func testTranslateWakeWordOffsetAtTheVeryStartOfACycleIsJustCallTakeCollectedSamples() {
+        let translated = CallCycleAddressing.translateWakeWordOffset(
+            20_000, wakeOffsetAtCycleStart: 20_000, callTakeCollectedSamples: 100_000)
+        XCTAssertEqual(translated, 100_000)
+    }
+
+    /// The actual bug on a device: `dispatch(.send)` used to stamp the command with the cycle's
+    /// end — after `endCollectingCycle()` has folded in the offline detector's own latency and
+    /// the wait for the final commit — which put the stamp seconds past where the words were
+    /// spoken, well outside `CommandWindowStripper`'s one-second window. Translating from the
+    /// engine's own offset instead lands within reach of it.
+    func testTheCycleEndStampMissesKaiSendButTheTranslatedOfflineOffsetReachesIt() {
+        let rate = 16_000.0
+        let spoken: [Word] = [
+            Word(range: 128_000..<134_400, text: "going"),  // 8.0s-8.4s
+            Word(range: 134_400..<137_600, text: "to"),  // 8.4s-8.6s
+            Word(range: 137_600..<144_000, text: "say"),  // 8.6s-9.0s
+            Word(range: 160_000..<164_800, text: "Kai"),  // 10.0s-10.3s
+            Word(range: 166_400..<172_800, text: "send"),  // 10.4s-10.8s
+        ]
+        let ledger = TranscriptLedger(
+            takeId: "call", mode: .call, sampleRate: Int(rate), draftKey: "s", preText: "",
+            segments: [
+                Segment(
+                    range: spoken.first!.range.lowerBound..<spoken.last!.range.upperBound,
+                    text: spoken.map(\.text).joined(separator: " "), words: spoken, source: .live)
+            ], capturedUpTo: 212_800, collecting: [0..<212_800], acknowledged: [0..<212_800])
+
+        // The cycle-end stamp: ~1.0s offline-detection latency + ~1.5s final-commit wait after
+        // "send" ended at 10.8s — this is what `callTakeCollectedSamples` read after
+        // `endCollectingCycle()` before the fix.
+        let cycleEndStamp = CommandEvent(kind: .send, atOffset: 212_800, confidence: 1)
+        let cycleEndText = CallMessageAssembler.assembledText(
+            for: [0..<212_800], in: ledger, strippingCommands: [cycleEndStamp])
+        XCTAssertEqual(cycleEndText, "going to say Kai send", "documents the bug: the stamp never reaches the words")
+
+        // The offline engine's own offset, translated: the detector fired at wake-word-listener
+        // offset 260,800 (wherever call entry put it), the cycle itself started at 100,000 in
+        // that same addressing, and the call's own ledger position when the cycle opened was 0.
+        let translated = CallCycleAddressing.translateWakeWordOffset(
+            260_800, wakeOffsetAtCycleStart: 100_000, callTakeCollectedSamples: 0)
+        XCTAssertEqual(translated, 160_800, "just past 'Kai' starting at 10.0s — the engine's own detection lag")
+        let translatedStamp = CommandEvent(kind: .send, atOffset: translated, confidence: 1)
+        let translatedText = CallMessageAssembler.assembledText(
+            for: [0..<212_800], in: ledger, strippingCommands: [translatedStamp])
+        XCTAssertEqual(translatedText, "going to say", "the translated offset is inside the stripper's window")
+    }
 }

@@ -108,4 +108,51 @@ final class SeamMergeTests: XCTestCase {
         let segment = Segment(range: 0..<1000, text: "solo", source: .live)
         XCTAssertEqual(SeamMerge.merge([segment]), [segment])
     }
+
+    // MARK: - Two segments of equal precedence claiming the same words
+
+    /// Two `.batch` passes over the same stretch — the shape a backfill race or a stale-gap
+    /// replan produces — used to both keep every word, since the old cross-segment check only
+    /// dropped a word claimed by a *strictly higher* precedence segment. The later one (a stable
+    /// sort keeps the earlier-appended segment first for an identical range) must now win.
+    func testTwoBatchSegmentsOverTheIdenticalRangeCollapseToOneRatherThanBothSurviving() {
+        let first = Segment(
+            range: 0..<32000, text: "testing the new call",
+            words: [
+                Word(range: 0..<8000, text: "testing"), Word(range: 8000..<16000, text: "the"),
+                Word(range: 16000..<24000, text: "new"), Word(range: 24000..<32000, text: "call"),
+            ], source: .batch)
+        let second = Segment(
+            range: 0..<32000, text: "testing the new call",
+            words: [
+                Word(range: 0..<8000, text: "testing"), Word(range: 8000..<16000, text: "the"),
+                Word(range: 16000..<24000, text: "new"), Word(range: 24000..<32000, text: "call"),
+            ], source: .batch)
+
+        let merged = SeamMerge.merge([first, second])
+
+        XCTAssertEqual(merged.count, 1, "an exact duplicate must collapse to a single segment")
+        XCTAssertEqual(merged.first?.text, "testing the new call")
+    }
+
+    /// The same resolution for a *partial* overlap between two equal-precedence segments — only
+    /// the contested words drop from the earlier one, its own words survive.
+    func testTwoBatchSegmentsWithAPartialOverlapEachKeepOnlyTheirOwnWords() {
+        let earlier = Segment(
+            range: 0..<24000, text: "testing the new",
+            words: [
+                Word(range: 0..<8000, text: "testing"), Word(range: 8000..<16000, text: "the"),
+                Word(range: 16000..<24000, text: "new"),
+            ], source: .batch)
+        let later = Segment(
+            range: 16000..<32000, text: "new call",
+            words: [Word(range: 16000..<24000, text: "new"), Word(range: 24000..<32000, text: "call")],
+            source: .batch)
+
+        let merged = SeamMerge.merge([earlier, later])
+
+        XCTAssertEqual(merged.map(\.text), ["testing the", "new call"])
+        let allWords = merged.flatMap { $0.words ?? [] }.map(\.text)
+        XCTAssertEqual(allWords.filter { $0 == "new" }.count, 1, "the contested word survives on exactly one side")
+    }
 }

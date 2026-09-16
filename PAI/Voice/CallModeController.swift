@@ -100,6 +100,13 @@ final class CallModeController {
     /// does, since nothing advances it between cycles) makes a second "Kai skip" indistinguishable
     /// from the echo of the first and silently drops it forever.
     private var wakeWordCaptureOffset = 0
+    /// `wakeWordCaptureOffset` as of the moment the currently-open cycle started collecting — what
+    /// translates an offline detection's own `atOffset` (addressed from call entry, in
+    /// `wakeWordCaptureOffset`'s own coordinates) into the call ledger's addressing: both counters
+    /// advance by the same `samples.count` on every `handleCapturedChunk` call while a cycle is
+    /// open, so `event.atOffset - wakeOffsetAtCycleStart` is exactly how far into the cycle the
+    /// detector's own window ended, the same quantity `cycleSamplesFed` tracks.
+    private var wakeOffsetAtCycleStart = 0
     private var callSampleRate = 16_000
     private var callLedgerTask: Task<Void, Never>?
     private var fallbackCommandTask: Task<Void, Never>?
@@ -363,6 +370,13 @@ final class CallModeController {
         // otherwise it is only ever buffered by `VoiceRecordingSession`'s own preconnect buffer,
         // never handed to it at all.
         guard let session = cycleSession else { return }
+        // Once `stop()` has moved the session past `.recording` — most commonly `.stopping`,
+        // waiting on the final commit after "stop"/"send" — `session.ingestAudioChunk` below
+        // silently drops whatever this hands it. Counting it here anyway used to inflate the
+        // cycle's own `cycleSamplesFed` (and therefore the collecting range `endCollectingCycle()`
+        // closes) with dead air past the point the command was actually spoken, which is exactly
+        // the stretch `CommandWindowStripper` then had no hope of reaching.
+        guard session.canIngestAudio else { return }
         callAudioFile?.append(pcm16le: samples)
         let offset = cycleSamplesFed
         cycleSamplesFed += samples.count
@@ -447,7 +461,21 @@ final class CallModeController {
                 commandWindow: window, commandText: phrase, playbackWindows: speech.recentPlayback)
         else { return }
 
-        Task { await dispatch(event.kind, confidence: event.confidence) }
+        // The offline engine's own `atOffset` is in `wakeWordCaptureOffset`'s addressing (from
+        // call entry, advancing through wake-mode gaps a cycle never sees) — translated into the
+        // call ledger's own addressing the same way `cycleSamplesFed` already is, since both
+        // counters advance by the same amount on every captured chunk while a cycle is open. The
+        // fallback channel's own event is already ledger-addressed (`watchFallbackCommands` builds
+        // it from `CallCycleAddressing.shift`), so it needs no translation. Read before `dispatch`
+        // runs — never inside it — so a "stop"/"send" is stamped where it was actually spoken,
+        // not wherever `callTakeCollectedSamples` happens to land once the cycle has since closed.
+        let spokenAtOffset =
+            isOffline
+            ? CallCycleAddressing.translateWakeWordOffset(
+                event.atOffset, wakeOffsetAtCycleStart: wakeOffsetAtCycleStart,
+                callTakeCollectedSamples: callTakeCollectedSamples)
+            : event.atOffset
+        Task { await dispatch(event.kind, confidence: event.confidence, spokenAtOffset: spokenAtOffset) }
     }
 
     /// A background poll over the currently-open cycle's own `committedSegments` — Freddy's
@@ -493,10 +521,16 @@ final class CallModeController {
     }
 
     /// The one place every accepted command — offline, fallback, or a manual tap — actually acts.
-    /// `atOffset` is never taken from the caller: it is always the call ledger's own current
-    /// position, since that is the only addressing `CallModeStore.turnRanges` and the ledger's
-    /// own `segments` agree on. See the type's own doc comment for why.
-    private func dispatch(_ kind: CommandKind, confidence: Double) async {
+    /// `spokenAtOffset` is `nil` for a manual tap, which has no spoken moment to stamp: those, and
+    /// `.start`/`.skip`/`.end` (never diagnosed as needing this), keep stamping at the call
+    /// ledger's own current position. A "stop"/"send" heard while genuinely `.collecting` uses
+    /// `spokenAtOffset` instead when one was given — where the command was actually spoken, not
+    /// wherever `callTakeCollectedSamples` lands once `endCollectingCycle()` has folded in
+    /// whatever this cycle captured after it, including the offline detector's own latency and
+    /// the wait for the final commit. That is what lets the turn range close there too
+    /// (`CallModeStore.handle(.stop)`/`.send` both close it at the event's own `atOffset`), so the
+    /// command's own audio ends up outside the turn instead of merely being stripped out of it.
+    private func dispatch(_ kind: CommandKind, confidence: Double, spokenAtOffset: Int? = nil) async {
         guard let store else { return }
         switch kind {
         case .start:
@@ -507,12 +541,14 @@ final class CallModeController {
             await store.handle(CommandEvent(kind: .start, atOffset: callTakeCollectedSamples, confidence: confidence))
         case .stop, .send:
             guard !isTransitioningCycle else { return }
+            var stampOffset = callTakeCollectedSamples
             if case .collecting = store.phase {
+                if let spokenAtOffset { stampOffset = spokenAtOffset }
                 isTransitioningCycle = true
                 await endCollectingCycle()
                 isTransitioningCycle = false
             }
-            await store.handle(CommandEvent(kind: kind, atOffset: callTakeCollectedSamples, confidence: confidence))
+            await store.handle(CommandEvent(kind: kind, atOffset: stampOffset, confidence: confidence))
             drainUnsentTurnText()
         case .skip:
             speech?.skip()
@@ -524,6 +560,7 @@ final class CallModeController {
 
     private func beginCollectingCycle() async {
         cycleSamplesFed = 0
+        wakeOffsetAtCycleStart = wakeWordCaptureOffset
         let session = VoiceRecordingSession(
             dependencies: VoiceRecordingDependencies(
                 mintToken: { [apiClient] purpose in try await apiClient.mintVoiceToken(purpose: purpose) },
@@ -595,16 +632,18 @@ final class CallModeController {
         var acknowledged = completedAcknowledgedRanges
         var capturedUpTo = callTakeCollectedSamples
         var collecting = completedCollectingRanges
+        var pendingLiveRange: SampleRange?
         if let session = cycleSession {
             let base = callTakeCollectedSamples
             segments += CallCycleAddressing.shift(session.committedSegments, by: base)
             acknowledged += CallCycleAddressing.shift(session.acknowledgedRanges, by: base)
             capturedUpTo = base + session.capturedUpTo
             collecting.append(base..<Int.max)
+            pendingLiveRange = session.pendingLiveRange.map { CallCycleAddressing.shift($0, by: base) }
         }
         controller.persistExternalLedger(
             takeId: callTakeId, segments: segments, capturedUpTo: capturedUpTo, acknowledged: acknowledged,
-            collecting: collecting)
+            pendingLiveRange: pendingLiveRange, collecting: collecting)
     }
 
     /// Call mode's own counterpart to `VoiceRecorderController.runLedgerLoop` — one running for

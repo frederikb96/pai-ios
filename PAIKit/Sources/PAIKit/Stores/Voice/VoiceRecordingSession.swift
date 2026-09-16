@@ -240,6 +240,29 @@ public final class VoiceRecordingSession {
 
     public var canStart: Bool { state == .idle }
 
+    /// Whether `ingestAudioChunk` would actually accept audio fed to it right now — what a caller
+    /// like call mode's own per-chunk bookkeeping (`cycleSamplesFed`, the WAV file) checks before
+    /// advancing state that assumes this session is receiving everything it is handed. A chunk
+    /// arriving after `stop()` has moved this to `.stopping` is silently dropped by
+    /// `ingestAudioChunk` below; without this, a caller kept counting it anyway, inflating a
+    /// closed cycle's own collecting range with dead air the session itself never even saw.
+    public var canIngestAudio: Bool {
+        state == .recording || state == .connecting || state == .reconnecting || state == .transcriptionStopped
+    }
+
+    /// The stretch of this take currently in flight on a healthy, still-recording connection —
+    /// captured and sent, but not yet acknowledged because the server has not had a pause to
+    /// commit it on yet. `nil` once `state` leaves `.recording` (a drop, a reconnect, `.stopping`,
+    /// `.paused`): at that point the same stretch is no longer merely "not yet due", it is exactly
+    /// what needs backfilling, and `derivedGaps`/`TranscriptLedger.folding(pendingLiveRange:)`
+    /// treats the absence of this value as "count it, if it is still uncovered" — the same rule a
+    /// genuine drop already needed.
+    public var pendingLiveRange: SampleRange? {
+        guard state == .recording else { return nil }
+        let lower = acknowledgedRanges.last?.upperBound ?? 0
+        return lower < capturedUpTo ? lower..<capturedUpTo : nil
+    }
+
     /// The rate negotiated for this take, fixed for its whole duration — what the app resumes
     /// capture at after a pause, so `AVAudioConverter`'s target never changes mid-take even if
     /// the hardware's own rate does (a Bluetooth headset dropping out mid-call, say).
@@ -754,10 +777,7 @@ public final class VoiceRecordingSession {
     /// retry succeeds. `.paused` is deliberately excluded: the app is not capturing during an
     /// audio interruption, so nothing should be arriving to buffer in the first place.
     public func ingestAudioChunk(pcm16le samples: [Int16], at offset: Int) async {
-        guard
-            state == .recording || state == .connecting || state == .reconnecting
-                || state == .transcriptionStopped
-        else { return }
+        guard canIngestAudio else { return }
         capturedUpTo = max(capturedUpTo, offset + samples.count)
 
         guard !isSilenceGated else {

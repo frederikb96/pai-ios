@@ -1140,4 +1140,113 @@ final class VoiceRecordingSessionTests: XCTestCase {
         let gaps = ledger.derivedGaps(capturedUpTo: session.capturedUpTo)
         XCTAssertTrue(gaps.isEmpty, "an ordinary pause between committed words must never read as a gap")
     }
+
+    // MARK: - pendingLiveRange: a healthy connection's still-uncommitted tail is not yet a gap
+
+    func testPendingLiveRangeIsNilBeforeRecordingEverStarts() {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        XCTAssertNil(session.pendingLiveRange)
+    }
+
+    /// The exact shape a call mode cycle's own one-second ledger write hits on every ordinary
+    /// turn: audio keeps arriving, nothing has committed yet, the socket is perfectly healthy.
+    /// Without excluding this, `TranscriptLedger.derivedGaps` reads it as an open gap and the
+    /// backfill loop starts batch-transcribing speech ElevenLabs was about to commit on its own.
+    func testPendingLiveRangeCoversWhatHasBeenCapturedButNotYetAcknowledgedWhileRecording() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 16000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        await session.ingestAudioChunk(pcm16le: [Int16](repeating: 100, count: 16000), at: 0)
+        await waitUntil { session.capturedUpTo == 16000 }
+
+        XCTAssertEqual(session.pendingLiveRange, 0..<16000, "nothing has committed yet, so all of it is pending")
+
+        let ledger = TranscriptLedger(takeId: "t", mode: .microphone, sampleRate: 16000, draftKey: "s", preText: "")
+            .folding(
+                liveSegments: session.committedSegments, capturedUpTo: session.capturedUpTo,
+                newlyAcknowledged: session.acknowledgedRanges, pendingLiveRange: session.pendingLiveRange)
+        XCTAssertTrue(ledger.gaps.isEmpty, "a healthy connection's own in-flight tail must not read as a gap")
+
+        // The same fold with no exclusion is what the pipeline used to do — documenting the bug
+        // this property fixes, not merely its absence.
+        let withoutExclusion = TranscriptLedger(
+            takeId: "t", mode: .microphone, sampleRate: 16000, draftKey: "s", preText: ""
+        )
+        .folding(
+            liveSegments: session.committedSegments, capturedUpTo: session.capturedUpTo,
+            newlyAcknowledged: session.acknowledgedRanges)
+        XCTAssertEqual(withoutExclusion.gaps.map(\.range), [0..<16000])
+    }
+
+    /// A commit narrows `pendingLiveRange` to whatever is left after it — the acknowledged
+    /// stretch is never pending again, only the newer audio sent since.
+    func testPendingLiveRangeShrinksToAfterTheLastCommitOnceOneArrives() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 16000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+        await primeTimeline(session, seconds: 0.5, sampleRate: 16000)
+        await waitUntil(async: { await transport.sentTexts.count > 0 })
+
+        await pushCommittedWithWords(transport, text: "hi", startSeconds: 0, endSeconds: 0.3)
+        await waitUntil { !session.acknowledgedRanges.isEmpty }
+
+        await session.ingestAudioChunk(pcm16le: [Int16](repeating: 100, count: 16000), at: 8000)
+        await waitUntil { session.capturedUpTo == 24000 }
+
+        let acknowledgedUpTo = session.acknowledgedRanges.last?.upperBound ?? 0
+        XCTAssertEqual(session.pendingLiveRange, acknowledgedUpTo..<24000)
+    }
+
+    /// The instant a drop moves this out of `.recording`, the same stretch is no longer merely
+    /// "not yet due" — it is exactly what backfill exists to heal, so this must stop excluding it.
+    func testPendingLiveRangeIsNilOnceTheConnectionDrops() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 16000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+        await session.ingestAudioChunk(pcm16le: [Int16](repeating: 100, count: 16000), at: 0)
+        await waitUntil { session.capturedUpTo == 16000 }
+        XCTAssertNotNil(session.pendingLiveRange)
+
+        await transport.fail()
+        await waitUntil { session.state == .reconnecting }
+        XCTAssertNil(session.pendingLiveRange, "a dropped connection's tail is a real gap, not a pending one")
+    }
+
+    // MARK: - canIngestAudio
+
+    func testCanIngestAudioIsFalseBeforeStartAndTrueOnceRecording() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        XCTAssertFalse(session.canIngestAudio)
+        await session.start(hardwareSampleRate: 16000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+        XCTAssertTrue(session.canIngestAudio)
+    }
+
+    /// `stop()` moves the session into `.stopping` while it waits out the final commit —
+    /// `ingestAudioChunk` (and therefore `canIngestAudio`) must say so, since a caller that kept
+    /// counting audio fed here anyway would inflate its own bookkeeping with dead air the session
+    /// itself silently drops.
+    func testCanIngestAudioIsFalseWhileStoppingWaitsOnTheFinalCommit() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport, sleep: { _ in await Task.yield() })
+        await session.start(hardwareSampleRate: 16000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        let stopTask = Task { await session.stop(reason: .user) }
+        await waitUntil { session.state == .stopping }
+        XCTAssertFalse(session.canIngestAudio)
+        await transport.push(#"{"message_type":"committed_transcript","text":""}"#)
+        await stopTask.value
+    }
 }

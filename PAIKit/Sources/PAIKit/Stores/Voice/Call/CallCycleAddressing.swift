@@ -37,4 +37,23 @@ public enum CallCycleAddressing {
     public static func shift(_ segments: [Segment], by base: Int) -> [Segment] {
         segments.map { shift($0, by: base) }
     }
+
+    /// Translates the offline command engine's own `atOffset` — addressed from call entry in the
+    /// wake-word listener's own coordinates, which advance through the wake-mode gaps *between*
+    /// cycles that a cycle's own audio never sees — into the call ledger's addressing. Both
+    /// counters advance by the same sample count on every chunk of audio captured while a cycle is
+    /// open, so `atOffset - wakeOffsetAtCycleStart` is exactly how far into the cycle the
+    /// detector's own window ended, the same quantity the cycle's own sample count tracks; adding
+    /// `callTakeCollectedSamples` (the ledger position the cycle itself started from) lands it in
+    /// the ledger's own addressing.
+    ///
+    /// This is what a spoken "stop"/"send" should be stamped with instead of the cycle's end —
+    /// the end includes the offline detector's own latency and the wait for the final commit,
+    /// during which more audio keeps being fed into the cycle, so stamping there put the command
+    /// seconds beyond where `CommandWindowStripper`'s window could ever reach it.
+    public static func translateWakeWordOffset(
+        _ atOffset: Int, wakeOffsetAtCycleStart: Int, callTakeCollectedSamples: Int
+    ) -> Int {
+        callTakeCollectedSamples + (atOffset - wakeOffsetAtCycleStart)
+    }
 }

@@ -391,14 +391,17 @@ final class VoiceRecorderController {
     /// shifted by `CallCycleAddressing` exactly the way `segments` already is — a gap is now
     /// derived from what the connection acknowledged, never from word coverage, so an empty or
     /// unshifted value here would show every captured sample as an open gap regardless of what
-    /// was actually said or covered.
+    /// was actually said or covered. `pendingLiveRange` needs the identical shift, from the
+    /// calling cycle's own `VoiceRecordingSession.pendingLiveRange` — `nil` whenever no cycle is
+    /// currently open or its connection is not `.recording`, which correctly lets that stretch
+    /// become an ordinary gap.
     func persistExternalLedger(
         takeId: String, segments: [Segment], capturedUpTo: Int, acknowledged: [SampleRange],
-        collecting: [SampleRange]
+        pendingLiveRange: SampleRange?, collecting: [SampleRange]
     ) {
         persistLedger(
             takeId: takeId, segments: segments, capturedUpTo: capturedUpTo, acknowledged: acknowledged,
-            collecting: collecting
+            pendingLiveRange: pendingLiveRange, collecting: collecting
         )
     }
 
@@ -559,7 +562,7 @@ final class VoiceRecorderController {
         if let takeId = currentTakeId, let base = activeLedger, base.takeId == takeId {
             var folded = base.folding(
                 liveSegments: voiceSession.committedSegments, capturedUpTo: voiceSession.capturedUpTo,
-                newlyAcknowledged: voiceSession.acknowledgedRanges
+                newlyAcknowledged: voiceSession.acknowledgedRanges, pendingLiveRange: voiceSession.pendingLiveRange
             )
             // Nothing left uncovered the moment the take ends — the text about to be written
             // below is the whole take, not a version with a marker still in it, so it really has
@@ -647,7 +650,7 @@ final class VoiceRecorderController {
                 lastSegmentCount = voiceSession.committedSegments.count
                 persistLedger(
                     takeId: takeId, segments: voiceSession.committedSegments, capturedUpTo: voiceSession.capturedUpTo,
-                    acknowledged: voiceSession.acknowledgedRanges)
+                    acknowledged: voiceSession.acknowledgedRanges, pendingLiveRange: voiceSession.pendingLiveRange)
             }
             try? await Task.sleep(for: .seconds(1))
         }
@@ -659,7 +662,7 @@ final class VoiceRecorderController {
         // ledger through, it is not itself what makes the final sentence land.
         persistLedger(
             takeId: takeId, segments: voiceSession.committedSegments, capturedUpTo: voiceSession.capturedUpTo,
-            acknowledged: voiceSession.acknowledgedRanges)
+            acknowledged: voiceSession.acknowledgedRanges, pendingLiveRange: voiceSession.pendingLiveRange)
     }
 
     /// Folds newly committed segments, how much has been captured, and what the connection has
@@ -680,13 +683,13 @@ final class VoiceRecorderController {
     /// captured sample as an open gap, which a missing argument catches at compile time instead.
     private func persistLedger(
         takeId: String, segments: [Segment], capturedUpTo: Int, acknowledged: [SampleRange],
-        collecting: [SampleRange]? = nil
+        pendingLiveRange: SampleRange?, collecting: [SampleRange]? = nil
     ) {
         guard let base = activeLedger, base.takeId == takeId else { return }
         let previousGapCount = base.gaps.count
         let final = base.folding(
             liveSegments: segments, capturedUpTo: capturedUpTo, newlyAcknowledged: acknowledged,
-            collecting: collecting
+            collecting: collecting, pendingLiveRange: pendingLiveRange
         )
         activeLedger = final
         try? LedgerFile.write(final, to: audioStorage.ledgerURL(id: takeId))

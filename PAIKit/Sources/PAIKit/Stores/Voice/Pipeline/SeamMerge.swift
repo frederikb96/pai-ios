@@ -42,8 +42,13 @@ public enum SeamMerge {
     /// belongs to whatever segment already covers it, not to this one, however good the
     /// transcription. Only once that self-trim has narrowed a segment to what it actually owns
     /// does the cross-segment check apply: a word a higher-precedence segment's (now-narrowed)
-    /// range also claims is dropped from this one. A segment left with no surviving words is
-    /// dropped entirely rather than kept as an empty husk.
+    /// range also claims is dropped from this one. Two segments of *equal* precedence — two batch
+    /// passes over a gap that grew between plan and apply, say — are resolved the same way: the
+    /// one later in `ordered` (a stable sort, so the more recently added of an identical range)
+    /// wins the word, so a genuine race between two backfill passes over the same stretch
+    /// collapses to one copy rather than surviving as a duplicate neither pass's precedence alone
+    /// would have dropped. A segment left with no surviving words is dropped entirely rather than
+    /// kept as an empty husk.
     private static func trimByWordOwnership(_ ordered: [Segment]) -> [Segment] {
         let selfTrimmed = ordered.map { segment -> Segment in
             guard let words = segment.words else { return segment }
@@ -61,11 +66,15 @@ public enum SeamMerge {
                 result.append(segment)
                 continue
             }
+            let ownPrecedence = precedence(segment.source)
             let survivors = words.filter { word in
                 let midpoint = (word.range.lowerBound + word.range.upperBound) / 2
                 return !selfTrimmed.enumerated().contains { other in
-                    other.offset != index && precedence(other.element.source) > precedence(segment.source)
-                        && other.element.range.contains(midpoint)
+                    guard other.offset != index, other.element.range.contains(midpoint) else { return false }
+                    let otherPrecedence = precedence(other.element.source)
+                    return otherPrecedence != ownPrecedence
+                        ? otherPrecedence > ownPrecedence
+                        : other.offset > index
                 }
             }
             guard !survivors.isEmpty else { continue }

@@ -256,6 +256,25 @@ final class TranscriptLedgerTests: XCTestCase {
         XCTAssertEqual(applied.segments.map(\.text), ["recovered"])
     }
 
+    /// A gap that grew while the pass was in flight — a later fold pushed its far edge out before
+    /// this pass's result came back — used to survive completely unchanged, since the old code
+    /// only removed a gap equal to `resolved`. The grown gap is now narrowed to whatever sliver
+    /// past the resolved stretch is still actually uncovered, so the next pass re-requests only
+    /// that sliver instead of re-transcribing words this pass already covered.
+    func testApplyingBackfillNarrowsAGapThatGrewWhileThePassWasInFlightRatherThanLeavingItWhole() {
+        let ledger = TranscriptLedger(
+            takeId: "t", mode: .microphone, sampleRate: 16000, draftKey: "s", preText: "",
+            capturedUpTo: 32000, gaps: [Gap(range: 0..<32000, attempts: 1, lastError: "timeout")]
+        )
+        let applied = ledger.applyingBackfill(
+            newSegments: [Segment(range: 0..<16000, text: "recovered", source: .batch)],
+            resolved: [0..<16000], failed: []
+        )
+        XCTAssertEqual(applied.gaps.map(\.range), [16000..<32000], "only the still-uncovered sliver remains")
+        XCTAssertEqual(applied.gaps.first?.attempts, 1, "the retry budget carries forward onto the narrowed gap")
+        XCTAssertEqual(applied.gaps.first?.lastError, "timeout")
+    }
+
     func testApplyingBackfillBumpsTheAttemptCountOfAFailedRangeAgainstTheCurrentGap() {
         let ledger = TranscriptLedger(
             takeId: "t", mode: .microphone, sampleRate: 16000, draftKey: "s", preText: "",
