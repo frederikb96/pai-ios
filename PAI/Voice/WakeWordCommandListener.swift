@@ -10,6 +10,11 @@ import PAIKit
 /// which is the exact situation this channel exists for. Idle listening is free and fully
 /// offline: nothing here ever opens a network connection at all.
 ///
+/// Several classifiers sharing "Kai" as their first word can all cross their own threshold for
+/// one spoken utterance — `WakeWordCommandArbiter` is what turns that burst into the single
+/// highest-scoring `CommandEvent` this hands to `onCommand`, rather than delivering every model
+/// that happened to fire.
+///
 /// Fed the same converted PCM `MicrophoneCapture.onChunk` already delivers (mono 16-bit at the
 /// negotiated transport rate) — a second, independent consumer of the same tap output, not a
 /// second capture engine: `WakeWordModel.predict(_:)` takes raw PCM directly, with no
@@ -33,6 +38,7 @@ final class WakeWordCommandListener {
 
     private var model: WakeWordModel?
     private var gate: WakeWordCommandGate?
+    private var arbiter: WakeWordCommandArbiter?
     private var sampleRate: Double = 16_000
 
     // A rolling window fed to `predict(_:)`, the same ring-buffer shape `WakeWordListener` uses
@@ -84,6 +90,7 @@ final class WakeWordCommandListener {
         do {
             model = try WakeWordModel(models: found.map(\.url), sampleRate: UInt32(sampleRate))
             gate = WakeWordCommandGate(manifest: Self.loadManifest(), sampleRate: sampleRate)
+            arbiter = WakeWordCommandArbiter(sampleRate: sampleRate)
             loadedCommands = Set(found.map(\.kind))
             AppVoiceDiagnosticsLog.shared.log(
                 .info, .command,
@@ -96,6 +103,7 @@ final class WakeWordCommandListener {
             feedback(.commandModelMissing(firstMissingKind ?? found[0].kind))
             model = nil
             gate = nil
+            arbiter = nil
             loadedCommands = []
         }
     }
@@ -146,6 +154,10 @@ final class WakeWordCommandListener {
         }
     }
 
+    /// Every crossing this round logs — useful on its own in a device log even when it never
+    /// reaches `onCommand` — but only ``WakeWordCommandArbiter``'s own winner, if any, is ever
+    /// delivered: several classifiers crossing threshold for one spoken utterance is the ordinary
+    /// case, not several commands, and `arbiter.observe` is what turns that into at most one.
     private func handle(scores: [String: Float], atOffset: Int) {
         inflight = false
         guard var gate else { return }
@@ -156,13 +168,18 @@ final class WakeWordCommandListener {
                 .info, .command,
                 "offline detection: \(event.kind.rawValue) at offset \(event.atOffset), "
                     + "confidence \(String(format: "%.2f", event.confidence))")
-            onCommand?(event)
         }
+        guard var arbiter else { return }
+        let winner = arbiter.observe(newEvents: events, atOffset: atOffset)
+        self.arbiter = arbiter
+        guard let winner else { return }
+        onCommand?(winner)
     }
 
     func stop() {
         model = nil
         gate = nil
+        arbiter = nil
         ring = []
         writeIndex = 0
         samplesWritten = 0

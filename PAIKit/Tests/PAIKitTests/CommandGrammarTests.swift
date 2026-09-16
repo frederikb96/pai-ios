@@ -52,6 +52,15 @@ final class CommandGrammarTests: XCTestCase {
             "the default phrase should stop matching once overridden")
     }
 
+    /// A real device log showed the transcript fallback detecting "end" shortly after a "send" —
+    /// this is what rules out "end" matching as a fragment inside "send": word-bounded matching
+    /// (`testMatchesNeverFiresOnAFragmentInsideALongerWord` above) already makes that structurally
+    /// impossible, and this is the actual text observed, confirmed to match only "send".
+    func testMatchesOnTheObservedTranscriptTextMatchesOnlySend() {
+        let matches = CommandGrammar.matches(in: "Kai Send Kai, Sam", phraseSet: .defaults)
+        XCTAssertEqual(matches.map(\.kind), [.send])
+    }
+
     func testMatchesReturnsEmptyForOrdinaryTextAboutTheseTopics() {
         // The false-trigger risk this whole gate exists for: talking about computers and Kai
         // without addressing either as a command.
