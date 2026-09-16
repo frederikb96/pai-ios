@@ -284,7 +284,7 @@ struct ComposerBar: View {
         switch voiceController.state {
         case .idle:
             await voiceController.start(draftKey: sessionID, preText: draftStore.draft(for: sessionID).text)
-        case .recording, .connecting, .paused, .reconnecting:
+        case .recording, .connecting, .paused, .reconnecting, .transcriptionStopped:
             // A tap always means "end the take", regardless of which of these mid-take states it
             // caught — `VoiceRecordingSession.stop` accepts all of them. The text itself is the
             // recorder's business now, on every one of the ways a take can end; nothing is

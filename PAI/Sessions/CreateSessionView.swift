@@ -566,7 +566,7 @@ struct CreateSessionView: View {
             // transcript is polled into it explicitly above rather than arriving already written
             // the way the chat composer's does.
             await voiceController.start(draftKey: nil, preText: text)
-        case .recording, .connecting, .paused, .reconnecting:
+        case .recording, .connecting, .paused, .reconnecting, .transcriptionStopped:
             // A tap always means "end the take", regardless of which of these mid-take states it
             // caught — `VoiceRecordingSession.stop` accepts all of them. Same rule as
             // `ComposerBar`'s own record button: one control, one behaviour, on both screens.

@@ -137,6 +137,9 @@ jobs:
           app=$(find build/dd/Build/Products -name '*.app' -maxdepth 3 | head -1)
           [ -n "$app" ] || { echo 'build produced no .app'; exit 1; }
           xcrun simctl install "$udid" "$app"
+          # Call mode opens the microphone on entry; without a grant its screenshot is the
+          # system permission prompt rather than the screen.
+          xcrun simctl privacy "$udid" grant microphone com.frederikberg.pai
 
       # Fixture mode, the launch-argument router and the debug bridge are all `#if DEBUG` — none
       # of them exist in a Release build, so this only runs for Debug. One launch per screen,

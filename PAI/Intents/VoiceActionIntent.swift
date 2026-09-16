@@ -7,10 +7,6 @@ import PAIKit
 /// the app to the foreground, since a phone in a pocket is exactly what this exists for; with no
 /// call running, it continues into the foreground and opens a fast session instead, the same
 /// launch ``NewFastSessionIntent`` already gives.
-///
-/// 🚨 Unverified beyond syntax — the app target compiles nowhere but a macOS run, and this is the
-/// one file in the block whose API surface (`IntentModes`, `requestToContinueInForeground()`)
-/// could only be read from documentation, never exercised against a compiler.
 struct VoiceActionIntent: AppIntent {
     static var title: LocalizedStringResource { "Voice Action" }
     static var description: IntentDescription {
@@ -29,7 +25,7 @@ struct VoiceActionIntent: AppIntent {
         if let bridge = VoiceIntentBridge.shared.toggleCallMode, bridge() {
             return .result()
         }
-        try await requestToContinueInForeground()
+        try await continueInForeground(alwaysConfirm: false)
         await NewSessionLaunchChoice.persist(sessionType: "fast", workingDir: nil)
         DeepLinkInbox.shared.receive(.createSession)
         return .result()
