@@ -146,6 +146,18 @@ public enum SessionListDomain {
         return SessionListFormat.withProjectPrefix(session.projectName, own)
     }
 
+    /// What the gated-secret-grant sheet names as the target it is about to unlock — title,
+    /// session type and machine, so granting from a stale sheet is never ambiguous about which
+    /// conversation receives it. Falls back to the raw session-type id and machine slug when the
+    /// machine directory has not loaded yet or the row predates multi-agent.
+    public static func secretGrantTarget(for session: Session, machines: [Machine]) -> String {
+        let slug = session.agent ?? MachineStore.defaultMachineSlug
+        let machine = machines.first { $0.slug == slug }
+        let machineName = machine?.displayName ?? slug
+        let typeName = machine?.sessionTypes.first { $0.id == session.sessionType }?.name ?? session.sessionType
+        return "\(sessionHeaderTitle(for: session)) · \(typeName) on \(machineName)"
+    }
+
     /// The claude.ai/code deep link for this session's Remote Control registration, or `nil`
     /// before one exists. Swift port of `claudeSession.ts`'s `claudeCodeUrl`.
     public static func claudeCodeUrl(cseId: String?) -> URL? {

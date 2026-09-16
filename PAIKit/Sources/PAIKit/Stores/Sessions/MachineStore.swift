@@ -20,8 +20,9 @@ extension PaiApiClient: MachineDirectoryApiClient {}
 public final class MachineStore {
     /// The VM's fixed slug (`config.VM_AGENT_SLUG` on the backend) — every session before
     /// multi-agent existed was one, so it is the default a new session launches on and the
-    /// fallback for a session row with no `agent` field at all.
-    public static let defaultMachineSlug = "vm"
+    /// fallback for a session row with no `agent` field at all. `nonisolated`: a plain constant,
+    /// and `SessionListDomain` (not itself `@MainActor`) reads it for the same fallback.
+    public nonisolated static let defaultMachineSlug = "vm"
 
     /// Every machine ever seen, most of which stay around after going offline.
     public private(set) var machines: [Machine] = []

@@ -2,9 +2,10 @@ import PAIKit
 import SwiftUI
 
 /// The plus button's menu — a native `Menu`, matching the "must feel native" constraint directly
-/// rather than porting the web's absolutely-positioned popover. Item order and the
-/// existing-session-only items (`Grant Secret Access`, `Cancel`) mirror the web's plus menu
-/// (`MessageInput.tsx`: "nothing is running before the session exists").
+/// rather than porting the web's absolutely-positioned popover. Item order mirrors the web's plus
+/// menu (`MessageInput.tsx`). `Cancel` needs only a session to exist; `Grant Secret Access` needs
+/// the server to say this particular one is grantable — the two are gated separately rather than
+/// both riding `hasSession`.
 struct ComposerActionMenu: View {
     var hasSession: Bool
     /// `nil` while there is no session yet to bind a call to — `CreateSessionView`'s own composer
@@ -13,6 +14,10 @@ struct ComposerActionMenu: View {
     /// The other session's own title, for `.runningElsewhere`'s label — `nil` falls back to a
     /// generic phrase rather than an empty one.
     var otherCallSessionName: String? = nil
+    /// Server-computed (`Session.secretGrantable`), not derived from `hasSession` — a session can
+    /// exist and still have nothing to grant against (sandboxed, no live conversation), and
+    /// re-deriving that predicate here would drift from what the grant route itself checks.
+    var canGrantSecretAccess: Bool
     var onPastRecordings: () -> Void
     var onAddPhoto: () -> Void
     var onAddFile: () -> Void
@@ -50,14 +55,16 @@ struct ComposerActionMenu: View {
             } label: {
                 Label("Temporary Note", systemImage: "note.text")
             }
-            if hasSession {
-                // Needs a real session id to grant against — unlike the other four entries,
-                // there is nothing sensible for this one to do before a session exists.
+            if canGrantSecretAccess {
                 Button {
                     onSecretGrant()
                 } label: {
                     Label("Grant Secret Access", systemImage: "key")
                 }
+            }
+            if hasSession {
+                // Needs a real session id to cancel — unlike the other four entries, there is
+                // nothing sensible for this one to do before a session exists.
                 Button(role: .destructive) {
                     onCancel()
                 } label: {

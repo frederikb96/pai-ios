@@ -232,7 +232,7 @@ final class PaiModelsTests: XCTestCase {
              "read_position_message_id":4242,"read_position_offset_px":137,
              "read_position_at_bottom":false,
              "remote_control":true,"discovered":false,
-             "project_id":"proj-1","phase_id":"phase-1","project_name":"PAIKit"}
+             "project_id":"proj-1","phase_id":"phase-1","project_name":"PAIKit","secret_grantable":true}
             """.utf8)
         let session = try JSONDecoder().decode(Session.self, from: json)
 
@@ -258,6 +258,37 @@ final class PaiModelsTests: XCTestCase {
         XCTAssertEqual(session.projectId, "proj-1")
         XCTAssertEqual(session.phaseId, "phase-1")
         XCTAssertEqual(session.projectName, "PAIKit")
+        XCTAssertEqual(session.secretGrantable, true)
+    }
+
+    /// A backend that predates `secret_grantable` omits the key entirely — must decode to `nil`
+    /// rather than throw and blank the row, matching `presence_state`'s own guard above.
+    func testSessionSecretGrantableIsNilWhenTheKeyIsAbsent() throws {
+        let json = Data(
+            """
+            {"id":"s1","session_type":"claude","status":"active","state":null,"blocker":null,
+             "working":null,"title":null,"title_locked":null,"initial_message":null,
+             "session_tokens":0,"claude_session_id":null,
+             "idle_timeout_minutes":null,"effective_idle_timeout_minutes":null,"cse_id":null,
+             "created_at":null,"updated_at":null,"last_activity_at":null,"working_dir":null,
+             "agent":null,"kind":null,"parent_session_id":null,"subagent_name":null,
+             "subagent_type":null,"subagent_description":null,"remote_control":null,
+             "discovered":null,"project_id":null,"phase_id":null,"project_name":null}
+            """.utf8)
+        let session = try JSONDecoder().decode(Session.self, from: json)
+        XCTAssertNil(session.secretGrantable)
+    }
+
+    /// `withLiveStatus` calls `Session`'s memberwise init, so any property left to its `= nil`
+    /// default is silently reset on every live status frame — the exact trap this file's own
+    /// convention section warns about. `secretGrantable` is not one of the fields a live status
+    /// event reports, so it must survive a rebuild unchanged rather than reading `true` as `nil`
+    /// the first time a status arrives.
+    func testWithLiveStatusPreservesSecretGrantableRatherThanResettingIt() throws {
+        var session = SessionFixture.make(secretGrantable: true)
+        session = session.withLiveStatus(
+            state: .ready, blocker: nil, working: true, presenceState: .working, activityCounts: nil)
+        XCTAssertEqual(session.secretGrantable, true)
     }
 
     /// Same guard as `SessionStatus`: a session list must not go empty just because one row

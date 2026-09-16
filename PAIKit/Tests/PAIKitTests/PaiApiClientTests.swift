@@ -551,12 +551,13 @@ final class PaiApiClientTests: XCTestCase {
         XCTAssertEqual(result, .granted(expiresAt: "2026-09-17T12:00:00+00:00"))
     }
 
-    /// The contract's three non-2xx shapes are outcomes the caller switches on, not one thrown
-    /// `PaiError` — each has to map to its own case rather than collapsing into the others.
+    /// The contract's non-2xx shapes are outcomes the caller switches on, not one thrown
+    /// `PaiError` — each has to map to its own case rather than collapsing into the others. 422,
+    /// not 403, is the wrong-passphrase status under contract v2.
     func testGrantSecretAccessMapsEachContractStatusToItsOwnOutcome() async throws {
         let client = try makeClient()
 
-        stubJSON(#"{"detail":"wrong passphrase"}"#, statusCode: 403)
+        stubJSON(#"{"detail":"wrong passphrase"}"#, statusCode: 422)
         var result = try await client.grantSecretAccess(sessionId: "s1", passphrase: "x", ttlSeconds: 60)
         XCTAssertEqual(result, .wrongPassphrase)
 
@@ -567,10 +568,22 @@ final class PaiApiClientTests: XCTestCase {
         stubJSON(#"{"detail":"agent did not answer"}"#, statusCode: 504)
         result = try await client.grantSecretAccess(sessionId: "s1", passphrase: "x", ttlSeconds: 60)
         XCTAssertEqual(result, .timedOut)
+
+        stubJSON(#"{"detail":"not an owner identity"}"#, statusCode: 403)
+        result = try await client.grantSecretAccess(sessionId: "s1", passphrase: "x", ttlSeconds: 60)
+        XCTAssertEqual(result, .notAuthorized(message: "not an owner identity"))
+
+        stubJSON(#"{"detail":"too many attempts"}"#, statusCode: 429)
+        result = try await client.grantSecretAccess(sessionId: "s1", passphrase: "x", ttlSeconds: 60)
+        XCTAssertEqual(result, .rateLimited(message: "too many attempts"))
+
+        stubJSON(#"{"detail":"passphrase contains control characters"}"#, statusCode: 400)
+        result = try await client.grantSecretAccess(sessionId: "s1", passphrase: "x", ttlSeconds: 60)
+        XCTAssertEqual(result, .invalidRequest(message: "passphrase contains control characters"))
     }
 
-    /// Any OTHER non-2xx status still throws normally — the three contract shapes above are the
-    /// only carved-out outcomes, not a general "swallow every error" shape.
+    /// Any OTHER non-2xx status still throws normally — the contract shapes above are the only
+    /// carved-out outcomes, not a general "swallow every error" shape.
     func testGrantSecretAccessStillThrowsOnAnUnrelatedServerError() async throws {
         stubJSON(#"{"detail":"boom"}"#, statusCode: 500)
         let client = try makeClient()

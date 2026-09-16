@@ -138,6 +138,7 @@ struct ComposerBar: View {
                     hasSession: true,
                     callMenuState: callMenuState,
                     otherCallSessionName: otherCallSessionName,
+                    canGrantSecretAccess: currentSession?.secretGrantable ?? false,
                     onPastRecordings: { showingRecordingsSheet = true },
                     onAddPhoto: { showingPhotoPicker = true },
                     onAddFile: { showingFilePicker = true },
@@ -197,7 +198,7 @@ struct ComposerBar: View {
             TemporaryNoteSheet { attachment in stageAttachments([attachment]) }
         }
         .sheet(isPresented: $showingSecretGrant) {
-            SecretGrantSheet(sessionID: sessionID)
+            SecretGrantSheet(sessionID: sessionID, session: currentSession)
         }
         .sheet(isPresented: $showingRecordingsSheet) {
             RecordingsSheet(

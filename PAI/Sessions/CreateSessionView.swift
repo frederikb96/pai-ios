@@ -385,7 +385,8 @@ struct CreateSessionView: View {
     }
 
     /// The same shape `ComposerBar`'s drivable composer uses, over the same `DraftKey.newSession`
-    /// draft, minus the Cancel action (`hasSession: false` — nothing is running yet).
+    /// draft, minus Cancel and Grant Secret Access — nothing is running yet, so neither has
+    /// anything sensible to do (`hasSession: false`, `canGrantSecretAccess: false`).
     private func composerBar(_ createSession: CreateSessionStore, _ voiceController: VoiceRecorderController)
         -> some View
     {
@@ -422,6 +423,7 @@ struct CreateSessionView: View {
 
                 ComposerActionMenu(
                     hasSession: false,
+                    canGrantSecretAccess: false,
                     onPastRecordings: { showingRecordingsSheet = true },
                     onAddPhoto: { showingPhotoPicker = true },
                     onAddFile: { showingFilePicker = true },

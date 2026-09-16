@@ -64,12 +64,26 @@ final class PaiApiClientAuthFailureTests: XCTestCase {
         XCTAssertEqual(box.count, 0)
     }
 
-    /// `grantSecretAccess`'s 403 means "wrong passphrase", not a rejected bearer token — unlike
-    /// every other 403 in this client, it must NOT sign the app out. This is the one route where
-    /// `testA403AlsoNotifies`'s rule deliberately does not apply.
+    /// `grantSecretAccess`'s 403 means "not the owner identity" under contract v2 — a real
+    /// auth-shaped failure, but not one this one route should sign the whole app out over: the
+    /// bearer token itself is fine. Unlike every other 403 in this client, it must NOT sign the
+    /// app out. This is the one route where `testA403AlsoNotifies`'s rule deliberately does not
+    /// apply.
+    func testGrantSecretAccessNotAuthorizedDoesNotSignOutTheUser() async {
+        let box = FailureBox()
+        let client = makeClient(status: 403, body: #"{"detail":"not an owner identity"}"#) { box.record($0) }
+
+        let result = try? await client.grantSecretAccess(sessionId: "s1", passphrase: "x", ttlSeconds: 60)
+
+        XCTAssertEqual(result, .notAuthorized(message: "not an owner identity"))
+        XCTAssertEqual(box.count, 0)
+    }
+
+    /// 422 is the wrong-passphrase status under contract v2 — also passed through rather than
+    /// thrown, and also never a reason to sign out.
     func testGrantSecretAccessWrongPassphraseDoesNotSignOutTheUser() async {
         let box = FailureBox()
-        let client = makeClient(status: 403, body: #"{"detail":"wrong passphrase"}"#) { box.record($0) }
+        let client = makeClient(status: 422, body: #"{"detail":"wrong passphrase"}"#) { box.record($0) }
 
         let result = try? await client.grantSecretAccess(sessionId: "s1", passphrase: "wrong", ttlSeconds: 60)
 

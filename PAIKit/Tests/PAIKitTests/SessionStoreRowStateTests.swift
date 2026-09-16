@@ -192,6 +192,42 @@ final class SessionStoreRowStateTests: XCTestCase {
         XCTAssertEqual(SessionListDomain.sessionHeaderTitle(for: session), "SOCCloud : Fix the alerting rule")
     }
 
+    // MARK: - secretGrantTarget
+
+    private func makeMachine(slug: String, displayName: String, sessionTypes: [SessionType] = []) -> Machine {
+        Machine(
+            slug: slug, displayName: displayName, online: true, lastSeenAt: nil, ingestEnabled: true,
+            capabilities: Machine.Capabilities(fastSessions: false, reboot: false, shell: false),
+            sessionTypes: sessionTypes
+        )
+    }
+
+    func testSecretGrantTargetNamesTitleTypeAndMachine() {
+        let session = SessionFixture.make(
+            sessionType: "claude", title: "Fix the alerting rule", agent: "laptop")
+        let machines = [
+            makeMachine(slug: "vm", displayName: "The VM"),
+            makeMachine(
+                slug: "laptop", displayName: "Freddy's Laptop",
+                sessionTypes: [SessionType(id: "claude", name: "Claude Code", icon: "terminal")]),
+        ]
+        XCTAssertEqual(
+            SessionListDomain.secretGrantTarget(for: session, machines: machines),
+            "Fix the alerting rule · Claude Code on Freddy's Laptop"
+        )
+    }
+
+    /// No `agent` on the row falls back to the VM's own slug — every session before multi-agent
+    /// existed was one. An unknown session type or an empty/not-yet-loaded machine directory falls
+    /// back to the raw id/slug rather than showing nothing.
+    func testSecretGrantTargetFallsBackToRawIdsWhenTheMachineDirectoryHasNothingToOffer() {
+        let session = SessionFixture.make(sessionType: "custom-type", title: "Untitled work", agent: nil)
+        XCTAssertEqual(
+            SessionListDomain.secretGrantTarget(for: session, machines: []),
+            "Untitled work · custom-type on vm"
+        )
+    }
+
     // MARK: - claudeCodeUrl
 
     func testClaudeCodeUrlStripsTheCsePrefix() {

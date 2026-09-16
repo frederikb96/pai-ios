@@ -136,12 +136,22 @@ public enum MessagesAroundResult: Sendable, Equatable {
     case notFound
 }
 
-/// `grantSecretAccess`'s four outcomes — see that method's doc comment for why 403 is a case
-/// here rather than a thrown `PaiError`.
+/// `grantSecretAccess`'s outcomes — see that method's doc comment for why 403 is a case here
+/// rather than a thrown `PaiError`.
 public enum SecretGrantResult: Sendable, Equatable {
     case granted(expiresAt: String)
+    /// 422 — the passphrase itself was wrong.
     case wrongPassphrase
+    /// 409 — this session has no running conversation to grant against right now.
     case sessionUnavailable
+    /// 403 — the calling identity is not the owner. Distinct from `.wrongPassphrase`: this is not
+    /// about what was typed, and the sheet should say so rather than implying a retry would help.
+    case notAuthorized(message: String)
+    /// 429 — too many attempts; `message` is the server's own detail.
+    case rateLimited(message: String)
+    /// 400 — the request itself was malformed (e.g. a control character in the passphrase, or a
+    /// `ttl_seconds` outside 60...604800); `message` is the server's own detail.
+    case invalidRequest(message: String)
     case timedOut
 }
 
@@ -888,14 +898,17 @@ public struct PaiApiClient: Sendable {
     // MARK: Gated secret grant
 
     /// `POST /api/session/{id}/secret-grant` — grants this session's Claude conversation every
-    /// gated secret for `ttlSeconds` (60...604800, enforced server-side). The three non-2xx
-    /// shapes the contract names are outcomes for the sheet to show distinctly, not one thrown
-    /// `PaiError` collapsing them together.
+    /// gated secret for `ttlSeconds` (60...604800, enforced server-side). The non-2xx shapes the
+    /// contract names are outcomes for the sheet to show distinctly, not one thrown `PaiError`
+    /// collapsing them together.
     ///
-    /// 🚨 This endpoint's 403 means "wrong passphrase", never a rejected bearer token — but
-    /// `PaiError.isAuthenticationFailure` treats every 403 as one, and `checkStatus` signs the
-    /// whole app out on that signal. Routed through `sendPassingThrough` instead of `send` so a
-    /// mistyped passphrase never reaches `checkStatus` at all.
+    /// 🚨 422, not 403, means "wrong passphrase". 403 on this route means "not the owner
+    /// identity" — a real auth-shaped failure, but not one this client should sign the whole app
+    /// out over: the bearer token is fine, it is just not the owner, and a JWT that answers every
+    /// other endpoint should not be thrown away because of this one route's stricter check.
+    /// `PaiError.isAuthenticationFailure` cannot make that distinction (it treats every 403 as a
+    /// rejected token), so 403 stays in `sendPassingThrough`'s passthrough set — same reason as
+    /// before this endpoint's error shape changed, different outcome once it is there.
     public func grantSecretAccess(
         sessionId: String, passphrase: String, ttlSeconds: Int
     ) async throws -> SecretGrantResult {
@@ -915,11 +928,14 @@ public struct PaiApiClient: Sendable {
             path: "/api/session/\(sessionId)/secret-grant",
             method: "POST",
             body: try Self.jsonBody(Body(passphrase: passphrase, ttlSeconds: ttlSeconds)),
-            passthrough: [403, 409, 504]
+            passthrough: [400, 403, 409, 422, 429, 504]
         )
         switch status {
-        case 403: return .wrongPassphrase
+        case 422: return .wrongPassphrase
         case 409: return .sessionUnavailable
+        case 403: return .notAuthorized(message: PaiError.from(statusCode: status, body: data).userMessage)
+        case 429: return .rateLimited(message: PaiError.from(statusCode: status, body: data).userMessage)
+        case 400: return .invalidRequest(message: PaiError.from(statusCode: status, body: data).userMessage)
         case 504: return .timedOut
         default:
             do {
