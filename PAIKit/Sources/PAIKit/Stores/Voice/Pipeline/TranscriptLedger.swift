@@ -259,6 +259,12 @@ extension TranscriptLedger {
     /// was in flight is untouched either way. `delivered` is deliberately not touched here — it
     /// means the text actually reached its destination, which only the caller who wrote it there
     /// knows.
+    ///
+    /// `resolved` ranges are also folded into `acknowledged` — a settled fact about the take,
+    /// exactly as final as anything a live commit ever confirmed. Without this, the next ordinary
+    /// `folding()` call (which recomputes `gaps` entirely fresh from `acknowledged`, never
+    /// consulting `gaps`' own current, already-healed state) would silently reopen the very gap
+    /// this pass just closed.
     public func applyingBackfill(
         newSegments: [Segment], resolved: [SampleRange], failed: [(range: SampleRange, error: String)]
     ) -> TranscriptLedger {
@@ -269,10 +275,11 @@ extension TranscriptLedger {
             guard let index = updatedGaps.firstIndex(where: { $0.range == failure.range }) else { continue }
             updatedGaps[index] = BackfillPlanner.recordFailure(updatedGaps[index], error: failure.error)
         }
+        let mergedAcknowledged = Self.merge((acknowledged ?? []) + resolved)
         return TranscriptLedger(
             takeId: takeId, mode: mode, sampleRate: sampleRate, draftKey: draftKey, preText: preText,
             segments: mergedSegments, capturedUpTo: capturedUpTo, gaps: updatedGaps, boundaries: boundaries,
-            collecting: collecting, events: events, delivered: delivered, acknowledged: acknowledged
+            collecting: collecting, events: events, delivered: delivered, acknowledged: mergedAcknowledged
         )
     }
 

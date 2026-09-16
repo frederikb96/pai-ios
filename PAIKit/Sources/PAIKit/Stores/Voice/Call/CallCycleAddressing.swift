@@ -15,6 +15,13 @@ public enum CallCycleAddressing {
         (base + range.lowerBound)..<(base + range.upperBound)
     }
 
+    /// Every range in `ranges`, shifted by the same `base` — what a cycle's own
+    /// `VoiceRecordingSession.acknowledgedRanges` is handed through wholesale, the acknowledged
+    /// counterpart to `shift(_:by:)` for `[Segment]` below.
+    public static func shift(_ ranges: [SampleRange], by base: Int) -> [SampleRange] {
+        ranges.map { shift($0, by: base) }
+    }
+
     public static func shift(_ word: Word, by base: Int) -> Word {
         Word(range: shift(word.range, by: base), text: word.text, logprob: word.logprob)
     }

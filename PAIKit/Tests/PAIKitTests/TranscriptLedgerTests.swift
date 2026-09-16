@@ -280,4 +280,28 @@ final class TranscriptLedgerTests: XCTestCase {
         XCTAssertTrue(applied.gaps.isEmpty)
         XCTAssertFalse(applied.delivered, "closing every gap must not silently mark the take delivered")
     }
+
+    /// Without this, a gap `applyingBackfill` just healed reopens the instant the next ordinary
+    /// `folding()` call runs: `folding()` recomputes `gaps` entirely fresh from `acknowledged`,
+    /// which a backfill otherwise never touches, discarding the heal. A resolved range is exactly
+    /// as settled a fact about the take as anything a live commit ever acknowledged — nothing
+    /// about it should still count as "not yet accounted for" once it is folded again. Call mode
+    /// hits this on every cycle after the first, since its own ledger loop restarts per
+    /// collecting cycle: a gap healed while wake mode held no cycle open would otherwise be
+    /// silently reopened the moment the next cycle's first write lands.
+    func testApplyingBackfillMarksTheResolvedRangeAcknowledgedSoALaterFoldNeverReopensIt() {
+        let ledger = TranscriptLedger(
+            takeId: "t", mode: .microphone, sampleRate: 16000, draftKey: "s", preText: "",
+            capturedUpTo: 1500, gaps: [Gap(range: 500..<1500)], acknowledged: [0..<500]
+        )
+        let healed = ledger.applyingBackfill(
+            newSegments: [Segment(range: 500..<1500, text: "recovered", source: .batch)],
+            resolved: [500..<1500], failed: []
+        )
+        XCTAssertTrue(healed.gaps.isEmpty)
+
+        // The next ordinary write — no new live segments, no new acknowledgment, same bounds.
+        let refolded = healed.folding(liveSegments: [], capturedUpTo: 1500, newlyAcknowledged: [])
+        XCTAssertTrue(refolded.gaps.isEmpty, "a fold after a heal must not reopen the same gap")
+    }
 }
