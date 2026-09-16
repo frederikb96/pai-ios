@@ -451,14 +451,16 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
 
     /// A copy with the session-level fields of a live SSE `status` event applied — the same
     /// fields `TranscriptStore.LiveSessionStatus` carries, and nothing else, because that event
-    /// never reports any other column this type holds.
+    /// never reports any other column this type holds. A caller synthesizing a status update from
+    /// something other than the SSE stream itself (a mutation response reporting only part of it)
+    /// passes the session's own current value for whichever field the response says nothing about.
     ///
     /// 🚨 Every parameter here MUST be passed through explicitly, never left to a `= nil`
     /// default: this calls the memberwise initializer with `self`'s own other fields, so a
     /// property relying on its default would be silently reset to `nil` on every live update.
     public func withLiveStatus(
         state: SessionState?, blocker: Blocker?, working: Bool?, presenceState: SessionPresenceState?,
-        activityCounts: ActivityCounts?
+        activityCounts: ActivityCounts?, secretGrantable: Bool?
     ) -> Session {
         Session(
             id: id, sessionType: sessionType, model: model, thinking: thinking, status: status, state: state,

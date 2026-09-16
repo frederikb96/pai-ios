@@ -62,6 +62,8 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
     public let presenceState: SessionPresenceState?
     /// See `Session.activityCounts`.
     public let activityCounts: ActivityCounts?
+    /// See `Session.secretGrantable`.
+    public let secretGrantable: Bool?
     /// Outgoing messages not yet delivered.
     ///
     /// ⚠️ Superseded by `pendingSends`, which the web client reads instead — nothing there
@@ -80,6 +82,7 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
         case status, state, blocker, working, queued
         case presenceState = "presence_state"
         case activityCounts = "activity_counts"
+        case secretGrantable = "secret_grantable"
         case queuedTexts = "queued_texts"
         case pendingSends = "pending_sends"
         case lastError = "last_error"
@@ -92,6 +95,7 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
         working: Bool?,
         presenceState: SessionPresenceState? = nil,
         activityCounts: ActivityCounts? = nil,
+        secretGrantable: Bool? = nil,
         queued: Int?,
         queuedTexts: [String]?,
         pendingSends: [PendingSend]?,
@@ -103,6 +107,7 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
         self.working = working
         self.presenceState = presenceState
         self.activityCounts = activityCounts
+        self.secretGrantable = secretGrantable
         self.queued = queued
         self.queuedTexts = queuedTexts
         self.pendingSends = pendingSends

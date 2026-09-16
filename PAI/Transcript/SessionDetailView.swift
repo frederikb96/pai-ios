@@ -212,7 +212,8 @@ struct SessionDetailView: View {
             guard let newValue else { return }
             sessions.applyLiveStatus(
                 sessionId: sessionID, state: newValue.state, blocker: newValue.blocker, working: newValue.working,
-                presenceState: newValue.presenceState, activityCounts: newValue.activityCounts
+                presenceState: newValue.presenceState, activityCounts: newValue.activityCounts,
+                secretGrantable: newValue.secretGrantable
             )
         }
         .task {

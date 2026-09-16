@@ -281,13 +281,13 @@ final class PaiModelsTests: XCTestCase {
 
     /// `withLiveStatus` calls `Session`'s memberwise init, so any property left to its `= nil`
     /// default is silently reset on every live status frame — the exact trap this file's own
-    /// convention section warns about. `secretGrantable` is not one of the fields a live status
-    /// event reports, so it must survive a rebuild unchanged rather than reading `true` as `nil`
-    /// the first time a status arrives.
-    func testWithLiveStatusPreservesSecretGrantableRatherThanResettingIt() throws {
-        var session = SessionFixture.make(secretGrantable: true)
+    /// convention section warns about. `secretGrantable` is now one of the fields an SSE `status`
+    /// event reports, so a fresh value passed in must actually replace the session's own.
+    func testWithLiveStatusCarriesSecretGrantableThrough() throws {
+        var session = SessionFixture.make(secretGrantable: false)
         session = session.withLiveStatus(
-            state: .ready, blocker: nil, working: true, presenceState: .working, activityCounts: nil)
+            state: .ready, blocker: nil, working: true, presenceState: .working, activityCounts: nil,
+            secretGrantable: true)
         XCTAssertEqual(session.secretGrantable, true)
     }
 

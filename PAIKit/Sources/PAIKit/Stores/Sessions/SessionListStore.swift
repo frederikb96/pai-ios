@@ -255,20 +255,23 @@ public final class SessionListStore {
     /// the event already carries them and nothing was reading them here. A no-op for a session
     /// this store has not loaded (a subagent, or one outside every loaded page): there is no row
     /// to update, and `ensureSessionLoaded` is the caller's tool for that case, not this one.
+    ///
+    /// `secretGrantable` travels the same path so the composer's grant entry reflects a session
+    /// going live or closing without waiting for the next poll — see `Session.secretGrantable`.
     public func applyLiveStatus(
         sessionId: String, state: SessionState?, blocker: Blocker?, working: Bool?,
-        presenceState: SessionPresenceState?, activityCounts: ActivityCounts?
+        presenceState: SessionPresenceState?, activityCounts: ActivityCounts?, secretGrantable: Bool?
     ) {
         if let index = syncedSessions.firstIndex(where: { $0.id == sessionId }) {
             syncedSessions[index] = syncedSessions[index].withLiveStatus(
                 state: state, blocker: blocker, working: working, presenceState: presenceState,
-                activityCounts: activityCounts
+                activityCounts: activityCounts, secretGrantable: secretGrantable
             )
         }
         if let index = serverFilteredResults.firstIndex(where: { $0.session.id == sessionId }) {
             let updated = serverFilteredResults[index].session.withLiveStatus(
                 state: state, blocker: blocker, working: working, presenceState: presenceState,
-                activityCounts: activityCounts
+                activityCounts: activityCounts, secretGrantable: secretGrantable
             )
             serverFilteredResults[index] = SessionSearchResult(
                 session: updated, score: serverFilteredResults[index].score
@@ -471,13 +474,14 @@ public final class SessionListStore {
                 case .closed, .alreadyClosed:
                     // Mirrors the backend's own mutation (`close_session` sets exactly `state`
                     // and `blocker`) rather than `applyLiveStatus`'s SSE-shaped update, which
-                    // would blank `working`/`presenceState`/`activityCounts` this response says
-                    // nothing about.
+                    // would blank `working`/`presenceState`/`activityCounts`/`secretGrantable`
+                    // this response says nothing about.
                     if let session = self.session(withId: id) {
                         self.replaceSession(
                             session.withLiveStatus(
                                 state: .closed, blocker: nil, working: session.working,
-                                presenceState: session.presenceState, activityCounts: session.activityCounts
+                                presenceState: session.presenceState, activityCounts: session.activityCounts,
+                                secretGrantable: session.secretGrantable
                             )
                         )
                     }

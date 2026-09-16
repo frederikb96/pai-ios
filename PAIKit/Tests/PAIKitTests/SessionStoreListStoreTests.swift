@@ -692,12 +692,13 @@ final class SessionStoreListStoreTests: XCTestCase {
 
         store.applyLiveStatus(
             sessionId: "s1", state: .ready, blocker: nil, working: true, presenceState: .working,
-            activityCounts: ActivityCounts(agents: 2, tasks: 1)
+            activityCounts: ActivityCounts(agents: 2, tasks: 1), secretGrantable: true
         )
 
         XCTAssertEqual(store.syncedSessions.first?.state, .ready)
         XCTAssertEqual(store.syncedSessions.first?.working, true)
         XCTAssertEqual(store.syncedSessions.first?.activityCounts, ActivityCounts(agents: 2, tasks: 1))
+        XCTAssertEqual(store.syncedSessions.first?.secretGrantable, true)
     }
 
     /// `withLiveStatus` rebuilds the row from its own memberwise initializer — a parameter left
@@ -713,10 +714,28 @@ final class SessionStoreListStoreTests: XCTestCase {
 
         store.applyLiveStatus(
             sessionId: "s1", state: .closed, blocker: nil, working: nil, presenceState: .working,
-            activityCounts: nil
+            activityCounts: nil, secretGrantable: nil
         )
 
         XCTAssertEqual(store.syncedSessions.first?.presenceState, .working)
+    }
+
+    /// Same trap, same shape, for the field the composer's grant entry gates on — a session going
+    /// live or closing mid-screen must flip the entry without waiting for the next poll.
+    func testApplyLiveStatusCarriesSecretGrantableThrough() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1", secretGrantable: false)], nextCursor: nil))
+        }
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        store.applyLiveStatus(
+            sessionId: "s1", state: nil, blocker: nil, working: nil, presenceState: nil,
+            activityCounts: nil, secretGrantable: true
+        )
+
+        XCTAssertEqual(store.syncedSessions.first?.secretGrantable, true)
     }
 
     /// The same trap as the presence-state test above, for the field a scheduled-session filter
@@ -733,7 +752,8 @@ final class SessionStoreListStoreTests: XCTestCase {
         await store.loadInitialSessions()
 
         store.applyLiveStatus(
-            sessionId: "s1", state: .ready, blocker: nil, working: true, presenceState: nil, activityCounts: nil
+            sessionId: "s1", state: .ready, blocker: nil, working: true, presenceState: nil, activityCounts: nil,
+            secretGrantable: nil
         )
 
         XCTAssertEqual(store.syncedSessions.first?.taskId, "task-1")
@@ -800,7 +820,7 @@ final class SessionStoreListStoreTests: XCTestCase {
 
         store.applyLiveStatus(
             sessionId: "not-loaded", state: .ready, blocker: nil, working: true, presenceState: nil,
-            activityCounts: nil
+            activityCounts: nil, secretGrantable: nil
         )
 
         XCTAssertTrue(store.syncedSessions.isEmpty)
@@ -965,6 +985,28 @@ final class SessionStoreListStoreTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 2_000_000)
         }
         XCTAssertEqual(store.session(withId: "s1")?.activityCounts, counts)
+    }
+
+    /// Same trap, for `secretGrantable`: the close mutation's own response is silent about it, so
+    /// carrying it through must read the row's existing value rather than resetting it to `nil`.
+    func testCloseSessionPreservesSecretGrantableItDidNotTouch() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(
+                SessionsPage(
+                    sessions: [SessionFixture.make(id: "s1", state: .ready, secretGrantable: true)],
+                    nextCursor: nil))
+        }
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        store.closeSession(id: "s1")
+
+        let deadline = ContinuousClock().now + .seconds(5)
+        while store.session(withId: "s1")?.state != .closed, ContinuousClock().now < deadline {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        XCTAssertEqual(store.session(withId: "s1")?.secretGrantable, true)
     }
 
     /// `close_error` is not a thrown error either — a caller reading only "did it throw" would

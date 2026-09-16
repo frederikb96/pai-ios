@@ -258,6 +258,23 @@ final class TranscriptStoreTests: XCTestCase {
         XCTAssertFalse(store.isProcessing(for: "s1"))
     }
 
+    /// `secret_grantable` decodes off the wire and routes into `liveStatus` the same way
+    /// `working`/`presence_state`/`activity_counts` already do — the composer's grant entry reads
+    /// through this rather than waiting for the session row's own next poll.
+    func testApplySseStatusRecordsSecretGrantableIntoLiveStatus() async throws {
+        let json = Data(
+            """
+            {"status":"active","state":null,"blocker":null,"working":null,"secret_grantable":true}
+            """.utf8)
+        let event = try JSONDecoder().decode(SseStatusEvent.self, from: json)
+        XCTAssertEqual(event.secretGrantable, true)
+
+        let store = TranscriptStore()
+        store.applySseStatus(sessionId: "s1", event: event)
+
+        XCTAssertEqual(store.liveStatus["s1"]?.secretGrantable, true)
+    }
+
     /// The scalar these two used to be showed a session that had just been switched to whatever
     /// the previous session's stream last reported, until its own first status/connect event
     /// landed. Keyed by session, a session that has reported nothing yet must read as idle and

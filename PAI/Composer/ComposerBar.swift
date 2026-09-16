@@ -138,7 +138,7 @@ struct ComposerBar: View {
                     hasSession: true,
                     callMenuState: callMenuState,
                     otherCallSessionName: otherCallSessionName,
-                    canGrantSecretAccess: currentSession?.secretGrantable ?? false,
+                    canGrantSecretAccess: currentSecretGrantable ?? false,
                     onPastRecordings: { showingRecordingsSheet = true },
                     onAddPhoto: { showingPhotoPicker = true },
                     onAddFile: { showingFilePicker = true },
@@ -440,6 +440,13 @@ struct ComposerBar: View {
 
     private var currentSession: Session? {
         sessions.rows.first { $0.session.id == sessionID }?.session
+    }
+
+    /// The transcript's own live SSE figure wins once it has reported anything for this session —
+    /// same precedence `SessionDetailView.currentActivityCounts` uses — so the grant entry follows
+    /// a session going live or closing without waiting for `sessions`' own row to catch up.
+    private var currentSecretGrantable: Bool? {
+        transcript.liveStatus[sessionID]?.secretGrantable ?? currentSession?.secretGrantable
     }
 
     private var isMachineOffline: Bool {
