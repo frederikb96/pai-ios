@@ -1,9 +1,9 @@
 import PAIKit
 import SwiftUI
 
-/// Grants this session's Claude conversation access to every gated secret, for a bounded time —
-/// the native counterpart to a Kitty overlay running `secret grant` interactively, for whoever is
-/// on the phone instead of the laptop. Sheet shape follows `TemporaryNoteSheet`: a full-screen
+/// Grants this session's Claude conversation access to gated secrets, for a bounded time — the
+/// native counterpart to a Kitty overlay running `secret grant` interactively, for whoever is on
+/// the phone instead of the laptop. Sheet shape follows `TemporaryNoteSheet`: a full-screen
 /// `NavigationStack` with Cancel/confirm in the toolbar, since this is also the one composer
 /// surface where the field being filled in matters more than anything behind it.
 ///
@@ -25,9 +25,16 @@ struct SecretGrantSheet: View {
     @State private var ttlSeconds = Self.durationChoices[2].seconds
     @State private var isSubmitting = false
     @State private var errorMessage: String?
+    /// What the sheet has to show before a passphrase is even useful — the gated names the live
+    /// conversation actually asked for. Drives which grant action is on offer, not just what the
+    /// footer says.
+    @State private var requestedAccess: RequestedAccessState = .loading
     /// The raw `expires_at` ISO string once granted — `nil` is "still filling in the form", not
     /// "not yet known", since this sheet never shows a prior grant.
     @State private var grantedUntil: String?
+    /// What the grant actually covered — `.all` covers everything, `.requested` only what was
+    /// asked for, so this can differ from `requestedAccess`'s own list.
+    @State private var grantedNames: [String] = []
     @FocusState private var passphraseFocused: Bool
 
     /// 60...604800 is the contract's own bound; these are the presets worth offering rather than
@@ -35,6 +42,16 @@ struct SecretGrantSheet: View {
     private static let durationChoices: [(label: String, seconds: Int)] = [
         ("1 hour", 3600), ("4 hours", 14400), ("24 hours", 86400), ("3 days", 259200), ("7 days", 604800),
     ]
+
+    /// What `getSecretRequests` answered, folded into one state the form switches on.
+    private enum RequestedAccessState {
+        case loading
+        /// Gated names the conversation asked for — legitimately empty, meaning "asked, and
+        /// nothing outstanding," distinct from `.notGrantable`.
+        case names([String])
+        case notGrantable
+        case fetchFailed(String)
+    }
 
     var body: some View {
         NavigationStack {
@@ -52,9 +69,14 @@ struct SecretGrantSheet: View {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Cancel") { dismiss() }
                     }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Grant") { Task { await submit() } }
-                            .disabled(passphrase.isEmpty || isSubmitting)
+                    // Only ever the `.requested` grant — an empty request list offers no toolbar
+                    // action at all, so Return (which mirrors this button) cannot fall through to
+                    // granting everything. `.grantAllSection` is the only way there.
+                    if case let .names(names) = requestedAccess, !names.isEmpty {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Grant") { Task { await submit(scope: .requested) } }
+                                .disabled(passphrase.isEmpty || isSubmitting)
+                        }
                     }
                 } else {
                     ToolbarItem(placement: .confirmationAction) {
@@ -64,39 +86,64 @@ struct SecretGrantSheet: View {
             }
         }
         .task {
-            // `.onAppear` fires while the sheet's own presentation transition is still animating,
-            // and a focus claimed mid-transition is silently dropped — SwiftUI has nothing that
-            // signals "the sheet has actually settled," so this waits out the transition rather
-            // than racing it. Not verified on a device; flag anew if the delay proves too short
-            // or too eager on a real phone.
-            try? await Task.sleep(for: .milliseconds(400))
-            passphraseFocused = true
+            // Independent of each other — the fetch does not need the passphrase field focused,
+            // and the focus delay does not need the fetch to finish first.
+            async let requests: Void = loadRequestedAccess()
+            async let focus: Void = focusPassphraseAfterTransition()
+            _ = await (requests, focus)
         }
         .onDisappear { passphrase = "" }
         .accessibilityIdentifier("secret-grant-sheet")
     }
 
+    // `.onAppear` fires while the sheet's own presentation transition is still animating, and a
+    // focus claimed mid-transition is silently dropped — SwiftUI has nothing that signals "the
+    // sheet has actually settled," so this waits out the transition rather than racing it. Not
+    // verified on a device; flag anew if the delay proves too short or too eager on a real phone.
+    private func focusPassphraseAfterTransition() async {
+        try? await Task.sleep(for: .milliseconds(400))
+        passphraseFocused = true
+    }
+
+    private func loadRequestedAccess() async {
+        guard let client = environment.connection?.apiClient else {
+            requestedAccess = .fetchFailed("Not connected.")
+            return
+        }
+        do {
+            switch try await client.getSecretRequests(sessionId: sessionID) {
+            case let .names(names): requestedAccess = .names(names)
+            case .notGrantable: requestedAccess = .notGrantable
+            }
+        } catch {
+            requestedAccess = .fetchFailed(
+                (error as? PaiError)?.userMessage ?? "Could not check what this session has asked for.")
+        }
+    }
+
+    @ViewBuilder
     private var form: some View {
         Form {
-            Section {
-                SecureField("Passphrase", text: $passphrase)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .focused($passphraseFocused)
-                    .submitLabel(.go)
-                    .onSubmit { Task { await submit() } }
-                    .accessibilityIdentifier("secret-grant-passphrase")
-            } footer: {
-                Text("Unlocks every gated secret for \(target)'s Claude conversation, for the duration below.")
-            }
-
-            Section {
-                Picker("Access for", selection: $ttlSeconds) {
-                    ForEach(Self.durationChoices, id: \.seconds) { choice in
-                        Text(choice.label).tag(choice.seconds)
-                    }
+            switch requestedAccess {
+            case .loading:
+                spinnerSection
+            case let .names(names):
+                passphraseSection(names: names)
+                durationSection
+                if names.isEmpty {
+                    grantAllSection
                 }
-                .accessibilityIdentifier("secret-grant-duration")
+            case .notGrantable:
+                Section {
+                    Text("This session isn't running right now — nothing to grant access to.")
+                        .foregroundStyle(PaiPalette.Semantic.textMuted)
+                }
+            case let .fetchFailed(message):
+                Section {
+                    Text(message)
+                        .foregroundStyle(PaiPalette.Semantic.errorText)
+                    Button("Try again") { Task { await loadRequestedAccess() } }
+                }
             }
 
             if let errorMessage {
@@ -107,13 +154,65 @@ struct SecretGrantSheet: View {
             }
 
             if isSubmitting {
-                Section {
-                    HStack {
-                        Spacer()
-                        ProgressView()
-                        Spacer()
-                    }
+                spinnerSection
+            }
+        }
+    }
+
+    private func passphraseSection(names: [String]) -> some View {
+        Section {
+            SecureField("Passphrase", text: $passphrase)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .focused($passphraseFocused)
+                .submitLabel(.go)
+                .onSubmit {
+                    guard !names.isEmpty else { return }
+                    Task { await submit(scope: .requested) }
                 }
+                .accessibilityIdentifier("secret-grant-passphrase")
+        } footer: {
+            Text(footerText(names: names))
+        }
+    }
+
+    private var durationSection: some View {
+        Section {
+            Picker("Access for", selection: $ttlSeconds) {
+                ForEach(Self.durationChoices, id: \.seconds) { choice in
+                    Text(choice.label).tag(choice.seconds)
+                }
+            }
+            .accessibilityIdentifier("secret-grant-duration")
+        }
+    }
+
+    /// The only path to `scope: .all` — deliberately not the toolbar's `Grant` and not wired to
+    /// Return, so nothing requested can only ever be granted by an explicit tap here.
+    private var grantAllSection: some View {
+        Section {
+            Button {
+                Task { await submit(scope: .all) }
+            } label: {
+                HStack {
+                    Spacer()
+                    Text("Grant all")
+                    Spacer()
+                }
+            }
+            .disabled(passphrase.isEmpty || isSubmitting)
+            .accessibilityIdentifier("secret-grant-all")
+        } footer: {
+            Text("Grants every gated secret rather than only what was asked for.")
+        }
+    }
+
+    private var spinnerSection: some View {
+        Section {
+            HStack {
+                Spacer()
+                ProgressView()
+                Spacer()
             }
         }
     }
@@ -126,6 +225,12 @@ struct SecretGrantSheet: View {
             Text("Access granted")
                 .font(PaiTypography.bodyEmphasized.font)
                 .foregroundStyle(PaiPalette.Semantic.textPrimary)
+            if !grantedNames.isEmpty {
+                Text(grantedNames.joined(separator: ", "))
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Semantic.textMuted)
+                    .multilineTextAlignment(.center)
+            }
             Text("Until \(formatted(raw))")
                 .font(PaiTypography.caption.font)
                 .foregroundStyle(PaiPalette.Semantic.textMuted)
@@ -134,24 +239,31 @@ struct SecretGrantSheet: View {
         .accessibilityIdentifier("secret-grant-success")
     }
 
-    private func submit() async {
+    private func submit(scope: SecretGrantScope) async {
         guard let client = environment.connection?.apiClient, !passphrase.isEmpty else { return }
         isSubmitting = true
         errorMessage = nil
         defer { isSubmitting = false }
         do {
             let result = try await client.grantSecretAccess(
-                sessionId: sessionID, passphrase: passphrase, ttlSeconds: ttlSeconds)
+                sessionId: sessionID, passphrase: passphrase, ttlSeconds: ttlSeconds, scope: scope)
             switch result {
-            case let .granted(expiresAt):
+            case let .granted(expiresAt, names):
                 // Cleared here rather than only on dismiss — a granted passphrase has done its
                 // job and has no reason to sit in memory while the confirmation is on screen.
                 passphrase = ""
+                grantedNames = names
                 grantedUntil = expiresAt
             case .wrongPassphrase:
                 errorMessage = "Wrong passphrase."
             case .sessionUnavailable:
                 errorMessage = "This session isn't running right now — nothing to grant access to."
+            case .nothingRequested:
+                // A race: `requestedAccess` said there was something outstanding and there no
+                // longer is, by the time this reached the server — re-fetch so the sheet reflects
+                // it instead of offering the same stale list again.
+                errorMessage = "Nothing to grant anymore — the agent isn't waiting on a gated secret."
+                await loadRequestedAccess()
             case let .notAuthorized(message):
                 errorMessage = message
             case let .rateLimited(message):
@@ -173,6 +285,15 @@ struct SecretGrantSheet: View {
     private var target: String {
         guard let session else { return sessionID }
         return SessionListDomain.secretGrantTarget(for: session, machines: machines.allMachines)
+    }
+
+    private func footerText(names: [String]) -> String {
+        guard !names.isEmpty else {
+            return "\(target)'s Claude conversation hasn't asked for a gated secret. "
+                + "\"Grant all\" unlocks every gated secret for it, for the duration below."
+        }
+        return "Unlocks \(names.joined(separator: ", ")) for \(target)'s Claude conversation, "
+            + "for the duration below."
     }
 
     /// Mirrors `SecretField.formatted(_:)` — the backend's six-fractional-digit ISO timestamp

@@ -136,14 +136,29 @@ public enum MessagesAroundResult: Sendable, Equatable {
     case notFound
 }
 
+/// `grantSecretAccess`'s `scope` — which gated secrets a grant actually unlocks. `.requested` is
+/// the default: only the names the live conversation has asked for and not yet been granted.
+/// `.all` is the same blanket grant contract v1/v2 always issued, now something a caller opts
+/// into explicitly rather than the only behaviour there is.
+public enum SecretGrantScope: String, Sendable, Equatable, Encodable {
+    case requested, all
+}
+
 /// `grantSecretAccess`'s outcomes — see that method's doc comment for why 403 is a case here
 /// rather than a thrown `PaiError`.
 public enum SecretGrantResult: Sendable, Equatable {
-    case granted(expiresAt: String)
+    /// `names` is what the grant actually covered — every gated name under `.all`, only the
+    /// requested ones under `.requested`.
+    case granted(expiresAt: String, names: [String])
     /// 422 — the passphrase itself was wrong.
     case wrongPassphrase
-    /// 409 — this session has no running conversation to grant against right now.
+    /// 409, detail other than "nothing requested" — this session has no running conversation to
+    /// grant against right now.
     case sessionUnavailable
+    /// 409, detail "nothing requested" — `scope: .requested` and the conversation is not waiting
+    /// on a gated secret. Distinct from `.sessionUnavailable`: the session is fine, there is just
+    /// nothing to grant it.
+    case nothingRequested
     /// 403 — the calling identity is not the owner. Distinct from `.wrongPassphrase`: this is not
     /// about what was typed, and the sheet should say so rather than implying a retry would help.
     case notAuthorized(message: String)
@@ -153,6 +168,17 @@ public enum SecretGrantResult: Sendable, Equatable {
     /// `ttl_seconds` outside 60...604800); `message` is the server's own detail.
     case invalidRequest(message: String)
     case timedOut
+}
+
+/// `getSecretRequests`'s outcomes.
+public enum SecretRequestsResult: Sendable, Equatable {
+    /// Gated names the live conversation has asked for and not yet been granted. Empty is a
+    /// legitimate answer — "asked, and got nothing" — distinct from `.notGrantable`, where there
+    /// is no live conversation to have asked anything.
+    case names([String])
+    /// 409 — same predicate as `Session.secretGrantable`; this session cannot be granted access
+    /// right now regardless of scope.
+    case notGrantable
 }
 
 // MARK: - PaiApiClient
@@ -897,10 +923,29 @@ public struct PaiApiClient: Sendable {
 
     // MARK: Gated secret grant
 
-    /// `POST /api/session/{id}/secret-grant` — grants this session's Claude conversation every
-    /// gated secret for `ttlSeconds` (60...604800, enforced server-side). The non-2xx shapes the
-    /// contract names are outcomes for the sheet to show distinctly, not one thrown `PaiError`
-    /// collapsing them together.
+    /// `GET /api/session/{id}/secret-requests` — the gated names the live conversation has asked
+    /// for and not yet been granted, for the sheet to show before anyone types a passphrase.
+    /// Owner-only, same as every other session route.
+    public func getSecretRequests(sessionId: String) async throws -> SecretRequestsResult {
+        struct Response: Decodable { let names: [String] }
+        let (status, data) = try await sendPassingThrough(
+            path: "/api/session/\(sessionId)/secret-requests",
+            method: "GET",
+            passthrough: [409]
+        )
+        guard status != 409 else { return .notGrantable }
+        do {
+            return .names(try JSONDecoder().decode(Response.self, from: data).names)
+        } catch {
+            throw PaiError.decoding("\(error)")
+        }
+    }
+
+    /// `POST /api/session/{id}/secret-grant` — grants this session's Claude conversation either
+    /// every gated secret (`scope: .all`) or only the names it has actually asked for
+    /// (`scope: .requested`, the default), for `ttlSeconds` (60...604800, enforced server-side).
+    /// The non-2xx shapes the contract names are outcomes for the sheet to show distinctly, not
+    /// one thrown `PaiError` collapsing them together.
     ///
     /// 🚨 422, not 403, means "wrong passphrase". 403 on this route means "not the owner
     /// identity" — a real auth-shaped failure, but not one this client should sign the whole app
@@ -909,37 +954,53 @@ public struct PaiApiClient: Sendable {
     /// `PaiError.isAuthenticationFailure` cannot make that distinction (it treats every 403 as a
     /// rejected token), so 403 stays in `sendPassingThrough`'s passthrough set — same reason as
     /// before this endpoint's error shape changed, different outcome once it is there.
+    ///
+    /// 🚨 409 is overloaded: `scope: .requested` against nothing outstanding answers 409 with
+    /// `detail: "nothing requested"`, indistinguishable by status code alone from the older
+    /// "session unavailable" 409. Only the detail text tells them apart, so this reads it rather
+    /// than mapping the status straight to one outcome the way every other passthrough code does.
     public func grantSecretAccess(
-        sessionId: String, passphrase: String, ttlSeconds: Int
+        sessionId: String, passphrase: String, ttlSeconds: Int, scope: SecretGrantScope = .requested
     ) async throws -> SecretGrantResult {
         struct Body: Encodable {
             let passphrase: String
             let ttlSeconds: Int
+            let scope: SecretGrantScope
             enum CodingKeys: String, CodingKey {
                 case passphrase
                 case ttlSeconds = "ttl_seconds"
+                case scope
             }
         }
         struct Response: Decodable {
             let expiresAt: String
-            enum CodingKeys: String, CodingKey { case expiresAt = "expires_at" }
+            let names: [String]
+            enum CodingKeys: String, CodingKey {
+                case expiresAt = "expires_at"
+                case names
+            }
         }
         let (status, data) = try await sendPassingThrough(
             path: "/api/session/\(sessionId)/secret-grant",
             method: "POST",
-            body: try Self.jsonBody(Body(passphrase: passphrase, ttlSeconds: ttlSeconds)),
+            body: try Self.jsonBody(Body(passphrase: passphrase, ttlSeconds: ttlSeconds, scope: scope)),
             passthrough: [400, 403, 409, 422, 429, 504]
         )
         switch status {
         case 422: return .wrongPassphrase
-        case 409: return .sessionUnavailable
+        case 409:
+            if case .detail("nothing requested", _) = PaiError.from(statusCode: status, body: data) {
+                return .nothingRequested
+            }
+            return .sessionUnavailable
         case 403: return .notAuthorized(message: PaiError.from(statusCode: status, body: data).userMessage)
         case 429: return .rateLimited(message: PaiError.from(statusCode: status, body: data).userMessage)
         case 400: return .invalidRequest(message: PaiError.from(statusCode: status, body: data).userMessage)
         case 504: return .timedOut
         default:
             do {
-                return .granted(expiresAt: try JSONDecoder().decode(Response.self, from: data).expiresAt)
+                let decoded = try JSONDecoder().decode(Response.self, from: data)
+                return .granted(expiresAt: decoded.expiresAt, names: decoded.names)
             } catch {
                 throw PaiError.decoding("\(error)")
             }

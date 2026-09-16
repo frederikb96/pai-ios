@@ -530,10 +530,11 @@ final class PaiApiClientTests: XCTestCase {
 
     // MARK: - grantSecretAccess
 
-    func testGrantSecretAccessSendsPassphraseAndTtlSecondsToTheContractPath() async throws {
-        stubJSON(#"{"expires_at":"2026-09-17T12:00:00+00:00"}"#)
+    func testGrantSecretAccessSendsPassphraseTtlSecondsAndScopeToTheContractPath() async throws {
+        stubJSON(#"{"expires_at":"2026-09-17T12:00:00+00:00","names":["OPENAI_API_KEY"]}"#)
         let client = try makeClient()
-        _ = try await client.grantSecretAccess(sessionId: "s1", passphrase: "hunter2", ttlSeconds: 3600)
+        _ = try await client.grantSecretAccess(
+            sessionId: "s1", passphrase: "hunter2", ttlSeconds: 3600, scope: .requested)
 
         XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.httpMethod, "POST")
         let path = PaiStubURLProtocol.capturedRequest?.url?.path ?? ""
@@ -541,19 +542,33 @@ final class PaiApiClientTests: XCTestCase {
         let body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
         XCTAssertTrue(body.contains(#""passphrase":"hunter2""#), body)
         XCTAssertTrue(body.contains(#""ttl_seconds":3600"#), body)
+        XCTAssertTrue(body.contains(#""scope":"requested""#), body)
     }
 
-    func testGrantSecretAccessDecodesExpiresAtOnSuccess() async throws {
-        stubJSON(#"{"expires_at":"2026-09-17T12:00:00+00:00"}"#)
+    /// `scope` defaults to `.requested` when a caller omits it — the sheet never wants `.all`
+    /// unless something explicitly asked for it.
+    func testGrantSecretAccessDefaultsScopeToRequested() async throws {
+        stubJSON(#"{"expires_at":"2026-09-17T12:00:00+00:00","names":[]}"#)
+        let client = try makeClient()
+        _ = try await client.grantSecretAccess(sessionId: "s1", passphrase: "x", ttlSeconds: 60)
+
+        let body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains(#""scope":"requested""#), body)
+    }
+
+    func testGrantSecretAccessDecodesExpiresAtAndNamesOnSuccess() async throws {
+        stubJSON(#"{"expires_at":"2026-09-17T12:00:00+00:00","names":["OPENAI_API_KEY","STRIPE_KEY"]}"#)
         let client = try makeClient()
         let result = try await client.grantSecretAccess(sessionId: "s1", passphrase: "x", ttlSeconds: 60)
 
-        XCTAssertEqual(result, .granted(expiresAt: "2026-09-17T12:00:00+00:00"))
+        XCTAssertEqual(
+            result,
+            .granted(expiresAt: "2026-09-17T12:00:00+00:00", names: ["OPENAI_API_KEY", "STRIPE_KEY"]))
     }
 
     /// The contract's non-2xx shapes are outcomes the caller switches on, not one thrown
     /// `PaiError` — each has to map to its own case rather than collapsing into the others. 422,
-    /// not 403, is the wrong-passphrase status under contract v2.
+    /// not 403, is the wrong-passphrase status.
     func testGrantSecretAccessMapsEachContractStatusToItsOwnOutcome() async throws {
         let client = try makeClient()
 
@@ -582,6 +597,20 @@ final class PaiApiClientTests: XCTestCase {
         XCTAssertEqual(result, .invalidRequest(message: "passphrase contains control characters"))
     }
 
+    /// 409 is overloaded: only the `detail` text distinguishes "nothing requested" from the older
+    /// "session unavailable" meaning, both sharing the same status code.
+    func testGrantSecretAccessDistinguishesNothingRequestedFrom409BySessionUnavailableByDetailText() async throws {
+        let client = try makeClient()
+
+        stubJSON(#"{"detail":"nothing requested"}"#, statusCode: 409)
+        var result = try await client.grantSecretAccess(sessionId: "s1", passphrase: "x", ttlSeconds: 60)
+        XCTAssertEqual(result, .nothingRequested)
+
+        stubJSON(#"{"detail":"no running conversation"}"#, statusCode: 409)
+        result = try await client.grantSecretAccess(sessionId: "s1", passphrase: "x", ttlSeconds: 60)
+        XCTAssertEqual(result, .sessionUnavailable)
+    }
+
     /// Any OTHER non-2xx status still throws normally — the contract shapes above are the only
     /// carved-out outcomes, not a general "swallow every error" shape.
     func testGrantSecretAccessStillThrowsOnAnUnrelatedServerError() async throws {
@@ -592,6 +621,49 @@ final class PaiApiClientTests: XCTestCase {
             XCTFail("expected a throw")
         } catch {
             // Any throw is correct here; the point is it does not return a `.wrongPassphrase`-like case.
+        }
+    }
+
+    // MARK: - getSecretRequests
+
+    func testGetSecretRequestsSendsGetToTheContractPath() async throws {
+        stubJSON(#"{"names":[]}"#)
+        let client = try makeClient()
+        _ = try await client.getSecretRequests(sessionId: "s1")
+
+        XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.httpMethod, "GET")
+        let path = PaiStubURLProtocol.capturedRequest?.url?.path ?? ""
+        XCTAssertTrue(path.hasSuffix("/api/session/s1/secret-requests"), path)
+    }
+
+    func testGetSecretRequestsDecodesNamesIncludingEmpty() async throws {
+        let client = try makeClient()
+
+        stubJSON(#"{"names":["OPENAI_API_KEY","STRIPE_KEY"]}"#)
+        var result = try await client.getSecretRequests(sessionId: "s1")
+        XCTAssertEqual(result, .names(["OPENAI_API_KEY", "STRIPE_KEY"]))
+
+        stubJSON(#"{"names":[]}"#)
+        result = try await client.getSecretRequests(sessionId: "s1")
+        XCTAssertEqual(result, .names([]))
+    }
+
+    func testGetSecretRequestsMaps409ToNotGrantable() async throws {
+        stubJSON(#"{"detail":"session not grantable"}"#, statusCode: 409)
+        let client = try makeClient()
+        let result = try await client.getSecretRequests(sessionId: "s1")
+
+        XCTAssertEqual(result, .notGrantable)
+    }
+
+    func testGetSecretRequestsStillThrowsOnAnUnrelatedServerError() async throws {
+        stubJSON(#"{"detail":"boom"}"#, statusCode: 500)
+        let client = try makeClient()
+        do {
+            _ = try await client.getSecretRequests(sessionId: "s1")
+            XCTFail("expected a throw")
+        } catch {
+            // Any throw is correct here; the point is it does not return a `.notGrantable`-like case.
         }
     }
 }
