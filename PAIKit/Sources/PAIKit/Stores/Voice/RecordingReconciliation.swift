@@ -81,7 +81,8 @@ public enum RecordingReconciliation {
             takeId: base.takeId, mode: base.mode, sampleRate: base.sampleRate, draftKey: base.draftKey,
             preText: base.preText, segments: base.segments, capturedUpTo: capturedSampleCount,
             gaps: base.derivedGaps(capturedUpTo: capturedSampleCount), boundaries: base.boundaries,
-            collecting: base.collecting, events: base.events, delivered: base.delivered
+            collecting: base.collecting, events: base.events, delivered: base.delivered,
+            acknowledged: base.acknowledged
         )
     }
 }

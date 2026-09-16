@@ -142,6 +142,12 @@ public final class VoiceRecordingSession {
     /// How much of the take has been captured (handed to `ingestAudioChunk`) so far — the value a
     /// caller feeds `TranscriptLedger.derivedGaps(capturedUpTo:)` alongside `committedSegments`.
     public private(set) var capturedUpTo = 0
+    /// What `TranscriptLedger.derivedGaps` treats as not-a-gap: audio sent on a connection that
+    /// later received any commit message (the server acknowledging anything on a connection is
+    /// what confirms every earlier send on it landed — see `acknowledgeCurrentConnection()`), plus
+    /// audio the silence gate withheld on purpose. Never word extents: an ordinary pause between
+    /// sentences must never read as missing audio. Merged, sorted, monotonically growing.
+    public private(set) var acknowledgedRanges: [SampleRange] = []
     public private(set) var lastEndReason: RecordingEndReason?
     /// Set only when `start()` itself failed — token mint, URL construction, transport connect.
     /// A failure mid-recording (the `.error` protocol message) is reported through
@@ -170,6 +176,10 @@ public final class VoiceRecordingSession {
     /// batch backfill instead.
     private var pendingBurstRange: SampleRange?
     private var pendingBurstAttempts = 0
+    /// Ranges sent on the *current* connection since its last acknowledgment — promoted into
+    /// `acknowledgedRanges` the moment any commit message arrives (`acknowledgeCurrentConnection`),
+    /// discarded (never promoted) if the connection drops or a fatal error ends attempts first.
+    private var pendingAcknowledgment: [SampleRange] = []
     /// Set right after a reconnect's `session_started` arrives, consumed by whichever chunk `send`
     /// actually transmits next — ElevenLabs accepts `previous_text` only on a reconnect's very
     /// first chunk, so this must ride whatever goes out first, burst or live. Built from committed
@@ -288,6 +298,8 @@ public final class VoiceRecordingSession {
         capturedUpTo = 0
         coveredUpTo = 0
         sentUpTo = 0
+        acknowledgedRanges = []
+        pendingAcknowledgment = []
         sessionTimeline = SessionTimeline()
         pendingBurstRange = nil
         pendingBurstAttempts = 0
@@ -403,6 +415,9 @@ public final class VoiceRecordingSession {
             state = .recording
             reconnectAttempt = 0
             sessionTimeline.reset()
+            // Whatever was sent on the dead connection and never acknowledged is genuinely gone —
+            // discarded, not carried into the new connection's own pending list.
+            pendingAcknowledgment = []
             if isReconnect {
                 let committedText = assembledCommittedText()
                 pendingPreviousTextForNextChunk = committedText.isEmpty ? nil : String(committedText.suffix(50))
@@ -418,12 +433,16 @@ public final class VoiceRecordingSession {
             // The timestamped twin (`.committedTranscriptWithWords`) is authoritative while
             // `include_timestamps=true` is always on this connection — using this message's own
             // text as well would append the same words twice. Only the acknowledgement (clearing
-            // the partial, releasing the commit wait) is used.
+            // the partial, releasing the commit wait, and confirming everything sent before it)
+            // is used — a commit message of *either* kind is the server acknowledging the
+            // connection, even one carrying no text of its own (the final flush commit, say).
+            acknowledgeCurrentConnection()
             partial = ""
             updateTranscribedText()
             awaitingFinalCommit = false
 
         case let .committedTranscriptWithWords(text, words):
+            acknowledgeCurrentConnection()
             if !text.isEmpty { recordCommittedSegment(text: text, words: words) }
             partial = ""
             updateTranscribedText()
@@ -449,6 +468,16 @@ public final class VoiceRecordingSession {
 
     private func assembledCommittedText() -> String {
         committedSegments.map(\.text).joined(separator: " ")
+    }
+
+    /// The server acknowledging *anything* on the current connection — a commit message of either
+    /// kind, even an empty one — is what confirms every earlier send on that connection actually
+    /// landed. Promotes whatever is pending into `acknowledgedRanges` and starts a fresh pending
+    /// list for whatever gets sent next on this same connection.
+    private func acknowledgeCurrentConnection() {
+        guard !pendingAcknowledgment.isEmpty else { return }
+        acknowledgedRanges = TranscriptLedger.merge(acknowledgedRanges + pendingAcknowledgment)
+        pendingAcknowledgment = []
     }
 
     /// Turns one `committed_transcript_with_timestamps` message into a take-relative `Segment`
@@ -542,6 +571,9 @@ public final class VoiceRecordingSession {
     /// opened (or extended) over the same window intersected with the tail — everything older
     /// than the tail is left for `derivedGaps` to surface once nothing ever commits over it.
     private func recordDropBookkeeping() {
+        // Whatever was sent on this connection since its last acknowledgment never got one, and
+        // never will — the connection that would have delivered it just closed.
+        pendingAcknowledgment = []
         if !partial.isEmpty {
             provisionalText = partial
             provisionalRange = coveredUpTo..<max(coveredUpTo, sentUpTo)
@@ -583,7 +615,7 @@ public final class VoiceRecordingSession {
             audioBase64: RealtimeUplinkChunk.audioBase64(fromPCM16LE: samples), commit: false,
             sampleRate: transportRateHz
         )
-        await send(chunk, offset: offset, sampleCount: samples.count)
+        await send(chunk, offset: offset, sampleCount: samples.count, isRealAudio: true)
     }
 
     private func scheduleReconnectAttempt() {
@@ -640,6 +672,8 @@ public final class VoiceRecordingSession {
             await transport.close(code: 1000, reason: nil)
         }
         transport = nil
+        // Nothing further will ever acknowledge this — no reconnect is ever attempted from here.
+        pendingAcknowledgment = []
         if !partial.isEmpty {
             provisionalText = partial
             provisionalRange = coveredUpTo..<max(coveredUpTo, sentUpTo)
@@ -727,6 +761,11 @@ public final class VoiceRecordingSession {
         capturedUpTo = max(capturedUpTo, offset + samples.count)
 
         guard !isSilenceGated else {
+            // Deliberately withheld, not lost — marked acknowledged-or-skipped immediately rather
+            // than waiting to see whether the preroll eventually replays it: gated audio is
+            // silence by construction, and must never read as a gap regardless of whether it is
+            // later resent.
+            acknowledgedRanges = TranscriptLedger.merge(acknowledgedRanges + [offset..<(offset + samples.count)])
             // Muted audio is silenced as it is held, not only as it is sent, so unmuting before
             // the gate lifts can never release what was captured while muted.
             holdForPreroll(isMuted ? [Int16](repeating: 0, count: samples.count) : samples, offset: offset)
@@ -758,7 +797,7 @@ public final class VoiceRecordingSession {
             sampleRate: transportRateHz
         )
         if state == .recording {
-            await send(chunk, offset: offset, sampleCount: samples.count)
+            await send(chunk, offset: offset, sampleCount: samples.count, isRealAudio: true)
         } else {
             preconnectBuffer.enqueue(BufferedChunk(chunk: chunk, offset: offset, sampleCount: samples.count))
         }
@@ -799,7 +838,7 @@ public final class VoiceRecordingSession {
 
     private func flushPreconnectBuffer() async {
         for buffered in preconnectBuffer.drain() {
-            await send(buffered.chunk, offset: buffered.offset, sampleCount: buffered.sampleCount)
+            await send(buffered.chunk, offset: buffered.offset, sampleCount: buffered.sampleCount, isRealAudio: true)
         }
     }
 
@@ -809,7 +848,13 @@ public final class VoiceRecordingSession {
     /// `offset`/`sampleCount` are `nil`/`0` for frames with no real take position (currently:
     /// none — the commit frame and keepalive both now carry a placeholder offset deliberately,
     /// so every transmitted frame keeps the timeline aligned).
-    private func send(_ chunk: RealtimeUplinkChunk, offset: Int? = nil, sampleCount: Int = 0) async {
+    /// `isRealAudio` distinguishes genuine captured content (live, buffered-flush, burst) from a
+    /// synthetic frame with no real take position (keepalive silence, the commit flush) — only
+    /// the former is ever queued toward `pendingAcknowledgment`, since only genuine audio can ever
+    /// legitimately be "acknowledged" or missing.
+    private func send(_ chunk: RealtimeUplinkChunk, offset: Int? = nil, sampleCount: Int = 0, isRealAudio: Bool = false)
+        async
+    {
         guard let transport else { return }
         var outgoing = chunk
         var carriesPreviousText = false
@@ -831,6 +876,7 @@ public final class VoiceRecordingSession {
                 sessionTimeline.recordTransmittedChunk(
                     sessionSampleStart: sessionStart, takeOffset: offset, sampleCount: sampleCount)
                 sentUpTo = max(sentUpTo, offset + sampleCount)
+                if isRealAudio { pendingAcknowledgment.append(offset..<(offset + sampleCount)) }
             }
         } catch {
             // A failed send is reported by the receive loop, which sees the same dead socket.
