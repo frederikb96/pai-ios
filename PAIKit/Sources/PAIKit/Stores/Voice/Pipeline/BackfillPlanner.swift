@@ -50,7 +50,9 @@ public enum BackfillPlanner {
         var run: [Gap] = []
         func flush() {
             guard !run.isEmpty else { return }
-            requests.append(contentsOf: split(run, maxSamples: maxSamples, marginSamples: marginSamples, capturedUpTo: capturedUpTo))
+            requests.append(
+                contentsOf: split(run, maxSamples: maxSamples, marginSamples: marginSamples, capturedUpTo: capturedUpTo)
+            )
             run = []
         }
         for gap in eligible {
@@ -87,6 +89,7 @@ public enum BackfillPlanner {
     /// to the gap, not to the episode that failed it.
     public static func recordFailure(_ gap: Gap, error: String) -> Gap {
         let attempts = gap.attempts + 1
-        return Gap(range: gap.range, attempts: attempts, lastError: error, demoted: attempts >= maxAttemptsBeforeDemotion)
+        return Gap(
+            range: gap.range, attempts: attempts, lastError: error, demoted: attempts >= maxAttemptsBeforeDemotion)
     }
 }

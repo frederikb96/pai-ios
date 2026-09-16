@@ -8,9 +8,12 @@ final class BackfillPlannerTests: XCTestCase {
     /// `.stable`, however many gaps are waiting.
     func testNoRequestsUnlessTheLinkIsStable() {
         let gaps = [Gap(range: 0..<16000)]
-        XCTAssertTrue(BackfillPlanner.plan(gaps: gaps, sampleRate: 16000, capturedUpTo: 16000, health: .unstable).isEmpty)
-        XCTAssertTrue(BackfillPlanner.plan(gaps: gaps, sampleRate: 16000, capturedUpTo: 16000, health: .offline).isEmpty)
-        XCTAssertTrue(BackfillPlanner.plan(gaps: gaps, sampleRate: 16000, capturedUpTo: 16000, health: .connecting).isEmpty)
+        XCTAssertTrue(
+            BackfillPlanner.plan(gaps: gaps, sampleRate: 16000, capturedUpTo: 16000, health: .unstable).isEmpty)
+        XCTAssertTrue(
+            BackfillPlanner.plan(gaps: gaps, sampleRate: 16000, capturedUpTo: 16000, health: .offline).isEmpty)
+        XCTAssertTrue(
+            BackfillPlanner.plan(gaps: gaps, sampleRate: 16000, capturedUpTo: 16000, health: .connecting).isEmpty)
     }
 
     func testDemotedGapsAreNeverPlanned() {
@@ -71,7 +74,8 @@ final class BackfillPlannerTests: XCTestCase {
         let sampleRate = 16000
         let elevenMinutes = 11 * 60 * sampleRate
         let gaps = [Gap(range: 0..<elevenMinutes)]
-        let requests = BackfillPlanner.plan(gaps: gaps, sampleRate: sampleRate, capturedUpTo: elevenMinutes, health: .stable)
+        let requests = BackfillPlanner.plan(
+            gaps: gaps, sampleRate: sampleRate, capturedUpTo: elevenMinutes, health: .stable)
         XCTAssertEqual(requests.count, 3, "5 + 5 + 1 minutes")
         XCTAssertEqual(requests[0].range, 0..<(5 * 60 * sampleRate))
         XCTAssertEqual(requests[1].range, (5 * 60 * sampleRate)..<(10 * 60 * sampleRate))

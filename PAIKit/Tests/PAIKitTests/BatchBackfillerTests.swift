@@ -29,7 +29,8 @@ final class BatchBackfillerTests: XCTestCase {
 
     func testSuccessfulBackfillProducesABatchSegmentWithTakeShiftedWordOffsets() async {
         // A gap at samples 32000..<48000, requested with a 1s (16000-sample) margin each side.
-        let request = BackfillPlanner.Request(range: 32000..<48000, audioRange: 16000..<64000, gapRanges: [32000..<48000])
+        let request = BackfillPlanner.Request(
+            range: 32000..<48000, audioRange: 16000..<64000, gapRanges: [32000..<48000])
         let reader = makeReader(pcm: [Int16](repeating: 1, count: request.audioRange.count))
 
         let outcome = await BatchBackfiller.run(
@@ -37,7 +38,10 @@ final class BatchBackfillerTests: XCTestCase {
             transcribe: { _, _ in
                 // Words at offset zero, relative to the request's own audio — as `batchTranscribe`
                 // is contracted to return.
-                (text: "hello there", words: [Word(range: 0..<8000, text: "hello"), Word(range: 8000..<16000, text: "there")])
+                (
+                    text: "hello there",
+                    words: [Word(range: 0..<8000, text: "hello"), Word(range: 8000..<16000, text: "there")]
+                )
             }
         )
 

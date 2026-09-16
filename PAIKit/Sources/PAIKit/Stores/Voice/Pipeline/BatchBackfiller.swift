@@ -46,7 +46,8 @@ public enum BatchBackfiller {
         // take-absolute offsets by the request's own start.
         let shiftedWords = result.words.map { word in
             Word(
-                range: (word.range.lowerBound + request.audioRange.lowerBound)..<(word.range.upperBound + request.audioRange.lowerBound),
+                range: (word.range.lowerBound + request.audioRange.lowerBound)..<(word.range.upperBound
+                    + request.audioRange.lowerBound),
                 text: word.text, logprob: word.logprob
             )
         }

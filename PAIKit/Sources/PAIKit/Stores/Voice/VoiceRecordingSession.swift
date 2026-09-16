@@ -56,6 +56,35 @@ public struct VoiceRecordingDependencies: Sendable {
     }
 }
 
+/// A ring of the most recent ~20s of captured PCM, addressed by take offset — what a reconnect
+/// bursts through the fresh socket ahead of live audio, replaying exactly what was actually
+/// transmitted (mute already applied) rather than the raw capture. The renamed, repurposed
+/// `PreconnectAudioBuffer`: that type's original job — everything before the very first
+/// `session_started` — is unaffected and kept separately; this is the *outage* buffer, and unlike
+/// the old design, it is a bounded tail rather than the store of record — the disk is that now.
+private struct RecentAudioTail {
+    private struct Chunk { let offset: Int; let samples: [Int16] }
+    private var chunks: [Chunk] = []
+    let windowSamples: Int
+
+    init(windowSamples: Int) { self.windowSamples = max(1, windowSamples) }
+
+    mutating func append(offset: Int, samples: [Int16]) {
+        guard !samples.isEmpty else { return }
+        chunks.append(Chunk(offset: offset, samples: samples))
+        guard let last = chunks.last else { return }
+        let cutoff = (last.offset + last.samples.count) - windowSamples
+        chunks.removeAll { $0.offset + $0.samples.count <= cutoff }
+    }
+
+    /// Chunks overlapping `range`, in the order they were captured — what a burst actually
+    /// replays. Never mutates the tail: the same stretch may need replaying on a second attempt.
+    func chunks(in range: SampleRange) -> [(offset: Int, samples: [Int16])] {
+        chunks.filter { $0.offset < range.upperBound && $0.offset + $0.samples.count > range.lowerBound }
+            .map { ($0.offset, $0.samples) }
+    }
+}
+
 /// The recording lifecycle end to end: mint a fresh token, connect, stream audio the app hands
 /// over, decide when to stop (the user, silence, an interruption, a lost connection, a protocol
 /// error), and hand back a prefixed transcript. Everything a live microphone would otherwise
@@ -72,6 +101,14 @@ public struct VoiceRecordingDependencies: Sendable {
 @MainActor
 @Observable
 public final class VoiceRecordingSession {
+    /// How much of the take's most recent audio is kept in memory for an immediate re-burst after
+    /// a drop, before a stretch is left for the batch backfill instead.
+    static let burstTailSeconds = 20
+    /// How many consecutive reconnects may re-burst the same still-uncovered stretch before it is
+    /// left alone — a flapping connection would otherwise re-send the same twenty seconds forever
+    /// instead of accumulating genuinely new audio.
+    static let maxBurstAttempts = 2
+
     public private(set) var state: VoiceRecordingState = .idle
     public private(set) var isMuted = false
     /// Committed segments plus the current partial, joined and unprefixed. A caller streaming
@@ -80,11 +117,24 @@ public final class VoiceRecordingSession {
     /// the web's `MessageInput.tsx` live effect. The final, one-shot prefixed string is
     /// `result.prefixedText` after `stop()` returns.
     public private(set) var transcribedText = ""
+    /// Every segment committed this take, in take-offset order — what a caller persists into the
+    /// ledger. A gap is never stored here or anywhere in this type: it is what `TranscriptLedger
+    /// .derivedGaps(capturedUpTo:)` reports once fed `committedSegments` and `capturedUpTo`, the
+    /// same "derive, do not duplicate" rule the ledger itself follows.
+    public private(set) var committedSegments: [Segment] = []
+    /// The in-flight partial at the moment a drop caught it — shown as provisional, greyed text
+    /// by a caller, and never folded into a committed segment. Cleared once a real segment covers
+    /// its range.
+    public private(set) var provisionalText = ""
+    public private(set) var provisionalRange: SampleRange?
+    /// How much of the take has been captured (handed to `ingestAudioChunk`) so far — the value a
+    /// caller feeds `TranscriptLedger.derivedGaps(capturedUpTo:)` alongside `committedSegments`.
+    public private(set) var capturedUpTo = 0
     public private(set) var lastEndReason: RecordingEndReason?
     /// Set only when `start()` itself failed — token mint, URL construction, transport connect.
     /// A failure mid-recording (the `.error` protocol message) is reported through
-    /// `lastProtocolErrorMessage` and `lastEndReason == .error` instead, since by then a start
-    /// failure's distinctions (key/service/permission) no longer apply.
+    /// `lastProtocolErrorMessage` and `state == .transcriptionStopped` instead, since by then a
+    /// start failure's distinctions (key/service/permission) no longer apply.
     public private(set) var lastStartFailure: VoiceStartFailure?
     public private(set) var lastProtocolErrorMessage: String?
     /// Why the realtime socket last went away mid-take — a close reason, or the notice ElevenLabs
@@ -100,7 +150,18 @@ public final class VoiceRecordingSession {
     /// new one so a resume racing a still-sleeping retry can never produce two.
     private var reconnectTask: Task<Void, Never>?
     private var reconnectAttempt = 0
-    private var preconnectBuffer = PreconnectAudioBuffer<RealtimeUplinkChunk>()
+    private var preconnectBuffer = PreconnectAudioBuffer<BufferedChunk>()
+    private var recentAudioTail = RecentAudioTail(windowSamples: 24000 * VoiceRecordingSession.burstTailSeconds)
+    private var sessionTimeline = SessionTimeline()
+    /// The stretch of the burst tail still owed a live-socket resend after a drop — cleared once
+    /// a committed segment covers it, or once `maxBurstAttempts` is spent and it is left for the
+    /// batch backfill instead.
+    private var pendingBurstRange: SampleRange?
+    private var pendingBurstAttempts = 0
+    /// Set right after a reconnect's `session_started` arrives, consumed by whichever chunk `send`
+    /// actually transmits next — ElevenLabs accepts `previous_text` only on a reconnect's very
+    /// first chunk, so this must ride whatever goes out first, burst or live.
+    private var pendingPreviousTextForNextChunk: String?
     private var silenceDetector: SilenceDetector?
     /// Whether detected silence is currently withholding audio from the socket — distinct from
     /// `isMuted`, which is Freddy's own hand mute. See `ingestAudioChunk`'s own comment for why
@@ -111,13 +172,20 @@ public final class VoiceRecordingSession {
     /// silence equivalent of `mutedMs` below.
     private var silenceGatedMs = 0
     /// The most recent withheld audio, at most `VoiceRealtimeProtocol.gatePrerollMs` of it, sent
-    /// ahead of the first chunk after the gate lifts.
-    private var gatePreroll: [[Int16]] = []
+    /// ahead of the first chunk after the gate lifts. Carries each chunk's take offset alongside
+    /// its samples so the replay still lands at the right place in `SessionTimeline`.
+    private var gatePreroll: [(offset: Int, samples: [Int16])] = []
     /// When a frame last reached the socket — what the keepalive measures against, so any stretch
     /// without one is covered, whether it began at a gate or a reconnect.
     private var lastUplinkAt: Date?
-    private var committedSegments: [String] = []
     private var partial = ""
+    /// The furthest take offset any committed segment has covered — advances only on a real
+    /// commit, never on a drop, which is exactly what leaves the uncovered stretch derivable as a
+    /// gap rather than needing to be recorded twice.
+    private var coveredUpTo = 0
+    /// The furthest take offset actually handed to `transport.send` (or buffered toward it) —
+    /// what a drop's provisional range and pending burst range are measured against.
+    private var sentUpTo = 0
     private var recordingStart: Date?
     private var transportRateHz = 24000
     private var narrowband = false
@@ -126,6 +194,15 @@ public final class VoiceRecordingSession {
     private var lastMuteToggle: Date?
     private var awaitingFinalCommit = false
     private var isStopping = false
+
+    /// A buffered chunk carries its take offset alongside the already-mute-resolved audio, so a
+    /// chunk queued before `session_started` still lands correctly in `SessionTimeline` once it
+    /// is actually flushed.
+    private struct BufferedChunk: Sendable {
+        let chunk: RealtimeUplinkChunk
+        let offset: Int
+        let sampleCount: Int
+    }
 
     public init(dependencies: VoiceRecordingDependencies) {
         self.dependencies = dependencies
@@ -172,6 +249,7 @@ public final class VoiceRecordingSession {
         sttLanguage = settings.sttLanguage
         silenceDetector = SilenceDetector(config: .from(settings))
         recordingStart = dependencies.now()
+        recentAudioTail = RecentAudioTail(windowSamples: transportRateHz * Self.burstTailSeconds)
 
         do {
             try await connectTransport()
@@ -185,6 +263,15 @@ public final class VoiceRecordingSession {
         committedSegments = []
         partial = ""
         transcribedText = ""
+        provisionalText = ""
+        provisionalRange = nil
+        capturedUpTo = 0
+        coveredUpTo = 0
+        sentUpTo = 0
+        sessionTimeline = SessionTimeline()
+        pendingBurstRange = nil
+        pendingBurstAttempts = 0
+        pendingPreviousTextForNextChunk = nil
         lastEndReason = nil
         lastStartFailure = nil
         lastProtocolErrorMessage = nil
@@ -288,36 +375,39 @@ public final class VoiceRecordingSession {
             // allocated the session has nowhere to go. Accepting `.reconnecting` too is what
             // makes a mid-take reconnect land in exactly the same place a first connect does.
             guard state == .connecting || state == .reconnecting else { return }
+            let isReconnect = state == .reconnecting
             state = .recording
             reconnectAttempt = 0
+            sessionTimeline.reset()
+            if isReconnect {
+                let committedText = assembledCommittedText()
+                pendingPreviousTextForNextChunk = committedText.isEmpty ? nil : String(committedText.suffix(50))
+                await burstPendingTailIfNeeded()
+            }
             await flushPreconnectBuffer()
 
         case let .partialTranscript(text):
             partial = text
             updateTranscribedText()
 
-        case let .committedTranscript(text):
-            if !text.isEmpty { committedSegments.append(text) }
+        case .committedTranscript:
+            // The timestamped twin (`.committedTranscriptWithWords`) is authoritative while
+            // `include_timestamps=true` is always on this connection — using this message's own
+            // text as well would append the same words twice. Only the acknowledgement (clearing
+            // the partial, releasing the commit wait) is used.
             partial = ""
             updateTranscribedText()
             awaitingFinalCommit = false
 
-        case let .committedTranscriptWithWords(text, _):
-            // Matches `.committedTranscript` exactly — before `include_timestamps=true` was
-            // added to the connection URL, ElevenLabs never sent this message type at all, and
-            // this case exists only to keep today's one behaviour (append the committed text)
-            // now that the enum has two cases instead of one. The words are not used yet: the
-            // ledger this take offsets into, and the "ignore the plain message while a
-            // timestamped one is expected" rule the design calls for, are pipeline work, not
-            // this session's.
-            if !text.isEmpty { committedSegments.append(text) }
+        case let .committedTranscriptWithWords(text, words):
+            if !text.isEmpty { recordCommittedSegment(text: text, words: words) }
             partial = ""
             updateTranscribedText()
             awaitingFinalCommit = false
 
         case let .error(message):
             lastProtocolErrorMessage = message
-            await finishStop(reason: .error)
+            await stopTranscriptionAttempts(reason: message)
 
         case let .sessionEnding(messageType, message):
             // The close that follows is what reconnects; this only keeps the reason, which the
@@ -330,14 +420,60 @@ public final class VoiceRecordingSession {
     }
 
     private func updateTranscribedText() {
-        transcribedText = (committedSegments + [partial]).filter { !$0.isEmpty }.joined(separator: " ")
+        transcribedText = (committedSegments.map(\.text) + [partial]).filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    private func assembledCommittedText() -> String {
+        committedSegments.map(\.text).joined(separator: " ")
+    }
+
+    /// Turns one `committed_transcript_with_timestamps` message into a take-relative `Segment`
+    /// and folds it into coverage — the point where a connection-relative word timestamp becomes
+    /// an address in the take, via `SessionTimeline`.
+    private func recordCommittedSegment(text: String, words: [RealtimeWordTimestamp]) {
+        let takeWords: [Word] = words.compactMap { word in
+            guard
+                let range = sessionTimeline.takeRange(
+                    startSeconds: word.start, endSeconds: word.end, sampleRate: transportRateHz
+                )
+            else { return nil }
+            return Word(range: range, text: word.text, logprob: word.logprob)
+        }
+        let range: SampleRange
+        if let first = takeWords.first, let last = takeWords.last {
+            range = first.range.lowerBound..<last.range.upperBound
+        } else {
+            // No word could be placed (an empty `SessionTimeline`, in practice) — fall back to
+            // whatever has been transmitted but not yet covered, rather than dropping the text.
+            range = coveredUpTo..<max(coveredUpTo, sentUpTo)
+        }
+        guard !range.isEmpty else { return }
+
+        let source: Segment.Source = (pendingBurstRange.map { $0.overlaps(range) } ?? false) ? .liveBurst : .live
+        committedSegments.append(
+            Segment(range: range, text: text, words: takeWords.isEmpty ? nil : takeWords, source: source))
+        coveredUpTo = max(coveredUpTo, range.upperBound)
+
+        if let provisional = provisionalRange, coveredUpTo >= provisional.upperBound {
+            provisionalText = ""
+            provisionalRange = nil
+        }
+        if let burst = pendingBurstRange {
+            if coveredUpTo >= burst.upperBound {
+                pendingBurstRange = nil
+                pendingBurstAttempts = 0
+            } else if coveredUpTo > burst.lowerBound {
+                pendingBurstRange = coveredUpTo..<burst.upperBound
+            }
+        }
     }
 
     /// A dropped socket does not end the take by itself — over the length of recording this
     /// feature is built for, a cellular handoff, a moment of dead signal, ElevenLabs shedding load
     /// or reaching a session limit are all likely, and every one of them is survived by opening a
-    /// fresh session. Only running out of `ReconnectPolicy` attempts ends it; a failure no retry
-    /// can fix has already ended it as `.error` before the close arrives.
+    /// fresh session. Reconnection has no attempt limit any more (`ReconnectPolicy`); only a fatal
+    /// protocol error, which arrives as `.error` before any close, ever stops trying — and even
+    /// that only stops transcription attempts, never the take (`stopTranscriptionAttempts`).
     ///
     /// The socket is deliberately left open while `.paused` (an interruption keeps the take, not
     /// the connection, alive), so it can still drop out from under a paused take — an idle
@@ -352,18 +488,71 @@ public final class VoiceRecordingSession {
             return
         }
         if let closeReason, !closeReason.isEmpty { lastDisconnectDetail = closeReason }
-        guard let delay = ReconnectPolicy.delaySeconds(forAttempt: reconnectAttempt + 1) else {
-            await finishStop(reason: .connectionLost)
-            return
+        if state == .recording {
+            recordDropBookkeeping()
+            dependencies.feedback(.connectionDropped(reason: closeReason))
         }
         transport = nil
         receiveTask?.cancel()
         receiveTask = nil
         guard state != .paused else { return }
 
-        reconnectAttempt += 1
         state = .reconnecting
+        scheduleReconnectAttempt()
+    }
 
+    /// What a drop leaves behind for a caller to read as "not yet covered": the in-flight partial
+    /// becomes provisional text over `[coveredUpTo, sentUpTo)`, and a pending burst range is
+    /// opened (or extended) over the same window intersected with the tail — everything older
+    /// than the tail is left for `derivedGaps` to surface once nothing ever commits over it.
+    private func recordDropBookkeeping() {
+        if !partial.isEmpty {
+            provisionalText = partial
+            provisionalRange = coveredUpTo..<max(coveredUpTo, sentUpTo)
+        }
+        partial = ""
+
+        let tailStart = max(coveredUpTo, sentUpTo - recentAudioTail.windowSamples)
+        guard tailStart < sentUpTo else { return }
+        if let existing = pendingBurstRange {
+            pendingBurstRange = existing.lowerBound..<max(existing.upperBound, sentUpTo)
+        } else {
+            pendingBurstRange = tailStart..<sentUpTo
+            pendingBurstAttempts = 0
+        }
+    }
+
+    /// Bursts whatever is still owed from the tail through the just-opened socket, or gives up on
+    /// it once `maxBurstAttempts` is spent — the range then simply stays uncovered and is left
+    /// for the batch backfill, rather than costing a third live-socket resend on every flap.
+    private func burstPendingTailIfNeeded() async {
+        guard let range = pendingBurstRange else { return }
+        guard pendingBurstAttempts < Self.maxBurstAttempts else {
+            pendingBurstRange = nil
+            pendingBurstAttempts = 0
+            return
+        }
+        pendingBurstAttempts += 1
+        for entry in recentAudioTail.chunks(in: range) {
+            await transmitBurst(entry.samples, offset: entry.offset)
+        }
+    }
+
+    /// Replays exactly what the tail already holds (mute already resolved at original capture
+    /// time) — unlike `transmit()`, never re-appends to the tail (the same stretch may need a
+    /// second burst attempt) and never buffers if the socket is somehow not yet open (a burst
+    /// only ever runs once `state == .recording`).
+    private func transmitBurst(_ samples: [Int16], offset: Int) async {
+        let chunk = RealtimeUplinkChunk(
+            audioBase64: RealtimeUplinkChunk.audioBase64(fromPCM16LE: samples), commit: false,
+            sampleRate: transportRateHz
+        )
+        await send(chunk, offset: offset, sampleCount: samples.count)
+    }
+
+    private func scheduleReconnectAttempt() {
+        reconnectAttempt += 1
+        let delay = ReconnectPolicy.delaySeconds(forAttempt: reconnectAttempt)
         reconnectTask?.cancel()
         reconnectTask = Task { [weak self] in
             await self?.dependencies.sleep(.seconds(delay))
@@ -372,16 +561,56 @@ public final class VoiceRecordingSession {
     }
 
     /// The retry itself, shared by the backoff wait above and `resumeAfterInterruption`'s
-    /// no-transport fallback — both leave `state == .reconnecting` and call straight into this,
-    /// so there is exactly one place that mints the retry's token and opens its socket.
+    /// no-transport fallback and `retryReconnectNow()` — all three leave `state == .reconnecting`
+    /// and call straight into this, so there is exactly one place that mints the retry's token
+    /// and opens its socket.
     private func performReconnectAttempt() async {
         // Torn down (stopped, or a later event already handled) while this was scheduled.
         guard state == .reconnecting else { return }
+        guard dependencies.health() != .offline else {
+            // The network path itself is unsatisfied — attempting a mint here would only spend a
+            // round trip that cannot succeed. Wait out the same backoff and check again, rather
+            // than burning an attempt count that no longer exists.
+            scheduleReconnectAttempt()
+            return
+        }
         do {
             try await connectTransport()
         } catch {
             await handleConnectionLost(closeReason: nil)
         }
+    }
+
+    /// Called by the app once `NWPathMonitor` reports the network path satisfied again — skips
+    /// whatever backoff wait is still pending so a reconnect is attempted immediately, per the
+    /// design's "on path satisfied, attempt immediately" rule. A no-op when nothing is waiting.
+    public func retryReconnectNow() {
+        guard state == .reconnecting else { return }
+        reconnectTask?.cancel()
+        reconnectTask = Task { [weak self] in await self?.performReconnectAttempt() }
+    }
+
+    /// A fatal protocol error (auth, quota, malformed input — anything a retry cannot fix) ends
+    /// transcription attempts for the take, never the capture itself: the app keeps writing
+    /// audio to disk regardless of this method, and whatever never reached ElevenLabs live is
+    /// exactly what the batch backfill exists to fill in once conditions allow. Only `stop()`
+    /// ever leaves `.transcriptionStopped`.
+    private func stopTranscriptionAttempts(reason: String) async {
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        receiveTask?.cancel()
+        receiveTask = nil
+        if let transport {
+            await transport.close(code: 1000, reason: nil)
+        }
+        transport = nil
+        if !partial.isEmpty {
+            provisionalText = partial
+            provisionalRange = coveredUpTo..<max(coveredUpTo, sentUpTo)
+            partial = ""
+        }
+        dependencies.feedback(.fatalProtocolError(reason))
+        state = .transcriptionStopped
     }
 
     // MARK: Audio ingestion — everything the app supplies
@@ -424,11 +653,18 @@ public final class VoiceRecordingSession {
     }
 
     /// Feed one buffer of mono PCM samples at the transport rate `start(hardwareSampleRate:)`
-    /// negotiated — no resampling happens here, the app's `AVAudioConverter` already did it.
-    /// `async` so the app awaits each call from its own capture-consuming task: that keeps
-    /// chunks in order for free, the same guarantee `preConnectBuffer`'s `ConcurrentLinkedQueue`
-    /// exists to provide on Android. Sent immediately once recording, buffered until
-    /// `session_started` otherwise.
+    /// negotiated, at `offset` — this chunk's position in the take, in samples from the take's
+    /// first captured sample (`streamingSent.sampleCount` before the app's own append, in the
+    /// app's own words). No resampling happens here, the app's `AVAudioConverter` already did it.
+    /// `async` so the app awaits each call from its own capture-consuming task: that keeps chunks
+    /// in order for free, the same guarantee `preConnectBuffer`'s `ConcurrentLinkedQueue` exists
+    /// to provide on Android. Sent immediately once recording, buffered until `session_started`
+    /// otherwise.
+    ///
+    /// Also accepted during `.transcriptionStopped`: `capturedUpTo` still advances (what a caller
+    /// derives gaps against must reflect everything actually captured, not only what a live
+    /// socket could use), even though nothing is transmitted — there is no transport to send to,
+    /// and the app's own write to disk happens independently of this method regardless.
     ///
     /// While muted, the content actually sent is replaced with digital silence regardless of
     /// what was passed in — silence detection's `muted` guard only suppresses gating and the
@@ -447,43 +683,57 @@ public final class VoiceRecordingSession {
     /// `session_started` — speech spoken during a network gap is not lost, only delayed until the
     /// retry succeeds. `.paused` is deliberately excluded: the app is not capturing during an
     /// audio interruption, so nothing should be arriving to buffer in the first place.
-    public func ingestAudioChunk(pcm16le samples: [Int16]) async {
-        guard state == .recording || state == .connecting || state == .reconnecting else { return }
+    public func ingestAudioChunk(pcm16le samples: [Int16], at offset: Int) async {
+        guard
+            state == .recording || state == .connecting || state == .reconnecting
+                || state == .transcriptionStopped
+        else { return }
+        capturedUpTo = max(capturedUpTo, offset + samples.count)
+
         guard !isSilenceGated else {
             // Muted audio is silenced as it is held, not only as it is sent, so unmuting before
             // the gate lifts can never release what was captured while muted.
-            holdForPreroll(isMuted ? [Int16](repeating: 0, count: samples.count) : samples)
+            holdForPreroll(isMuted ? [Int16](repeating: 0, count: samples.count) : samples, offset: offset)
             await sendKeepaliveIfDue(sampleCount: samples.count)
             return
         }
         let preroll = gatePreroll
         gatePreroll = []
         for held in preroll {
-            await transmit(held)
+            await transmit(held.samples, offset: held.offset)
         }
-        await transmit(samples)
+        await transmit(samples, offset: offset)
     }
 
-    private func transmit(_ samples: [Int16]) async {
+    private func transmit(_ samples: [Int16], offset: Int) async {
         let effectiveSamples = isMuted ? [Int16](repeating: 0, count: samples.count) : samples
+        switch state {
+        case .transcriptionStopped:
+            // No transport to send to, and no attempt is ever made to reconnect from here — the
+            // audio is already safely on disk through the app's own write, independent of this
+            // method.
+            return
+        default:
+            break
+        }
+        recentAudioTail.append(offset: offset, samples: effectiveSamples)
         let chunk = RealtimeUplinkChunk(
-            audioBase64: RealtimeUplinkChunk.audioBase64(fromPCM16LE: effectiveSamples),
-            commit: false,
+            audioBase64: RealtimeUplinkChunk.audioBase64(fromPCM16LE: effectiveSamples), commit: false,
             sampleRate: transportRateHz
         )
         if state == .recording {
-            await send(chunk)
+            await send(chunk, offset: offset, sampleCount: samples.count)
         } else {
-            preconnectBuffer.enqueue(chunk)
+            preconnectBuffer.enqueue(BufferedChunk(chunk: chunk, offset: offset, sampleCount: samples.count))
         }
     }
 
-    private func holdForPreroll(_ samples: [Int16]) {
-        gatePreroll.append(samples)
+    private func holdForPreroll(_ samples: [Int16], offset: Int) {
+        gatePreroll.append((offset: offset, samples: samples))
         let limit = transportRateHz * VoiceRealtimeProtocol.gatePrerollMs / 1000
-        var held = gatePreroll.reduce(0) { $0 + $1.count }
-        while gatePreroll.count > 1, held - gatePreroll[0].count >= limit {
-            held -= gatePreroll.removeFirst().count
+        var held = gatePreroll.reduce(0) { $0 + $1.samples.count }
+        while gatePreroll.count > 1, held - gatePreroll[0].samples.count >= limit {
+            held -= gatePreroll.removeFirst().samples.count
         }
     }
 
@@ -499,26 +749,50 @@ public final class VoiceRecordingSession {
             return
         }
         let silence = [Int16](repeating: 0, count: sampleCount)
-        await send(
-            RealtimeUplinkChunk(
-                audioBase64: RealtimeUplinkChunk.audioBase64(fromPCM16LE: silence),
-                commit: false,
-                sampleRate: transportRateHz
-            )
+        let chunk = RealtimeUplinkChunk(
+            audioBase64: RealtimeUplinkChunk.audioBase64(fromPCM16LE: silence), commit: false,
+            sampleRate: transportRateHz
         )
+        // Synthetic silence, not real captured audio — but it still occupies a real position in
+        // the connection's own received-sample count, so `SessionTimeline` must know about it or
+        // every later word's timestamp drifts. `capturedUpTo` is the placeholder offset: nothing
+        // captured there is missing text, so a word an entry like this ever got placed at can
+        // only ever land on silence.
+        await send(chunk, offset: capturedUpTo, sampleCount: sampleCount)
     }
 
     private func flushPreconnectBuffer() async {
-        for chunk in preconnectBuffer.drain() {
-            await send(chunk)
+        for buffered in preconnectBuffer.drain() {
+            await send(buffered.chunk, offset: buffered.offset, sampleCount: buffered.sampleCount)
         }
     }
 
-    private func send(_ chunk: RealtimeUplinkChunk) async {
-        guard let transport, let data = try? chunk.encoded() else { return }
+    /// The one physical choke point every uplink frame passes through — where `previous_text` is
+    /// injected onto whichever chunk goes out first after a reconnect, and where every
+    /// successfully sent chunk with a real offset is folded into `SessionTimeline`/`sentUpTo`.
+    /// `offset`/`sampleCount` are `nil`/`0` for frames with no real take position (currently:
+    /// none — the commit frame and keepalive both now carry a placeholder offset deliberately,
+    /// so every transmitted frame keeps the timeline aligned).
+    private func send(_ chunk: RealtimeUplinkChunk, offset: Int? = nil, sampleCount: Int = 0) async {
+        guard let transport else { return }
+        var outgoing = chunk
+        if let previousText = pendingPreviousTextForNextChunk {
+            outgoing = RealtimeUplinkChunk(
+                audioBase64: chunk.audioBase64, commit: chunk.commit, sampleRate: chunk.sampleRate,
+                previousText: previousText
+            )
+            pendingPreviousTextForNextChunk = nil
+        }
+        guard let data = try? outgoing.encoded() else { return }
         do {
             try await transport.send(text: String(decoding: data, as: UTF8.self))
             lastUplinkAt = dependencies.now()
+            if let offset, sampleCount > 0 {
+                let sessionStart = sessionTimeline.nextSessionSampleStart
+                sessionTimeline.recordTransmittedChunk(
+                    sessionSampleStart: sessionStart, takeOffset: offset, sampleCount: sampleCount)
+                sentUpTo = max(sentUpTo, offset + sampleCount)
+            }
         } catch {
             // A failed send is reported by the receive loop, which sees the same dead socket.
         }
@@ -572,11 +846,14 @@ public final class VoiceRecordingSession {
     // MARK: Stop
 
     /// Idempotent: a second call while already stopping is a no-op rather than a second commit
-    /// frame or a second `finishStop`.
+    /// frame or a second `finishStop`. Callable from `.transcriptionStopped` too — that state has
+    /// no live transport, so the wait below and the commit frame are both skipped, and the take
+    /// simply ends with whatever text the batch backfill has not yet had a chance to add.
     public func stop(reason: RecordingEndReason) async {
-        guard state == .recording || state == .connecting || state == .paused || state == .reconnecting else {
-            return
-        }
+        guard
+            state == .recording || state == .connecting || state == .paused || state == .reconnecting
+                || state == .transcriptionStopped
+        else { return }
         reconnectTask?.cancel()
         reconnectTask = nil
         guard !isStopping else { return }
@@ -587,7 +864,7 @@ public final class VoiceRecordingSession {
         if transport != nil {
             awaitingFinalCommit = true
             let commitChunk = RealtimeUplinkChunk.commitFrame(sampleRate: transportRateHz)
-            await send(commitChunk)
+            await send(commitChunk, offset: capturedUpTo, sampleCount: VoiceRealtimeProtocol.commitFrameSampleCount)
 
             var waitedMs = 0
             while WaitForCommitPolicy.shouldContinueWaiting(

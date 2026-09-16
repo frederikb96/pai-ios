@@ -24,7 +24,8 @@ public struct SessionTimeline: Sendable, Equatable {
     /// and never sent (a take that stopped before flushing) must never be recorded here.
     public mutating func recordTransmittedChunk(sessionSampleStart: Int, takeOffset: Int, sampleCount: Int) {
         guard sampleCount > 0 else { return }
-        entries.append(Entry(sessionSampleStart: sessionSampleStart, takeOffsetStart: takeOffset, sampleCount: sampleCount))
+        entries.append(
+            Entry(sessionSampleStart: sessionSampleStart, takeOffsetStart: takeOffset, sampleCount: sampleCount))
     }
 
     /// The connection's own sample count as of its next transmitted chunk — what a caller passes

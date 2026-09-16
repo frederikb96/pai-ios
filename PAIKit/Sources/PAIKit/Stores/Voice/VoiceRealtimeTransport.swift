@@ -82,18 +82,19 @@ public actor URLSessionVoiceRealtimeTransport: VoiceRealtimeTransport {
 /// Every close during a take is retried, whatever its reason: ElevenLabs closes a healthy take
 /// under load (`resource_exhausted`), at a session time limit and when it has heard nothing for
 /// a while, and a phone losing signal carries no reason at all. The failures a retry cannot fix
-/// arrive as an error message before the close and end the take there — see
-/// `RealtimeDownlinkMessage`.
+/// arrive as an error message before the close and end transcription attempts there instead of
+/// retrying — see `RealtimeDownlinkMessage` and `VoiceRecordingState.transcriptionStopped`.
+///
+/// No attempt limit: over the length of a take this pipeline is built for — an hour in a pocket —
+/// a cellular handoff or a dead patch of signal is ordinary, not exceptional, and nothing about a
+/// retry count should be the reason a take ends. The delay grows then holds at its ceiling for as
+/// long as the take keeps running.
 public enum ReconnectPolicy {
-    /// Seconds, ported from Android; the last delay repeats for any attempt past the array's
-    /// length, up to `maxAttempts`.
-    public static let backoffSeconds = [5, 10, 20]
-    public static let maxAttempts = 5
+    /// Seconds. The last value repeats for any attempt past the array's length.
+    public static let backoffSeconds = [2, 4, 8, 16, 30]
 
-    /// `nil` once `maxAttempts` is exceeded — the caller gives up and reports connection loss.
-    public static func delaySeconds(forAttempt attempt: Int) -> Int? {
-        guard attempt >= 1, attempt <= maxAttempts else { return nil }
-        let index = min(attempt, backoffSeconds.count) - 1
+    public static func delaySeconds(forAttempt attempt: Int) -> Int {
+        let index = min(max(attempt, 1), backoffSeconds.count) - 1
         return backoffSeconds[index]
     }
 }

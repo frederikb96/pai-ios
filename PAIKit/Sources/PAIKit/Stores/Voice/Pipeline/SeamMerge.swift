@@ -58,7 +58,9 @@ public enum SeamMerge {
             guard !survivors.isEmpty else { continue }
             let range = survivors.first!.range.lowerBound..<survivors.last!.range.upperBound
             result.append(
-                Segment(range: range, text: survivors.map(\.text).joined(separator: " "), words: survivors, source: segment.source)
+                Segment(
+                    range: range, text: survivors.map(\.text).joined(separator: " "), words: survivors,
+                    source: segment.source)
             )
         }
         return result
@@ -109,7 +111,8 @@ public enum SeamMerge {
 
         if precedence(next.source) >= precedence(previous.source) {
             let kept = previousWords.dropLast(overlap)
-            let trimmed = Segment(range: previous.range, text: kept.joined(separator: " "), words: nil, source: previous.source)
+            let trimmed = Segment(
+                range: previous.range, text: kept.joined(separator: " "), words: nil, source: previous.source)
             return (trimmed, next)
         } else {
             let kept = nextWords.dropFirst(overlap)
