@@ -95,6 +95,17 @@ final class CallModeController {
     private var callLedgerTask: Task<Void, Never>?
     private var fallbackCommandTask: Task<Void, Never>?
     private var fallbackLastScannedSegmentCount = 0
+
+    // MARK: - The turn's live preview, written into the bound session's own draft
+
+    /// Whatever was already in the draft the moment this call began — the live preview below is
+    /// built on top of it, and it is what the draft returns to once a turn is sent or the call
+    /// ends, the same "append to whatever was already there" rule a microphone-mode take follows.
+    private var preCallDraftText = ""
+    /// The last preview text actually written — skips a redundant write on every poll tick where
+    /// nothing has changed, matching `ComposerBar`'s own live-transcript poll.
+    private var lastWrittenPreviewText: String?
+    private var previewTask: Task<Void, Never>?
     /// Set synchronously, before the first `await`, for the whole of a "start"/"stop"/"send"
     /// dispatch's own cycle transition — `beginCollectingCycle()`/`endCollectingCycle()` mutate
     /// `cycleSession`/`completedCycleSegments`/`callTakeCollectedSamples` directly, none of it
@@ -134,6 +145,10 @@ final class CallModeController {
     }
 
     var isActive: Bool { store != nil }
+    /// The session a running call is bound to, or `nil` while none is active — what the
+    /// composer's plus menu reads to tell "this session's own call" from "a call running
+    /// elsewhere" (`ComposerCallMenu.state`).
+    var activeSessionID: String? { boundSessionID }
 
     // MARK: - Entry
 
@@ -158,6 +173,8 @@ final class CallModeController {
         }
 
         boundSessionID = sessionID
+        preCallDraftText = drafts.draft(for: sessionID).text
+        lastWrittenPreviewText = nil
         let sampleRate = VoiceAudioRatePolicy.transportRate(
             hardwareRate: controller.microphoneCapture.hardwareSampleRate)
         callSampleRate = sampleRate
@@ -252,6 +269,8 @@ final class CallModeController {
         // transcribe it, no audio file to capture it, and no feedback telling him so.
         await beginCollectingCycle()
         store.finishEntering(atOffset: callTakeCollectedSamples)
+        previewTask?.cancel()
+        previewTask = Task { [weak self] in await self?.streamTurnPreviewIntoDraft() }
         return true
     }
 
@@ -609,9 +628,49 @@ final class CallModeController {
     /// a delayed `.pendingSend` resolves through — `consumeUnsentTurnText()` is what keeps the
     /// two from ever folding the same text in twice.
     private func drainUnsentTurnText() {
-        guard let store, let text = store.consumeUnsentTurnText(), let sessionID = boundSessionID else { return }
-        let current = drafts.draft(for: sessionID).text
-        drafts.setDraftText(key: sessionID, text: current.isEmpty ? text : "\(current) \(text)")
+        guard let store, let text = store.consumeUnsentTurnText() else { return }
+        appendToDraftClearingPreview(text)
+    }
+
+    /// While a call runs, the session it is bound to sees whatever the current turn has
+    /// transcribed so far — Freddy's own "see the transcript appearing in the text box" — kept
+    /// current whether or not the call screen is on top, since this runs off `CallModeController`
+    /// itself rather than the screen's own lifecycle. Reads `store.previewText`, which never
+    /// consumes anything the way `trySend` does, so polling it changes nothing about what a later
+    /// "send" actually sends.
+    private func streamTurnPreviewIntoDraft() async {
+        while !Task.isCancelled, let store, let sessionID = boundSessionID {
+            var openRange: SampleRange?
+            if case .collecting(let startOffset) = store.phase {
+                openRange = startOffset..<(callTakeCollectedSamples + cycleSamplesFed)
+            }
+            let ledger =
+                controller.currentExternalLedger
+                ?? TranscriptLedger(
+                    takeId: callTakeId ?? "", mode: .call, sampleRate: callSampleRate, draftKey: sessionID,
+                    preText: "")
+            let preview = store.previewText(openRange: openRange, in: ledger)
+            if preview != lastWrittenPreviewText {
+                lastWrittenPreviewText = preview
+                drafts.setDraftText(
+                    key: sessionID,
+                    text: VoiceRecorderController.composeLiveText(pre: preCallDraftText, partial: preview))
+            }
+            try? await Task.sleep(for: .milliseconds(300))
+        }
+    }
+
+    /// Restores the draft to whatever it held before this call's own live preview started writing
+    /// to it, then appends `text` — the shared step `drainUnsentTurnText()` and `exit()`'s own
+    /// abandoned-turn handling both need: without it, the text they append lands after a preview
+    /// that already shows the identical words, duplicating them. Updates `preCallDraftText` to the
+    /// result, so a second append later in the same call stacks rather than overwriting the first.
+    private func appendToDraftClearingPreview(_ text: String) {
+        guard let sessionID = boundSessionID, !text.isEmpty else { return }
+        lastWrittenPreviewText = nil
+        let combined = preCallDraftText.isEmpty ? text : "\(preCallDraftText) \(text)"
+        drafts.setDraftText(key: sessionID, text: combined)
+        preCallDraftText = combined
     }
 
     // MARK: - Exit
@@ -626,9 +685,12 @@ final class CallModeController {
         }
         await store.handle(CommandEvent(kind: .end, atOffset: callTakeCollectedSamples, confidence: 1))
 
-        if let text = store.lastAbandonedTurnText, !text.isEmpty, let sessionID = boundSessionID {
-            let current = drafts.draft(for: sessionID).text
-            drafts.setDraftText(key: sessionID, text: current.isEmpty ? text : "\(current) \(text)")
+        // Stopped before reading `lastAbandonedTurnText` below — the preview loop's own next tick
+        // would otherwise race this append and either clobber it or duplicate it.
+        previewTask?.cancel()
+        previewTask = nil
+        if let text = store.lastAbandonedTurnText {
+            appendToDraftClearingPreview(text)
         }
 
         await teardown()
@@ -639,6 +701,8 @@ final class CallModeController {
     /// The shared parts of ending a call, whether it ran a single second or an hour, and whether
     /// it is ending normally or because entry itself failed partway through.
     private func teardown() async {
+        previewTask?.cancel()
+        previewTask = nil
         replyFeed?.disconnect()
         replyFeed = nil
         fallbackCommandTask?.cancel()

@@ -12,6 +12,11 @@ struct VoiceRecorderButton: View {
     /// offer to stop a take it does not own — it renders an unavailable microphone instead, which
     /// is what the situation actually is.
     var isMine: Bool = true
+    /// Overrides `controller.canStart`'s own gate on an idle tap — `nil` keeps the ordinary
+    /// behavior (`CreateSessionView`'s own mic, which has no session yet to hand a running take
+    /// or call over to). The composer passes an explicit value so a tap can take over a take or a
+    /// call running elsewhere, which `controller.canStart` alone always refuses.
+    var canStartOverride: Bool?
     var onTap: () -> Void
 
     private var displayState: VoiceRecordingState {
@@ -19,7 +24,7 @@ struct VoiceRecorderButton: View {
     }
 
     private var canStart: Bool {
-        isMine && controller.canStart
+        canStartOverride ?? (isMine && controller.canStart)
     }
 
     var body: some View {

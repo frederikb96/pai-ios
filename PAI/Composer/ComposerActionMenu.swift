@@ -7,15 +7,27 @@ import SwiftUI
 /// (`MessageInput.tsx`: "nothing is running before the session exists").
 struct ComposerActionMenu: View {
     var hasSession: Bool
+    /// `nil` while there is no session yet to bind a call to — `CreateSessionView`'s own composer
+    /// has no menu entries for call mode at all, matching how it never offers a long-press either.
+    var callMenuState: ComposerCallMenuState?
+    /// The other session's own title, for `.runningElsewhere`'s label — `nil` falls back to a
+    /// generic phrase rather than an empty one.
+    var otherCallSessionName: String?
     var onPastRecordings: () -> Void
     var onAddPhoto: () -> Void
     var onAddFile: () -> Void
     var onTemporaryNote: () -> Void
     var onSecretGrant: () -> Void
     var onCancel: () -> Void
+    var onStartOrReturnToCall: () -> Void
+    var onEndCall: () -> Void
 
     var body: some View {
         Menu {
+            if let callMenuState {
+                callModeItems(state: callMenuState)
+                Divider()
+            }
             Button {
                 onPastRecordings()
             } label: {
@@ -61,5 +73,40 @@ struct ComposerActionMenu: View {
         }
         .accessibilityIdentifier("composer-action-menu")
         .accessibilityLabel("More options")
+    }
+
+    @ViewBuilder
+    private func callModeItems(state: ComposerCallMenuState) -> some View {
+        switch state {
+        case .start:
+            Button {
+                onStartOrReturnToCall()
+            } label: {
+                Label("Start Call Mode", systemImage: "phone.fill")
+            }
+            .accessibilityIdentifier("composer-menu-start-call")
+        case .returnToCall:
+            Button {
+                onStartOrReturnToCall()
+            } label: {
+                Label("Return to Call", systemImage: "phone.fill")
+            }
+            .accessibilityIdentifier("composer-menu-return-to-call")
+            Button(role: .destructive) {
+                onEndCall()
+            } label: {
+                Label("End Call", systemImage: "phone.down.fill")
+            }
+            .accessibilityIdentifier("composer-menu-end-call")
+        case .runningElsewhere:
+            Button {
+                onStartOrReturnToCall()
+            } label: {
+                Label(
+                    "Switch Call Here" + (otherCallSessionName.map { " (from \($0))" } ?? ""),
+                    systemImage: "arrow.triangle.swap")
+            }
+            .accessibilityIdentifier("composer-menu-switch-call")
+        }
     }
 }

@@ -58,6 +58,23 @@ struct CallModeScreen: View {
     @ViewBuilder
     private func content(callMode: CallModeController, store: CallModeStore) -> some View {
         VStack(spacing: 24) {
+            // Leaves the screen without ending the call — nothing here calls `exit()`, so the
+            // pipeline, the reply feed and speech output all keep running exactly as they would
+            // with the screen still on top. Reaching the call again is the plus menu's own
+            // "Return to Call" entry, which reopens this same screen and reattaches
+            // (`CallModeController.enter(sessionID:)` is a no-op once already bound to it).
+            HStack {
+                Button {
+                    dismiss()
+                } label: {
+                    Label("Back", systemImage: "chevron.down")
+                        .font(PaiTypography.bodyEmphasized.font)
+                        .foregroundStyle(PaiPalette.Semantic.textSecondary)
+                }
+                .accessibilityIdentifier("call-mode-back")
+                Spacer()
+            }
+
             Spacer()
 
             Text(stateLabel(store: store, speech: callMode.speech))

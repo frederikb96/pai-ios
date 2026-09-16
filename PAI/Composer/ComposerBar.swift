@@ -136,26 +136,24 @@ struct ComposerBar: View {
 
                 ComposerActionMenu(
                     hasSession: true,
+                    callMenuState: callMenuState,
+                    otherCallSessionName: otherCallSessionName,
                     onPastRecordings: { showingRecordingsSheet = true },
                     onAddPhoto: { showingPhotoPicker = true },
                     onAddFile: { showingFilePicker = true },
                     onTemporaryNote: { showingTemporaryNote = true },
                     onSecretGrant: { showingSecretGrant = true },
-                    onCancel: { Task { await cancelSession() } }
+                    onCancel: { Task { await cancelSession() } },
+                    onStartOrReturnToCall: { startOrReturnToCall(voiceController: voiceController) },
+                    onEndCall: { Task { await environment.connection?.callMode.exit() } }
                 )
 
                 VoiceRecorderButton(
                     controller: voiceController,
-                    isMine: voiceController.state == .idle || isRecordingHere(voiceController)
+                    isMine: voiceController.state == .idle || isRecordingHere(voiceController),
+                    canStartOverride: micButtonCanStartOverride(voiceController)
                 ) {
                     Task { await toggleRecording(draftStore: draftStore, voiceController: voiceController) }
-                }
-                // A long-press opens call mode for this session — only offered while the
-                // microphone is genuinely free, the same gate a tap already applies, so this
-                // never races a microphone-mode take started from another composer.
-                .onLongPressGesture(minimumDuration: 0.5) {
-                    guard voiceController.state == .idle else { return }
-                    showingCallMode = true
                 }
 
                 if isRecordingHere(voiceController) {
@@ -276,27 +274,88 @@ struct ComposerBar: View {
         controller.setupFailure?.userMessage ?? controller.lastStartFailure?.userMessage
     }
 
+    /// What tapping the mic in this session's composer does to whatever else is claiming the one
+    /// shared microphone — Freddy's "the new one wins, the old one stops cleanly" rule
+    /// (`VoiceHandover.forMicrophoneTap`), never applicable while this session already owns the
+    /// running take (`isRecordingHere` handles that tap as an ordinary stop instead).
+    private func microphoneHandoverAction(_ controller: VoiceRecorderController) -> VoiceHandoverAction {
+        let running = controller.state == .idle ? nil : controller.activeDraftKey
+        return VoiceHandover.forMicrophoneTap(
+            sessionID: sessionID, microphoneTakeSessionID: running,
+            callModeActive: environment.connection?.callMode.isActive ?? false)
+    }
+
+    /// `nil` defers to `VoiceRecorderButton`'s own ordinary gate (`controller.canStart`) — the
+    /// case where a tap genuinely cannot start anything (already starting, no key configured).
+    /// `true` forces the button tappable even though `controller.canStart` would refuse it: a
+    /// handover tap does not itself start anything until the thing it is taking over has stopped,
+    /// so the ordinary "is the microphone free right now" gate does not apply to it.
+    private func micButtonCanStartOverride(_ controller: VoiceRecorderController) -> Bool? {
+        guard !isRecordingHere(controller) else { return nil }
+        switch microphoneHandoverAction(controller) {
+        case .startOnly, .alreadyHere: return nil
+        case .stopMicrophoneTake, .stopCallMode: return true
+        }
+    }
+
     private func toggleRecording(draftStore: DraftStore, voiceController: VoiceRecorderController) async {
-        // A take belonging to another session (or to the new-session sheet) is not this bar's to
-        // end, and there is only one microphone. Said out loud rather than silently ignored — a
-        // record button that does nothing reads as a broken app.
-        guard voiceController.state == .idle || isRecordingHere(voiceController) else {
-            sendErrorMessage = "A recording is already running somewhere else."
+        if isRecordingHere(voiceController) {
+            // A tap always means "end the take", regardless of which mid-take state it caught —
+            // `VoiceRecordingSession.stop` accepts all of them. The text itself is the recorder's
+            // business now, on every one of the ways a take can end; nothing is applied here.
+            guard voiceController.state != .stopping else { return }
+            await voiceController.stop()
             return
         }
 
         sendErrorMessage = nil
-        switch voiceController.state {
-        case .idle:
-            await voiceController.start(draftKey: sessionID, preText: draftStore.draft(for: sessionID).text)
-        case .recording, .connecting, .paused, .reconnecting, .transcriptionStopped:
-            // A tap always means "end the take", regardless of which of these mid-take states it
-            // caught — `VoiceRecordingSession.stop` accepts all of them. The text itself is the
-            // recorder's business now, on every one of the ways a take can end; nothing is
-            // applied here.
+        switch microphoneHandoverAction(voiceController) {
+        case .stopMicrophoneTake:
+            // The other session's own draft keeps exactly the text its take had transcribed —
+            // `VoiceRecorderController.stop()` writes it there itself, the same as an ordinary
+            // tap-to-stop in that composer would.
             await voiceController.stop()
-        case .stopping:
+        case .stopCallMode:
+            await environment.connection?.callMode.exit()
+        case .startOnly, .alreadyHere:
             break
+        }
+        await voiceController.start(draftKey: sessionID, preText: draftStore.draft(for: sessionID).text)
+    }
+
+    // MARK: - Call mode
+
+    private var callMenuState: ComposerCallMenuState {
+        ComposerCallMenu.state(
+            callBoundSessionID: environment.connection?.callMode.activeSessionID, sessionID: sessionID)
+    }
+
+    /// The title of the session a call is running in elsewhere, for the plus menu's own
+    /// "Switch Call Here" label — `nil` when there is none to name, or it has none of its own.
+    private var otherCallSessionName: String? {
+        guard let otherID = environment.connection?.callMode.activeSessionID, otherID != sessionID else { return nil }
+        return sessions.rows.first { $0.session.id == otherID }?.session.title
+    }
+
+    /// The plus menu's one call-mode action, whatever state it is offered from — starting fresh,
+    /// reattaching to this session's own call, or switching a call running elsewhere over to here.
+    /// `VoiceHandover.forCallModeStart` decides which; this only ever runs `exit()` for whichever
+    /// half of "the new one wins, the old one stops cleanly" actually applies.
+    private func startOrReturnToCall(voiceController: VoiceRecorderController) {
+        Task {
+            let running = voiceController.state == .idle ? nil : voiceController.activeDraftKey
+            switch VoiceHandover.forCallModeStart(
+                sessionID: sessionID, callBoundSessionID: environment.connection?.callMode.activeSessionID,
+                microphoneTakeSessionID: running)
+            {
+            case .stopMicrophoneTake:
+                await voiceController.stop()
+            case .stopCallMode:
+                await environment.connection?.callMode.exit()
+            case .startOnly, .alreadyHere:
+                break
+            }
+            showingCallMode = true
         }
     }
 
