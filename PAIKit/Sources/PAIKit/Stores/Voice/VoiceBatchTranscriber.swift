@@ -57,11 +57,73 @@ public struct VoiceBatchTranscriber: Sendable {
         return .text(decoded.text)
     }
 
+    /// What the backfill pipeline needs that the plain `transcribe(wav:token:language:)` above
+    /// does not: word-level timestamps (so `SeamMerge` can place each word), and the keyterm list
+    /// biasing recognition toward the command phrases and Freddy's recurring vocabulary. A
+    /// separate result type rather than a richer `Result` — `.text(String)` is pattern-matched
+    /// with a single associated value at its one existing call site, and widening it would break
+    /// that match rather than merely add to it.
+    public enum WordTimestampResult: Sendable, Equatable {
+        case words(text: String, words: [RealtimeWordTimestamp])
+        case noSpeechDetected
+        case failed(PaiError)
+    }
+
+    public func transcribeWithWordTimestamps(
+        wav: Data, token: String, language: VoiceSettings.Language, keyterms: [String] = []
+    ) async throws -> WordTimestampResult {
+        let boundary = "PAIKit-\(UUID().uuidString)"
+        let body = Self.multipartBody(
+            wav: wav, language: language, boundary: boundary, timestampsGranularity: "word", keyterms: keyterms
+        )
+
+        var components = URLComponents(string: "https://api.elevenlabs.io/v1/speech-to-text")
+        components?.queryItems = [URLQueryItem(name: "token", value: token)]
+        guard let url = components?.url else { throw VoiceTransportError.notConnected }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+
+        let (data, response) = try await urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            return .failed(.transport("Response was not HTTP"))
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            return .failed(.from(statusCode: http.statusCode, body: data))
+        }
+
+        // Same wire shape as the realtime endpoint's `committed_transcript_with_timestamps`
+        // (`text`/`start`/`end`/`type`/`logprob` per word) — `type: "spacing"` (and any
+        // non-`"word"` entry, e.g. `"audio_event"`) is filtered the same way.
+        struct WordEnvelope: Decodable {
+            let text: String
+            let start: Double?
+            let end: Double?
+            let type: String
+            let logprob: Double?
+        }
+        struct ResponseBody: Decodable { let text: String; let words: [WordEnvelope]? }
+        guard let decoded = try? JSONDecoder().decode(ResponseBody.self, from: data), !decoded.text.isEmpty else {
+            return .noSpeechDetected
+        }
+        let words =
+            (decoded.words ?? [])
+            .filter { $0.type == "word" }
+            .map { RealtimeWordTimestamp(text: $0.text, start: $0.start ?? 0, end: $0.end ?? 0, logprob: $0.logprob) }
+        return .words(text: decoded.text, words: words)
+    }
+
     /// Pure body construction — testable without a network call. `language_code` is omitted for
-    /// `.auto`, matching `VoiceRealtimeProtocol.connectionURL`'s reasoning. Internal rather than
-    /// `private` so `VoiceBatchTranscriberTests` can assert its shape directly instead of
-    /// reaching it only through a stubbed round trip.
-    static func multipartBody(wav: Data, language: VoiceSettings.Language, boundary: String) -> Data {
+    /// `.auto`, matching `VoiceRealtimeProtocol.connectionURL`'s reasoning. `timestampsGranularity`
+    /// and `keyterms` are `nil`/empty by default so the plain `transcribe` call above is
+    /// unaffected. Internal rather than `private` so `VoiceBatchTranscriberTests` can assert its
+    /// shape directly instead of reaching it only through a stubbed round trip.
+    static func multipartBody(
+        wav: Data, language: VoiceSettings.Language, boundary: String, timestampsGranularity: String? = nil,
+        keyterms: [String] = []
+    ) -> Data {
         var body = Data()
         func appendField(name: String, value: String) {
             body.append("--\(boundary)\r\n".data(using: .utf8)!)
@@ -72,6 +134,12 @@ public struct VoiceBatchTranscriber: Sendable {
         appendField(name: "model_id", value: modelId)
         if language != .auto {
             appendField(name: "language_code", value: language.rawValue)
+        }
+        if let timestampsGranularity {
+            appendField(name: "timestamps_granularity", value: timestampsGranularity)
+        }
+        for term in keyterms {
+            appendField(name: "keyterms", value: term)
         }
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append(
