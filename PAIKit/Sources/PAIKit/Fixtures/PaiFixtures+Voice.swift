@@ -238,4 +238,18 @@ extension PaiFixtures {
         rawStored: true,
         endedBy: .crashed
     )
+
+    /// A take the durable pipeline is still catching up on — one open gap, most of the audio
+    /// already covered. Exists so the recordings sheet's coverage line ("M:SS untranscribed") has
+    /// something to draw in a screenshot; `recordingOrdinary`/`recordingRecovered` both carry no
+    /// `transcription` at all, so neither ever renders it.
+    public static let recordingWithOpenGap = RecordingMeta(
+        timestampMs: 1_798_615_000_000,
+        durationMs: 42_000,
+        sampleRate: 16000,
+        rawStored: true,
+        endedBy: .connectionLost,
+        transcript: "the first part of this recording made it through before the connection dropped",
+        transcription: TranscriptionMeta(coveredMs: 34_000, gapMs: 8000, gapCount: 1, state: .pending, delivered: false)
+    )
 }

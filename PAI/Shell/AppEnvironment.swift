@@ -172,8 +172,9 @@ final class AppEnvironment {
             // that the row drew at all, exactly as it duplicated into a wall of "Recovered" rows.
             if PaiFixtureLaunch.isEnabled() {
                 let alreadySeeded = Set(settingsStore.recordings.map(\.id))
-                for recording in [PaiFixtures.recordingOrdinary, PaiFixtures.recordingRecovered]
-                where !alreadySeeded.contains(recording.id) {
+                for recording in [
+                    PaiFixtures.recordingOrdinary, PaiFixtures.recordingRecovered, PaiFixtures.recordingWithOpenGap,
+                ] where !alreadySeeded.contains(recording.id) {
                     settingsStore.saveRecording(recording)
                 }
             }
