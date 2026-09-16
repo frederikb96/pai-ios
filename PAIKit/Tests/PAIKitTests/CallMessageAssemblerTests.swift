@@ -93,4 +93,61 @@ final class CallMessageAssemblerTests: XCTestCase {
         XCTAssertEqual(
             CallMessageAssembler.assembledText(for: [0..<100, 800..<1000], in: ledger), "first half second half")
     }
+
+    // MARK: - Assembly with a command's own spoken words stripped out
+
+    func testStrippingWithNoCommandsAtAllIsIdenticalToPlainAssembly() {
+        let ledger = ledger(segments: [
+            Segment(range: 0..<100, text: "hello there", source: .live)
+        ])
+        XCTAssertEqual(
+            CallMessageAssembler.assembledText(for: [0..<100], in: ledger, strippingCommands: []),
+            CallMessageAssembler.assembledText(for: [0..<100], in: ledger))
+    }
+
+    func testStrippingRemovesTheCommandsOwnWordsFromASegmentThatCarriesWordTiming() {
+        let words = [
+            Word(range: 0..<400, text: "hello"), Word(range: 400..<700, text: "kai"),
+            Word(range: 700..<1000, text: "stop"),
+        ]
+        let ledger = ledger(segments: [
+            Segment(range: 0..<1000, text: "hello kai stop", words: words, source: .live)
+        ])
+        let command = CommandEvent(kind: .stop, atOffset: 850, confidence: 1)
+
+        XCTAssertEqual(
+            CallMessageAssembler.assembledText(for: [0..<1000], in: ledger, strippingCommands: [command]),
+            "hello")
+    }
+
+    func testStrippingLeavesASegmentWithNoWordTimingUnstrippedRatherThanDroppingIt() {
+        // A batch backfill result older than word-level timing, say — an occasional stray command
+        // word left in is a far smaller cost than silently losing genuinely dictated text.
+        let ledger = ledger(segments: [
+            Segment(range: 0..<1000, text: "hello kai stop", words: nil, source: .batch)
+        ])
+        let command = CommandEvent(kind: .stop, atOffset: 850, confidence: 1)
+
+        XCTAssertEqual(
+            CallMessageAssembler.assembledText(for: [0..<1000], in: ledger, strippingCommands: [command]),
+            "hello kai stop")
+    }
+
+    func testStrippingOnlyTouchesWordsMatchingTheFiredCommandsOwnVocabulary() {
+        // "stop" is spoken here, but the only command that fired is "send" — a coincidental word
+        // that merely resembles a command's vocabulary must never be cut unless that command
+        // actually fired.
+        let words = [
+            Word(range: 0..<400, text: "please"), Word(range: 400..<700, text: "dont"),
+            Word(range: 700..<1000, text: "stop"),
+        ]
+        let ledger = ledger(segments: [
+            Segment(range: 0..<1000, text: "please dont stop", words: words, source: .live)
+        ])
+        let command = CommandEvent(kind: .send, atOffset: 850, confidence: 1)
+
+        XCTAssertEqual(
+            CallMessageAssembler.assembledText(for: [0..<1000], in: ledger, strippingCommands: [command]),
+            "please dont stop")
+    }
 }

@@ -22,6 +22,15 @@ import PAIKit
 final class WakeWordCommandListener {
     var onCommand: ((CommandEvent) -> Void)?
 
+    /// Every command this listener's classifier actually loaded and is scoring — distinct from
+    /// `config.offlineCommands`, which is only what Freddy asked for. A caller deciding whether
+    /// the transcript fallback should skip a command (because the offline engine already owns
+    /// it) must check this, never the raw config: a command the config names but whose `.onnx`
+    /// file never made it into the bundle is unreachable by *either* channel if the config alone
+    /// decides — the offline engine never fires it, and the fallback stays silent believing the
+    /// offline engine has it covered.
+    private(set) var loadedCommands: Set<CommandKind> = []
+
     private var model: WakeWordModel?
     private var gate: WakeWordCommandGate?
     private var sampleRate: Double = 16_000
@@ -40,37 +49,51 @@ final class WakeWordCommandListener {
     private var takeOffset = 0
 
     /// Loads a classifier for every command `config.offlineCommands` names that actually has an
-    /// `.onnx` file in the app bundle — a command it names with no file present is silently
-    /// skipped and reported once through `feedback` (`.commandModelMissing`), never a crash.
-    /// Trained models ship as `<CommandKind.modelName>.onnx`; thresholds come from a
-    /// `thresholds.json` alongside them, decoded as `WakeWordManifest`, with
-    /// `WakeWordManifest.defaultThreshold` standing in for any command that file doesn't name —
-    /// see `modelURL(for:)`/`loadManifest()` for exactly where both are looked up.
+    /// `.onnx` file in the app bundle — a command it names with no file present is silently left
+    /// out of `loadedCommands`, never a crash. Trained models ship as
+    /// `<CommandKind.modelName>.onnx`; thresholds come from a `thresholds.json` alongside them,
+    /// decoded as `WakeWordManifest`, with `WakeWordManifest.defaultThreshold` standing in for
+    /// any command that file doesn't name — see `modelURL(for:)`/`loadManifest()` for exactly
+    /// where both are looked up.
+    ///
+    /// `feedback` fires **at most once** per call, whatever went wrong and however many commands
+    /// it touched — a call that ships with none of its five models bundled would otherwise post
+    /// five separate notifications the instant it starts, exactly the "chatty" failure mode
+    /// `FeedbackPolicy` exists to collapse everywhere else it can reach. One representative
+    /// missing command is enough to point Freddy at the bundle; naming all of them needs a
+    /// `FeedbackEvent` case built to carry more than one, which is not this fix's to add.
     func start(config: WakeWordListeningConfig, sampleRate: Double, feedback: @escaping (FeedbackEvent) -> Void) {
         stop()
         self.sampleRate = sampleRate
         let ringSize = max(Int(sampleRate * Self.windowSeconds), 1)
         ring = [Int16](repeating: 0, count: ringSize)
 
-        var urls: [URL] = []
+        var found: [(kind: CommandKind, url: URL)] = []
+        var firstMissingKind: CommandKind?
         for kind in config.offlineCommands.sorted(by: { $0.rawValue < $1.rawValue }) {
             guard let url = Self.modelURL(for: kind) else {
-                feedback(.commandModelMissing(kind))
+                if firstMissingKind == nil { firstMissingKind = kind }
                 continue
             }
-            urls.append(url)
+            found.append((kind, url))
         }
-        guard !urls.isEmpty else { return }
+        guard !found.isEmpty else {
+            if let firstMissingKind { feedback(.commandModelMissing(firstMissingKind)) }
+            return
+        }
         do {
-            model = try WakeWordModel(models: urls, sampleRate: UInt32(sampleRate))
+            model = try WakeWordModel(models: found.map(\.url), sampleRate: UInt32(sampleRate))
             gate = WakeWordCommandGate(manifest: Self.loadManifest(), sampleRate: sampleRate)
+            loadedCommands = Set(found.map(\.kind))
+            if let firstMissingKind { feedback(.commandModelMissing(firstMissingKind)) }
         } catch {
-            // Every command configured to load offline is effectively missing — one event per
-            // command rather than inventing a separate "engine failed entirely" case for what is,
-            // from the caller's point of view, the same degrade.
-            for kind in config.offlineCommands { feedback(.commandModelMissing(kind)) }
+            // The engine itself never started, so every command that would have loaded is
+            // effectively missing too — `loadedCommands` stays empty either way, and this is
+            // still the one notification for the whole failure, not one per command.
+            feedback(.commandModelMissing(firstMissingKind ?? found[0].kind))
             model = nil
             gate = nil
+            loadedCommands = []
         }
     }
 
@@ -135,6 +158,7 @@ final class WakeWordCommandListener {
         writeIndex = 0
         samplesWritten = 0
         inflight = false
+        loadedCommands = []
     }
 }
 

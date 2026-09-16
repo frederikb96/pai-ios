@@ -77,4 +77,18 @@ final class WakeWordCommandGateTests: XCTestCase {
         let events = gate.detect(scores: ["kai_stop": 0.9], atOffset: Int(rate * 0.02))
         XCTAssertEqual(events.map(\.kind), [.stop])
     }
+
+    /// This is the gate working exactly as designed — the contract a caller must honor is what
+    /// makes it a trap rather than a feature: `atOffset` has to be a genuinely advancing audio
+    /// position, never merely repeated. A caller that stalls the offset it feeds this gate (wake
+    /// mode's own offset never advancing between collecting cycles, say) reproduces exactly this
+    /// shape for a real command spoken a second time, without anything here ever changing.
+    func testTwoDetectionsAtTheExactSameOffsetAreDebouncedForever() {
+        var gate = WakeWordCommandGate(manifest: WakeWordManifest(), sampleRate: rate)
+        let first = gate.detect(scores: ["kai_skip": 0.9], atOffset: 5000)
+        let second = gate.detect(scores: ["kai_skip": 0.9], atOffset: 5000)
+
+        XCTAssertEqual(first.count, 1)
+        XCTAssertEqual(second.count, 0, "a caller whose offset never advances can never fire this command again")
+    }
 }

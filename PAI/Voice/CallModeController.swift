@@ -75,10 +75,27 @@ final class CallModeController {
     /// only advances across `collecting` stretches, never across a wake-mode gap between them.
     private var callTakeCollectedSamples = 0
     private var cycleSamplesFed = 0
+    /// A monotonic count of every sample this call has ever captured, in every phase — unlike
+    /// `callTakeCollectedSamples`/`cycleSamplesFed`, which only advance while `collecting`. The
+    /// wake-word listener's own offset is built from this and only this: `WakeWordCommandGate`
+    /// debounces a repeated detection by comparing its offset against the last one accepted for
+    /// that command, so an offset that stalls while `.listening` (as the ledger-addressed one
+    /// does, since nothing advances it between cycles) makes a second "Kai skip" indistinguishable
+    /// from the echo of the first and silently drops it forever.
+    private var wakeWordCaptureOffset = 0
     private var callSampleRate = 16_000
     private var callLedgerTask: Task<Void, Never>?
     private var fallbackCommandTask: Task<Void, Never>?
     private var fallbackLastScannedSegmentCount = 0
+    /// Set synchronously, before the first `await`, for the whole of a "start"/"stop"/"send"
+    /// dispatch's own cycle transition — `beginCollectingCycle()`/`endCollectingCycle()` mutate
+    /// `cycleSession`/`completedCycleSegments`/`callTakeCollectedSamples` directly, none of it
+    /// guarded by `CallModeStore`'s own phase, so a second command landing mid-transition (the
+    /// pipeline's own `await`s run seconds, not instantly) would otherwise double-process the
+    /// same segments. Dropping the whole command while this is set is deliberate: `CommandDetector`
+    /// and the wake-word engine both re-arm on the next spoken command, and a duplicate this close
+    /// together is far more likely an echo of the same one than Freddy actually saying it twice.
+    private var isTransitioningCycle = false
 
     init(
         controller: VoiceRecorderController, apiClient: PaiApiClient, requestFactory: PaiRequestFactory,
@@ -137,6 +154,7 @@ final class CallModeController {
             hardwareRate: controller.microphoneCapture.hardwareSampleRate)
         callSampleRate = sampleRate
         callTakeCollectedSamples = 0
+        wakeWordCaptureOffset = 0
         completedCycleSegments = []
         completedCollectingRanges = []
         // The exact id scheme a microphone-mode take uses — never prefixed or otherwise marked as
@@ -159,7 +177,10 @@ final class CallModeController {
         controller.beginExternalTake(
             TranscriptLedger(takeId: takeId, mode: .call, sampleRate: sampleRate, draftKey: sessionID, preText: "")
         ) { [weak self] in
-            Task { @MainActor in await self?.store?.ledgerChanged() }
+            Task { @MainActor in
+                await self?.store?.ledgerChanged()
+                self?.drainUnsentTurnText()
+            }
         }
 
         let store = CallModeStore(
@@ -179,7 +200,19 @@ final class CallModeController {
                 },
                 postMessage: { [weak self] text in
                     guard let self else { return }
-                    _ = try await self.apiClient.postMessage(sessionId: sessionID, message: text)
+                    // The same shape `ComposerBar.send` already uses: a bubble shows the instant
+                    // the request goes out, named by the row it becomes once the request answers
+                    // — never left to the reply feed alone, which only speaks a new assistant
+                    // message and has nothing to say about Freddy's own send still in flight.
+                    let sendTask = Task<PostMessageResponse, Error> {
+                        try await self.apiClient.postMessage(sessionId: sessionID, message: text)
+                    }
+                    // `@Sendable`, calling a `@MainActor` store's method — same assertion as
+                    // `currentLedger` above, for the same reason.
+                    MainActor.assumeIsolated {
+                        self.transcript.trackSend(sessionId: sessionID, text: text, send: sendTask)
+                    }
+                    _ = try await sendTask.value
                 },
                 feedback: { [weak self] event in MainActor.assumeIsolated { self?.controller.handleFeedback(event) } }
             ))
@@ -205,8 +238,13 @@ final class CallModeController {
             return false
         }
 
-        connectReplyFeed(sessionID: sessionID)
-        store.finishEntering(atOffset: 0)
+        await connectReplyFeed(sessionID: sessionID)
+        // Opens the first cycle before the phase itself flips to `.collecting` — without this,
+        // `finishEntering` set the phase but nothing ever called `beginCollectingCycle()`, so
+        // every word Freddy says right after the long-press had nowhere to go: no session to
+        // transcribe it, no audio file to capture it, and no feedback telling him so.
+        await beginCollectingCycle()
+        store.finishEntering(atOffset: callTakeCollectedSamples)
         return true
     }
 
@@ -270,11 +308,17 @@ final class CallModeController {
     }
 
     private func handleCapturedChunk(_ samples: [Int16]) async {
-        guard let store else { return }
-        let wakeWordOffset = callTakeCollectedSamples + cycleSamplesFed
-        wakeWordListener?.ingest(pcm16le: samples, atOffset: wakeWordOffset)
+        guard store != nil else { return }
+        wakeWordListener?.ingest(pcm16le: samples, atOffset: wakeWordCaptureOffset)
+        wakeWordCaptureOffset += samples.count
 
-        guard case .collecting = store.phase, let session = cycleSession else { return }
+        // Gated on `cycleSession` existing, never on `store.phase == .collecting`: a cycle is
+        // open (and its socket connecting) for a stretch before the store's own phase catches up
+        // to it (`dispatch(.start)` awaits `beginCollectingCycle()` before calling
+        // `store.handle`), and audio captured during that stretch must still reach the session —
+        // otherwise it is only ever buffered by `VoiceRecordingSession`'s own preconnect buffer,
+        // never handed to it at all.
+        guard let session = cycleSession else { return }
         callAudioFile?.append(pcm16le: samples)
         let offset = cycleSamplesFed
         cycleSamplesFed += samples.count
@@ -283,8 +327,8 @@ final class CallModeController {
 
     // MARK: - The reply feed
 
-    private func connectReplyFeed(sessionID: String) {
-        replyBaseline = transcript.window(for: sessionID).newestLoadedId ?? 0
+    private func connectReplyFeed(sessionID: String) async {
+        replyBaseline = await resolveReplyBaseline(sessionID: sessionID)
         spokenReplyIds = []
         let client = PaiSseClient(
             sessionId: sessionID, requestFactory: requestFactory,
@@ -304,6 +348,21 @@ final class CallModeController {
         client.connect()
     }
 
+    /// The reply feed's own starting point — every message at or before this id is history,
+    /// never spoken. The transcript's own window is only populated once the chat screen has
+    /// actually been opened; entering a call straight from the sessions list (never having opened
+    /// the transcript this launch) leaves it empty, and falling back to `0` there would have
+    /// call mode speak the session's entire history out loud the moment it connects. Asking the
+    /// backend directly for the newest message id is the same fallback `PaiSseClient.onInit`
+    /// already relies on to catch a client back up correctly on a genuine reconnect — this only
+    /// covers the one gap that isn't: getting a correct starting point before the first connect.
+    private func resolveReplyBaseline(sessionID: String) async -> Int {
+        if let loaded = transcript.window(for: sessionID).newestLoadedId { return loaded }
+        guard let tail = try? await apiClient.getMessages(sessionId: sessionID, page: .tail(limit: 1))
+        else { return 0 }
+        return tail.map(\.id).max() ?? 0
+    }
+
     private func speak(_ messages: [Message]) {
         let speakable = SpokenReplySelector.speakable(from: messages, baseline: replyBaseline, spoken: spokenReplyIds)
         for message in speakable {
@@ -318,13 +377,16 @@ final class CallModeController {
     // MARK: - Commands: offline (wake-word) and the transcript fallback
 
     /// `isOffline` only decides the echo/dedup bookkeeping's own labeling — both paths converge on
-    /// `dispatch(_:confidence:)`. A command the offline engine already owns (per
-    /// `wakeWordSettings.config.offlineCommands`) is never accepted from the fallback path, since
-    /// during `collecting` both can see the same spoken words and a double-fire would send twice
-    /// or skip twice.
+    /// `dispatch(_:confidence:)`. A command the offline engine actually loaded a classifier for
+    /// (`wakeWordListener?.loadedCommands`, never the raw `wakeWordSettings.config` — a command
+    /// the config names but whose `.onnx` file never shipped has no classifier scoring it at all)
+    /// is never accepted from the fallback path, since during `collecting` both can see the same
+    /// spoken words and a double-fire would send twice or skip twice. Basing this on the config
+    /// instead would make such a command unreachable by *either* channel: the offline engine
+    /// never fires it, and the fallback stays silent believing the engine has it covered.
     private func routeDetectedCommand(_ event: CommandEvent, isOffline: Bool) {
         guard let speech else { return }
-        if !isOffline, wakeWordSettings.config.offlineCommands.contains(event.kind) { return }
+        if !isOffline, wakeWordListener?.loadedCommands.contains(event.kind) == true { return }
 
         // Wall-clock is approximated at the moment this fires — neither channel has a genuine
         // take-to-wall-clock mapping the way `VoiceRecordingSession`'s own `SessionTimeline` does
@@ -345,9 +407,10 @@ final class CallModeController {
     }
 
     /// A background poll over the currently-open cycle's own `committedSegments` — Freddy's
-    /// documented fallback, recognising whichever commands `wakeWordSettings.config.offlineCommands`
-    /// does not cover from the ElevenLabs transcript instead, only ever possible while `collecting`
-    /// (the paid transcript is the only thing running then). One `CommandObservation` per newly
+    /// documented fallback, recognising from the ElevenLabs transcript whichever commands
+    /// `wakeWordListener?.loadedCommands` doesn't already cover offline (`routeDetectedCommand`'s
+    /// own check), only ever possible while `collecting` (the paid transcript is the only thing
+    /// running then). One `CommandObservation` per newly
     /// committed segment, matching `CommandDetector`'s own contract: `isFinal: true`, word timing
     /// shifted into the call ledger's own addressing when the engine supplied it and its count
     /// agrees with the segment's own word split, `nil` otherwise — `CommandDetector`'s pause gate
@@ -393,14 +456,20 @@ final class CallModeController {
         guard let store else { return }
         switch kind {
         case .start:
-            guard case .listening = store.phase else { return }
+            guard case .listening = store.phase, !isTransitioningCycle else { return }
+            isTransitioningCycle = true
             await beginCollectingCycle()
+            isTransitioningCycle = false
             await store.handle(CommandEvent(kind: .start, atOffset: callTakeCollectedSamples, confidence: confidence))
         case .stop, .send:
+            guard !isTransitioningCycle else { return }
             if case .collecting = store.phase {
+                isTransitioningCycle = true
                 await endCollectingCycle()
+                isTransitioningCycle = false
             }
             await store.handle(CommandEvent(kind: kind, atOffset: callTakeCollectedSamples, confidence: confidence))
+            drainUnsentTurnText()
         case .skip:
             speech?.skip()
             await store.handle(CommandEvent(kind: .skip, atOffset: callTakeCollectedSamples, confidence: confidence))
@@ -436,18 +505,37 @@ final class CallModeController {
         }
         // Matches `VoiceRecorderController.start()`'s own wait: `state` leaves `.idle`
         // synchronously, before the connect's own `await` — waiting for that (never the full
-        // connect) is what lets `handleCapturedChunk` start feeding this session immediately,
-        // buffered ahead of the socket the same way a microphone-mode take's first chunks are.
+        // connect, which is left running in the background below) is what lets
+        // `handleCapturedChunk` start feeding this session immediately, buffered ahead of the
+        // socket the same way a microphone-mode take's first chunks are, and lets the phase flip
+        // to `.collecting` without Freddy's own "start" ever waiting on a mint-and-connect
+        // round trip.
         var guardIterations = 0
         while session.state == .idle && guardIterations < 200 {
             await Task.yield()
             guardIterations += 1
         }
-        await startTask.value
         fallbackCommandTask?.cancel()
         fallbackCommandTask = Task { [weak self] in await self?.watchFallbackCommands() }
         callLedgerTask?.cancel()
         callLedgerTask = Task { [weak self] in await self?.runCallLedgerLoop() }
+        reportStartFailureIfAny(of: startTask, for: session)
+    }
+
+    /// A mint or connect failure never reaches `ConnectionHealth` the way a mid-take drop does —
+    /// `VoiceRecordingDependencies.connectionEvent` only fires `.mintSucceeded`/`.socketOpened`
+    /// on the way up, nothing on the way the attempt actually failed — so without this, a cycle
+    /// whose very first connect never lands plays no cue and posts no notification at all:
+    /// Freddy talks into a cycle that was never going to transcribe anything, with nothing
+    /// telling him so. Runs detached from `beginCollectingCycle()`'s own return, on purpose — the
+    /// connect itself can take seconds, and `session === cycleSession` is what keeps a failure
+    /// from a cycle Freddy has already stopped from surfacing as if it were the current one's.
+    private func reportStartFailureIfAny(of startTask: Task<Void, Never>, for session: VoiceRecordingSession) {
+        Task { @MainActor [weak self] in
+            await startTask.value
+            guard let self, self.cycleSession === session, let failure = session.lastStartFailure else { return }
+            self.controller.handleFeedback(.connectionDropped(reason: failure.userMessage))
+        }
     }
 
     /// Writes this instant's picture of the call — every earlier cycle's own segments plus
@@ -501,6 +589,18 @@ final class CallModeController {
         cycleSession = nil
 
         persistCallLedger()
+    }
+
+    /// Whatever `CallModeStore` most recently couldn't send — refused (a terminal session
+    /// status), or thrown by `postMessage` — is folded into the draft rather than left stranded
+    /// on the store's own property with nothing ever reading it. Checked from every path that can
+    /// set it: right after a manual "stop"/"send" dispatch, and after the ledger-commit callback
+    /// a delayed `.pendingSend` resolves through — `consumeUnsentTurnText()` is what keeps the
+    /// two from ever folding the same text in twice.
+    private func drainUnsentTurnText() {
+        guard let store, let text = store.consumeUnsentTurnText(), let sessionID = boundSessionID else { return }
+        let current = drafts.draft(for: sessionID).text
+        drafts.setDraftText(key: sessionID, text: current.isEmpty ? text : "\(current) \(text)")
     }
 
     // MARK: - Exit

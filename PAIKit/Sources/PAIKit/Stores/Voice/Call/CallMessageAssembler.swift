@@ -30,4 +30,30 @@ public enum CallMessageAssembler {
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    /// The same assembly as above, with every word `commands` recognized cut out of the segments
+    /// that carry word timing (`CommandWindowStripper`). Without this, "send" itself — heard from
+    /// `.collecting`, where it doubles as stop-and-send — lands as the tail end of the very
+    /// message it triggered sending: Freddy's own "Kai send" spoken into the message he meant to
+    /// close. A segment with no `words` (a batch backfill result older than word-level timing,
+    /// say) passes through unstripped rather than being dropped outright — an occasional stray
+    /// command word left in is a far smaller cost than losing genuinely dictated text.
+    public static func assembledText(
+        for ranges: [SampleRange], in ledger: TranscriptLedger, strippingCommands commands: [CommandEvent],
+        phraseSet: CommandPhraseSet = .defaults
+    ) -> String {
+        guard !commands.isEmpty else { return assembledText(for: ranges, in: ledger) }
+        let sampleRate = Double(ledger.sampleRate)
+        return
+            ledger.segments
+            .filter { segment in ranges.contains { $0.overlaps(segment.range) } }
+            .sorted { $0.range.lowerBound < $1.range.lowerBound }
+            .map { segment in
+                guard let words = segment.words else { return segment.text }
+                return CommandWindowStripper.strip(
+                    words: words, commands: commands, phraseSet: phraseSet, sampleRate: sampleRate)
+            }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
