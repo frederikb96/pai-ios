@@ -1,0 +1,110 @@
+import PAIKit
+import UserNotifications
+
+/// The connection-health half of the design: turns every `FeedbackEvent` a take produces into an
+/// earcon and, through `FeedbackPolicy`, into a local notification — one per take, updated in
+/// place rather than stacking on a bad ride. This is what tells Freddy the moment anything flaky
+/// happens, even when recovery is fully automatic and nothing else on screen would show it.
+///
+/// Distinct from `VoiceInterruptionNotifier`: that one posts a single, final "this take ended"
+/// notice for a reason `VoiceRecorderController` already decided; this one fires throughout a
+/// take that is still very much running, and reuses one notification request rather than posting
+/// a fresh one per event. `VoiceInterruptionNotifier` is not deleted here — `VoiceRecorderController`
+/// still calls it, and rewiring that call site is the controller-integration work, not this
+/// type's; once that lands, `VoiceInterruptionNotifier` has nothing left calling it.
+///
+/// Owns no authorization request of its own, same as `VoiceInterruptionNotifier` — `PushRegistrar`
+/// is the one claimant of the system prompt; this silently no-ops when notifications were never
+/// authorized, same as that type does.
+@MainActor
+final class VoiceFeedbackNotifier {
+    private var policy = FeedbackPolicy()
+    private let earcons: EarconPlayer
+    /// Every request this take posts is scoped under this id, so a fresh take never collides
+    /// with — or accidentally updates — a notification left over from the previous one.
+    private var takeId: String = "voice"
+
+    init(earcons: EarconPlayer) {
+        self.earcons = earcons
+    }
+
+    /// Call once per take, before its first event — resets the episode and per-cause dedup state
+    /// a stale `FeedbackPolicy` would otherwise carry over from whatever take came before it.
+    func beginTake(id: String) {
+        takeId = id
+        policy = FeedbackPolicy()
+    }
+
+    /// The shape `VoiceRecordingDependencies.feedback: (FeedbackEvent) -> Void` wants — a plain,
+    /// synchronous, non-`async` closure. Posting a notification is async, so it is dispatched
+    /// into its own `Task` rather than making every call site `await` a UI nicety; the cue plays
+    /// synchronously first, before that hop, since the cue is what matters most under load.
+    func handle(_ event: FeedbackEvent) {
+        let action = policy.decide(event, now: Date())
+        if let cue = action.cue {
+            earcons.play(cue)
+        }
+        guard let notify = action.notify else { return }
+        Task { await post(notify) }
+    }
+
+    private func post(_ notify: FeedbackAction.Notify) async {
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
+            return
+        }
+        let content = UNMutableNotificationContent()
+        content.title = title(for: notify.event)
+        content.body = body(for: notify)
+        content.interruptionLevel = .timeSensitive
+        content.sound = .default
+        content.threadIdentifier = takeId
+        // A repeated identifier replaces the existing request's content rather than adding a
+        // second one — the entire mechanism behind "updated in place, not one per event".
+        let request = UNNotificationRequest(identifier: "\(takeId)-\(notify.key)", content: content, trigger: nil)
+        try? await UNUserNotificationCenter.current().add(request)
+    }
+
+    private func title(for event: FeedbackEvent) -> String {
+        switch event {
+        case .captureGaveUp: return "Voice recording stopped"
+        default: return "Voice"
+        }
+    }
+
+    private func body(for notify: FeedbackAction.Notify) -> String {
+        switch notify.event {
+        case .connectionDropped, .captureRestarted:
+            return notify.episodeDropCount > 1
+                ? "Connection lost \(notify.episodeDropCount) times so far — recording continues."
+                : "Connection lost — recording continues."
+        case .serverNotice(let reason):
+            return "Connection lost (\(reason)) — recording continues."
+        case .mintFailed:
+            return "Server unreachable — recording continues."
+        case .reconnected:
+            return notify.episodeDropCount > 0
+                ? "Reconnected after \(notify.episodeDropCount) drop\(notify.episodeDropCount == 1 ? "" : "s")."
+                : "Reconnected."
+        case .gapOpened:
+            return "Still catching up on audio not yet transcribed."
+        case .backfillCompleted:
+            return "All audio transcribed."
+        case .backfillFailed:
+            return "Some audio could not be transcribed — check Settings › Recordings."
+        case .fatalProtocolError(let reason):
+            return "Transcription stopped (\(reason)) — recording continues."
+        case .captureGaveUp:
+            return "The microphone could not be restarted."
+        case .ttsDropped:
+            return "The spoken-reply connection was lost."
+        case .ttsReconnected:
+            return "The spoken-reply connection is back."
+        case .replyNotSpoken:
+            return "A reply was not spoken — it is in the transcript."
+        case .interruptionPaused, .interruptionResumed, .commandRecognized:
+            // `FeedbackPolicy` never emits a `notify` for these — a cue only, no notification.
+            return ""
+        }
+    }
+}

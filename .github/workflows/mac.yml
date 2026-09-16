@@ -89,6 +89,9 @@ jobs:
           grep -q '"pai"' /tmp/built-info.txt \
             || { echo '::error::the pai:// URL scheme is missing — every note shortcut opens nothing'; \
                  cat /tmp/built-info.txt; exit 1; }
+          grep -q 'NSSpeechRecognitionUsageDescription' /tmp/built-info.txt \
+            || { echo '::error::NSSpeechRecognitionUsageDescription is missing — the offline voice-command listener crashes instead of prompting'; \
+                 cat /tmp/built-info.txt; exit 1; }
           echo 'background modes, URL scheme and generated keys all present'
 
       # Runs after the app build on purpose. This step compiles the whole package on a macOS host,

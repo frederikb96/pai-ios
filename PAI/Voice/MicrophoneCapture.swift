@@ -43,6 +43,8 @@ final class MicrophoneCapture: @unchecked Sendable {
     private var rawConverter: AVAudioConverter?
     private var sendFormat: AVAudioFormat?
     private var rawFormat: AVAudioFormat?
+    private var earconPlayerNode: AVAudioPlayerNode?
+    private var earconSampleRate: Double?
 
     /// The input's own rate before any conversion — what `VoiceAudioRatePolicy.transportRate`
     /// must be given to decide the rate actually negotiated for `start(targetSampleRate:)`.
@@ -104,6 +106,61 @@ final class MicrophoneCapture: @unchecked Sendable {
         rawConverter = nil
         sendFormat = nil
         rawFormat = nil
+        // A stop can follow a configuration change, which invalidates every connection on the
+        // engine including the earcon node's — `playEarcon` re-attaches a fresh one on next use
+        // rather than scheduling onto a node whose connection no longer exists.
+        earconPlayerNode = nil
+        earconSampleRate = nil
+    }
+
+    /// Plays `samples` (mono, 16-bit PCM at `sampleRate` — exactly what `Earcon.samples` already
+    /// produces) through this same engine, mixed into its output. This is what makes a cue
+    /// audible with the ringer switch on silent: `.playAndRecord` "continues with the Silent
+    /// switch set to silent", and the cue rides the session capture already configured rather
+    /// than opening one of its own. Never touches the input tap or `onChunk`/`onRawChunk` — an
+    /// earcon playing is not a capture event.
+    ///
+    /// Safe to call whether or not `start(targetSampleRate:)` has been called yet: the engine is
+    /// started if it isn't already running. A caller with nothing to play through this yet (the
+    /// very first cue of a take, before any capture starts) still gets a working cue.
+    func playEarcon(samples: [Int16], sampleRate: Double) {
+        guard !samples.isEmpty,
+            let format = AVAudioFormat(
+                commonFormat: .pcmFormatInt16, sampleRate: sampleRate, channels: 1, interleaved: true)
+        else { return }
+
+        let node: AVAudioPlayerNode
+        if let existing = earconPlayerNode, earconSampleRate == sampleRate {
+            node = existing
+        } else {
+            if let existing = earconPlayerNode {
+                engine.disconnectNodeOutput(existing)
+                engine.detach(existing)
+            }
+            let fresh = AVAudioPlayerNode()
+            engine.attach(fresh)
+            engine.connect(fresh, to: engine.mainMixerNode, format: format)
+            earconPlayerNode = fresh
+            earconSampleRate = sampleRate
+            node = fresh
+        }
+
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)) else {
+            return
+        }
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+        guard let channelData = buffer.int16ChannelData else { return }
+        samples.withUnsafeBufferPointer { source in
+            guard let base = source.baseAddress else { return }
+            channelData[0].update(from: base, count: samples.count)
+        }
+
+        if !engine.isRunning {
+            engine.prepare()
+            try? engine.start()
+        }
+        node.scheduleBuffer(buffer, completionHandler: nil)
+        node.play()
     }
 
     /// Runs on the tap's real-time thread. `AVAudioConverter.convert` allocates internally, which
