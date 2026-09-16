@@ -70,11 +70,11 @@ private final class FakeNotesApi: NotesApiClient, @unchecked Sendable {
 
     func getNote(id: String) async throws -> NoteDetail {
         guard getNoteGateEnabled else { return getNoteResult ?? NoteFixture.detail(id: id) }
-        gateLock.lock()
-        getNoteHasStarted = true
-        let started = getNoteStarted
-        getNoteStarted = nil
-        gateLock.unlock()
+        let started = gateLock.withLock {
+            getNoteHasStarted = true
+            defer { getNoteStarted = nil }
+            return getNoteStarted
+        }
         started?.resume()
         await withCheckedContinuation { continuation in
             gateLock.lock()
