@@ -259,6 +259,18 @@ public final class CallModeStore {
         await trySend()
     }
 
+    /// The turn's own text as it stands right now — every closed range already in `turnRanges`,
+    /// plus `openRange` (the still-recording cycle, if any), assembled from whatever the ledger
+    /// has committed so far. Unlike `trySend`, never waits on a gap and never consumes anything:
+    /// a caller showing this as a live preview polls it as often as it likes, gap or no gap,
+    /// without disturbing what a later "send" will actually do.
+    public func previewText(openRange: SampleRange?, in ledger: TranscriptLedger) -> String {
+        var ranges = turnRanges
+        if let openRange { ranges.append(openRange) }
+        guard !ranges.isEmpty else { return "" }
+        return CallMessageAssembler.assembledText(for: ranges, in: ledger, strippingCommands: firedCommandsInTurn)
+    }
+
     /// Whatever the turn held is assembled best-effort (never waiting on a gap the way `send`
     /// does — ending abandons the take, not merely the turn) and handed to `lastAbandonedTurnText`
     /// rather than lost silently.

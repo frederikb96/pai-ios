@@ -115,6 +115,61 @@ final class CallModeStoreTests: XCTestCase {
         XCTAssertEqual(store.turnRanges, [0..<500, 800..<1200], "both collecting stretches belong to one turn")
     }
 
+    // MARK: - Live preview: what a caller shows before "send" or even "stop"
+
+    func testPreviewTextIncludesTheStillOpenCollectingRange() async {
+        let ledgerBox = LedgerBox(
+            TranscriptLedger(
+                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+                segments: [Segment(range: 0..<1000, text: "hello there", source: .live)]
+            ))
+        let store = makeStore(ledgerBox: ledgerBox, sender: SendRecorder())
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+
+        XCTAssertEqual(store.previewText(openRange: 0..<1000, in: ledgerBox.ledger), "hello there")
+    }
+
+    func testPreviewTextIsEmptyWithNoOpenRangeAndNothingHeld() {
+        let store = makeStore(ledgerBox: LedgerBox(emptyLedger()), sender: SendRecorder())
+        XCTAssertEqual(store.previewText(openRange: nil, in: emptyLedger()), "")
+    }
+
+    func testPreviewTextCombinesAHeldTurnFromAnEarlierStopWithTheNewOpenRange() async {
+        let ledgerBox = LedgerBox(
+            TranscriptLedger(
+                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+                segments: [
+                    Segment(range: 0..<500, text: "first cycle", source: .live),
+                    Segment(range: 800..<1200, text: "second cycle", source: .live),
+                ]
+            ))
+        let store = makeStore(ledgerBox: ledgerBox, sender: SendRecorder())
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+        await store.handle(CommandEvent(kind: .stop, atOffset: 500, confidence: 1))
+
+        XCTAssertEqual(
+            store.previewText(openRange: 800..<1200, in: ledgerBox.ledger), "first cycle second cycle")
+    }
+
+    func testPreviewTextNeverConsumesTheTurnTheWaySendDoes() async {
+        let ledgerBox = LedgerBox(
+            TranscriptLedger(
+                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+                segments: [Segment(range: 0..<500, text: "still here", source: .live)]
+            ))
+        let store = makeStore(ledgerBox: ledgerBox, sender: SendRecorder())
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+        await store.handle(CommandEvent(kind: .stop, atOffset: 500, confidence: 1))
+
+        _ = store.previewText(openRange: nil, in: ledgerBox.ledger)
+        _ = store.previewText(openRange: nil, in: ledgerBox.ledger)
+
+        XCTAssertEqual(store.turnRanges, [0..<500], "reading the preview twice must not touch the turn")
+    }
+
     // MARK: - Send: from recording mode (stop-and-send), and from wake mode after a stop
 
     func testSendFromCollectingActsAsStopAndSendThenReturnsToListening() async {
