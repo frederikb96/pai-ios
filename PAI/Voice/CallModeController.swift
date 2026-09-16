@@ -32,6 +32,15 @@ import PAIKit
 @MainActor
 @Observable
 final class CallModeController {
+    /// The app's one instance, for the debug bridge — the same `weak var current` shape
+    /// `TranscriptCollectionViewController` already uses, since this is likewise "one instance
+    /// for the app" rather than something a route can reach through a view hierarchy. Answers
+    /// what the plus menu's call-mode entry would show right now, the JSON counterpart to
+    /// screenshotting a native `Menu`, which nothing here can force open.
+    #if DEBUG
+        static weak var current: CallModeController?
+    #endif
+
     private(set) var store: CallModeStore?
     private(set) var speech: SpeechOutputSession?
 
@@ -142,6 +151,9 @@ final class CallModeController {
             }
             return true
         }
+        #if DEBUG
+            Self.current = self
+        #endif
     }
 
     var isActive: Bool { store != nil }
