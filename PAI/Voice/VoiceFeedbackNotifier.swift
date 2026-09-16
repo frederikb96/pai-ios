@@ -51,7 +51,7 @@ final class VoiceFeedbackNotifier {
     private static func logLevel(for event: FeedbackEvent) -> VoiceLogLevel {
         switch event {
         case .connectionDropped, .serverNotice, .mintFailed, .fatalProtocolError, .captureGaveUp, .backfillFailed,
-            .ttsDropped, .replyNotSpoken, .commandModelMissing:
+            .ttsDropped, .ttsRejected, .replyNotSpoken, .commandModelMissing:
             .warning
         case .reconnected, .gapOpened, .backfillCompleted, .captureRestarted, .interruptionPaused,
             .interruptionResumed, .ttsReconnected, .commandRecognized:
@@ -75,6 +75,7 @@ final class VoiceFeedbackNotifier {
         case .interruptionResumed: "audio session interruption ended"
         case .ttsDropped: "spoken-reply connection dropped"
         case .ttsReconnected: "spoken-reply connection reconnected"
+        case .ttsRejected(let reason, let message): "spoken-reply request rejected (\(reason)): \(message)"
         case .replyNotSpoken: "a reply was not spoken"
         case .commandRecognized(let kind): "command recognized: \(kind.rawValue)"
         case .commandModelMissing(let kind): "no offline model bundled for command: \(kind.rawValue)"
@@ -133,6 +134,15 @@ final class VoiceFeedbackNotifier {
             return "The spoken-reply connection was lost."
         case .ttsReconnected:
             return "The spoken-reply connection is back."
+        case .ttsRejected(let reason, _):
+            switch reason {
+            case "voice_id_does_not_exist":
+                return "Voice not found — check the voice ID in Settings."
+            case "authentication_required":
+                return "ElevenLabs rejected the request — check the API key in Settings."
+            default:
+                return "The voice service rejected the request (\(reason))."
+            }
         case .replyNotSpoken:
             return "A reply was not spoken — it is in the transcript."
         case .commandModelMissing(let kind):

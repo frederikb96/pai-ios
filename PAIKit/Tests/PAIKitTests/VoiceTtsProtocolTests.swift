@@ -118,6 +118,23 @@ final class VoiceTtsProtocolTests: XCTestCase {
         XCTAssertNil(TtsDownlinkMessage.decode("not json at all"))
     }
 
+    /// The exact shape a live probe confirmed ElevenLabs sends for an unknown voice id, before
+    /// closing the socket — never audio, so this must decode to something distinguishable from
+    /// both a normal message and an ordinary connection failure.
+    func testAServerErrorMessageDecodesWithItsReasonAndHumanReadableText() {
+        let message = TtsDownlinkMessage.decode(
+            #"{"message":"A voice with voice_id abc123 does not exist.","error":"voice_id_does_not_exist","code":1008}"#
+        )
+        XCTAssertEqual(
+            message,
+            .serverError(reason: "voice_id_does_not_exist", message: "A voice with voice_id abc123 does not exist."))
+    }
+
+    func testAServerErrorWithNoMessageFallsBackToTheReasonItself() {
+        let message = TtsDownlinkMessage.decode(#"{"error":"authentication_required","code":1008}"#)
+        XCTAssertEqual(message, .serverError(reason: "authentication_required", message: "authentication_required"))
+    }
+
     // MARK: - PCM decode round-trip
 
     func testPcm16SamplesRoundTripsWithRealtimeUplinkChunksOwnEncoder() {

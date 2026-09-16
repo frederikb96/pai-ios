@@ -162,12 +162,21 @@ public enum TtsDownlinkMessage: Sendable, Equatable {
     case audio(contextId: String?, base64: String)
     /// `FinalOutputMulti` — `isFinal: true`: every chunk for this context has now arrived.
     case contextFinished(contextId: String?)
+    /// A permanent rejection of the request itself, arriving over the wire before the close that
+    /// follows it — a live probe confirmed ElevenLabs sends `{"message":"…","error":"…",
+    /// "code":1008}` for an unknown voice id or a bad/missing key, then closes the socket about a
+    /// second later. `reason` is `error` (the machine-readable code), `message` is ElevenLabs'
+    /// own human-readable text. Never worth a resend: the account or voice configuration is what
+    /// is wrong, not the connection.
+    case serverError(reason: String, message: String)
     case unrecognized(raw: String)
 
     private struct Envelope: Decodable {
         let audio: String?
         let contextId: String?
         let isFinal: Bool?
+        let message: String?
+        let error: String?
     }
 
     public static func decode(_ text: String) -> TtsDownlinkMessage? {
@@ -179,6 +188,9 @@ public enum TtsDownlinkMessage: Sendable, Equatable {
         }
         if envelope.isFinal == true {
             return .contextFinished(contextId: envelope.contextId)
+        }
+        if let reason = envelope.error {
+            return .serverError(reason: reason, message: envelope.message ?? reason)
         }
         return .unrecognized(raw: text)
     }

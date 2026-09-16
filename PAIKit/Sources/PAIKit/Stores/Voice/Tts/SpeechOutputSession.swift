@@ -145,6 +145,12 @@ public final class SpeechOutputSession {
     private var currentContextId: String?
     private var resendsForCurrentReply = 0
     private var ended = false
+    /// Set once ElevenLabs has rejected the request itself (`TtsDownlinkMessage.serverError`) —
+    /// an unknown voice id, a bad or missing key. Sticky for the rest of this session: every
+    /// future reply would hit the identical rejection, so nothing here ever attempts to connect
+    /// again once this is true, matching `VoiceRecordingSession.stopTranscriptionAttempts`'s own
+    /// "this is not the kind of failure a retry fixes" handling for the STT side.
+    private var rejected = false
     /// Set the instant a drop is detected, cleared the instant a context afterward actually gets
     /// content onto the wire — what tells `advance()` when to emit `.ttsReconnected`, the health
     /// episode `.ttsDropped` opens (`FeedbackPolicy` shares one episode across every connection
@@ -222,6 +228,11 @@ public final class SpeechOutputSession {
     /// if there is no socket yet) unless something else is already generating, in which case this
     /// one waits its turn on the wire the same way it will for playback.
     public func enqueue(messageId: Int, sentences: [String]) {
+        guard !rejected else {
+            dependencies.log(.info, "tts", "reply \(messageId) not spoken — voice rejected earlier this call")
+            dependencies.feedback(.replyNotSpoken)
+            return
+        }
         dependencies.log(.info, "tts", "reply \(messageId) enqueued (\(sentences.count) sentences)")
         let wasIdle = state == .idle
         queue.enqueue(messageId: messageId, sentences: sentences)
@@ -500,9 +511,42 @@ public final class SpeechOutputSession {
 
             Task { await self.advance() }
 
+        case let .serverError(reason, message):
+            handleServerRejection(reason: reason, message: message)
+
         case .unrecognized, nil:
             break
         }
+    }
+
+    /// ElevenLabs told us — over the wire, before the close that follows it — that this request
+    /// can never succeed. Abandons everything queued or playing immediately (no resend budget
+    /// spent chasing a rejection that will not change) and marks the session so every future
+    /// reply is skipped without even trying to connect. `end()`'s own teardown is not reused here
+    /// since a rejection speaks for the rest of this session, not for closing it — the call keeps
+    /// going, replies simply stop being spoken and land in the transcript instead.
+    private func handleServerRejection(reason: String, message: String) {
+        guard !rejected else { return }
+        dependencies.log(.warning, "tts", "server rejected: \(reason)")
+        rejected = true
+        receiveTask?.cancel()
+        let hadQueuedWork = !queue.isEmpty || currentlyPlayingMessageId != nil
+        dependencies.stopPlayback()
+        if let playing = currentlyPlayingMessageId {
+            finalizePlaybackWindow(for: playing)
+            currentlyPlayingMessageId = nil
+        }
+        buffered = [:]
+        readyToPlay = []
+        queue = ReplyQueue()
+        currentContextId = nil
+        resendsForCurrentReply = 0
+        let transportToClose = transport
+        transport = nil
+        state = .idle
+        dependencies.feedback(.ttsRejected(reason: reason, message: message))
+        if hadQueuedWork { dependencies.feedback(.replyNotSpoken) }
+        Task { await transportToClose?.close(code: 1000, reason: nil) }
     }
 
     // MARK: - Playback bookkeeping

@@ -110,6 +110,8 @@ public struct FeedbackPolicy: Sendable, Equatable {
             return causeGated("backfillFailed", event: event)
         case .fatalProtocolError(let reason):
             return causeGated("fatal:\(reason)", event: event)
+        case .ttsRejected(let reason, _):
+            return causeGated("ttsRejected:\(reason)", event: event)
         case .captureGaveUp:
             return causeGated("captureGaveUp", event: event)
         case .replyNotSpoken:

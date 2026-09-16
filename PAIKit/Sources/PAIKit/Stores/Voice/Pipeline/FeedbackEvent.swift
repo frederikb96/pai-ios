@@ -18,6 +18,12 @@ public enum FeedbackEvent: Sendable, Equatable {
     case interruptionResumed
     case ttsDropped
     case ttsReconnected
+    /// ElevenLabs rejected the request itself — an unknown voice id, a bad or missing key —
+    /// before ever sending audio. Never a drop: retrying cannot fix a rejection like this, only
+    /// changing the setting it names can. `reason` is the machine-readable code
+    /// (`voice_id_does_not_exist`, `authentication_required`, …) `FeedbackPolicy` dedupes by;
+    /// `message` is ElevenLabs' own human-readable text, logged verbatim.
+    case ttsRejected(reason: String, message: String)
     case replyNotSpoken
     case commandRecognized(CommandKind)
     /// A command configured to run offline has no `.onnx` classifier in the app bundle — that

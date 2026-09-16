@@ -595,6 +595,63 @@ final class SpeechOutputSessionTests: XCTestCase {
         await waitUntil(async: { await transport.sentTexts.contains { $0.contains("second.") } })
     }
 
+    // MARK: - A permanent server rejection is never retried
+
+    /// A live probe confirmed the exact wire shape: ElevenLabs sends this JSON, then closes —
+    /// never audio, and retrying only reproduces the identical rejection. `advance()` must never
+    /// be scheduled again after this, unlike an ordinary drop.
+    func testAServerRejectionAbandonsTheReplyWithoutAnyRetryAndFiresTtsRejected() async {
+        let transport = FakeVoiceTtsTransport()
+        let recorder = FeedbackRecorder()
+        let session = makeSession(transport: transport, feedbackRecorder: recorder)
+
+        session.enqueue(messageId: 1, sentences: ["hi."])
+        await waitUntil(async: { await transport.connectCallCount >= 1 })
+        let connectCountAtRejection = await transport.connectCallCount
+
+        await transport.push(
+            #"{"message":"A voice with voice_id abc123 does not exist.","error":"voice_id_does_not_exist","code":1008}"#
+        )
+
+        await waitUntil {
+            recorder.events.contains(
+                .ttsRejected(reason: "voice_id_does_not_exist", message: "A voice with voice_id abc123 does not exist.")
+            )
+        }
+        XCTAssertTrue(recorder.events.contains(.replyNotSpoken), "the abandoned reply must still be reported")
+
+        // Give the (nonexistent) retry machinery every chance to fire before asserting it didn't.
+        for _ in 0..<50 { await Task.yield() }
+        let connectCountAfterWaiting = await transport.connectCallCount
+        XCTAssertEqual(connectCountAfterWaiting, connectCountAtRejection, "a rejection must never reconnect and retry")
+        XCTAssertEqual(session.state, .idle)
+    }
+
+    /// Once rejected, every later reply is skipped without even attempting to connect — spending
+    /// another mint-and-connect would only reproduce the identical rejection.
+    func testAReplyEnqueuedAfterARejectionIsSkippedWithoutAttemptingToConnect() async {
+        let transport = FakeVoiceTtsTransport()
+        let recorder = FeedbackRecorder()
+        let session = makeSession(transport: transport, feedbackRecorder: recorder)
+
+        session.enqueue(messageId: 1, sentences: ["hi."])
+        await waitUntil(async: { await transport.connectCallCount >= 1 })
+        await transport.push(#"{"message":"bad key","error":"authentication_required","code":1008}"#)
+        await waitUntil {
+            recorder.events.contains(.ttsRejected(reason: "authentication_required", message: "bad key"))
+        }
+        let connectCountAtRejection = await transport.connectCallCount
+
+        session.enqueue(messageId: 2, sentences: ["second."])
+        for _ in 0..<50 { await Task.yield() }
+
+        let connectCountAfterWaiting = await transport.connectCallCount
+        XCTAssertEqual(connectCountAfterWaiting, connectCountAtRejection, "never attempts to connect again")
+        XCTAssertEqual(
+            recorder.events.filter { $0 == .replyNotSpoken }.count, 2,
+            "both the abandoned first reply and the skipped second one are reported")
+    }
+
     // MARK: - End
 
     func testEndClosesTheSocketAndClearsEverything() async {

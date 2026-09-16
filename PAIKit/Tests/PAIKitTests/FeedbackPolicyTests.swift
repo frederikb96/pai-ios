@@ -228,6 +228,25 @@ final class FeedbackPolicyTests: XCTestCase {
         XCTAssertEqual(auth.notify?.disposition, .post, "a distinct reason is a distinct cause")
     }
 
+    /// A permanent rejection (an unknown voice id, a bad key) is never a drop — it dedupes by its
+    /// own machine-readable reason, exactly like `fatalProtocolError`, so a second reply hitting
+    /// the identical rejection does not re-notify.
+    func testTtsRejectedFiresOncePerDistinctReason() {
+        var policy = FeedbackPolicy()
+        let first = policy.decide(.ttsRejected(reason: "voice_id_does_not_exist", message: "not found"), now: t0)
+        XCTAssertEqual(first.cue, .error)
+        XCTAssertEqual(first.notify?.disposition, .post)
+        XCTAssertEqual(first.notify?.key, "ttsRejected:voice_id_does_not_exist")
+
+        let second = policy.decide(
+            .ttsRejected(reason: "voice_id_does_not_exist", message: "not found"), now: t0.addingTimeInterval(1))
+        XCTAssertNil(second.notify, "the same reason must not re-fire")
+
+        let different = policy.decide(
+            .ttsRejected(reason: "authentication_required", message: "bad key"), now: t0.addingTimeInterval(2))
+        XCTAssertEqual(different.notify?.disposition, .post, "a distinct reason is a distinct cause")
+    }
+
     func testCaptureGaveUpFiresOncePerTake() {
         var policy = FeedbackPolicy()
         let first = policy.decide(.captureGaveUp, now: t0)
