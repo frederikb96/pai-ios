@@ -72,6 +72,14 @@ enum TtsReconnectPolicy {
     }
 }
 
+/// How often `SpeechOutputSession` pings its dedicated idle context, well inside
+/// `VoiceTtsProtocol.maxInactivityTimeoutSeconds` — a wide margin rather than one close to the
+/// ceiling, since nothing here is time-critical and a single delayed tick must never itself risk
+/// crossing the timeout.
+enum TtsKeepAlivePolicy {
+    static let intervalSeconds = 60
+}
+
 public enum SpeechOutputState: Sendable, Equatable {
     case idle
     /// The socket is connecting, or a reply is being generated with nothing audible yet — the
@@ -101,11 +109,14 @@ public enum SpeechOutputState: Sendable, Equatable {
 /// while several replies' worth of audio sit scheduled at once would.
 ///
 /// One socket serves the whole call rather than one per reply: the socket is left open between
-/// replies instead of being proactively closed, and reconnects lazily — on the next `enqueue` or
-/// on the receive loop's own error — rather than being kept alive with a dedicated idle context.
-/// ElevenLabs documents no connection-level (as opposed to per-context) inactivity behaviour for
-/// this endpoint, so holding a context open purely to prevent a timeout would be built against a
-/// guess; reconnecting when there is actually a reply to speak is not.
+/// replies instead of being proactively closed. ElevenLabs closes the whole connection — every
+/// context on it, not just one — after `VoiceTtsProtocol.maxInactivityTimeoutSeconds` of no
+/// activity anywhere on it; requesting that ceiling on connect buys headroom, but a call sits
+/// quiet between replies for far longer than even that on an ordinary ride, so this session pings
+/// a context opened purely to stay open (`keepAliveTick()`) on `TtsKeepAlivePolicy`'s own
+/// schedule. A genuine network loss still reconnects lazily — on the next `enqueue` or on the
+/// receive loop's own error — exactly as before; only a silence-driven close is now prevented
+/// rather than treated as a drop.
 ///
 /// `@MainActor` for the same reason `VoiceRecordingSession` is: every realistic caller is a
 /// UI-driven view model, and the event rate (one context per reply, a handful of audio chunks a
@@ -133,6 +144,13 @@ public final class SpeechOutputSession {
     /// episode `.ttsDropped` opens (`FeedbackPolicy` shares one episode across every connection
     /// event) has no other way to close in a call with no STT socket of its own to close it for.
     private var recoveringFromDrop = false
+    /// A context opened purely to stay open, so `keepAliveTick()` has something to ping across a
+    /// stretch with no reply context of its own. `nil` until the first tick that actually needs
+    /// it (a short call may never open one at all), and reset to `nil` whenever the transport it
+    /// belongs to goes away — a stale id pinged on a fresh socket references a context that was
+    /// never opened on it.
+    private var keepAliveContextId: String?
+    private var keepAliveTask: Task<Void, Never>?
 
     // MARK: Playback pipeline — see the type's own doc comment for why this is separate from
     // `queue`/`currentContextId` above.
@@ -157,6 +175,39 @@ public final class SpeechOutputSession {
 
     public init(dependencies: SpeechOutputDependencies) {
         self.dependencies = dependencies
+        startKeepAliveTimer()
+    }
+
+    /// Runs for the whole session lifetime, not just while a socket happens to be open —
+    /// `keepAliveTick()` itself no-ops whenever there is nothing to ping, so there is nothing to
+    /// start or stop per connection. Real `Task.sleep`, not `dependencies.sleep`: that dependency
+    /// exists for the bounded, finite-count backoff in `handleReplyFailure`, and an unbounded loop
+    /// built on its test double (an instant no-op) would spin the main actor rather than wait.
+    private func startKeepAliveTimer() {
+        keepAliveTask = Task { [weak self] in
+            while true {
+                try? await Task.sleep(for: .seconds(TtsKeepAlivePolicy.intervalSeconds))
+                guard let self, !Task.isCancelled else { return }
+                await self.keepAliveTick()
+            }
+        }
+    }
+
+    /// One keep-alive step: pings a dedicated idle context, opening it first if this is the first
+    /// time it is actually needed. A no-op whenever something else already resets ElevenLabs'
+    /// connection-wide inactivity clock on its own — no live socket, or a reply's own context
+    /// already doing it — so calling this never has a visible effect beyond the wire traffic
+    /// itself. Left internal rather than private so a test can drive it directly, simulating many
+    /// idle intervals passing without an actual wait.
+    func keepAliveTick() async {
+        guard !ended, transport != nil, queue.isEmpty else { return }
+        if keepAliveContextId == nil {
+            let contextId = UUID().uuidString
+            keepAliveContextId = contextId
+            await sendFrame(.initializeContext(contextId: contextId))
+        }
+        guard let contextId = keepAliveContextId else { return }
+        await sendFrame(.keepContextAlive(contextId: contextId))
     }
 
     /// A reply arrived — appended to the queue; generation starts (minting and connecting first
@@ -222,6 +273,7 @@ public final class SpeechOutputSession {
     public func end() {
         ended = true
         receiveTask?.cancel()
+        keepAliveTask?.cancel()
         dependencies.stopPlayback()
         if let playing = currentlyPlayingMessageId {
             finalizePlaybackWindow(for: playing)
@@ -229,6 +281,7 @@ public final class SpeechOutputSession {
         let transportToClose = transport
         transport = nil
         currentContextId = nil
+        keepAliveContextId = nil
         currentlyPlayingMessageId = nil
         buffered = [:]
         readyToPlay = []
@@ -314,6 +367,9 @@ public final class SpeechOutputSession {
         guard !ended else { return }
         transport = nil
         currentContextId = nil
+        // The dead socket took every context on it down with it, the idle one included — a fresh
+        // connection needs a fresh context, never a ping aimed at one that was never opened on it.
+        keepAliveContextId = nil
         // The dead context's own progress means nothing to the fresh one a reconnect opens next
         // — without this, a head whose every sentence had already been handed to that context
         // reports nothing left to send, and neither it nor anything queued behind it ever speaks
