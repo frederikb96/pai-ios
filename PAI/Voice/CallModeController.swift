@@ -306,7 +306,8 @@ final class CallModeController {
                 },
                 markReplyAudioComplete: { [weak output] messageId in output?.markComplete(messageId: messageId) },
                 stopPlayback: { [weak output] in output?.stop() },
-                feedback: { [weak self] event in MainActor.assumeIsolated { self?.controller.handleFeedback(event) } }
+                feedback: { [weak self] event in MainActor.assumeIsolated { self?.controller.handleFeedback(event) } },
+                log: { level, category, message in AppVoiceDiagnosticsLog.shared.log(level, category, message) }
             ))
         speech = session
         output.onFinishedPlaying = { [weak session] messageId in
