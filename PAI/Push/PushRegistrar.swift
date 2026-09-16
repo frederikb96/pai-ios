@@ -35,11 +35,18 @@ final class PushRegistrar: NSObject, UIApplicationDelegate, UNUserNotificationCe
     /// onto sessions running elsewhere, so a push about one of them is news whether or not
     /// another session happens to be on screen. Delivery was never the problem; the app was
     /// declining to draw it.
+    ///
+    /// Both delegate methods use the completion-handler form and call it on the main queue. The
+    /// `async` forms return on a concurrency-pool thread, and UIKit's handling of the completion
+    /// (a snapshot update) asserts it is on the main thread — an abort on the first tapped
+    /// notification.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        willPresent notification: UNNotification
-    ) async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound, .badge]
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        nonisolated(unsafe) let completion = completionHandler
+        DispatchQueue.main.async { completion([.banner, .list, .sound, .badge]) }
     }
 
     /// A tapped notification.
@@ -50,14 +57,21 @@ final class PushRegistrar: NSObject, UIApplicationDelegate, UNUserNotificationCe
     /// to put it.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse
-    ) async {
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
         // Nonisolated because the protocol requirement is, and its parameters are not `Sendable`
         // — a main-actor implementation cannot satisfy it at all. Only the parsed link crosses
         // to the main actor, and a `DeepLink` is a value.
         let payload = Self.stringPayload(response.notification.request.content.userInfo)
-        guard let link = DeepLink.from(payload: payload) else { return }
-        await MainActor.run { DeepLinkInbox.shared.receive(link) }
+        let link = DeepLink.from(payload: payload)
+        nonisolated(unsafe) let completion = completionHandler
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                if let link { DeepLinkInbox.shared.receive(link) }
+            }
+            completion()
+        }
     }
 
     /// Flattens the system's `[AnyHashable: Any]` to the string pairs `DeepLink` parses.
