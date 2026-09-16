@@ -94,6 +94,13 @@ private struct RecordingRow: View {
                         .font(PaiTypography.caption.font)
                         .foregroundStyle(PaiPalette.Semantic.warningText)
                 }
+                if let coverageLine {
+                    Text(coverageLine)
+                        .font(PaiTypography.caption.font)
+                        .foregroundStyle(
+                            recording.transcription?.state == .failed
+                                ? PaiPalette.Semantic.errorText : PaiPalette.Semantic.warningText)
+                }
             }
         }
     }
@@ -105,5 +112,15 @@ private struct RecordingRow: View {
 
     private var durationLabel: String {
         String(format: "%.1fs", recording.durationMs / 1000)
+    }
+
+    /// `nil` for a complete take, or one made before the durable pipeline existed — this line is
+    /// only worth showing when there is actually something left to say about it.
+    private var coverageLine: String? {
+        guard let transcription = recording.transcription, transcription.state != .complete else { return nil }
+        let totalSeconds = Int(transcription.gapMs / 1000)
+        let duration = "\(totalSeconds / 60):\(String(format: "%02d", totalSeconds % 60))"
+        return transcription.state == .failed
+            ? "Failed to transcribe \(duration)" : "\(duration) untranscribed"
     }
 }

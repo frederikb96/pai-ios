@@ -217,6 +217,27 @@ final class SettingsStoreTests: XCTestCase {
         }
     }
 
+    func testRemoveRecordingDeletesTheMatchingEntryAndReportsItEvicted() async throws {
+        try await MainActor.run {
+            let store = try Self.makeStore()
+            var evicted: [RecordingMeta] = []
+            store.onRecordingEvicted = { evicted.append($0) }
+            store.saveRecording(RecordingMeta(timestampMs: 5, durationMs: 1000))
+            store.saveRecording(RecordingMeta(timestampMs: 6, durationMs: 1000))
+
+            store.removeRecording(id: RecordingMeta.id(forTimestampMs: 5))
+
+            XCTAssertEqual(store.recordings.map(\.timestampMs), [6])
+            XCTAssertEqual(evicted.count, 1)
+            XCTAssertEqual(evicted.first?.timestampMs, 5)
+
+            // An id this store never saved is a no-op.
+            store.removeRecording(id: "not-a-real-id")
+            XCTAssertEqual(store.recordings.count, 1)
+            XCTAssertEqual(evicted.count, 1)
+        }
+    }
+
     func testElevenLabsKeyStatusStartsUnknownNotFalse() async throws {
         try await MainActor.run {
             let store = try Self.makeStore()

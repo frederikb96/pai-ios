@@ -739,6 +739,21 @@ final class VoiceRecorderController {
         try await apiClient.mintVoiceToken(purpose: .batch).token
     }
 
+    /// The recordings screen's "Transcribe now" — makes sure a take with open gaps has a backfill
+    /// loop running for it, the exact same loop `persistLedger`/`reconcileTakes` schedule on their
+    /// own. A no-op for a take with no gaps at all, or one already being worked.
+    func transcribeRemainingGaps(id: String) {
+        guard let ledger = readLedger(takeId: id), !ledger.gaps.isEmpty else { return }
+        scheduleBackfillIfNeeded(takeId: id)
+    }
+
+    /// Deletes a past recording by Freddy's own tap — distinct from the retention cap's automatic
+    /// eviction, though both end at `onRecordingEvicted`, which is what actually removes the
+    /// bytes.
+    func deleteRecording(_ meta: RecordingMeta) {
+        settingsStore.removeRecording(id: meta.id)
+    }
+
     /// Stops the take, persists the recording (audio + metadata), and returns the composer-ready
     /// prefixed text for the caller to insert.
     @discardableResult

@@ -218,6 +218,16 @@ public final class SettingsStore {
         storage.setValue(recordings, forKey: Keys.recordings)
     }
 
+    /// Removes one recording by id — Freddy's own Delete in the recordings screen, distinct from
+    /// the cap's automatic eviction above, though both end by calling `onRecordingEvicted`, since
+    /// either way the actual bytes still have to go with it.
+    public func removeRecording(id: String) {
+        guard let index = recordings.firstIndex(where: { $0.id == id }) else { return }
+        let removed = recordings.remove(at: index)
+        storage.setValue(recordings, forKey: Keys.recordings)
+        onRecordingEvicted?(removed)
+    }
+
     // MARK: - Secret presence (fetch before Settings is ever opened)
 
     /// Populates `elevenLabsKey.status` and `smtp.password.status` from one presence fetch.
