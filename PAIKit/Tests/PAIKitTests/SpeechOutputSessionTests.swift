@@ -73,11 +73,18 @@ private final class TestClock: @unchecked Sendable {
     var current = Date(timeIntervalSince1970: 1000)
 }
 
+/// Records everything `SpeechOutputDependencies`' playback closures are asked to do — which
+/// reply's samples, in what order, and which replies were told "no more audio is coming". A test
+/// scripting a bursty delivery (a later reply's whole audio arriving before an earlier one is
+/// confirmed heard) reads this to prove the later reply's audio was held rather than played
+/// early, and prove `stopPlayback()` never silenced it.
 private final class PlaybackSpy: @unchecked Sendable {
-    private(set) var scheduledSamples: [[Float]] = []
+    private(set) var scheduledSamples: [(messageId: Int, samples: [Float])] = []
+    private(set) var completedMessages: [Int] = []
     private(set) var stopCount = 0
 
-    func play(_ samples: [Float]) { scheduledSamples.append(samples) }
+    func play(_ messageId: Int, _ samples: [Float]) { scheduledSamples.append((messageId, samples)) }
+    func markComplete(_ messageId: Int) { completedMessages.append(messageId) }
     func stop() { stopCount += 1 }
 }
 
@@ -105,7 +112,8 @@ final class SpeechOutputSessionTests: XCTestCase {
             voiceId: { "voice-abc" },
             now: { [clock] in clock.current },
             sleep: { _ in },
-            playAudio: { [playback] samples in playback.play(samples) },
+            playAudio: { [playback] messageId, samples in playback.play(messageId, samples) },
+            markReplyAudioComplete: { [playback] messageId in playback.markComplete(messageId) },
             stopPlayback: { [playback] in playback.stop() },
             feedback: { [feedbackRecorder] event in feedbackRecorder.record(event) }
         )
@@ -165,16 +173,14 @@ final class SpeechOutputSessionTests: XCTestCase {
         XCTAssertTrue(sent[2].contains("second."))
         XCTAssertTrue(sent[2].contains("\"flush\":true"))
 
-        if case .speaking(_, let messageId) = session.state {
-            XCTAssertEqual(messageId, 1)
-        } else {
-            XCTFail("expected .speaking, got \(session.state)")
-        }
+        // No audio has arrived yet — generation and playback are decoupled, so sending every
+        // sentence does not by itself mean anything is audible.
+        XCTAssertEqual(session.state, .connecting)
     }
 
-    // MARK: - Audio arrives and is decoded before reaching playback
+    // MARK: - Audio arrives, is decoded, and starts the reply playing
 
-    func testAudioMessagesReachPlaybackAsDecodedFloatSamples() async {
+    func testTheFirstReplysFirstAudioChunkStartsItPlayingImmediately() async {
         let transport = FakeVoiceTtsTransport()
         let playback = PlaybackSpy()
         let session = makeSession(transport: transport, playback: playback)
@@ -188,56 +194,93 @@ final class SpeechOutputSessionTests: XCTestCase {
         await transport.push(#"{"audio":"\#(base64)"}"#)
 
         await waitUntil { !playback.scheduledSamples.isEmpty }
-        XCTAssertEqual(playback.scheduledSamples.first?.count, 3)
+        XCTAssertEqual(playback.scheduledSamples.first?.messageId, 1)
+        XCTAssertEqual(playback.scheduledSamples.first?.samples.count, 3)
+        XCTAssertEqual(session.state, .speaking(messageId: 1))
     }
 
-    // MARK: - A finished context advances to the next reply
+    // MARK: - Generation pipelines ahead of playback, exactly as measured against a live socket
 
-    func testContextFinishedAdvancesToTheNextQueuedReplyOnANewContext() async {
-        let transport = FakeVoiceTtsTransport()
-        let session = makeSession(transport: transport)
-
-        session.enqueue(messageId: 1, sentences: ["first."])
-        await waitUntil { await transport.sentTexts.count >= 2 }
-        session.enqueue(messageId: 2, sentences: ["second."])
-
-        await transport.push(#"{"isFinal":true}"#)
-
-        await waitUntil(async: { await transport.sentTexts.contains { $0.contains("second.") } })
-
-        if case .speaking(_, let messageId) = session.state {
-            XCTAssertEqual(messageId, 2)
-        } else {
-            XCTFail("expected .speaking(messageId: 2), got \(session.state)")
-        }
-        let connectCalls = await transport.connectCallCount
-        XCTAssertEqual(connectCalls, 1, "the same socket should be reused between replies")
-    }
-
-    // MARK: - Skip
-
-    func testSkipStopsPlaybackClosesTheContextAndAdvances() async {
+    /// A live socket probe showed a reply's whole audio, and its `isFinal`, arriving within about
+    /// a second — long before the reply is actually finished being heard. Reply 2's generation
+    /// must be free to start (and finish) the moment reply 1's generation does, without reply 2's
+    /// audio being played early.
+    func testAQueuedReplysGenerationStartsAssoonAsThePreviousOnesFinishesEvenWhileItIsStillPlaying() async {
         let transport = FakeVoiceTtsTransport()
         let playback = PlaybackSpy()
         let session = makeSession(transport: transport, playback: playback)
 
         session.enqueue(messageId: 1, sentences: ["first."])
         await waitUntil { await transport.sentTexts.count >= 2 }
+        let reply1Audio = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [1, 1, 1])
+        await transport.push(#"{"audio":"\#(reply1Audio)"}"#)
+        await waitUntil { !playback.scheduledSamples.isEmpty }  // reply 1 is now playing
+
+        await transport.push(#"{"isFinal":true}"#)  // reply 1's generation finishes
         session.enqueue(messageId: 2, sentences: ["second."])
+
+        await waitUntil(async: { await transport.sentTexts.contains { $0.contains("second.") } })
+        let connectCalls = await transport.connectCallCount
+        XCTAssertEqual(connectCalls, 1, "the same socket should be reused between replies")
+
+        let reply2Audio = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [2, 2, 2, 2, 2])
+        await transport.push(#"{"audio":"\#(reply2Audio)"}"#)
+        await waitUntil { session.queue.head?.messageId != 2 || session.queue.isEmpty }
+        await transport.push(#"{"isFinal":true}"#)
+        await waitUntil { session.queue.isEmpty }
+
+        // Reply 2's audio fully arrived while reply 1 was still `currentlyPlayingMessageId` —
+        // it must not have reached the player yet.
+        XCTAssertFalse(playback.scheduledSamples.contains { $0.messageId == 2 })
+        XCTAssertEqual(session.state, .speaking(messageId: 1), "reply 1 is still the one actually playing")
+    }
+
+    // MARK: - Skip interrupts exactly the reply being heard, never one still queued behind it
+
+    /// The scenario a live socket probe surfaced directly: skip while reply 1 plays and reply 2's
+    /// audio has already fully arrived. Reply 2 must still play in full once it is its turn,
+    /// because its audio was held rather than handed to the player early.
+    func testSkipDuringReply1WhileReply2sAudioIsAlreadyFullyDeliveredStillPlaysReply2InFull() async {
+        let transport = FakeVoiceTtsTransport()
+        let playback = PlaybackSpy()
+        let session = makeSession(transport: transport, playback: playback)
+
+        session.enqueue(messageId: 1, sentences: ["first."])
+        await waitUntil { await transport.sentTexts.count >= 2 }
+        let reply1Audio = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [1, 1, 1])
+        await transport.push(#"{"audio":"\#(reply1Audio)"}"#)
+        await waitUntil { !playback.scheduledSamples.isEmpty }
+
+        await transport.push(#"{"isFinal":true}"#)
+        session.enqueue(messageId: 2, sentences: ["second."])
+        await waitUntil(async: { await transport.sentTexts.contains { $0.contains("second.") } })
+
+        // Reply 2's whole audio arrives and finishes generating too, all while reply 1 is still
+        // the one actually playing — matching what the live socket probe measured.
+        let reply2Audio = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [2, 2, 2, 2, 2])
+        await transport.push(#"{"audio":"\#(reply2Audio)"}"#)
+        await transport.push(#"{"isFinal":true}"#)
+        await waitUntil { session.queue.isEmpty }
+        XCTAssertFalse(
+            playback.scheduledSamples.contains { $0.messageId == 2 },
+            "reply 2's audio must still be held, not already playing, before the skip")
 
         session.skip()
 
         XCTAssertEqual(playback.stopCount, 1)
-        // Wait on the transport's own record, not on `session.state` — `state` flips to
-        // `.speaking(2)` synchronously, before the frames for reply 2 are actually awaited-sent,
-        // so it is not proof the send happened.
-        await waitUntil(async: { await transport.sentTexts.contains { $0.contains("second.") } })
-
-        let sent = await transport.sentTexts
-        XCTAssertTrue(sent.contains { $0.contains("\"close_context\":true") })
+        let reply2Scheduled = playback.scheduledSamples.filter { $0.messageId == 2 }
+        XCTAssertEqual(
+            reply2Scheduled.map(\.samples.count), [5],
+            "reply 2's full, already-delivered audio must play once it is promoted")
+        XCTAssertEqual(session.state, .speaking(messageId: 2))
+        // Reply 1's generation had already finished (hence `[1, ...`), and reply 2 was already
+        // fully generated too by the time it was promoted, so both get told there is no more
+        // audio coming for them — reply 1 when its context finished, reply 2 the moment it
+        // became the one playing.
+        XCTAssertEqual(playback.completedMessages, [1, 2])
     }
 
-    func testSkipWithNothingElseQueuedReturnsToIdle() async {
+    func testSkipBeforeAnyAudioHasArrivedCancelsTheReplyStillOnTheWire() async {
         let transport = FakeVoiceTtsTransport()
         let session = makeSession(transport: transport)
         session.enqueue(messageId: 1, sentences: ["only one."])
@@ -245,8 +288,116 @@ final class SpeechOutputSessionTests: XCTestCase {
 
         session.skip()
 
-        await waitUntil { session.state == .idle }
+        // `state` reaches `.idle` synchronously (the queue is dropped before the async
+        // `closeContext` frame is even dispatched), so it is not proof that frame was sent — wait
+        // on the transport's own record instead.
+        await waitUntil(async: { await transport.sentTexts.contains { $0.contains("\"close_context\":true") } })
         XCTAssertTrue(session.queue.isEmpty)
+        XCTAssertEqual(session.state, .idle)
+    }
+
+    func testSkipWithNothingPlayingOrGeneratingIsANoOp() {
+        let transport = FakeVoiceTtsTransport()
+        let playback = PlaybackSpy()
+        let session = makeSession(transport: transport, playback: playback)
+
+        session.skip()
+
+        XCTAssertEqual(playback.stopCount, 1, "stopPlayback is harmless to call even with nothing playing")
+        XCTAssertEqual(session.state, .idle)
+    }
+
+    // MARK: - A reply whose synthesis produces no audio at all never wedges playback
+
+    func testAReplyWithNoAudioAtAllIsSkippedOverWithoutBlockingTheNextOne() async {
+        let transport = FakeVoiceTtsTransport()
+        let playback = PlaybackSpy()
+        let session = makeSession(transport: transport, playback: playback)
+
+        session.enqueue(messageId: 1, sentences: ["silent."])
+        await waitUntil { await transport.sentTexts.count >= 2 }
+        // Reply 1's context finishes without ever producing a single audio chunk.
+        await transport.push(#"{"isFinal":true}"#)
+
+        session.enqueue(messageId: 2, sentences: ["audible."])
+        await waitUntil(async: { await transport.sentTexts.contains { $0.contains("audible.") } })
+        let audio = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [9, 9, 9])
+        await transport.push(#"{"audio":"\#(audio)"}"#)
+
+        await waitUntil { !playback.scheduledSamples.isEmpty }
+        XCTAssertEqual(playback.scheduledSamples.first?.messageId, 2)
+        XCTAssertEqual(session.state, .speaking(messageId: 2))
+    }
+
+    // MARK: - Playback windows are stamped from when audio was actually heard, not received
+
+    /// Measured against a live socket: ElevenLabs can finish generating and delivering a reply's
+    /// audio, and report it `isFinal`, long before that audio is actually done playing. The
+    /// recorded window has to run to when the app confirms playback finished, not to when the
+    /// wire said generation finished.
+    func testRecentPlaybackWindowRunsToWhenPlaybackFinishedIsReportedNotToWhenAudioArrived() async throws {
+        let transport = FakeVoiceTtsTransport()
+        let playback = PlaybackSpy()
+        let session = makeSession(transport: transport, playback: playback)
+
+        session.enqueue(messageId: 1, sentences: ["a reply."])
+        await waitUntil { await transport.sentTexts.count >= 2 }
+
+        let audio = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [1, 2, 3])
+        await transport.push(#"{"audio":"\#(audio)"}"#)
+        await waitUntil { !playback.scheduledSamples.isEmpty }
+        let arrivalTime = clock.current
+
+        await transport.push(#"{"isFinal":true}"#)
+        await waitUntil { !playback.completedMessages.isEmpty }
+
+        // Real playback continues well after generation finished — the whole point of the
+        // measurement this fix responds to.
+        clock.current = clock.current.addingTimeInterval(5)
+        session.playbackFinished(messageId: 1)
+
+        let entry = try XCTUnwrap(session.recentPlayback.first)
+        XCTAssertEqual(entry.window.lowerBound, arrivalTime)
+        XCTAssertEqual(entry.window.upperBound, clock.current)
+        XCTAssertEqual(entry.text, "a reply.")
+    }
+
+    func testSkipsPlaybackWindowIsStampedAtTheInterruptionMomentNotAtSomeLaterOrEarlierTime() async throws {
+        let transport = FakeVoiceTtsTransport()
+        let playback = PlaybackSpy()
+        let session = makeSession(transport: transport, playback: playback)
+
+        session.enqueue(messageId: 1, sentences: ["a reply."])
+        await waitUntil { await transport.sentTexts.count >= 2 }
+
+        let audio = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [1, 2, 3])
+        await transport.push(#"{"audio":"\#(audio)"}"#)
+        await waitUntil { !playback.scheduledSamples.isEmpty }
+        let arrivalTime = clock.current
+
+        clock.current = clock.current.addingTimeInterval(2)
+        session.skip()
+
+        let entry = try XCTUnwrap(session.recentPlayback.first)
+        XCTAssertEqual(entry.window.lowerBound, arrivalTime)
+        XCTAssertEqual(entry.window.upperBound, clock.current)
+    }
+
+    func testPlaybackFinishedIsIgnoredForAnyMessageIdOtherThanTheOneCurrentlyPlaying() async {
+        let transport = FakeVoiceTtsTransport()
+        let playback = PlaybackSpy()
+        let session = makeSession(transport: transport, playback: playback)
+
+        session.enqueue(messageId: 1, sentences: ["hi."])
+        await waitUntil { await transport.sentTexts.count >= 2 }
+        let audio = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [1, 2, 3])
+        await transport.push(#"{"audio":"\#(audio)"}"#)
+        await waitUntil { !playback.scheduledSamples.isEmpty }
+
+        session.playbackFinished(messageId: 999)  // some other, unrelated id
+
+        XCTAssertTrue(session.recentPlayback.isEmpty)
+        XCTAssertEqual(session.state, .speaking(messageId: 1))
     }
 
     // MARK: - A dropped connection is retried, resends the reply, and eventually gives up
@@ -264,7 +415,7 @@ final class SpeechOutputSessionTests: XCTestCase {
         await waitUntil { recorder.events.contains(.ttsDropped) }
     }
 
-    func testARepeatedlyFailingReplyIsEventuallyAbandonedWithReplyNotSpoken() async {
+    func testARepeatedlyFailingReplyIsEventuallyAbandonedAndTheNextOneStillGetsGenerated() async {
         let transport = FakeVoiceTtsTransport()
         let recorder = FeedbackRecorder()
         let session = makeSession(transport: transport, feedbackRecorder: recorder)
@@ -289,93 +440,11 @@ final class SpeechOutputSessionTests: XCTestCase {
         XCTAssertTrue(recorder.events.contains(.replyNotSpoken), "the exhausted reply should have been abandoned")
 
         await waitUntil(async: { await transport.sentTexts.contains { $0.contains("second.") } })
-
-        if case .speaking(_, let messageId) = session.state {
-            XCTAssertEqual(messageId, 2)
-        } else {
-            XCTFail("expected .speaking(messageId: 2), got \(session.state)")
-        }
-    }
-
-    // MARK: - Playback windows for echo rejection
-
-    func testRecentPlaybackRecordsAWindowCoveringFirstAudioToContextFinishedWithTheRepliesFullText() async {
-        let transport = FakeVoiceTtsTransport()
-        let playback = PlaybackSpy()
-        let session = makeSession(transport: transport, playback: playback)
-
-        session.enqueue(messageId: 1, sentences: ["hello there.", "how are you."])
-        await waitUntil { await transport.sentTexts.count >= 3 }
-
-        let base64 = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [0, 1, 2])
-        await transport.push(#"{"audio":"\#(base64)"}"#)
-        await waitUntil { !playback.scheduledSamples.isEmpty }
-        // Audio has arrived and been scheduled, but the context has not reported finished yet —
-        // nothing is finalised into `recentPlayback` until it does.
-        XCTAssertTrue(session.recentPlayback.isEmpty)
-
-        await transport.push(#"{"isFinal":true}"#)
-        await waitUntil { !session.recentPlayback.isEmpty }
-
-        let entry = try? XCTUnwrap(session.recentPlayback.first)
-        XCTAssertEqual(entry?.text, "hello there. how are you.")
-    }
-
-    /// Measured against a live socket: ElevenLabs generates and delivers audio far ahead of
-    /// playback, so a whole reply's PCM can arrive within a second even though it takes much
-    /// longer to actually be heard. The recorded window has to reflect that longer, audible
-    /// duration — not the near-instant wall-clock gap between the first chunk and `isFinal`.
-    func testRecentPlaybackWindowRunsToTheAudioDurationEvenWhenEverythingArrivesInstantly() async throws {
-        let transport = FakeVoiceTtsTransport()
-        let playback = PlaybackSpy()
-        let session = makeSession(transport: transport, playback: playback)
-
-        session.enqueue(messageId: 1, sentences: ["a long reply."])
-        await waitUntil { await transport.sentTexts.count >= 2 }
-
-        // Exactly one second of 24kHz mono PCM, arriving and finishing (`isFinal`) with no
-        // simulated wall-clock advance between the two at all.
-        let oneSecondOfSamples = [Int16](repeating: 0, count: 24000)
-        let base64 = RealtimeUplinkChunk.audioBase64(fromPCM16LE: oneSecondOfSamples)
-        await transport.push(#"{"audio":"\#(base64)"}"#)
-        await waitUntil { !playback.scheduledSamples.isEmpty }
-        await transport.push(#"{"isFinal":true}"#)
-        await waitUntil { !session.recentPlayback.isEmpty }
-
-        let entry = try XCTUnwrap(session.recentPlayback.first)
-        let duration = entry.window.upperBound.timeIntervalSince(entry.window.lowerBound)
-        XCTAssertEqual(duration, 1.0, accuracy: 0.01)
-    }
-
-    /// Skip cuts playback short of whatever audio had already arrived — the window must be capped
-    /// at when skip actually happened, not extended out to the full duration of audio ElevenLabs
-    /// had already generated but that was never actually heard.
-    func testSkipCapsThePlaybackWindowAtTheInterruptionRatherThanTheFullAudioDuration() async throws {
-        let transport = FakeVoiceTtsTransport()
-        let playback = PlaybackSpy()
-        let session = makeSession(transport: transport, playback: playback)
-
-        session.enqueue(messageId: 1, sentences: ["a very long reply."])
-        await waitUntil { await transport.sentTexts.count >= 2 }
-
-        // Ten seconds of audio arrives, but only half a second of wall clock actually passes
-        // before "computer skip" cuts it off.
-        let tenSecondsOfSamples = [Int16](repeating: 0, count: 240_000)
-        let base64 = RealtimeUplinkChunk.audioBase64(fromPCM16LE: tenSecondsOfSamples)
-        await transport.push(#"{"audio":"\#(base64)"}"#)
-        await waitUntil { !playback.scheduledSamples.isEmpty }
-        clock.current = clock.current.addingTimeInterval(0.5)
-
-        session.skip()
-
-        let entry = try XCTUnwrap(session.recentPlayback.first)
-        let duration = entry.window.upperBound.timeIntervalSince(entry.window.lowerBound)
-        XCTAssertEqual(duration, 0.5, accuracy: 0.01)
     }
 
     // MARK: - End
 
-    func testEndClosesTheSocketAndClearsTheQueue() async {
+    func testEndClosesTheSocketAndClearsEverything() async {
         let transport = FakeVoiceTtsTransport()
         let session = makeSession(transport: transport)
         session.enqueue(messageId: 1, sentences: ["hi."])
