@@ -11,8 +11,8 @@ import XCTest
 /// Every method starts with `requireLiveElevenLabsApiKey()`, which skips (not fails) unless
 /// `PAI_LIVE_ELEVENLABS=1` is set and `ELEVENLABS_API_KEY` is present in the process environment —
 /// read only there, never logged, never compared to anything, never printed. Every URL or error
-/// text this file ever puts into an assertion message is routed through `ElevenLabsLiveRedacting`
-/// first, proven correct on its own in `ElevenLabsLiveRedactingTests`, which runs unconditionally.
+/// text this file ever puts into an assertion message is routed through `VoiceCredentialRedaction`
+/// first, proven correct on its own in `VoiceCredentialRedactionTests`, which runs unconditionally.
 @MainActor
 final class ElevenLabsLiveTests: XCTestCase {
     private static let sampleRate = 16000
@@ -24,7 +24,7 @@ final class ElevenLabsLiveTests: XCTestCase {
         withDescription description: String, inFile filePath: String, atLine lineNumber: Int, expected: Bool
     ) {
         super.recordFailure(
-            withDescription: ElevenLabsLiveRedacting.redact(description), inFile: filePath, atLine: lineNumber,
+            withDescription: VoiceCredentialRedaction.redact(description), inFile: filePath, atLine: lineNumber,
             expected: expected)
     }
     private static let chunkSize = 1600
@@ -162,7 +162,7 @@ final class ElevenLabsLiveTests: XCTestCase {
             switch outcome {
             case let .segment(segment): batchSegments.append(segment)
             case .noSpeechDetected: XCTFail("expected the batch endpoint to hear utterance A's speech")
-            case let .failed(error): XCTFail("batch backfill failed: \(ElevenLabsLiveRedacting.redact(error))")
+            case let .failed(error): XCTFail("batch backfill failed: \(VoiceCredentialRedaction.redact(error))")
             }
         }
         XCTAssertFalse(
