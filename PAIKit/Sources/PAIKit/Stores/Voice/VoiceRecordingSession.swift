@@ -102,7 +102,11 @@ private struct RecentAudioTail {
 @Observable
 public final class VoiceRecordingSession {
     /// How much of the take's most recent audio is kept in memory for an immediate re-burst after
-    /// a drop, before a stretch is left for the batch backfill instead.
+    /// a drop, before a stretch is left for the batch backfill instead. Sent unpaced (the whole
+    /// tail in a tight loop) — measured against a live connection, an unpaced burst up to 20s
+    /// succeeds and completes normally; 30s and beyond gets the connection closed with
+    /// `queue_overflow`. This stays at the high end of the confirmed-safe range rather than
+    /// closer to 30s, since the margin is the whole point.
     static let burstTailSeconds = 20
     /// How many consecutive reconnects may re-burst the same still-uncovered stretch before it is
     /// left alone — a flapping connection would otherwise re-send the same twenty seconds forever
