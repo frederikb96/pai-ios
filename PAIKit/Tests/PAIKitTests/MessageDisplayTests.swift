@@ -213,13 +213,69 @@ final class MessageDisplayTests: XCTestCase {
         XCTAssertEqual(reply?.body, "ok")
     }
 
-    func testParseNotifyReplyReturnsNilWhenTitleNeededTheQuotedFormForAnInlineColon() {
+    /// An inline `: ` forces PyYAML's single-quoted style. Captured verbatim from a real
+    /// notification title.
+    func testParseNotifyReplyParsesASingleQuotedScalarWithAnInlineColon() {
         let content =
             "status: ok\nsent: true\nnotification_id: id\nmarker: pai-notify:x\n"
-            + "title: 'Deploy: finished'\nbody: x\n"
-        XCTAssertNil(MessageDisplay.parseNotifyReply(content))
+            + "title: 'talos ❓ Cluster health: 3 NVMe disks wearing out'\nbody: x\n"
+        let reply = MessageDisplay.parseNotifyReply(content)
+        XCTAssertEqual(reply?.title, "talos ❓ Cluster health: 3 NVMe disks wearing out")
+        XCTAssertEqual(reply?.body, "x")
     }
 
+    /// PyYAML doubles an embedded apostrophe (`''`) inside a single-quoted scalar. Captured
+    /// verbatim from a real notification body.
+    func testParseNotifyReplyUnescapesADoubledApostropheInASingleQuotedScalar() {
+        let content =
+            "status: ok\nsent: true\nnotification_id: id\nmarker: pai-notify:x\n"
+            + "title: x\n"
+            + "body: 'D7: I''ll merge PR #862 after the Immich rebuild, before node2, unless you say no."
+            + " Mayastor drops a replica away >10 min and re-copies it in full; for node2''s HDD replicas"
+            + " that''s a day each. 30 min covers a Robot power cycle.'\n"
+        let reply = MessageDisplay.parseNotifyReply(content)
+        XCTAssertEqual(
+            reply?.body,
+            "D7: I'll merge PR #862 after the Immich rebuild, before node2, unless you say no."
+                + " Mayastor drops a replica away >10 min and re-copies it in full; for node2's HDD replicas"
+                + " that's a day each. 30 min covers a Robot power cycle.")
+    }
+
+    /// A control character (a literal tab, here) forces PyYAML's double-quoted style, escaped
+    /// with its own backslash sequences.
+    func testParseNotifyReplyUnescapesADoubleQuotedScalar() {
+        let content =
+            "status: ok\nsent: true\nnotification_id: id\nmarker: pai-notify:x\n"
+            + "title: x\nbody: \"value\\twith\\ttab\"\n"
+        let reply = MessageDisplay.parseNotifyReply(content)
+        XCTAssertEqual(reply?.body, "value\twith\ttab")
+    }
+
+    /// A plain scalar long enough to cross PyYAML's output width folds onto an indented
+    /// continuation line with no quoting at all; a lone fold rejoins with a single space.
+    func testParseNotifyReplyRejoinsAWidthWrappedPlainContinuationLine() {
+        let words = (0..<200).map { "word\($0)" }.joined(separator: " ")
+        let firstLine = (0...138).map { "word\($0)" }.joined(separator: " ")
+        let continuation = (139...199).map { "word\($0)" }.joined(separator: " ")
+        let content = "status: ok\ntitle: x\nbody: \(firstLine)\n  \(continuation)\n"
+        let reply = MessageDisplay.parseNotifyReply(content)
+        XCTAssertEqual(reply?.body, words)
+    }
+
+    /// The same width-wrap fold inside a single-quoted scalar, where an inline `: ` also forced
+    /// the quoted style.
+    func testParseNotifyReplyRejoinsAWidthWrappedSingleQuotedContinuationLine() {
+        let words = (0..<200).map { "word\($0)" }.joined(separator: " ")
+        let firstLine = (0...137).map { "word\($0)" }.joined(separator: " ")
+        let continuation = (138...199).map { "word\($0)" }.joined(separator: " ")
+        let content = "status: ok\ntitle: x\nbody: 'note: \(firstLine)\n  \(continuation)'\n"
+        let reply = MessageDisplay.parseNotifyReply(content)
+        XCTAssertEqual(reply?.body, "note: " + words)
+    }
+
+    /// Two consecutive line breaks inside a quoted scalar are PyYAML's encoding of a literal
+    /// embedded newline, not a width-wrap fold — reversing that correctly means re-implementing
+    /// YAML's line-folding rules, which this deliberately does not attempt.
     func testParseNotifyReplyReturnsNilWhenBodyNeededTheQuotedFormForAnEmbeddedLineBreak() {
         let content =
             "status: ok\nsent: true\nnotification_id: id\nmarker: pai-notify:x\n"

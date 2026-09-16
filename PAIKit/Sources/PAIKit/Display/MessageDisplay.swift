@@ -139,34 +139,187 @@ public enum MessageDisplay {
     /// `notify()` (`backend/src/pai_cloud/mcp_server.py`) always emits `title` and `body` as the
     /// two lines right after `marker`, via block-style YAML (`backend/src/pai_cloud/mcp_serializer.py`,
     /// PyYAML's `SafeDumper` with `default_flow_style=False`). PyYAML renders a value as a bare
-    /// `key: value` plain scalar whenever it can, and switches to a quoted style — always starting
-    /// with `'` — the moment it can't: a newline, leading/trailing whitespace, a leading digit or
-    /// "yes"/"no"/"null"-shaped ambiguity, an inline `: `. That quoted style folds a single
-    /// embedded line break into a blank output line, which this deliberately does not attempt to
-    /// reverse: doing so correctly means re-implementing YAML's folding rules for a cosmetic gain.
-    /// When either value took the quoted form this returns `nil` and the caller falls back to the
-    /// raw dump — correct in every case, specially rendered only when both values are the plain
-    /// single-line form real notification text is in practice. Mirrors the web's
-    /// `parseNotifyReply` (`web/src/utils/messageDisplay.ts`) exactly, so the two clients agree on
-    /// when to special-case a reply.
+    /// `key: value` plain scalar whenever it can, and switches to single-quoted (doubling any
+    /// embedded `'`) or double-quoted (backslash escapes) the moment it can't: a newline,
+    /// leading/trailing whitespace, a leading digit or "yes"/"no"/"null"-shaped ambiguity, an
+    /// inline `: `, or a character double-quoting alone can represent. A value long enough to
+    /// cross PyYAML's output width also folds onto indented continuation lines — this rejoins
+    /// those with a single space, YAML's own rule for a lone line break.
+    ///
+    /// Returns `nil` for anything this cannot reconstruct losslessly: an unterminated quote, an
+    /// escape neither quoted style defines, or two or more consecutive line breaks inside a
+    /// quoted value — YAML folds those to a literal embedded newline rather than a space, which
+    /// this deliberately does not attempt to reverse: doing so correctly means re-implementing
+    /// YAML's folding rules for a cosmetic gain. The caller falls back to the raw dump in that
+    /// case. Mirrors the web's `parseNotifyReply` (`web/src/utils/messageDisplay.ts`) exactly, so
+    /// the two clients agree on when to special-case a reply.
     public static func parseNotifyReply(_ content: String) -> NotifyReply? {
-        guard let title = firstLineMatch(of: "title: (.*)", in: content),
-            let body = firstLineMatch(of: "body: (.*)", in: content)
+        guard let title = scalarValue(forKey: "title", in: content),
+            let body = scalarValue(forKey: "body", in: content)
         else { return nil }
-        guard !title.hasPrefix("'"), !body.hasPrefix("'") else { return nil }
         return NotifyReply(title: title, body: body)
     }
 
-    private static func firstLineMatch(of pattern: String, in content: String) -> String? {
-        guard let regex = try? NSRegularExpression(pattern: "^" + pattern + "$", options: [.anchorsMatchLines]) else {
-            return nil
-        }
+    private static func scalarValue(forKey key: String, in content: String) -> String? {
+        guard
+            let regex = try? NSRegularExpression(
+                pattern: "^\(NSRegularExpression.escapedPattern(for: key)): (.*)$", options: [.anchorsMatchLines])
+        else { return nil }
         let range = NSRange(content.startIndex..<content.endIndex, in: content)
         guard let match = regex.firstMatch(in: content, range: range), match.numberOfRanges > 1,
             let valueRange = Range(match.range(at: 1), in: content)
         else { return nil }
-        return String(content[valueRange])
+
+        guard valueRange.lowerBound < valueRange.upperBound else { return "" }
+        switch content[valueRange.lowerBound] {
+        case "'":
+            return parseSingleQuotedScalar(in: content, from: content.index(after: valueRange.lowerBound))
+        case "\"":
+            return parseDoubleQuotedScalar(in: content, from: content.index(after: valueRange.lowerBound))
+        default:
+            return parsePlainScalar(in: content, firstLine: content[valueRange], from: valueRange.upperBound)
+        }
     }
+
+    /// A plain scalar's first line, plus any indented continuation lines PyYAML wrapped it onto
+    /// — each rejoined with a single space. A continuation is recognised only by its leading
+    /// whitespace, which is what tells it apart from the next `key: value` line at column 0.
+    private static func parsePlainScalar(in content: String, firstLine: Substring, from lineEnd: String.Index)
+        -> String
+    {
+        var result = String(firstLine)
+        var index = lineEnd
+        while index < content.endIndex, content[index] == "\n" {
+            let afterBreak = content.index(after: index)
+            guard afterBreak < content.endIndex, content[afterBreak] == " " || content[afterBreak] == "\t" else {
+                break
+            }
+            var cursor = afterBreak
+            while cursor < content.endIndex, content[cursor] == " " || content[cursor] == "\t" {
+                cursor = content.index(after: cursor)
+            }
+            let lineStart = cursor
+            while cursor < content.endIndex, content[cursor] != "\n" {
+                cursor = content.index(after: cursor)
+            }
+            result += " " + content[lineStart..<cursor]
+            index = cursor
+        }
+        return result
+    }
+
+    /// A single-quoted scalar's content, from just past the opening `'`. `''` is an escaped
+    /// literal quote; any other `'` closes the value. A lone line break (PyYAML's own width
+    /// wrap) folds to a single space; two or more in a row would be a literal embedded newline —
+    /// unsupported, see ``parseNotifyReply(_:)``.
+    private static func parseSingleQuotedScalar(in content: String, from start: String.Index) -> String? {
+        var result = ""
+        var index = start
+        while index < content.endIndex {
+            switch content[index] {
+            case "'":
+                let next = content.index(after: index)
+                if next < content.endIndex, content[next] == "'" {
+                    result.append("'")
+                    index = content.index(after: next)
+                } else {
+                    return result
+                }
+            case "\n":
+                guard let cursor = foldLineBreak(in: content, from: index) else { return nil }
+                result.append(" ")
+                index = cursor
+            default:
+                result.append(content[index])
+                index = content.index(after: index)
+            }
+        }
+        return nil
+    }
+
+    /// A double-quoted scalar's content, from just past the opening `"`. Handles the escapes
+    /// PyYAML's emitter can produce — including a `\` immediately before a line break, which
+    /// marks a width-wrap fold PyYAML itself makes explicit rather than implicit: the break and
+    /// its continuation-line indent are dropped outright, with no space inserted (a folded space
+    /// in this style is written back out as its own `\ ` escape). An unescaped line break follows
+    /// the same fold-or-bail rule as the single-quoted case.
+    private static func parseDoubleQuotedScalar(in content: String, from start: String.Index) -> String? {
+        var result = ""
+        var index = start
+        while index < content.endIndex {
+            let ch = content[index]
+            if ch == "\"" {
+                return result
+            } else if ch == "\\" {
+                let escapeStart = content.index(after: index)
+                guard escapeStart < content.endIndex else { return nil }
+                let escapeChar = content[escapeStart]
+                if escapeChar == "\n" {
+                    var cursor = content.index(after: escapeStart)
+                    while cursor < content.endIndex, content[cursor] == " " || content[cursor] == "\t" {
+                        cursor = content.index(after: cursor)
+                    }
+                    index = cursor
+                } else if let mapped = Self.doubleQuoteEscapes[escapeChar] {
+                    result.append(mapped)
+                    index = content.index(after: escapeStart)
+                } else if let hexLength = Self.doubleQuoteHexEscapeLengths[escapeChar] {
+                    guard
+                        let scalar = readHexEscape(
+                            in: content, from: content.index(after: escapeStart), length: hexLength)
+                    else { return nil }
+                    result.append(scalar.value)
+                    index = scalar.end
+                } else {
+                    return nil
+                }
+            } else if ch == "\n" {
+                guard let cursor = foldLineBreak(in: content, from: index) else { return nil }
+                result.append(" ")
+                index = cursor
+            } else {
+                result.append(ch)
+                index = content.index(after: index)
+            }
+        }
+        return nil
+    }
+
+    /// Consumes one lone line break plus the following line's leading indentation — PyYAML's
+    /// width-wrap fold. Returns `nil` (unsupported: a literal embedded newline) if a second break
+    /// immediately follows, rather than indented content.
+    private static func foldLineBreak(in content: String, from index: String.Index) -> String.Index? {
+        var cursor = content.index(after: index)
+        guard cursor >= content.endIndex || content[cursor] != "\n" else { return nil }
+        while cursor < content.endIndex, content[cursor] == " " || content[cursor] == "\t" {
+            cursor = content.index(after: cursor)
+        }
+        return cursor
+    }
+
+    private static func readHexEscape(in content: String, from start: String.Index, length: Int)
+        -> (value: Character, end: String.Index)?
+    {
+        var cursor = start
+        var hex = ""
+        for _ in 0..<length {
+            guard cursor < content.endIndex, content[cursor].isHexDigit else { return nil }
+            hex.append(content[cursor])
+            cursor = content.index(after: cursor)
+        }
+        guard let code = UInt32(hex, radix: 16), let unicodeScalar = Unicode.Scalar(code) else { return nil }
+        return (Character(unicodeScalar), cursor)
+    }
+
+    /// PyYAML's double-quoted single-character escapes (`yaml/scanner.py`'s `ESCAPE_REPLACEMENTS`).
+    private static let doubleQuoteEscapes: [Character: Character] = [
+        "0": "\0", "a": "\u{07}", "b": "\u{08}", "t": "\t", "n": "\n", "v": "\u{0B}",
+        "f": "\u{0C}", "r": "\r", "e": "\u{1B}", " ": " ", "\"": "\"", "\\": "\\",
+        "/": "/", "N": "\u{85}", "_": "\u{A0}", "L": "\u{2028}", "P": "\u{2029}",
+    ]
+
+    /// PyYAML's `\xXX` / `\uXXXX` / `\UXXXXXXXX` hex escapes, keyed by their digit count.
+    private static let doubleQuoteHexEscapeLengths: [Character: Int] = ["x": 2, "u": 4, "U": 8]
 
     /// Strips the line-number prefixes the Read tool emits (`   141→content`).
     ///

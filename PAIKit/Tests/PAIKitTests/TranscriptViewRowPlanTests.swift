@@ -120,9 +120,12 @@ final class TranscriptViewRowPlanTests: XCTestCase {
     }
 
     func testAMarkedResultFallsBackToTheOrdinaryToolResultCardWhenTheReplyTextCannotBeParsed() {
-        let quoted =
-            "status: ok\nmarker: pai-notify:x\ntitle: 'Deploy: finished'\nbody: x\n"
-        let result = ToolResult(toolUseId: "1", toolName: "Bash", content: quoted, isError: false)
+        // A single-quoted value can fold across lines two ways: a lone break is a width-wrap fold
+        // (rejoined with a space), but two in a row encode a literal embedded newline — the one
+        // shape `parseNotifyReply` still cannot reconstruct, so this stays the genuine fallback case.
+        let unparseable =
+            "status: ok\nmarker: pai-notify:x\ntitle: Deploy finished\nbody: 'line one\n\n  line two'\n"
+        let result = ToolResult(toolUseId: "1", toolName: "Bash", content: unparseable, isError: false)
         let msg = message(type: .toolResult, toolResult: result, notificationMarker: "pai-notify:x")
 
         let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
