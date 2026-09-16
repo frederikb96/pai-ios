@@ -75,6 +75,12 @@ final class AppEnvironment {
         /// to outlive the screen that started it — see `VoiceRecorderController`'s doc comment.
         /// There is one microphone, so there is one of these.
         let voice: VoiceRecorderController
+        /// Which commands the offline wake-word engine listens for — its own persistence,
+        /// independent of `SettingsStore`, the same shape `SmtpSettingsStore` already is.
+        let wakeWordSettings: WakeWordSettingsStore
+        /// Call mode — app-wide for the same reason `voice` is: a call outlives the screen that
+        /// started it, and the Action Button's own intent needs to reach it with no screen open.
+        let callMode: CallModeController
         /// The notification feed (row 5.27) — app-wide rather than scoped to its own screen,
         /// since the unread count drives a badge visible from the session list's toolbar and the
         /// springboard, neither of which is that screen.
@@ -174,6 +180,10 @@ final class AppEnvironment {
         #endif
         let draftStore = DraftStore(api: client)
         let toasts = ToastCenter()
+        let transcript = TranscriptStore()
+        let voice = VoiceRecorderController(
+            apiClient: client, settingsStore: settingsStore, drafts: draftStore, toasts: toasts)
+        let wakeWordSettings = WakeWordSettingsStore(storage: defaults)
 
         connection = Connection(
             requestFactory: factory,
@@ -181,7 +191,7 @@ final class AppEnvironment {
             sessions: SessionListStore(api: client),
             machines: MachineStore(api: client),
             claudeAuth: ClaudeAuthStore(api: client),
-            transcript: TranscriptStore(),
+            transcript: transcript,
             settings: settingsStore,
             drafts: draftStore,
             me: MeStore(api: client),
@@ -192,8 +202,11 @@ final class AppEnvironment {
             notes: NotesStore(api: client),
             notesBrowse: NotesBrowseStore(api: client, storage: defaults),
             staging: StagedAttachmentStore(),
-            voice: VoiceRecorderController(
-                apiClient: client, settingsStore: settingsStore, drafts: draftStore, toasts: toasts),
+            voice: voice,
+            wakeWordSettings: wakeWordSettings,
+            callMode: CallModeController(
+                controller: voice, apiClient: client, requestFactory: factory, transcript: transcript,
+                drafts: draftStore, settingsStore: settingsStore, wakeWordSettings: wakeWordSettings),
             notifications: NotificationCenterStore(api: client),
             transcriptJumps: TranscriptJumpRequests()
         )

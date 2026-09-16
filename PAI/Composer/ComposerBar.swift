@@ -33,6 +33,7 @@ struct ComposerBar: View {
     @State private var showingFilePicker = false
     @State private var showingTemporaryNote = false
     @State private var showingRecordingsSheet = false
+    @State private var showingCallMode = false
 
     init(sessionID: String) {
         self.sessionID = sessionID
@@ -147,6 +148,13 @@ struct ComposerBar: View {
                 ) {
                     Task { await toggleRecording(draftStore: draftStore, voiceController: voiceController) }
                 }
+                // A long-press opens call mode for this session — only offered while the
+                // microphone is genuinely free, the same gate a tap already applies, so this
+                // never races a microphone-mode take started from another composer.
+                .onLongPressGesture(minimumDuration: 0.5) {
+                    guard voiceController.state == .idle else { return }
+                    showingCallMode = true
+                }
 
                 if isRecordingHere(voiceController) {
                     MuteButton(controller: voiceController) { voiceController.toggleMute() }
@@ -194,6 +202,9 @@ struct ComposerBar: View {
                 onInsertTranscript: { prefixed in appendTranscript(prefixed, draftStore: draftStore) },
                 onAttach: { files in stageAttachments(files) }
             )
+        }
+        .fullScreenCover(isPresented: $showingCallMode) {
+            CallModeScreen(sessionID: sessionID)
         }
         .accessibilityIdentifier("composer-bar")
     }

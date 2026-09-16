@@ -122,5 +122,14 @@ struct PaiAppShortcuts: AppShortcutsProvider {
             shortTitle: "New Session of Type",
             systemImageName: "rectangle.stack.badge.plus"
         )
+        AppShortcut(
+            intent: VoiceActionIntent(),
+            phrases: [
+                "Toggle \(.applicationName) call",
+                "\(.applicationName) voice action",
+            ],
+            shortTitle: "Voice Action",
+            systemImageName: "phone.fill"
+        )
     }
 }

@@ -98,6 +98,10 @@ final class CallModeController {
     /// microphone-mode take, permission was refused, or the audio session could not be configured.
     /// The caller (the call screen's own `.task`) is expected to show that and dismiss itself.
     func enter(sessionID: String) async -> Bool {
+        // Reopening the call screen for the call already running (dismissed and long-pressed
+        // again, say) reattaches rather than double-entering; a different session while one is
+        // already live is refused, the same as a microphone-mode take would be.
+        if store != nil { return boundSessionID == sessionID }
         guard controller.reserveForCallMode() else { return false }
         guard await controller.ensureMicrophonePermission() else {
             controller.releaseFromCallMode()
