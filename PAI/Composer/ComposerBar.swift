@@ -32,6 +32,7 @@ struct ComposerBar: View {
     @State private var showingPhotoPicker = false
     @State private var showingFilePicker = false
     @State private var showingTemporaryNote = false
+    @State private var showingSecretGrant = false
     @State private var showingRecordingsSheet = false
     @State private var showingCallMode = false
 
@@ -139,6 +140,7 @@ struct ComposerBar: View {
                     onAddPhoto: { showingPhotoPicker = true },
                     onAddFile: { showingFilePicker = true },
                     onTemporaryNote: { showingTemporaryNote = true },
+                    onSecretGrant: { showingSecretGrant = true },
                     onCancel: { Task { await cancelSession() } }
                 )
 
@@ -195,6 +197,9 @@ struct ComposerBar: View {
         }
         .sheet(isPresented: $showingTemporaryNote) {
             TemporaryNoteSheet { attachment in stageAttachments([attachment]) }
+        }
+        .sheet(isPresented: $showingSecretGrant) {
+            SecretGrantSheet(sessionID: sessionID)
         }
         .sheet(isPresented: $showingRecordingsSheet) {
             RecordingsSheet(

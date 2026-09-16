@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The plus button's menu — a native `Menu`, matching the "must feel native" constraint directly
 /// rather than porting the web's absolutely-positioned popover. Item order and the
-/// existing-session-only `Cancel` item mirror the web's plus menu exactly
+/// existing-session-only items (`Grant Secret Access`, `Cancel`) mirror the web's plus menu
 /// (`MessageInput.tsx`: "nothing is running before the session exists").
 struct ComposerActionMenu: View {
     var hasSession: Bool
@@ -11,6 +11,7 @@ struct ComposerActionMenu: View {
     var onAddPhoto: () -> Void
     var onAddFile: () -> Void
     var onTemporaryNote: () -> Void
+    var onSecretGrant: () -> Void
     var onCancel: () -> Void
 
     var body: some View {
@@ -36,6 +37,13 @@ struct ComposerActionMenu: View {
                 Label("Temporary Note", systemImage: "note.text")
             }
             if hasSession {
+                // Needs a real session id to grant against — unlike the other four entries,
+                // there is nothing sensible for this one to do before a session exists.
+                Button {
+                    onSecretGrant()
+                } label: {
+                    Label("Grant Secret Access", systemImage: "key")
+                }
                 Button(role: .destructive) {
                     onCancel()
                 } label: {

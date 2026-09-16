@@ -426,6 +426,7 @@ struct CreateSessionView: View {
                     onAddPhoto: { showingPhotoPicker = true },
                     onAddFile: { showingFilePicker = true },
                     onTemporaryNote: { showingTemporaryNote = true },
+                    onSecretGrant: {},
                     onCancel: {}
                 )
 
