@@ -15,19 +15,44 @@ public struct VoiceRecordingDependencies: Sendable {
     public var settings: @Sendable () -> VoiceSettings
     public var now: @Sendable () -> Date
     public var sleep: @Sendable (Duration) async -> Void
+    /// Re-transcribes a stretch of audio through the batch endpoint — the backfill's word-level
+    /// counterpart to `mintToken(.batch)` + `VoiceBatchTranscriber`, returning the words a
+    /// `.batch` `Segment` is built from (take-relative shifting is the caller's job, since this
+    /// closure only ever sees the bytes it was handed, offset zero).
+    public var batchTranscribe:
+        @Sendable (Data, VoiceSettings.Language) async throws -> (
+            text: String, words: [Word]
+        )
+    public var ledgerStorage: any LedgerStorage
+    public var audioReader: any TakeAudioReader
+    public var feedback: @Sendable (FeedbackEvent) -> Void
+    public var health: @Sendable () -> HealthState
 
     public init(
         mintToken: @escaping @Sendable (VoiceTokenPurpose) async throws -> VoiceToken,
         makeRealtimeTransport: @escaping @Sendable () -> VoiceRealtimeTransport,
         settings: @escaping @Sendable () -> VoiceSettings,
         now: @escaping @Sendable () -> Date = Date.init,
-        sleep: @escaping @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) }
+        sleep: @escaping @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) },
+        batchTranscribe:
+            @escaping @Sendable (Data, VoiceSettings.Language) async throws -> (
+                text: String, words: [Word]
+            ) = { _, _ in throw VoiceTransportError.notConnected },
+        ledgerStorage: any LedgerStorage = UnconfiguredLedgerStorage(),
+        audioReader: any TakeAudioReader = UnconfiguredTakeAudioReader(),
+        feedback: @escaping @Sendable (FeedbackEvent) -> Void = { _ in },
+        health: @escaping @Sendable () -> HealthState = { .offline }
     ) {
         self.mintToken = mintToken
         self.makeRealtimeTransport = makeRealtimeTransport
         self.settings = settings
         self.now = now
         self.sleep = sleep
+        self.batchTranscribe = batchTranscribe
+        self.ledgerStorage = ledgerStorage
+        self.audioReader = audioReader
+        self.feedback = feedback
+        self.health = health
     }
 }
 
@@ -272,6 +297,19 @@ public final class VoiceRecordingSession {
             updateTranscribedText()
 
         case let .committedTranscript(text):
+            if !text.isEmpty { committedSegments.append(text) }
+            partial = ""
+            updateTranscribedText()
+            awaitingFinalCommit = false
+
+        case let .committedTranscriptWithWords(text, _):
+            // Matches `.committedTranscript` exactly — before `include_timestamps=true` was
+            // added to the connection URL, ElevenLabs never sent this message type at all, and
+            // this case exists only to keep today's one behaviour (append the committed text)
+            // now that the enum has two cases instead of one. The words are not used yet: the
+            // ledger this take offsets into, and the "ignore the plain message while a
+            // timestamped one is expected" rule the design calls for, are pipeline work, not
+            // this session's.
             if !text.isEmpty { committedSegments.append(text) }
             partial = ""
             updateTranscribedText()

@@ -108,6 +108,9 @@ public enum SessionSearchMode: String, Sendable, Equatable {
 /// `PaiTerminalScrollDirection` does.
 public enum VoiceTokenPurpose: String, Sendable, Equatable {
     case realtime, batch
+    /// Opens the multi-context TTS socket for speech out — the backend maps this to ElevenLabs'
+    /// `tts_websocket` token type.
+    case tts
 }
 
 /// Raw bytes plus the server-assigned filename — a download, not a JSON response.

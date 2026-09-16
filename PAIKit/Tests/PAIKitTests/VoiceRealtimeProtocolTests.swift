@@ -29,6 +29,15 @@ final class VoiceRealtimeProtocolTests: XCTestCase {
         XCTAssertTrue(query.contains("token=single-use-tok"), query)
     }
 
+    /// Without this, ElevenLabs never sends `committed_transcript_with_timestamps` at all —
+    /// `RealtimeDownlinkMessage`'s whole timestamped case would be dead code.
+    func testConnectionURLAlwaysRequestsTimestamps() throws {
+        let url = try XCTUnwrap(
+            VoiceRealtimeProtocol.connectionURL(token: "tok", sampleRate: 24000, language: .auto)
+        )
+        XCTAssertTrue((url.query ?? "").contains("include_timestamps=true"), url.absoluteString)
+    }
+
     // MARK: Uplink frame
 
     func testUplinkChunkEncodesTheDocumentedFieldNames() throws {
@@ -61,6 +70,23 @@ final class VoiceRealtimeProtocolTests: XCTestCase {
         XCTAssertEqual(Array(bytes), [0x02, 0x01, 0xFF, 0xFF])
     }
 
+    /// An ordinary chunk must never carry the key at all — ElevenLabs documents `previous_text`
+    /// as accepted only on a reconnect's first chunk and an error on every later one, so sending
+    /// `null` in its place would be exactly as wrong as sending a stale value.
+    func testUplinkChunkOmitsPreviousTextWhenNil() throws {
+        let chunk = RealtimeUplinkChunk(audioBase64: "abc", commit: false, sampleRate: 24000)
+        let json = try JSONSerialization.jsonObject(with: chunk.encoded()) as? [String: Any]
+        XCTAssertNil(json?["previous_text"])
+    }
+
+    func testUplinkChunkCarriesPreviousTextWhenSet() throws {
+        let chunk = RealtimeUplinkChunk(
+            audioBase64: "abc", commit: false, sampleRate: 24000, previousText: "context"
+        )
+        let json = try JSONSerialization.jsonObject(with: chunk.encoded()) as? [String: Any]
+        XCTAssertEqual(json?["previous_text"] as? String, "context")
+    }
+
     // MARK: Downlink decoding
 
     func testDecodesSessionStarted() {
@@ -78,11 +104,41 @@ final class VoiceRealtimeProtocolTests: XCTestCase {
             RealtimeDownlinkMessage.decode(#"{"message_type":"committed_transcript","text":"hello"}"#),
             .committedTranscript(text: "hello")
         )
+    }
+
+    /// The timestamped message decodes to its own case, distinct from the plain one above —
+    /// carrying words is the entire reason it exists.
+    func testDecodesCommittedTranscriptWithTimestampsAsItsOwnCase() {
         XCTAssertEqual(
             RealtimeDownlinkMessage.decode(
                 #"{"message_type":"committed_transcript_with_timestamps","text":"hello"}"#
             ),
-            .committedTranscript(text: "hello")
+            .committedTranscriptWithWords(text: "hello", words: [])
+        )
+    }
+
+    /// The documented shape (`api-reference_speech-to-text_v-1-speech-to-text-realtime.md`):
+    /// `type: "word"` entries carry a word each; `type: "spacing"` entries are the gaps between
+    /// them and must never show up as a word themselves.
+    func testCommittedTranscriptWithTimestampsFiltersOutSpacingEntries() {
+        let json = """
+            {"message_type":"committed_transcript_with_timestamps","text":"The first",
+             "words":[
+               {"text":"The","start":0,"end":0.12,"type":"word","logprob":-0.05},
+               {"text":" ","start":0.12,"end":0.14,"type":"spacing"},
+               {"text":"first","start":0.14,"end":0.42,"type":"word","logprob":-0.03}
+             ]}
+            """
+        guard case let .committedTranscriptWithWords(text, words) = RealtimeDownlinkMessage.decode(json) else {
+            return XCTFail("expected .committedTranscriptWithWords")
+        }
+        XCTAssertEqual(text, "The first")
+        XCTAssertEqual(
+            words,
+            [
+                RealtimeWordTimestamp(text: "The", start: 0, end: 0.12, logprob: -0.05),
+                RealtimeWordTimestamp(text: "first", start: 0.14, end: 0.42, logprob: -0.03),
+            ]
         )
     }
 

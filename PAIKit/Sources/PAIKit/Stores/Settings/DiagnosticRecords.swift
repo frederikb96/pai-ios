@@ -158,13 +158,16 @@ public struct RecordingMeta: Codable, Sendable, Equatable, Identifiable {
     public let startup: RecordingStartup?
     /// Time the mic was muted. Absent when it never was.
     public let mutedMs: Double?
+    /// The durable pipeline's own view of this take's coverage — absent for a recording made
+    /// before the ledger existed, and for one still in progress.
+    public let transcription: TranscriptionMeta?
 
     public init(
         timestampMs: Double, durationMs: Double, sampleRate: Double? = nil,
         rawSampleRate: Double? = nil, mic: MicDiagnostics? = nil, rawStored: Bool? = nil,
         endedBy: RecordingEndReason? = nil, silence: SilenceMeta? = nil, stt: SttMeta? = nil,
         transcript: String? = nil, levels: LevelStats? = nil, narrowband: Bool? = nil,
-        startup: RecordingStartup? = nil, mutedMs: Double? = nil
+        startup: RecordingStartup? = nil, mutedMs: Double? = nil, transcription: TranscriptionMeta? = nil
     ) {
         self.timestampMs = timestampMs
         self.durationMs = durationMs
@@ -180,5 +183,6 @@ public struct RecordingMeta: Codable, Sendable, Equatable, Identifiable {
         self.narrowband = narrowband
         self.startup = startup
         self.mutedMs = mutedMs
+        self.transcription = transcription
     }
 }

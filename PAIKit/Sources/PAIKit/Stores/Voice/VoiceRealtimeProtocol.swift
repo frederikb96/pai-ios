@@ -41,6 +41,10 @@ public enum VoiceRealtimeProtocol {
             URLQueryItem(name: "vad_silence_threshold_secs", value: vadSilenceThresholdSecs),
             URLQueryItem(name: "vad_threshold", value: vadThreshold),
             URLQueryItem(name: "enable_logging", value: "false"),
+            // Asks for `committed_transcript_with_timestamps` alongside (or instead of) the plain
+            // `committed_transcript` — see `RealtimeDownlinkMessage.decode`'s own comment on what
+            // arrives once this is on.
+            URLQueryItem(name: "include_timestamps", value: "true"),
             URLQueryItem(name: "token", value: token),
         ]
         if language != .auto {
@@ -58,18 +62,33 @@ public struct RealtimeUplinkChunk: Encodable, Sendable, Equatable {
     public let audioBase64: String
     public let commit: Bool
     public let sampleRate: Int
+    /// Context for a reconnect's first chunk only — "sending it in subsequent chunks will result
+    /// in an error" [ElevenLabs]. `nil` on every ordinary chunk, and omitted from the encoded
+    /// JSON entirely rather than sent as `null`, which is what makes that distinction real.
+    public let previousText: String?
 
     enum CodingKeys: String, CodingKey {
         case messageType = "message_type"
         case audioBase64 = "audio_base_64"
         case commit
         case sampleRate = "sample_rate"
+        case previousText = "previous_text"
     }
 
-    public init(audioBase64: String, commit: Bool, sampleRate: Int) {
+    public init(audioBase64: String, commit: Bool, sampleRate: Int, previousText: String? = nil) {
         self.audioBase64 = audioBase64
         self.commit = commit
         self.sampleRate = sampleRate
+        self.previousText = previousText
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(messageType, forKey: .messageType)
+        try container.encode(audioBase64, forKey: .audioBase64)
+        try container.encode(commit, forKey: .commit)
+        try container.encode(sampleRate, forKey: .sampleRate)
+        try container.encodeIfPresent(previousText, forKey: .previousText)
     }
 
     /// The final frame of a take: `VoiceRealtimeProtocol.commitFrameSampleCount` samples of
@@ -113,6 +132,12 @@ public enum RealtimeDownlinkMessage: Sendable, Equatable {
     case sessionStarted
     case partialTranscript(text: String)
     case committedTranscript(text: String)
+    /// `committed_transcript_with_timestamps` — sent instead of, or alongside,
+    /// `committed_transcript` once `include_timestamps=true` is on the connection URL.
+    /// `SessionTimeline` is what turns these connection-relative seconds into take offsets;
+    /// whether both messages actually arrive for the same segment, and which one then wins, is
+    /// `VoiceRecordingSession`'s decision, not this decoder's.
+    case committedTranscriptWithWords(text: String, words: [RealtimeWordTimestamp])
     case error(message: String)
     case sessionEnding(messageType: String, message: String?)
     case commitThrottled
@@ -127,14 +152,23 @@ public enum RealtimeDownlinkMessage: Sendable, Equatable {
         "transcriber_error", "insufficient_audio_activity",
     ]
 
+    private struct WordEnvelope: Decodable {
+        let text: String
+        let start: Double
+        let end: Double
+        let type: String
+        let logprob: Double?
+    }
+
     private struct Envelope: Decodable {
         let messageType: String
         let text: String?
         let message: String?
         let error: String?
+        let words: [WordEnvelope]?
         enum CodingKeys: String, CodingKey {
             case messageType = "message_type"
-            case text, message, error
+            case text, message, error, words
         }
     }
 
@@ -149,8 +183,15 @@ public enum RealtimeDownlinkMessage: Sendable, Equatable {
         switch envelope.messageType {
         case "session_started": return .sessionStarted
         case "partial_transcript": return .partialTranscript(text: envelope.text ?? "")
-        case "committed_transcript", "committed_transcript_with_timestamps":
-            return .committedTranscript(text: envelope.text ?? "")
+        case "committed_transcript": return .committedTranscript(text: envelope.text ?? "")
+        case "committed_transcript_with_timestamps":
+            // `type: "spacing"` entries carry the gaps between words, not words themselves — kept
+            // out of `words` here so every caller downstream addresses actual words only.
+            let words =
+                (envelope.words ?? [])
+                .filter { $0.type == "word" }
+                .map { RealtimeWordTimestamp(text: $0.text, start: $0.start, end: $0.end, logprob: $0.logprob) }
+            return .committedTranscriptWithWords(text: envelope.text ?? "", words: words)
         case "commit_throttled": return .commitThrottled
         case let type where fatalErrorTypes.contains(type):
             if type == "error" { return .error(message: detail ?? "Unknown error") }
@@ -159,6 +200,24 @@ public enum RealtimeDownlinkMessage: Sendable, Equatable {
             return .sessionEnding(messageType: type, message: detail)
         default: return .unrecognized(messageType: envelope.messageType)
         }
+    }
+}
+
+/// One word from a `committed_transcript_with_timestamps` message — the server's own idea of
+/// where a word sits in *this connection's* audio, in seconds from its first sample. Deliberately
+/// not `Word` (`Pipeline/TranscriptLedger.swift`), which already carries take-relative sample
+/// offsets; `SessionTimeline` is what turns one into the other.
+public struct RealtimeWordTimestamp: Sendable, Equatable {
+    public let text: String
+    public let start: Double
+    public let end: Double
+    public let logprob: Double?
+
+    public init(text: String, start: Double, end: Double, logprob: Double? = nil) {
+        self.text = text
+        self.start = start
+        self.end = end
+        self.logprob = logprob
     }
 }
 

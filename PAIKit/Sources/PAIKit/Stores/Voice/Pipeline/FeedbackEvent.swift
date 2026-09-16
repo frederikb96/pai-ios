@@ -1,0 +1,32 @@
+import Foundation
+
+/// One occurrence `FeedbackPolicy` turns into a cue, a notification, both or neither. Carries
+/// just enough to word the notification; dedup and rate limiting are `FeedbackPolicy`'s own job,
+/// not this type's.
+public enum FeedbackEvent: Sendable, Equatable {
+    case connectionDropped(reason: String?)
+    case serverNotice(String)
+    case mintFailed
+    case reconnected
+    case gapOpened
+    case backfillCompleted
+    case backfillFailed
+    case fatalProtocolError(String)
+    case captureRestarted
+    case captureGaveUp
+    case interruptionPaused
+    case interruptionResumed
+    case ttsDropped
+    case ttsReconnected
+    case replyNotSpoken
+    case commandRecognized(CommandKind)
+}
+
+/// The earcon `EarconPlayer` plays for a `FeedbackEvent` — `Earcon.samples(kind:rate:)` is what
+/// actually synthesizes one.
+public enum EarconKind: Sendable, Equatable {
+    case drop, reconnect, healed, error, pause
+    /// One tone per command, distinct per command — exempt from `FeedbackPolicy`'s rate
+    /// limiting, since a swallowed confirmation is worse than a chatty one.
+    case command(CommandKind)
+}
