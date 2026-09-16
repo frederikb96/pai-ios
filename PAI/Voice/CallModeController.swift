@@ -216,9 +216,7 @@ final class CallModeController {
                     let sendTask = Task<PostMessageResponse, Error> {
                         try await self.apiClient.postMessage(sessionId: sessionID, message: text)
                     }
-                    // `@Sendable`, calling a `@MainActor` store's method — same assertion as
-                    // `currentLedger` above, for the same reason.
-                    MainActor.assumeIsolated {
+                    await MainActor.run {
                         self.transcript.trackSend(sessionId: sessionID, text: text, send: sendTask)
                     }
                     _ = try await sendTask.value

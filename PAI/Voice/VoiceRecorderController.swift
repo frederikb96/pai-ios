@@ -1176,8 +1176,8 @@ final class VoiceRecorderController {
                 await self?.consumeCapturedChunk(samples)
             }
         }
-        capture.onChunk = { [weak self] samples in
-            self?.chunkContinuation?.yield(samples)
+        capture.onChunk = { samples in
+            continuation.yield(samples)
         }
         capture.onRawChunk = { [weak self] samples in
             Task { @MainActor [weak self] in
@@ -1366,7 +1366,7 @@ final class VoiceRecorderController {
                 vadSilenceSecs: Double(VoiceRealtimeProtocol.vadSilenceThresholdSecs) ?? 1.5,
                 vadThreshold: Double(VoiceRealtimeProtocol.vadThreshold) ?? 0.4
             ),
-            transcript: takeLedger.map { Self.assembledText(from: $0, capturedUpTo: $0.capturedUpTo) }
+            transcript: takeLedger.map { VoiceTextAssembly.assembledText(from: $0) }
                 .flatMap { $0.isEmpty ? nil : $0 } ?? (result.text.isEmpty ? nil : result.text),
             levels: LevelStats(
                 peak: peakAmplitude, rms: averageLevel, clippedSamples: 0, totalSamples: sent?.sampleCount ?? 0
