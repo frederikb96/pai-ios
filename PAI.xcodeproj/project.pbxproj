@@ -72,6 +72,7 @@
 				1A0000000000000000000007 /* Sources */,
 				1A0000000000000000000008 /* Frameworks */,
 				1A0000000000000000000009 /* Resources */,
+				1A0000000000000000000018 /* Stamp Package Framework Minimum OS */,
 			);
 			buildRules = (
 			);
@@ -136,6 +137,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		1A0000000000000000000018 /* Stamp Package Framework Minimum OS */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Stamp Package Framework Minimum OS";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\n# onnxruntime's package framework ships a MinimumOSVersion that is empty or below the\n# deployment target it is linked against, which App Store Connect rejects (ITMS-90208).\n# Raise every embedded framework's value to the app's deployment target.\nframeworks=\"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}\"\n[ -d \"$frameworks\" ] || exit 0\nfor plist in \"$frameworks\"/*.framework/Info.plist; do\n  [ -f \"$plist\" ] || continue\n  current=$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' \"$plist\" 2>/dev/null || true)\n  lowest=$(printf '%s\\n%s\\n' \"$current\" \"${IPHONEOS_DEPLOYMENT_TARGET}\" | sort -V | head -1)\n  if [ -z \"$current\" ] || [ \"$current\" != \"${IPHONEOS_DEPLOYMENT_TARGET}\" -a \"$lowest\" = \"$current\" ]; then\n    /usr/libexec/PlistBuddy -c 'Delete :MinimumOSVersion' \"$plist\" 2>/dev/null || true\n    /usr/libexec/PlistBuddy -c \"Add :MinimumOSVersion string ${IPHONEOS_DEPLOYMENT_TARGET}\" \"$plist\"\n    echo \"stamped MinimumOSVersion ${IPHONEOS_DEPLOYMENT_TARGET} into $plist\"\n  fi\ndone\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		1A0000000000000000000007 /* Sources */ = {

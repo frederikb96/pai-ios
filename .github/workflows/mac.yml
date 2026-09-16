@@ -94,7 +94,18 @@ jobs:
           models=$(find "$app" -name 'kai_*.onnx' | wc -l | tr -d ' ')
           [ "$models" -ge 1 ] && find "$app" -name 'thresholds.json' | grep -q . \
             || { echo "::error::wake-word models missing from the bundle (found $models)"; exit 1; }
-          echo 'background modes, URL scheme, generated keys and wake-word models all present'
+          # App Store Connect rejects an upload (ITMS-90208) when an embedded framework's
+          # MinimumOSVersion is empty or below the app's own, and says so only by email afterwards.
+          app_min=$(plutil -extract MinimumOSVersion raw "$app/Info.plist")
+          for plist in "$app"/Frameworks/*.framework/Info.plist; do
+            [ -f "$plist" ] || continue
+            fw_min=$(plutil -extract MinimumOSVersion raw "$plist" 2>/dev/null || true)
+            echo "$(basename "$(dirname "$plist")") MinimumOSVersion=${fw_min:-<missing>}"
+            lowest=$(printf '%s\n%s\n' "$fw_min" "$app_min" | sort -V | head -1)
+            [ -n "$fw_min" ] && { [ "$fw_min" = "$app_min" ] || [ "$lowest" = "$app_min" ]; } \
+              || { echo "::error::$plist declares MinimumOSVersion '${fw_min}' below the app's $app_min — App Store Connect will reject the upload"; exit 1; }
+          done
+          echo 'background modes, URL scheme, generated keys, wake-word models and framework minimum OS all present'
 
       # Runs after the app build on purpose. This step compiles the whole package on a macOS host,
       # which is the only place the UIKit-guarded files compile at all — so it fails for reasons
