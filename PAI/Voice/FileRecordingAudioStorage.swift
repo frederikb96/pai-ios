@@ -97,6 +97,13 @@ struct FileRecordingAudioStorage: RecordingAudioStorage, LedgerStorage, TakeAudi
         FileManager.default.fileExists(atPath: rawURL(id: id).path)
     }
 
+    /// A ledger file already exists for this take — the signal a launch pass uses to tell "the
+    /// durable pipeline was already tracking this one" from "a take from before this feature
+    /// existed", which must never be reconciled into a single, fully-untranscribed gap.
+    func hasLedger(id: String) -> Bool {
+        FileManager.default.fileExists(atPath: ledgerURL(id: id).path)
+    }
+
     /// Reads only the 44-byte header rather than `load(id:)`'s whole-file read — a reconciliation
     /// pass may be looking at an hour of audio, and every byte past the header is unneeded here.
     func sentHeader(id: String) -> (sampleRate: Int, dataSize: UInt32)? {

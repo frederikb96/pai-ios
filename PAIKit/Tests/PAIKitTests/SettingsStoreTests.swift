@@ -167,13 +167,15 @@ final class SettingsStoreTests: XCTestCase {
 
             let incomplete = RecordingMeta(
                 timestampMs: 0, durationMs: 1000,
-                transcription: TranscriptionMeta(coveredMs: 500, gapMs: 500, gapCount: 1, state: .pending, delivered: false))
+                transcription: TranscriptionMeta(
+                    coveredMs: 500, gapMs: 500, gapCount: 1, state: .pending, delivered: false))
             store.saveRecording(incomplete)
             for i in 1...10 {
                 store.saveRecording(
                     RecordingMeta(
                         timestampMs: Double(i), durationMs: 1000,
-                        transcription: TranscriptionMeta(coveredMs: 1000, gapMs: 0, gapCount: 0, state: .complete, delivered: true))
+                        transcription: TranscriptionMeta(
+                            coveredMs: 1000, gapMs: 0, gapCount: 0, state: .complete, delivered: true))
                 )
             }
 
