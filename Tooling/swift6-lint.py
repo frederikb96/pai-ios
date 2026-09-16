@@ -47,6 +47,9 @@ SHADOWED_WRAPPER = re.compile(r"^\s*(?:public |internal |private |fileprivate )?
 AMBIGUOUS_PAIR = re.compile(r"(?:width|x|dx): \.[A-Za-z]\w*, (?:height|y|dy): \.[A-Za-z]\w*")
 ISOLATED_STATIC = re.compile(r"^\s*(?:public |internal |private |fileprivate )?static (?:let|var) ([A-Za-z_]\w*)\b")
 DETACHED_TASK = re.compile(r"\bTask\.detached\b")
+# App Intents on iOS 26: the foreground hand-off is `continueInForeground(_:alwaysConfirm:)`;
+# the older name no longer resolves.
+REMOVED_INTENT_FOREGROUND_API = re.compile(r"\brequestToContinueInForeground\s*\(")
 #: A one-line `guard ... else { return ... }` — the shape that disqualifies a following `switch`
 #: from the compiler's implicit-return-expression inference, since that only applies when the
 #: `switch`/`if` is the *sole* statement of the enclosing body.
@@ -443,6 +446,12 @@ def check(path: Path) -> list[tuple[int, str, str]]:
                 index + 1, line.strip(),
                 "stored 'static var' is global mutable state under Swift 6 — make it computed "
                 "({ ... }), a 'static let', or 'nonisolated(unsafe)'",
+            ))
+        if REMOVED_INTENT_FOREGROUND_API.search(line) and not line.lstrip().startswith("//"):
+            findings.append((
+                index + 1, line.strip(),
+                "'requestToContinueInForeground' does not resolve on iOS 26 — use "
+                "'continueInForeground(_:alwaysConfirm:)'",
             ))
         if SHADOWED_WRAPPER.match(line):
             findings.append((
