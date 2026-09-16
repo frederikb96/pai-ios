@@ -67,7 +67,7 @@ final class CallModeStoreTests: XCTestCase {
         XCTAssertEqual(store.phase, .idle)
     }
 
-    // MARK: - Start / stop
+    // MARK: - Start / stop: stop holds, it never sends
 
     func testStartWhileListeningEntersCollectingAtTheCommandsOffset() async {
         let store = makeStore(ledgerBox: LedgerBox(emptyLedger()), sender: SendRecorder())
@@ -80,22 +80,17 @@ final class CallModeStoreTests: XCTestCase {
         XCTAssertEqual(store.phase, .collecting(startOffset: 500))
     }
 
-    func testStopWithFullyCoveredRangeAssemblesAndSendsThenReturnsToListening() async {
-        let ledgerBox = LedgerBox(
-            TranscriptLedger(
-                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
-                segments: [Segment(range: 0..<1000, text: "hello there", source: .live)]
-            ))
+    func testStopReturnsToListeningWithoutSendingAndKeepsTheTextInTheTurn() async {
         let sender = SendRecorder()
-        let store = makeStore(ledgerBox: ledgerBox, sender: sender)
+        let store = makeStore(ledgerBox: LedgerBox(emptyLedger()), sender: sender)
         store.startEntering()
         store.finishEntering(atOffset: 0)
 
         await store.handle(CommandEvent(kind: .stop, atOffset: 1000, confidence: 1))
 
-        XCTAssertEqual(sender.sentTexts, ["hello there"])
+        XCTAssertTrue(sender.sentTexts.isEmpty, "stop must never send — only send does")
         XCTAssertEqual(store.phase, .listening)
-        XCTAssertNil(store.pendingRange)
+        XCTAssertEqual(store.turnRanges, [0..<1000])
     }
 
     func testStopIsIgnoredWhenNotCurrentlyCollecting() async {
@@ -107,13 +102,79 @@ final class CallModeStoreTests: XCTestCase {
         XCTAssertEqual(store.phase, .idle)
     }
 
-    func testStopWithNoCoveredTextAtAllReturnsToListeningWithoutSendingAnEmptyMessage() async {
+    func testASecondStartAfterAStopExtendsTheSameTurnAcrossTwoRanges() async {
+        let store = makeStore(ledgerBox: LedgerBox(emptyLedger()), sender: SendRecorder())
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+
+        await store.handle(CommandEvent(kind: .stop, atOffset: 500, confidence: 1))
+        XCTAssertEqual(store.turnRanges, [0..<500])
+
+        await store.handle(CommandEvent(kind: .start, atOffset: 800, confidence: 1))
+        await store.handle(CommandEvent(kind: .stop, atOffset: 1200, confidence: 1))
+        XCTAssertEqual(store.turnRanges, [0..<500, 800..<1200], "both collecting stretches belong to one turn")
+    }
+
+    // MARK: - Send: from recording mode (stop-and-send), and from wake mode after a stop
+
+    func testSendFromCollectingActsAsStopAndSendThenReturnsToListening() async {
+        let ledgerBox = LedgerBox(
+            TranscriptLedger(
+                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+                segments: [Segment(range: 0..<1000, text: "hello there", source: .live)]
+            ))
+        let sender = SendRecorder()
+        let store = makeStore(ledgerBox: ledgerBox, sender: sender)
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+
+        await store.handle(CommandEvent(kind: .send, atOffset: 1000, confidence: 1))
+
+        XCTAssertEqual(sender.sentTexts, ["hello there"])
+        XCTAssertEqual(store.phase, .listening)
+        XCTAssertTrue(store.turnRanges.isEmpty)
+    }
+
+    func testSendFromListeningSendsThePendingTurnLeftByAnEarlierStop() async {
+        let ledgerBox = LedgerBox(
+            TranscriptLedger(
+                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+                segments: [Segment(range: 0..<1000, text: "hello there", source: .live)]
+            ))
+        let sender = SendRecorder()
+        let store = makeStore(ledgerBox: ledgerBox, sender: sender)
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+        await store.handle(CommandEvent(kind: .stop, atOffset: 1000, confidence: 1))
+        XCTAssertEqual(store.phase, .listening)
+
+        await store.handle(CommandEvent(kind: .send, atOffset: 1500, confidence: 1))
+
+        XCTAssertEqual(sender.sentTexts, ["hello there"])
+        XCTAssertEqual(store.phase, .listening)
+        XCTAssertTrue(store.turnRanges.isEmpty)
+    }
+
+    func testSendFromListeningWithNothingPendingIsANoOp() async {
+        let sender = SendRecorder()
+        let store = makeStore(ledgerBox: LedgerBox(emptyLedger()), sender: sender)
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+        await store.handle(CommandEvent(kind: .stop, atOffset: 0, confidence: 1))  // -> listening, empty turn
+
+        await store.handle(CommandEvent(kind: .send, atOffset: 100, confidence: 1))
+
+        XCTAssertTrue(sender.sentTexts.isEmpty)
+        XCTAssertEqual(store.phase, .listening)
+    }
+
+    func testSendWithNoCoveredTextAtAllReturnsToListeningWithoutSendingAnEmptyMessage() async {
         let sender = SendRecorder()
         let store = makeStore(ledgerBox: LedgerBox(emptyLedger()), sender: sender)
         store.startEntering()
         store.finishEntering(atOffset: 0)
 
-        await store.handle(CommandEvent(kind: .stop, atOffset: 500, confidence: 1))
+        await store.handle(CommandEvent(kind: .send, atOffset: 500, confidence: 1))
 
         XCTAssertTrue(sender.sentTexts.isEmpty)
         XCTAssertEqual(store.phase, .listening)
@@ -121,7 +182,7 @@ final class CallModeStoreTests: XCTestCase {
 
     // MARK: - Hold while a gap is open, auto-send once it closes
 
-    func testStopWithAnOpenGapHoldsRatherThanSendingHalfTheMessage() async {
+    func testSendWithAnOpenGapHoldsRatherThanSendingHalfTheMessage() async {
         let ledgerBox = LedgerBox(
             TranscriptLedger(
                 takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
@@ -133,11 +194,11 @@ final class CallModeStoreTests: XCTestCase {
         store.startEntering()
         store.finishEntering(atOffset: 0)
 
-        await store.handle(CommandEvent(kind: .stop, atOffset: 1000, confidence: 1))
+        await store.handle(CommandEvent(kind: .send, atOffset: 1000, confidence: 1))
 
         XCTAssertTrue(sender.sentTexts.isEmpty)
-        XCTAssertEqual(store.phase, .pendingSend(range: 0..<1000))
-        XCTAssertEqual(store.pendingRange, 0..<1000)
+        XCTAssertEqual(store.phase, .pendingSend)
+        XCTAssertEqual(store.turnRanges, [0..<1000])
     }
 
     func testLedgerChangedSendsTheHeldMessageOnceTheGapCloses() async {
@@ -151,8 +212,8 @@ final class CallModeStoreTests: XCTestCase {
         let store = makeStore(ledgerBox: ledgerBox, sender: sender)
         store.startEntering()
         store.finishEntering(atOffset: 0)
-        await store.handle(CommandEvent(kind: .stop, atOffset: 1000, confidence: 1))
-        XCTAssertEqual(store.phase, .pendingSend(range: 0..<1000))
+        await store.handle(CommandEvent(kind: .send, atOffset: 1000, confidence: 1))
+        XCTAssertEqual(store.phase, .pendingSend)
 
         // The backfill closes the gap and adds the rest of the segment.
         ledgerBox.ledger = TranscriptLedger(
@@ -166,30 +227,15 @@ final class CallModeStoreTests: XCTestCase {
 
         XCTAssertEqual(sender.sentTexts, ["partial message now complete"])
         XCTAssertEqual(store.phase, .listening)
-        XCTAssertNil(store.pendingRange)
+        XCTAssertTrue(store.turnRanges.isEmpty)
     }
 
-    func testLedgerChangedIsANoOpWhenNotCurrentlyHoldingAMessage() async {
+    func testLedgerChangedIsANoOpWhenNotCurrentlyHoldingATurn() async {
         let sender = SendRecorder()
         let store = makeStore(ledgerBox: LedgerBox(emptyLedger()), sender: sender)
         await store.ledgerChanged()  // Never entered `.pendingSend` — nothing to do.
         XCTAssertTrue(sender.sentTexts.isEmpty)
         XCTAssertEqual(store.phase, .idle)
-    }
-
-    // MARK: - Mute
-
-    func testMuteAndUnmuteToggleIsMutedWithoutTouchingPhase() async {
-        let store = makeStore(ledgerBox: LedgerBox(emptyLedger()), sender: SendRecorder())
-        store.startEntering()
-        store.finishEntering(atOffset: 0)
-
-        await store.handle(CommandEvent(kind: .mute, atOffset: 10, confidence: 1))
-        XCTAssertTrue(store.isMuted)
-        XCTAssertEqual(store.phase, .collecting(startOffset: 0))
-
-        await store.handle(CommandEvent(kind: .unmute, atOffset: 20, confidence: 1))
-        XCTAssertFalse(store.isMuted)
     }
 
     // MARK: - Skip
@@ -203,6 +249,58 @@ final class CallModeStoreTests: XCTestCase {
         await store.handle(CommandEvent(kind: .skip, atOffset: 10, confidence: 1))
 
         XCTAssertEqual(store.phase, phaseBefore)
+    }
+
+    // MARK: - End: leaves call mode, never silently drops a pending turn
+
+    func testEndWithNothingPendingClearsAbandonedText() async {
+        let store = makeStore(ledgerBox: LedgerBox(emptyLedger()), sender: SendRecorder())
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+
+        await store.handle(CommandEvent(kind: .end, atOffset: 100, confidence: 1))
+
+        XCTAssertEqual(store.phase, .idle)
+        XCTAssertNil(store.lastAbandonedTurnText)
+    }
+
+    func testEndWithAPendingTurnHandsItsTextToLastAbandonedTurnTextRatherThanSendingOrLosingIt() async {
+        let ledgerBox = LedgerBox(
+            TranscriptLedger(
+                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+                segments: [Segment(range: 0..<1000, text: "never mind", source: .live)]
+            ))
+        let sender = SendRecorder()
+        let store = makeStore(ledgerBox: ledgerBox, sender: sender)
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+        await store.handle(CommandEvent(kind: .stop, atOffset: 1000, confidence: 1))
+        XCTAssertEqual(store.turnRanges, [0..<1000])
+
+        await store.handle(CommandEvent(kind: .end, atOffset: 1000, confidence: 1))
+
+        XCTAssertTrue(sender.sentTexts.isEmpty, "end never sends — only send does")
+        XCTAssertEqual(store.phase, .idle)
+        XCTAssertEqual(store.lastAbandonedTurnText, "never mind")
+        XCTAssertTrue(store.turnRanges.isEmpty)
+    }
+
+    func testStartEnteringResetsLastAbandonedTurnTextFromAPreviousCall() async {
+        let ledgerBox = LedgerBox(
+            TranscriptLedger(
+                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+                segments: [Segment(range: 0..<1000, text: "never mind", source: .live)]
+            ))
+        let store = makeStore(ledgerBox: ledgerBox, sender: SendRecorder())
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+        await store.handle(CommandEvent(kind: .stop, atOffset: 1000, confidence: 1))
+        await store.handle(CommandEvent(kind: .end, atOffset: 1000, confidence: 1))
+        XCTAssertNotNil(store.lastAbandonedTurnText)
+
+        store.startEntering()
+
+        XCTAssertNil(store.lastAbandonedTurnText)
     }
 
     // MARK: - Every accepted command earns its confirmation tone
@@ -247,7 +345,7 @@ final class CallModeStoreTests: XCTestCase {
         store.finishEntering(atOffset: 0)
         store.sessionStatusChanged(.completed)
 
-        await store.handle(CommandEvent(kind: .stop, atOffset: 1000, confidence: 1))
+        await store.handle(CommandEvent(kind: .send, atOffset: 1000, confidence: 1))
 
         XCTAssertTrue(sender.sentTexts.isEmpty, "a terminal session must never receive a new send")
         XCTAssertEqual(store.phase, .listening, "the call itself stays open even when sending is refused")
@@ -265,7 +363,7 @@ final class CallModeStoreTests: XCTestCase {
         store.finishEntering(atOffset: 0)
         store.sessionStatusChanged(.active)
 
-        await store.handle(CommandEvent(kind: .stop, atOffset: 1000, confidence: 1))
+        await store.handle(CommandEvent(kind: .send, atOffset: 1000, confidence: 1))
 
         XCTAssertEqual(sender.sentTexts, ["hello there"])
     }
@@ -284,7 +382,7 @@ final class CallModeStoreTests: XCTestCase {
         store.startEntering()
         store.finishEntering(atOffset: 0)
 
-        await store.handle(CommandEvent(kind: .stop, atOffset: 1000, confidence: 1))
+        await store.handle(CommandEvent(kind: .send, atOffset: 1000, confidence: 1))
 
         XCTAssertTrue(sender.sentTexts.isEmpty)
         XCTAssertEqual(store.phase, .listening)

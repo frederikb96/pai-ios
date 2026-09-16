@@ -20,6 +20,9 @@ public enum FeedbackEvent: Sendable, Equatable {
     case ttsReconnected
     case replyNotSpoken
     case commandRecognized(CommandKind)
+    /// A command configured to run offline has no `.onnx` classifier in the app bundle — that
+    /// command is silently unreachable by voice until this is fixed, never a crash.
+    case commandModelMissing(CommandKind)
 }
 
 /// The earcon `EarconPlayer` plays for a `FeedbackEvent` — `Earcon.samples(kind:rate:)` is what

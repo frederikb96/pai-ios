@@ -126,14 +126,13 @@ final class CommandDetectorTests: XCTestCase {
         XCTAssertEqual(detector.detect(observation)?.kind, .stop)
     }
 
-    func testUpdatingThePhraseSetChangesWhatTheNextObservationMatches() {
-        var detector = CommandDetector(phraseSet: .defaults, sampleRate: rate)
+    func testACustomPhraseSetAtInitIsWhatTheDetectorMatchesAgainst() {
         var phrases = CommandPhraseSet.defaults.phrases
         phrases[.end] = "Jarvis goodbye"
-        detector.updatePhraseSet(CommandPhraseSet(phrases: phrases))
+        var detector = CommandDetector(phraseSet: CommandPhraseSet(phrases: phrases), sampleRate: rate)
 
         let old = detector.detect(CommandObservation(text: "Kai end", isFinal: true, wordTimes: nil, atOffset: 1000))
-        XCTAssertNil(old, "the old default phrase should no longer match once overridden")
+        XCTAssertNil(old, "the default phrase should not match once the phrase set overrides it")
 
         let new = detector.detect(
             CommandObservation(text: "Jarvis goodbye", isFinal: true, wordTimes: nil, atOffset: 2000))

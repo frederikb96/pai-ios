@@ -40,15 +40,15 @@ final class CommandGrammarTests: XCTestCase {
         XCTAssertEqual(matches.map(\.kind), [.start, .stop])
     }
 
-    func testMatchesRespectsACustomConfiguredPhrase() {
+    func testMatchesRespectsACustomPhraseSet() {
         var phrases = CommandPhraseSet.defaults.phrases
-        phrases[.mute] = "Jarvis silence"
+        phrases[.send] = "Jarvis go ahead"
         let phraseSet = CommandPhraseSet(phrases: phrases)
 
         XCTAssertTrue(
-            CommandGrammar.matches(in: "Jarvis silence please", phraseSet: phraseSet).contains { $0.kind == .mute })
+            CommandGrammar.matches(in: "Jarvis go ahead please", phraseSet: phraseSet).contains { $0.kind == .send })
         XCTAssertTrue(
-            CommandGrammar.matches(in: "Kai mute", phraseSet: phraseSet).isEmpty,
+            CommandGrammar.matches(in: "Kai send", phraseSet: phraseSet).isEmpty,
             "the default phrase should stop matching once overridden")
     }
 
