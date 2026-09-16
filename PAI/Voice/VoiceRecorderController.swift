@@ -87,6 +87,10 @@ final class VoiceRecorderController {
     /// restores.
     private var preVoiceText = ""
     private var liveTextTask: Task<Void, Never>?
+    /// One ordered consumer for every chunk `MicrophoneCapture` delivers — see
+    /// `wireCaptureCallbacks()`'s own comment for why this exists instead of one `Task` per chunk.
+    private var chunkContinuation: AsyncStream<[Int16]>.Continuation?
+    private var chunkConsumerTask: Task<Void, Never>?
     /// Held for the whole of `start()`, which is `async` and therefore interleaves.
     ///
     /// 🚨 `voiceSession.state` does not leave `.idle` until well after `start()`'s first `await`,
@@ -311,9 +315,8 @@ final class VoiceRecorderController {
     }
 
     /// Feeds a call-mode socket's own mint/connect/deliver/close into the same app-wide
-    /// `ConnectionHealth` machine a microphone-mode take's socket already reports into — the
-    /// architect's "one machine, not one per mode" read literally, through the one accessor this
-    /// type exposes for it.
+    /// `ConnectionHealth` machine a microphone-mode take's socket already reports into — one
+    /// machine, not one per mode, through the one accessor this type exposes for it.
     func reportConnectionEvent(_ event: ConnectionHealthEvent) {
         Self.applyConnectionHealthEvent(event, box: connectionHealthBox, notifier: feedbackNotifier)
     }
@@ -357,10 +360,15 @@ final class VoiceRecorderController {
     /// (`reserveForCallMode()`), so there is never a genuine second claimant to conflict with.
     /// `onLedgerChanged` fires whenever a write lands for this take while it is still the active
     /// one — see `notifyExternalLedgerObserverIfCurrent`'s own doc comment.
+    ///
+    /// Also resets `feedbackNotifier`'s episode, exactly as `start()` does for a microphone-mode
+    /// take — without this, a call inherits whatever per-cause dedup state the previous take left
+    /// behind, and an error already reported there stays silently suppressed for this one.
     func beginExternalTake(_ ledger: TranscriptLedger, onLedgerChanged: @escaping () -> Void) {
         externalTakeId = ledger.takeId
         externalLedgerChanged = onLedgerChanged
         activeLedger = ledger
+        feedbackNotifier.beginTake(id: ledger.takeId)
     }
 
     /// Releases the slot `beginExternalTake` claimed — a backfill that completes afterward for
@@ -376,8 +384,20 @@ final class VoiceRecorderController {
     /// Call mode's own entry into the identical ledger write `persistLedger` already gives a
     /// microphone-mode take — gap derivation, backfill scheduling and the "still catching up" cue
     /// all follow from this one call, unchanged.
-    func persistExternalLedger(takeId: String, segments: [Segment], capturedUpTo: Int, collecting: [SampleRange]) {
-        persistLedger(takeId: takeId, segments: segments, capturedUpTo: capturedUpTo, collecting: collecting)
+    ///
+    /// 🚨 `acknowledged` must be the calling cycle's own `VoiceRecordingSession.acknowledgedRanges`,
+    /// shifted by `CallCycleAddressing` exactly the way `segments` already is — a gap is now
+    /// derived from what the connection acknowledged, never from word coverage, so an empty or
+    /// unshifted value here would show every captured sample as an open gap regardless of what
+    /// was actually said or covered.
+    func persistExternalLedger(
+        takeId: String, segments: [Segment], capturedUpTo: Int, acknowledged: [SampleRange],
+        collecting: [SampleRange]
+    ) {
+        persistLedger(
+            takeId: takeId, segments: segments, capturedUpTo: capturedUpTo, acknowledged: acknowledged,
+            collecting: collecting
+        )
     }
 
     /// The call's own ledger as of the last write — `nil` once `endExternalTake()` has released
@@ -519,11 +539,32 @@ final class VoiceRecorderController {
     /// because that is the single funnel every ending goes through — the user's tap, silence
     /// detection, a lost connection, an interruption nothing could resume. Wiring this to the tap
     /// alone is what left the other three endings writing nothing at all.
+    ///
+    /// 🚨 Folds the session's own, already-complete final state into the ledger synchronously
+    /// before reading it — `voiceSession.stop()` has already waited out the take's very last
+    /// commit by the time this runs, but the periodic ledger loop ticks once a second and can
+    /// easily have missed it, which used to drop the take's last sentence from the draft.
     private func finishLiveText() {
         liveTextTask?.cancel()
         liveTextTask = nil
+        chunkConsumerTask?.cancel()
+        chunkConsumerTask = nil
+        chunkContinuation?.finish()
+        chunkContinuation = nil
         ledgerTask?.cancel()
         ledgerTask = nil
+        if let takeId = currentTakeId, let base = activeLedger, base.takeId == takeId {
+            var folded = base.folding(
+                liveSegments: voiceSession.committedSegments, capturedUpTo: voiceSession.capturedUpTo,
+                newlyAcknowledged: voiceSession.acknowledgedRanges
+            )
+            // Nothing left uncovered the moment the take ends — the text about to be written
+            // below is the whole take, not a version with a marker still in it, so it really has
+            // been delivered.
+            if folded.gaps.isEmpty { folded = Self.markingDelivered(folded) }
+            activeLedger = folded
+            try? LedgerFile.write(folded, to: audioStorage.ledgerURL(id: takeId))
+        }
         defer {
             activeDraftKey = nil
             preVoiceText = ""
@@ -545,20 +586,7 @@ final class VoiceRecorderController {
     /// open a ledger (a start failure before the first sample, say).
     private func assembledPrefixedText() -> String {
         guard let ledger = activeLedger else { return voiceSession.result.prefixedText }
-        let text = Self.assembledText(from: ledger, capturedUpTo: voiceSession.capturedUpTo)
-        guard !text.isEmpty else { return "" }
-        return "\(VoiceRecordingResult.sttPrefix)\(text)"
-    }
-
-    /// A ledger's segments in take order, joined by a space, with an inline `…` marker where a
-    /// gap is still open (decision D2) — computed once here rather than duplicated between the
-    /// take-ending path above and the recovered-take healing path below.
-    private static func assembledText(from ledger: TranscriptLedger, capturedUpTo: Int) -> String {
-        let merged = SeamMerge.merge(ledger.segments)
-        let gaps = ledger.derivedGaps(capturedUpTo: capturedUpTo)
-        let parts: [(offset: Int, text: String)] =
-            merged.map { ($0.range.lowerBound, $0.text) } + gaps.map { ($0.range.lowerBound, "…") }
-        return parts.sorted { $0.offset < $1.offset }.map(\.text).joined(separator: " ")
+        return VoiceTextAssembly.assembledPrefixedText(from: ledger)
     }
 
     /// Gives up the take without touching the draft — for the failures that happen before any
@@ -615,53 +643,52 @@ final class VoiceRecorderController {
             if voiceSession.committedSegments.count != lastSegmentCount {
                 lastSegmentCount = voiceSession.committedSegments.count
                 persistLedger(
-                    takeId: takeId, segments: voiceSession.committedSegments, capturedUpTo: voiceSession.capturedUpTo)
+                    takeId: takeId, segments: voiceSession.committedSegments, capturedUpTo: voiceSession.capturedUpTo,
+                    acknowledged: voiceSession.acknowledgedRanges)
             }
             try? await Task.sleep(for: .seconds(1))
         }
         // One last write regardless of how the loop above ended — the final segment or the
         // final `capturedUpTo` can land in the gap between the loop's last tick and the state
-        // actually flipping to `.idle`.
-        persistLedger(takeId: takeId, segments: voiceSession.committedSegments, capturedUpTo: voiceSession.capturedUpTo)
+        // actually flipping to `.idle`. `finishLiveText()`'s own synchronous fold, called once
+        // `stop()` has fully returned, is what actually catches the take's very last commit —
+        // this last tick only narrows the window a concurrent backfill pass could read a stale
+        // ledger through, it is not itself what makes the final sentence land.
+        persistLedger(
+            takeId: takeId, segments: voiceSession.committedSegments, capturedUpTo: voiceSession.capturedUpTo,
+            acknowledged: voiceSession.acknowledgedRanges)
     }
 
-    /// Folds newly committed segments and how much has been captured into `takeId`'s ledger,
-    /// merges in whatever backfill has already recovered for it, and writes the result — the
-    /// write order the design calls for (audio already on disk by the time this runs; the ledger
-    /// is therefore never ahead of it). A new gap appearing since the last write schedules a
-    /// backfill loop for it and sounds the "still catching up" cue.
+    /// Folds newly committed segments, how much has been captured, and what the connection has
+    /// newly acknowledged into `takeId`'s ledger (`TranscriptLedger.folding` — the same fold
+    /// `finishLiveText()`'s final synchronous call uses, so neither can disagree about what a
+    /// take's last moment holds), and writes the result — the write order the design calls for
+    /// (audio already on disk by the time this runs; the ledger is therefore never ahead of it).
+    /// A new gap appearing since the last write schedules a backfill loop for it and sounds the
+    /// "still catching up" cue.
     ///
-    /// Generic over which mode produced `segments`/`capturedUpTo`/`collecting`: a microphone-mode
-    /// take passes `voiceSession`'s own (`collecting` left `nil`, carrying forward whatever the
-    /// ledger already has — always `[]` for that mode); call mode passes its own cycle-shifted
-    /// running totals (`CallCycleAddressing`) and a freshly computed `collecting`, since that is
-    /// the one field `.call` mode's own `derivedGaps` bounds itself to. Nothing below this line
-    /// knows or cares which caller it was.
+    /// Generic over which mode produced `segments`/`capturedUpTo`/`collecting`/`acknowledged`: a
+    /// microphone-mode take passes `voiceSession`'s own (`collecting` left `nil`, carrying forward
+    /// whatever the ledger already has — always `[]` for that mode); call mode passes its own
+    /// cycle-shifted running totals (`CallCycleAddressing`) and a freshly computed `collecting`,
+    /// since that is the one field `.call` mode's own `derivedGaps` bounds itself to.
+    /// `acknowledged` has no default — a caller that does not shift and pass its own session's
+    /// `acknowledgedRanges` the same way it already shifts `segments` would silently show every
+    /// captured sample as an open gap, which a missing argument catches at compile time instead.
     private func persistLedger(
-        takeId: String, segments: [Segment], capturedUpTo: Int, collecting: [SampleRange]? = nil
+        takeId: String, segments: [Segment], capturedUpTo: Int, acknowledged: [SampleRange],
+        collecting: [SampleRange]? = nil
     ) {
         guard let base = activeLedger, base.takeId == takeId else { return }
-        let recoveredSegments = base.segments.filter { $0.source == .batch || $0.source == .recovery }
-        let merged = SeamMerge.merge(segments + recoveredSegments)
-        let resolvedCollecting = collecting ?? base.collecting
-        let candidate = TranscriptLedger(
-            takeId: base.takeId, mode: base.mode, sampleRate: base.sampleRate, draftKey: base.draftKey,
-            preText: base.preText, segments: merged, capturedUpTo: capturedUpTo, gaps: base.gaps,
-            boundaries: base.boundaries, collecting: resolvedCollecting, events: base.events,
-            delivered: base.delivered
-        )
-        let newGaps = candidate.derivedGaps(capturedUpTo: capturedUpTo)
         let previousGapCount = base.gaps.count
-        let final = TranscriptLedger(
-            takeId: candidate.takeId, mode: candidate.mode, sampleRate: candidate.sampleRate,
-            draftKey: candidate.draftKey, preText: candidate.preText, segments: merged, capturedUpTo: capturedUpTo,
-            gaps: newGaps, boundaries: candidate.boundaries, collecting: candidate.collecting,
-            events: candidate.events, delivered: candidate.delivered
+        let final = base.folding(
+            liveSegments: segments, capturedUpTo: capturedUpTo, newlyAcknowledged: acknowledged,
+            collecting: collecting
         )
         activeLedger = final
         try? LedgerFile.write(final, to: audioStorage.ledgerURL(id: takeId))
-        if !newGaps.isEmpty {
-            if newGaps.count > previousGapCount {
+        if !final.gaps.isEmpty {
+            if final.gaps.count > previousGapCount {
                 feedbackNotifier.handle(.gapOpened)
             }
             scheduleBackfillIfNeeded(takeId: takeId)
@@ -693,30 +720,37 @@ final class VoiceRecorderController {
     /// Runs until every gap this take has is resolved or demoted, reading the ledger fresh each
     /// pass — which is what lets the very same loop serve the take still actively recording (read
     /// from `activeLedger`) and a take `reconcileTakes()` found incomplete at launch (read from
-    /// disk) with no separate code path for either. Nothing is spent while the link is anything
-    /// but `.stable` (`BackfillPlanner.plan`'s own gate); this loop's job above that is only to
-    /// keep checking.
+    /// disk) with no separate code path for either.
+    ///
+    /// 🚨 Gated on `backfillGate(now:)`, never `state` — `state` answers "is a live socket open
+    /// and trustworthy right now", which stays `.offline`/`.connecting` with no take recording at
+    /// all, so healing an ended take, launch recovery and "Transcribe now" used to wait forever
+    /// with nothing that could ever wake them. `backfillGate` only needs the network path itself
+    /// satisfied with no recent failure — knowable with no socket open — and reads fresh off
+    /// `Date()` on every poll, so this loop's own three-second tick is already the "timer" that
+    /// lets its 30-second recent-failure window elapse; nothing else needs to tick it.
     private func runBackfillLoop(takeId: String) async {
         while !Task.isCancelled {
             guard let ledger = readLedger(takeId: takeId), !ledger.gaps.isEmpty else { return }
-            guard connectionHealthBox.value.state == .stable else {
+            let health = connectionHealthBox.value.backfillGate(now: Date())
+            guard health == .stable else {
                 try? await Task.sleep(for: .seconds(Self.backfillPollSeconds))
                 continue
             }
             let requests = BackfillPlanner.plan(
-                gaps: ledger.gaps, sampleRate: ledger.sampleRate, capturedUpTo: ledger.capturedUpTo,
-                health: connectionHealthBox.value.state)
+                gaps: ledger.gaps, sampleRate: ledger.sampleRate, capturedUpTo: ledger.capturedUpTo, health: health)
             guard !requests.isEmpty else {
                 try? await Task.sleep(for: .seconds(Self.backfillPollSeconds))
                 continue
             }
 
-            var updatedGaps = ledger.gaps
             var newSegments: [Segment] = []
+            var resolved: [SampleRange] = []
+            var failed: [(range: SampleRange, error: String)] = []
             let language = Self.voiceSettings(from: settingsStore).sttLanguage
             let sampleRate = ledger.sampleRate
             for request in requests {
-                guard connectionHealthBox.value.state == .stable else { break }
+                guard connectionHealthBox.value.backfillGate(now: Date()) == .stable else { break }
                 let outcome = await BatchBackfiller.run(
                     request, sampleRate: sampleRate, language: language, audioReader: audioStorage, takeId: takeId,
                     transcribe: { [weak self] wav, requestLanguage in
@@ -728,42 +762,57 @@ final class VoiceRecorderController {
                 switch outcome {
                 case let .segment(segment):
                     newSegments.append(segment)
-                    updatedGaps.removeAll { request.gapRanges.contains($0.range) }
+                    resolved.append(contentsOf: request.gapRanges)
                 case .noSpeechDetected:
-                    updatedGaps.removeAll { request.gapRanges.contains($0.range) }
+                    resolved.append(contentsOf: request.gapRanges)
                 case let .failed(error):
-                    for gapRange in request.gapRanges {
-                        guard let index = updatedGaps.firstIndex(where: { $0.range == gapRange }) else { continue }
-                        updatedGaps[index] = BackfillPlanner.recordFailure(updatedGaps[index], error: error)
-                    }
+                    failed.append(contentsOf: request.gapRanges.map { (range: $0, error: error) })
                 }
             }
-            applyBackfillOutcome(takeId: takeId, newSegments: newSegments, updatedGaps: updatedGaps)
+            applyBackfillOutcome(takeId: takeId, newSegments: newSegments, resolved: resolved, failed: failed)
             try? await Task.sleep(for: .milliseconds(300))
         }
     }
 
-    /// Merges what one backfill pass produced into the ledger, updates the take's `RecordingMeta`
-    /// coverage, and — once every gap this take had is closed — appends the healed text into its
-    /// draft (a take that is still the active one gets this for free through `assembledPrefixedText`
-    /// instead, so this only fires for a take that has already ended) and sounds the healed cue.
-    private func applyBackfillOutcome(takeId: String, newSegments: [Segment], updatedGaps: [Gap]) {
+    /// Applies one backfill pass against the ledger's *current* state
+    /// (`TranscriptLedger.applyingBackfill` — never the snapshot `runBackfillLoop` started
+    /// reading from, which its own network round trips can leave stale), updates the take's
+    /// `RecordingMeta` coverage, and — once every gap this take had is closed — heals its draft in
+    /// place (a take that is still the active one gets this for free through
+    /// `assembledPrefixedText` instead, so this only fires for a take that has already ended).
+    ///
+    /// 🚨 Heals by replacing the take's own previously-inserted text (`DraftHeal.heal`), never by
+    /// appending — the draft already holds this take's text from `finishLiveText`, or the take was
+    /// sent and the draft moved on; appending the whole assembled take a second time duplicated it
+    /// either way. When the previous text can no longer be found (edited, already sent), the
+    /// recovered text is left in Recordings rather than surprising Freddy in an unrelated draft —
+    /// `delivered` stays `false` in that case, so retention never evicts audio nobody has seen.
+    /// Call-mode takes never reach this at all: they send turns as messages, not through a draft,
+    /// so appending here was always the wrong destination for them.
+    private func applyBackfillOutcome(
+        takeId: String, newSegments: [Segment], resolved: [SampleRange], failed: [(range: SampleRange, error: String)]
+    ) {
         guard let ledger = readLedger(takeId: takeId) else { return }
-        let merged = SeamMerge.merge(ledger.segments + newSegments)
-        let delivered = updatedGaps.isEmpty ? true : ledger.delivered
-        let final = TranscriptLedger(
-            takeId: ledger.takeId, mode: ledger.mode, sampleRate: ledger.sampleRate, draftKey: ledger.draftKey,
-            preText: ledger.preText, segments: merged, capturedUpTo: ledger.capturedUpTo, gaps: updatedGaps,
-            boundaries: ledger.boundaries, collecting: ledger.collecting, events: ledger.events, delivered: delivered
-        )
-        try? LedgerFile.write(final, to: audioStorage.ledgerURL(id: takeId))
+        let previousPrefixedText = VoiceTextAssembly.assembledPrefixedText(from: ledger)
+        var final = ledger.applyingBackfill(newSegments: newSegments, resolved: resolved, failed: failed)
 
         if takeId == currentTakeId {
             activeLedger = final
             notifyExternalLedgerObserverIfCurrent(takeId: takeId)
-        } else if final.gaps.isEmpty, !newSegments.isEmpty, let draftKey = final.draftKey {
-            appendHealedText(final, draftKey: draftKey)
+        } else if final.mode == .microphone, !newSegments.isEmpty, final.gaps.isEmpty, let draftKey = final.draftKey {
+            let healedText = VoiceTextAssembly.assembledPrefixedText(from: final)
+            switch DraftHeal.heal(
+                currentDraftText: drafts.draft(for: draftKey).text, previousInsertedText: previousPrefixedText,
+                healedText: healedText
+            ) {
+            case let .replaced(newDraftText):
+                drafts.setDraftText(key: draftKey, text: newDraftText)
+                final = Self.markingDelivered(final)
+            case .notFound:
+                break
+            }
         }
+        try? LedgerFile.write(final, to: audioStorage.ledgerURL(id: takeId))
         updateRecordingMeta(takeId: takeId, ledger: final)
 
         if final.gaps.isEmpty {
@@ -773,17 +822,16 @@ final class VoiceRecorderController {
         }
     }
 
-    /// A take that is no longer the active one — recovered at launch, or simply finished before
-    /// its own backfill did — has its healed text appended to the draft it belonged to, prefixed
-    /// exactly as a live take's is, since the draft may well have moved on since the take ended.
-    /// Called once, the round a take's last gap closes, never per partial pass — appending the
-    /// whole assembled text on every pass would duplicate it.
-    private func appendHealedText(_ ledger: TranscriptLedger, draftKey: String) {
-        let text = Self.assembledText(from: ledger, capturedUpTo: ledger.capturedUpTo)
-        guard !text.isEmpty else { return }
-        let prefixed = "\(VoiceRecordingResult.sttPrefix)\(text)"
-        let current = drafts.draft(for: draftKey).text
-        drafts.setDraftText(key: draftKey, text: current.isEmpty ? prefixed : "\(current) \(prefixed)")
+    /// `delivered` means the assembled text actually reached its destination — set here, the one
+    /// place that is actually true, rather than inferred from `gaps.isEmpty` alone (closing every
+    /// gap says nothing about whether the healed text ever made it into a draft anyone will read).
+    private static func markingDelivered(_ ledger: TranscriptLedger) -> TranscriptLedger {
+        TranscriptLedger(
+            takeId: ledger.takeId, mode: ledger.mode, sampleRate: ledger.sampleRate, draftKey: ledger.draftKey,
+            preText: ledger.preText, segments: ledger.segments, capturedUpTo: ledger.capturedUpTo, gaps: ledger.gaps,
+            boundaries: ledger.boundaries, collecting: ledger.collecting, events: ledger.events, delivered: true,
+            acknowledged: ledger.acknowledged
+        )
     }
 
     /// The one caller of the batch endpoint's word-timestamp variant — converts its
@@ -817,8 +865,13 @@ final class VoiceRecorderController {
     /// `SettingsStore` never saved (still mid-take, or evicted since).
     private func updateRecordingMeta(takeId: String, ledger: TranscriptLedger) {
         guard let existing = settingsStore.recordings.first(where: { $0.id == takeId }) else { return }
-        let transcript = SeamMerge.merge(ledger.segments)
-            .sorted { $0.range.lowerBound < $1.range.lowerBound }.map(\.text).joined(separator: " ")
+        // `ledger.segments` is already the output of a `SeamMerge.merge` pass — both write paths
+        // that ever produce it (`folding`, `applyingBackfill`) run it once; re-running it here
+        // would be redundant at best, and — as `VoiceTextAssembly.assembledText`'s own comment
+        // explains — a second pass can see ranges the first pass's own trimming already widened,
+        // which can mask a real self-trim regression rather than surface it.
+        let transcript = ledger.segments.sorted { $0.range.lowerBound < $1.range.lowerBound }.map(\.text).joined(
+            separator: " ")
         let updated = RecordingMeta(
             timestampMs: existing.timestampMs, durationMs: existing.durationMs, sampleRate: existing.sampleRate,
             rawSampleRate: existing.rawSampleRate, mic: existing.mic, rawStored: existing.rawStored,
@@ -1105,23 +1158,26 @@ final class VoiceRecorderController {
                 self.levelCount += 1
             }
         }
-        capture.onChunk = { [weak self] samples in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.lastChunkAt = Date()
-                // The offset this chunk lands at in the take — read before the append below, so
-                // it names where the chunk about to be written *starts*, matching the sample
-                // count `ingestAudioChunk(at:)` needs to keep `SessionTimeline` (and everything
-                // addressed off it — segments, gaps, the ledger) aligned with what actually
-                // reached disk.
-                let offset = self.streamingSent?.sampleCount ?? 0
-                // Mirrors what `VoiceRecordingSession.ingestAudioChunk` actually transmits when
-                // muted — the socket receives zeroes, so the saved "sent" recording should too,
-                // rather than silently disagreeing with what ElevenLabs was given.
-                let effective = self.voiceSession.isMuted ? [Int16](repeating: 0, count: samples.count) : samples
-                self.streamingSent?.append(pcm16le: effective)
-                await self.voiceSession.ingestAudioChunk(pcm16le: samples, at: offset)
+        // One ordered consumer for every captured chunk, not one unstructured `Task` per chunk.
+        // `VoiceRecordingSession.ingestAudioChunk`'s own contract requires the app await each call
+        // from a single consuming task, because that is the only thing that keeps chunks in
+        // order: two chunks each spawned as their own `Task` can resume out of order across the
+        // transport's own `await`, handing `SessionTimeline` an offset that no longer matches what
+        // actually reached the socket. Feeding a stream synchronously from `onChunk` and draining
+        // it from one long-running task is what actually gives that guarantee, rather than merely
+        // asserting it in a doc comment. A fresh stream per take — the old one's consumer task is
+        // cancelled first, so a chunk that arrives right at a restart can never feed the session
+        // that is about to start in its place.
+        let (chunkStream, continuation) = AsyncStream<[Int16]>.makeStream()
+        chunkContinuation = continuation
+        chunkConsumerTask?.cancel()
+        chunkConsumerTask = Task { [weak self] in
+            for await samples in chunkStream {
+                await self?.consumeCapturedChunk(samples)
             }
+        }
+        capture.onChunk = { [weak self] samples in
+            self?.chunkContinuation?.yield(samples)
         }
         capture.onRawChunk = { [weak self] samples in
             Task { @MainActor [weak self] in
@@ -1136,6 +1192,24 @@ final class VoiceRecorderController {
                 streamingRaw.append(pcm16le: samples)
             }
         }
+    }
+
+    /// What `chunkConsumerTask` drains, one at a time, in the order `MicrophoneCapture` delivered
+    /// them — the single place a captured buffer becomes both a disk append and a
+    /// `voiceSession.ingestAudioChunk` call.
+    private func consumeCapturedChunk(_ samples: [Int16]) async {
+        lastChunkAt = Date()
+        // The offset this chunk lands at in the take — read before the append below, so it names
+        // where the chunk about to be written *starts*, matching the sample count
+        // `ingestAudioChunk(at:)` needs to keep `SessionTimeline` (and everything addressed off
+        // it — segments, gaps, the ledger) aligned with what actually reached disk.
+        let offset = streamingSent?.sampleCount ?? 0
+        // Mirrors what `VoiceRecordingSession.ingestAudioChunk` actually transmits when muted —
+        // the socket receives zeroes, so the saved "sent" recording should too, rather than
+        // silently disagreeing with what ElevenLabs was given.
+        let effective = voiceSession.isMuted ? [Int16](repeating: 0, count: samples.count) : samples
+        streamingSent?.append(pcm16le: effective)
+        await voiceSession.ingestAudioChunk(pcm16le: samples, at: offset)
     }
 
     // MARK: - Capture watchdog

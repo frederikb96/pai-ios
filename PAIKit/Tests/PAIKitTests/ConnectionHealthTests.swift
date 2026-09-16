@@ -101,4 +101,47 @@ final class ConnectionHealthTests: XCTestCase {
         _ = health.handle(.socketDelivered, now: start)
         XCTAssertEqual(health.handle(.pathSatisfied(false), now: start), .offline)
     }
+
+    // MARK: - backfillGate
+
+    /// The exact scenario `state` cannot answer: no take is recording, so no socket has ever
+    /// opened, yet the network path itself has been fine for a long time. `state` stays stuck at
+    /// `.connecting` forever in this situation — `backfillGate` is the separate reading built for
+    /// it, and must reach `.stable` with nothing else true at all.
+    func testBackfillGateReachesStableWithNoSocketEverOpenedGivenAPathSatisfiedForAWhile() {
+        var health = ConnectionHealth()
+        _ = health.handle(.pathSatisfied(true), now: start)
+        let anHourLater = start.addingTimeInterval(3600)
+        XCTAssertEqual(health.state, .connecting, "state itself must stay stuck — this is the bug backfillGate fixes")
+        XCTAssertEqual(health.backfillGate(now: anHourLater), .stable)
+    }
+
+    func testBackfillGateIsOfflineWhenThePathIsUnsatisfied() {
+        let health = ConnectionHealth()
+        XCTAssertEqual(health.backfillGate(now: start), .offline)
+    }
+
+    /// A close or a mint failure still means "give it a moment" for backfill purposes too — the
+    /// same 30s window `state`'s own `unstable` reads, just without requiring a socket.
+    func testBackfillGateIsUnstableWithinTheRecentFailureWindowThenStable() {
+        var health = ConnectionHealth()
+        _ = health.handle(.pathSatisfied(true), now: start)
+        _ = health.handle(.mintFailed, now: start)
+        let justInsideTheWindow = start.addingTimeInterval(ConnectionHealth.recentFailureWindowSeconds - 1)
+        XCTAssertEqual(health.backfillGate(now: justInsideTheWindow), .unstable)
+        let justOutsideTheWindow = start.addingTimeInterval(ConnectionHealth.recentFailureWindowSeconds + 1)
+        XCTAssertEqual(health.backfillGate(now: justOutsideTheWindow), .stable)
+    }
+
+    /// `backfillGate` reads fresh off whatever `now` it is given on every call — no `.tick` event
+    /// is needed to let its own window elapse, unlike `state`.
+    func testBackfillGateNeedsNoTickToLetItsWindowElapse() {
+        var health = ConnectionHealth()
+        _ = health.handle(.pathSatisfied(true), now: start)
+        _ = health.handle(.socketClosed(reason: nil), now: start)
+        let wellPastTheWindow = start.addingTimeInterval(ConnectionHealth.recentFailureWindowSeconds + 1)
+        // No `.handle` call at all between `start` and this read — a plain call with a later
+        // `now` is enough.
+        XCTAssertEqual(health.backfillGate(now: wellPastTheWindow), .stable)
+    }
 }

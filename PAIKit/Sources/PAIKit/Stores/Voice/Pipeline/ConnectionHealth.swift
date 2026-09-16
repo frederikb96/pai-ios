@@ -66,4 +66,20 @@ public struct ConnectionHealth: Sendable, Equatable {
         let stable = hasDelivered && openForSeconds >= Self.stableAfterSeconds && !recentFailure
         state = stable ? .stable : .unstable
     }
+
+    /// A separate reading for whether batch backfill should run — deliberately not `state`, which
+    /// answers "is *this socket* worth trusting" and therefore requires one to be open. Backfill
+    /// has no socket of its own: healing an ended take, launch recovery and "transcribe now" all
+    /// need to know only whether the network path itself is usable, which is knowable with
+    /// nothing connected at all. A `.stable` `state` implies this reads `.stable` too, but not the
+    /// reverse — the app can be sitting idle, path fine, with no take running at all.
+    ///
+    /// Takes `now` explicitly rather than reading a cached recompute, so a caller polling this on
+    /// a timer sees the 30s recent-failure window elapse on its own — no `.tick` event needed to
+    /// "tick" this particular reading forward.
+    public func backfillGate(now: Date) -> HealthState {
+        guard pathSatisfied else { return .offline }
+        let recentFailure = lastFailureAt.map { now.timeIntervalSince($0) < Self.recentFailureWindowSeconds } ?? false
+        return recentFailure ? .unstable : .stable
+    }
 }

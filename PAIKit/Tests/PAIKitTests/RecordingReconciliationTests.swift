@@ -85,7 +85,7 @@ final class RecordingReconciliationTests: XCTestCase {
         let ledger = TranscriptLedger(
             takeId: "1700000000001", mode: .microphone, sampleRate: 16000, draftKey: "session-1", preText: "",
             segments: [Segment(range: 0..<16000, text: "hello", source: .live)], capturedUpTo: 32000,
-            gaps: [Gap(range: 16000..<32000, attempts: 2, lastError: "timeout")]
+            gaps: [Gap(range: 16000..<32000, attempts: 2, lastError: "timeout")], acknowledged: [0..<16000]
         )
         let reconciled = RecordingReconciliation.reconcile(
             ledger: ledger, takeId: ledger.takeId, sampleRate: 16000, capturedSampleCount: 48000
@@ -102,7 +102,8 @@ final class RecordingReconciliationTests: XCTestCase {
     func testReconcileDropsAGapAlreadyFullyCovered() {
         let ledger = TranscriptLedger(
             takeId: "1700000000002", mode: .microphone, sampleRate: 16000, draftKey: nil, preText: "",
-            segments: [Segment(range: 0..<32000, text: "all of it", source: .live)], capturedUpTo: 32000
+            segments: [Segment(range: 0..<32000, text: "all of it", source: .live)], capturedUpTo: 32000,
+            acknowledged: [0..<32000]
         )
         let reconciled = RecordingReconciliation.reconcile(
             ledger: ledger, takeId: ledger.takeId, sampleRate: 16000, capturedSampleCount: 32000

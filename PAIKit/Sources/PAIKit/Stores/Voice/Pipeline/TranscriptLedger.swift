@@ -143,12 +143,20 @@ public struct TranscriptLedger: Codable, Sendable, Equatable {
     /// The assembled text has reached its draft or message. The rule for when a take's audio may
     /// ever be deleted reads this alongside `gaps.isEmpty`.
     public let delivered: Bool
+    /// Sample ranges the durable pipeline treats as accounted for and never a gap: audio sent on
+    /// a connection that later received any commit message (an acknowledgement that everything
+    /// sent before it landed), and audio the silence gate deliberately withheld. Word extents are
+    /// not this measure — an ordinary pause between sentences is silence inside an acknowledged
+    /// stretch, not a hole in it. Optional so a ledger written before this field existed still
+    /// decodes; read as empty, which means "nothing acknowledged yet" rather than "everything
+    /// captured is fine" — the safe direction, same as every other crash-recovery default here.
+    public let acknowledged: [SampleRange]?
 
     public init(
         takeId: String, mode: VoiceMode, sampleRate: Int, draftKey: String?, preText: String,
         segments: [Segment] = [], capturedUpTo: Int = 0, gaps: [Gap] = [],
         boundaries: [MessageBoundary] = [], collecting: [SampleRange] = [],
-        events: [PipelineEvent] = [], delivered: Bool = false
+        events: [PipelineEvent] = [], delivered: Bool = false, acknowledged: [SampleRange]? = nil
     ) {
         self.takeId = takeId
         self.mode = mode
@@ -162,6 +170,7 @@ public struct TranscriptLedger: Codable, Sendable, Equatable {
         self.collecting = collecting
         self.events = events
         self.delivered = delivered
+        self.acknowledged = acknowledged
     }
 }
 
@@ -190,13 +199,15 @@ extension TranscriptLedger {
     }
 
     /// The gap list this ledger should hold right now: every stretch of captured, in-scope audio
-    /// with no committed segment over it, carrying forward the attempt count, last error and
-    /// demotion of whichever persisted `Gap` it overlaps — a retry budget must survive a restart,
-    /// not reset because the hole was recomputed fresh. A gap now fully covered is simply absent
-    /// from the result; nothing here ever deletes a `Segment` or a persisted attempt count itself.
+    /// not yet `acknowledged` — never word extents, which is what silently turned an ordinary
+    /// pause between sentences into a "gap" that backfill re-requested forever. Carries forward
+    /// the attempt count, last error and demotion of whichever persisted `Gap` it overlaps — a
+    /// retry budget must survive a restart, not reset because the hole was recomputed fresh. A
+    /// gap now acknowledged is simply absent from the result; nothing here ever deletes a
+    /// `Segment` or a persisted attempt count itself.
     public func derivedGaps(capturedUpTo: Int) -> [Gap] {
         let bounds = collectingBounds(capturedUpTo: capturedUpTo)
-        let uncovered = Self.uncoveredRanges(in: bounds, covered: coveredRanges)
+        let uncovered = Self.uncoveredRanges(in: bounds, covered: acknowledged ?? [])
         return uncovered.map { range in
             if let previous = gaps.first(where: { $0.range.overlaps(range) }) {
                 return Gap(
@@ -212,6 +223,65 @@ extension TranscriptLedger {
     /// already reached the draft or message it belongs to. Retention (which takes the cap
     /// actually evicts) reads this before counting a take against its limit.
     public var mayBeDeleted: Bool { gaps.isEmpty && delivered }
+
+    /// Folds fresh session output into the ledger — new live segments merged with whatever
+    /// batch/recovery segments it already had, `acknowledged` extended with what the session has
+    /// newly confirmed, and gaps re-derived against the new `capturedUpTo`. What every live write
+    /// is built from: the periodic ledger loop while a take runs, and the final synchronous fold
+    /// at `stop()` — the same function for both is what keeps the take's very last sentence from
+    /// being dropped by whichever one happened to run last.
+    public func folding(
+        liveSegments: [Segment], capturedUpTo: Int, newlyAcknowledged: [SampleRange],
+        collecting: [SampleRange]? = nil
+    ) -> TranscriptLedger {
+        let recoveredSegments = segments.filter { $0.source == .batch || $0.source == .recovery }
+        let mergedSegments = SeamMerge.merge(liveSegments + recoveredSegments)
+        let mergedAcknowledged = Self.merge((acknowledged ?? []) + newlyAcknowledged)
+        let resolvedCollecting = collecting ?? self.collecting
+        let withoutGaps = TranscriptLedger(
+            takeId: takeId, mode: mode, sampleRate: sampleRate, draftKey: draftKey, preText: preText,
+            segments: mergedSegments, capturedUpTo: capturedUpTo, gaps: gaps, boundaries: boundaries,
+            collecting: resolvedCollecting, events: events, delivered: delivered, acknowledged: mergedAcknowledged
+        )
+        return TranscriptLedger(
+            takeId: takeId, mode: mode, sampleRate: sampleRate, draftKey: draftKey, preText: preText,
+            segments: mergedSegments, capturedUpTo: capturedUpTo,
+            gaps: withoutGaps.derivedGaps(capturedUpTo: capturedUpTo), boundaries: boundaries,
+            collecting: resolvedCollecting, events: events, delivered: delivered, acknowledged: mergedAcknowledged
+        )
+    }
+
+    /// Applies one backfill pass's outcome to the ledger's *current* state — never the snapshot
+    /// the pass started reading from, which a network round trip can leave stale. `resolved`
+    /// ranges (a `.segment` or `.noSpeechDetected` outcome) are removed from whatever `gaps` holds
+    /// right now, not from a copy computed before the pass began; `failed` ranges get their
+    /// attempt bumped against the *current* gap for that range. A gap opened fresh while the pass
+    /// was in flight is untouched either way. `delivered` is deliberately not touched here — it
+    /// means the text actually reached its destination, which only the caller who wrote it there
+    /// knows.
+    ///
+    /// `resolved` ranges are also folded into `acknowledged` — a settled fact about the take,
+    /// exactly as final as anything a live commit ever confirmed. Without this, the next ordinary
+    /// `folding()` call (which recomputes `gaps` entirely fresh from `acknowledged`, never
+    /// consulting `gaps`' own current, already-healed state) would silently reopen the very gap
+    /// this pass just closed.
+    public func applyingBackfill(
+        newSegments: [Segment], resolved: [SampleRange], failed: [(range: SampleRange, error: String)]
+    ) -> TranscriptLedger {
+        let mergedSegments = SeamMerge.merge(segments + newSegments)
+        var updatedGaps = gaps
+        updatedGaps.removeAll { gap in resolved.contains { $0 == gap.range } }
+        for failure in failed {
+            guard let index = updatedGaps.firstIndex(where: { $0.range == failure.range }) else { continue }
+            updatedGaps[index] = BackfillPlanner.recordFailure(updatedGaps[index], error: failure.error)
+        }
+        let mergedAcknowledged = Self.merge((acknowledged ?? []) + resolved)
+        return TranscriptLedger(
+            takeId: takeId, mode: mode, sampleRate: sampleRate, draftKey: draftKey, preText: preText,
+            segments: mergedSegments, capturedUpTo: capturedUpTo, gaps: updatedGaps, boundaries: boundaries,
+            collecting: collecting, events: events, delivered: delivered, acknowledged: mergedAcknowledged
+        )
+    }
 
     /// Merges overlapping or adjacent ranges into a sorted, disjoint set.
     static func merge(_ ranges: [SampleRange]) -> [SampleRange] {

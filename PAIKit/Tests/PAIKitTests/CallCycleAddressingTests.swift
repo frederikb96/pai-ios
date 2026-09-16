@@ -43,6 +43,15 @@ final class CallCycleAddressingTests: XCTestCase {
         XCTAssertEqual(shifted.map(\.range), [500..<600, 600..<700])
     }
 
+    func testShiftingAnArrayOfRangesShiftsEveryElementByTheSameBase() {
+        let ranges: [SampleRange] = [0..<100, 200..<300]
+        XCTAssertEqual(CallCycleAddressing.shift(ranges, by: 1000), [1000..<1100, 1200..<1300])
+    }
+
+    func testShiftingAnEmptyArrayOfRangesStaysEmpty() {
+        XCTAssertEqual(CallCycleAddressing.shift([SampleRange](), by: 1000), [])
+    }
+
     // MARK: - A scripted connection drop inside one cycle, stitched with a second cycle
 
     /// The scenario the healing feature exists for, built entirely from values — no live socket,
@@ -55,33 +64,46 @@ final class CallCycleAddressingTests: XCTestCase {
     /// must carry every word exactly once, in order, across both cycles, with no gap remaining.
     func testAConnectionDropWithinOneCycleHealsToEveryWordExactlyOnceOnceBackfilled() {
         // Cycle 1, addressed from zero exactly as a microphone-mode take is: "one two" committed
-        // live, then the socket drops for 1000 samples (audio still captured, nothing committed),
-        // then "three four" backfills the drop.
+        // live — and so acknowledged — over the first 500 samples, then the socket drops for
+        // 1000 samples (audio still captured to disk, nothing sent or acknowledged), then a batch
+        // backfill recovers the dropped stretch before "stop".
         let cycle1Live = [Segment(range: 0..<500, text: "one two", source: .live)]
+        let cycle1Acknowledged: [SampleRange] = [0..<500]
         let cycle1CapturedUpTo = 1500
 
         let cycle1Base = 0
-        var callSegments = CallCycleAddressing.shift(cycle1Live, by: cycle1Base)
-        var callCapturedUpTo = cycle1Base + cycle1CapturedUpTo
+        let callCapturedUpTo1 = cycle1Base + cycle1CapturedUpTo
         var callCollecting: [SampleRange] = [CallCycleAddressing.shift(0..<cycle1CapturedUpTo, by: cycle1Base)]
+        // The call's own cumulative live picture across every cycle so far — exactly
+        // `CallModeController.persistCallLedger()`'s own `completedCycleSegments`, which
+        // `folding`'s own `liveSegments:` argument must be handed in full each time (it only ever
+        // re-includes `.batch`/`.recovery` segments already in the ledger, never `.live` ones
+        // from an earlier fold).
+        var callLiveSegments = CallCycleAddressing.shift(cycle1Live, by: cycle1Base)
 
+        // `folding` is the exact function a periodic ledger write already goes through — this is
+        // what `CallModeController.persistCallLedger()` calls indirectly via
+        // `persistExternalLedger`, never a hand-rolled equivalent.
         var ledger = TranscriptLedger(
-            takeId: "call-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
-            segments: callSegments, capturedUpTo: callCapturedUpTo, collecting: callCollecting)
+            takeId: "call-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: ""
+        )
+        .folding(
+            liveSegments: callLiveSegments, capturedUpTo: callCapturedUpTo1,
+            newlyAcknowledged: CallCycleAddressing.shift(cycle1Acknowledged, by: cycle1Base),
+            collecting: callCollecting)
         XCTAssertEqual(
-            ledger.derivedGaps(capturedUpTo: callCapturedUpTo).map(\.range), [500..<1500],
+            ledger.gaps.map(\.range), [500..<1500],
             "the drop must derive as exactly one gap, bounded to the collecting range")
 
         // The batch backfill recovers the dropped stretch — shifted the same way a live segment
-        // would be, since the shift function does not care about `Segment.Source`.
+        // would be, since the shift function does not care about `Segment.Source`. Backfilled
+        // audio heals the gap directly (`applyingBackfill`'s own contract, matching what the real
+        // backfill loop does to the ledger); it is never folded into `acknowledged`, which tracks
+        // only what the live connection itself confirmed.
         let recovered = CallCycleAddressing.shift(
             Segment(range: 500..<1500, text: "three four", source: .batch), by: cycle1Base)
-        callSegments = SeamMerge.merge(callSegments + [recovered])
-        ledger = TranscriptLedger(
-            takeId: ledger.takeId, mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
-            segments: callSegments, capturedUpTo: callCapturedUpTo, collecting: callCollecting)
-        XCTAssertTrue(
-            ledger.derivedGaps(capturedUpTo: callCapturedUpTo).isEmpty, "healed — nothing left uncovered")
+        ledger = ledger.applyingBackfill(newSegments: [recovered], resolved: [500..<1500], failed: [])
+        XCTAssertTrue(ledger.gaps.isEmpty, "healed — nothing left uncovered")
 
         // Cycle 1 ends ("stop"/"send"): the call's own running position advances by exactly what
         // cycle 1 captured. A wake-mode stretch follows — never written to disk, never part of
@@ -90,19 +112,25 @@ final class CallCycleAddressingTests: XCTestCase {
         let callTakeCollectedSamplesAfterCycle1 = cycle1Base + cycle1CapturedUpTo
 
         // Cycle 2, addressed from zero again (a fresh `VoiceRecordingSession`), shifted by the
-        // call's new running position.
+        // call's new running position — fully committed live, so fully acknowledged too.
+        // `folding`'s own contract re-includes cycle 1's batch-recovered "three four" from the
+        // ledger's current state on its own; cycle 1's own live "one two" only survives because
+        // `callLiveSegments` still carries it forward, exactly as `CallModeController`'s own
+        // `completedCycleSegments` does.
         let cycle2Live = [Segment(range: 0..<800, text: "five six seven", source: .live)]
+        let cycle2Acknowledged: [SampleRange] = [0..<800]
         let cycle2Base = callTakeCollectedSamplesAfterCycle1
-        callSegments = SeamMerge.merge(callSegments + CallCycleAddressing.shift(cycle2Live, by: cycle2Base))
-        callCapturedUpTo = cycle2Base + 800
+        let callCapturedUpTo2 = cycle2Base + 800
         callCollecting.append(CallCycleAddressing.shift(0..<800, by: cycle2Base))
+        callLiveSegments += CallCycleAddressing.shift(cycle2Live, by: cycle2Base)
 
-        ledger = TranscriptLedger(
-            takeId: ledger.takeId, mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
-            segments: callSegments, capturedUpTo: callCapturedUpTo, collecting: callCollecting)
+        ledger = ledger.folding(
+            liveSegments: callLiveSegments, capturedUpTo: callCapturedUpTo2,
+            newlyAcknowledged: CallCycleAddressing.shift(cycle2Acknowledged, by: cycle2Base),
+            collecting: callCollecting)
 
-        XCTAssertTrue(ledger.derivedGaps(capturedUpTo: callCapturedUpTo).isEmpty)
-        let fullText = callSegments.sorted { $0.range.lowerBound < $1.range.lowerBound }.map(\.text).joined(
+        XCTAssertTrue(ledger.gaps.isEmpty)
+        let fullText = ledger.segments.sorted { $0.range.lowerBound < $1.range.lowerBound }.map(\.text).joined(
             separator: " ")
         XCTAssertEqual(fullText, "one two three four five six seven", "every word exactly once, in order")
     }

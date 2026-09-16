@@ -15,16 +15,17 @@ import PAIKit
 /// continuous session microphone mode uses for a whole take. Each cycle addresses its own audio
 /// from zero, exactly as a microphone-mode take does — never fed a non-zero starting offset, so
 /// every internal invariant that type already relies on holds unchanged. While a cycle is open,
-/// its `committedSegments` are shifted (`CallCycleAddressing`) by however many samples the call's
-/// own ledger has already collected across every earlier cycle and written through — reusing
-/// `VoiceRecorderController`'s own ledger-write and backfill machinery directly
-/// (`persistExternalLedger`/`beginExternalTake`), never a second copy of either. That is also what
-/// makes a connection drop mid-cycle heal exactly as a microphone-mode take's does: audio keeps
-/// being captured to disk regardless of the socket, `capturedUpTo` keeps advancing with it
-/// (`VoiceRecordingSession.ingestAudioChunk`'s own contract), and whatever stretch a drop leaves
-/// uncommitted derives as an ordinary gap the same `BackfillPlanner`/`BatchBackfiller` already
-/// heal for microphone mode, bounded to `TranscriptLedger.collecting` — the one field `.call`
-/// mode's own gap derivation bounds itself to, kept current here on every write.
+/// its `committedSegments` and `acknowledgedRanges` are both shifted (`CallCycleAddressing`) by
+/// however many samples the call's own ledger has already collected across every earlier cycle
+/// and written through — reusing `VoiceRecorderController`'s own ledger-write and backfill
+/// machinery directly (`persistExternalLedger`/`beginExternalTake`), never a second copy of
+/// either. That is also what makes a connection drop mid-cycle heal exactly as a microphone-mode
+/// take's does: audio keeps being captured to disk regardless of the socket, `capturedUpTo` keeps
+/// advancing with it (`VoiceRecordingSession.ingestAudioChunk`'s own contract), and whatever
+/// stretch a drop leaves unacknowledged derives as an ordinary gap the same
+/// `BackfillPlanner`/`BatchBackfiller` already heal for microphone mode, bounded to
+/// `TranscriptLedger.collecting` — the one field `.call` mode's own gap derivation bounds itself
+/// to, kept current here on every write.
 ///
 /// **What this does not build:** speaking a blocker the session is waiting on out loud — flagged
 /// elsewhere rather than guessed at under time pressure.
@@ -69,6 +70,13 @@ final class CallModeController {
     /// `TranscriptLedger.collecting` is built from, since `.call` mode's own gap derivation bounds
     /// itself to exactly this field.
     private var completedCollectingRanges: [SampleRange] = []
+    /// Every earlier cycle's own acknowledged ranges, already shifted into the call ledger's
+    /// addressing — the acknowledged counterpart to `completedCycleSegments`, merged with
+    /// whichever cycle is currently open (if any) on every write exactly the same way.
+    /// `persistExternalLedger`'s `acknowledged:` argument is what the durable pipeline's own gap
+    /// derivation now measures against instead of word extents, so this must carry the call's
+    /// whole acknowledged history, not merely the newest cycle's own.
+    private var completedAcknowledgedRanges: [SampleRange] = []
     /// How many samples the call's own ledger has collected across every cycle *before* the one
     /// currently open, if any — the shift every one of that cycle's segments gets while it runs.
     /// Also what a command's own `atOffset` is built from: the ledger's own addressing, which
@@ -157,6 +165,7 @@ final class CallModeController {
         wakeWordCaptureOffset = 0
         completedCycleSegments = []
         completedCollectingRanges = []
+        completedAcknowledgedRanges = []
         // The exact id scheme a microphone-mode take uses — never prefixed or otherwise marked as
         // a call's — so a crashed call is reconciled at the next launch through the identical
         // path a crashed dictation already is: `RecordingReconciliation.metadata(for:)` only
@@ -548,16 +557,19 @@ final class CallModeController {
     private func persistCallLedger() {
         guard let callTakeId else { return }
         var segments = completedCycleSegments
+        var acknowledged = completedAcknowledgedRanges
         var capturedUpTo = callTakeCollectedSamples
         var collecting = completedCollectingRanges
         if let session = cycleSession {
             let base = callTakeCollectedSamples
             segments += CallCycleAddressing.shift(session.committedSegments, by: base)
+            acknowledged += CallCycleAddressing.shift(session.acknowledgedRanges, by: base)
             capturedUpTo = base + session.capturedUpTo
             collecting.append(base..<Int.max)
         }
         controller.persistExternalLedger(
-            takeId: callTakeId, segments: segments, capturedUpTo: capturedUpTo, collecting: collecting)
+            takeId: callTakeId, segments: segments, capturedUpTo: capturedUpTo, acknowledged: acknowledged,
+            collecting: collecting)
     }
 
     /// Call mode's own counterpart to `VoiceRecorderController.runLedgerLoop` — one running for
@@ -584,6 +596,7 @@ final class CallModeController {
 
         let base = callTakeCollectedSamples
         completedCycleSegments += CallCycleAddressing.shift(session.committedSegments, by: base)
+        completedAcknowledgedRanges += CallCycleAddressing.shift(session.acknowledgedRanges, by: base)
         completedCollectingRanges.append(base..<(base + cycleSamplesFed))
         callTakeCollectedSamples += cycleSamplesFed
         cycleSession = nil
@@ -659,6 +672,7 @@ final class CallModeController {
         callTakeId = nil
         completedCycleSegments = []
         completedCollectingRanges = []
+        completedAcknowledgedRanges = []
         boundSessionID = nil
 
         let capture = controller.microphoneCapture

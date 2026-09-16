@@ -92,8 +92,8 @@ public final class CallModeStore {
     /// refused once this is terminal, per `sendingIsRefused`; the call itself stays open.
     public private(set) var sessionStatus: SessionStatus?
     /// Set when `postMessage` throws — the send itself already has its own recoverable-failure
-    /// path (row `n`'s note on `dependencies.postMessage`); this is only call mode's own record
-    /// of the last such failure, for whatever surface wants to announce it.
+    /// path, documented on `CallModeDependencies.postMessage` above; this is only call mode's own
+    /// record of the last such failure, for whatever surface wants to announce it.
     public private(set) var lastSendFailure: Error?
     /// Set when "end" was heard while the turn still held unsent text — whatever was assembled
     /// from `turnRanges` at that moment, never sent automatically (mirroring `recoverCrashCut`'s
