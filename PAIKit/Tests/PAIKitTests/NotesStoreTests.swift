@@ -31,8 +31,14 @@ private final class FakeNotesApi: NotesApiClient, @unchecked Sendable {
     /// load-vs-save race turns this on and holds the call open with a continuation instead of a
     /// sleep, so the ordering is exact rather than hoped-for.
     var getNoteGateEnabled = false
+    /// The gated load runs in its own `Task`, so it can reach the gate before the test starts
+    /// waiting for it, or the test can release it before it has parked. Each hand-off records
+    /// that it already happened, under a lock, so neither side's wake-up is ever lost.
+    private let gateLock = NSLock()
     private var getNoteStarted: CheckedContinuation<Void, Never>?
+    private var getNoteHasStarted = false
     private var getNoteRelease: CheckedContinuation<Void, Never>?
+    private var getNoteReleased = false
 
     func getNotes(containerId: String?, favourite: Bool?, limit: Int, offset: Int) async throws -> [NoteSummary] {
         getNotesResult
@@ -41,19 +47,45 @@ private final class FakeNotesApi: NotesApiClient, @unchecked Sendable {
     /// Suspends until the in-flight `getNote` call is released, resolving as soon as that call
     /// has actually started so a test can then drive something else to completion in between.
     func waitUntilGetNoteStarted() async {
-        await withCheckedContinuation { self.getNoteStarted = $0 }
+        await withCheckedContinuation { continuation in
+            gateLock.lock()
+            if getNoteHasStarted {
+                gateLock.unlock()
+                continuation.resume()
+            } else {
+                getNoteStarted = continuation
+                gateLock.unlock()
+            }
+        }
     }
 
     func releaseGetNote() {
-        getNoteRelease?.resume()
+        gateLock.lock()
+        getNoteReleased = true
+        let release = getNoteRelease
         getNoteRelease = nil
+        gateLock.unlock()
+        release?.resume()
     }
 
     func getNote(id: String) async throws -> NoteDetail {
         guard getNoteGateEnabled else { return getNoteResult ?? NoteFixture.detail(id: id) }
-        getNoteStarted?.resume()
+        gateLock.lock()
+        getNoteHasStarted = true
+        let started = getNoteStarted
         getNoteStarted = nil
-        await withCheckedContinuation { self.getNoteRelease = $0 }
+        gateLock.unlock()
+        started?.resume()
+        await withCheckedContinuation { continuation in
+            gateLock.lock()
+            if getNoteReleased {
+                gateLock.unlock()
+                continuation.resume()
+            } else {
+                getNoteRelease = continuation
+                gateLock.unlock()
+            }
+        }
         return getNoteResult ?? NoteFixture.detail(id: id)
     }
 
