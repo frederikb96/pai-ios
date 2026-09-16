@@ -9,18 +9,20 @@ struct ComposerActionMenu: View {
     var hasSession: Bool
     /// `nil` while there is no session yet to bind a call to — `CreateSessionView`'s own composer
     /// has no menu entries for call mode at all, matching how it never offers a long-press either.
-    var callMenuState: ComposerCallMenuState?
+    var callMenuState: ComposerCallMenuState? = nil
     /// The other session's own title, for `.runningElsewhere`'s label — `nil` falls back to a
     /// generic phrase rather than an empty one.
-    var otherCallSessionName: String?
+    var otherCallSessionName: String? = nil
     var onPastRecordings: () -> Void
     var onAddPhoto: () -> Void
     var onAddFile: () -> Void
     var onTemporaryNote: () -> Void
     var onSecretGrant: () -> Void
     var onCancel: () -> Void
-    var onStartOrReturnToCall: () -> Void
-    var onEndCall: () -> Void
+    /// Unreachable while `callMenuState` is `nil` — the item that would call it is never in the
+    /// menu — so `CreateSessionView`'s own composer, which has no session yet, needs no override.
+    var onStartOrReturnToCall: () -> Void = {}
+    var onEndCall: () -> Void = {}
 
     var body: some View {
         Menu {
