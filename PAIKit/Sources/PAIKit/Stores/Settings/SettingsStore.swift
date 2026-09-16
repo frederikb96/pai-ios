@@ -19,9 +19,10 @@ public enum SttLanguage: String, Codable, Sendable, CaseIterable {
 ///
 /// Three different persistence shapes live here, deliberately kept distinct rather than implied
 /// by which method happens to get called:
-/// - **client-side, immediate** — STT language, mic device, silence detection, the two
-///   diagnostic lists, expand preferences: a `set...` call persists to `storage` and updates
-///   published state in the same step, same as the web's `localStorage` + immediate apply.
+/// - **client-side, immediate** — STT language, mic device, silence detection, the TTS voice id
+///   and speech rate, the two diagnostic lists, expand preferences: a `set...` call persists to
+///   `storage` and updates published state in the same step, same as the web's `localStorage` +
+///   immediate apply.
 /// - **server-persisted, draft-and-save** — `smtp`, a whole sub-store, because Save/dirty
 ///   tracking/validation is real state, not a detail this store should flatten away.
 /// - **write-only secret** — `elevenLabsKey` (and `smtp.password`): presence is fetched, the
@@ -41,6 +42,8 @@ public final class SettingsStore {
         static let theme = "theme"
         static let showsNoteLineNumbers = "showsNoteLineNumbers"
         static let noteToolbarLayout = "noteToolbarLayout"
+        static let ttsVoiceId = "ttsVoiceId"
+        static let ttsSpeechRate = "ttsSpeechRate"
     }
 
     static let maxSentMessages = 10
@@ -69,6 +72,14 @@ public final class SettingsStore {
     /// avoid. Always sanitized before being stored here, so every read of this property is safe
     /// to hand straight to the bar with no further checking.
     public private(set) var noteToolbarLayout: [NoteToolbarActionId]
+
+    /// Freddy's pasted ElevenLabs voice id for call mode's spoken replies — a plain client-side
+    /// setting, not a secret: it names which voice to speak in, nothing that authenticates
+    /// anything. Empty means "use ElevenLabs' own default voice for the token".
+    public private(set) var ttsVoiceId: String
+    /// `AVAudioUnitTimePitch.rate` call mode's speech output plays back at — `1.0` is ElevenLabs'
+    /// own generation speed, unchanged.
+    public private(set) var ttsSpeechRate: Double
 
     public let elevenLabsKey: WriteOnlySecretField
     public let smtp: SmtpSettingsStore
@@ -102,6 +113,8 @@ public final class SettingsStore {
         showsNoteLineNumbers = storage.value(forKey: Keys.showsNoteLineNumbers) ?? false
         let storedToolbarIds: [String] = storage.value(forKey: Keys.noteToolbarLayout) ?? []
         noteToolbarLayout = NoteToolbarLayout.sanitize(rawIds: storedToolbarIds)
+        ttsVoiceId = storage.value(forKey: Keys.ttsVoiceId) ?? ""
+        ttsSpeechRate = storage.value(forKey: Keys.ttsSpeechRate) ?? 1.0
     }
 
     // MARK: - Client-side settings, immediate apply
@@ -134,6 +147,16 @@ public final class SettingsStore {
     public func setSilenceDurationMs(_ ms: Double) {
         silenceDurationMs = ms
         storage.setValue(ms, forKey: Keys.silenceDurationMs)
+    }
+
+    public func setTtsVoiceId(_ voiceId: String) {
+        ttsVoiceId = voiceId
+        storage.setValue(voiceId, forKey: Keys.ttsVoiceId)
+    }
+
+    public func setTtsSpeechRate(_ rate: Double) {
+        ttsSpeechRate = rate
+        storage.setValue(rate, forKey: Keys.ttsSpeechRate)
     }
 
     public func setShowsNoteLineNumbers(_ enabled: Bool) {

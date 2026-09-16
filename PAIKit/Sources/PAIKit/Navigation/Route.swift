@@ -90,6 +90,12 @@ public enum Route: Hashable, Sendable {
     /// one. Mirrors the web's `SchedulerApp.tsx`, whose three routes (list/new/id) are the same
     /// shape with `nil` standing in for its `new` segment.
     case schedulerTask(id: String?)
+    /// Call mode, full-screen, bound to one session — reached by a long-press on the composer's
+    /// microphone button in real usage, and by the fixture screenshot workflow the same way every
+    /// other full-screen-cover destination is. Carries no separate identity concern of its own
+    /// beyond the session id: a call is always freshly entered, never resumed at a different
+    /// stack depth.
+    case callMode(sessionID: String)
 
     /// Ignores `session`'s `messageID` — see that case's doc comment. Everything else is a plain
     /// per-case comparison, same as the synthesized version this replaces.
@@ -113,6 +119,7 @@ public enum Route: Hashable, Sendable {
         case (.arcOverview(let a), .arcOverview(let b)): return a == b
         case (.schedulerList, .schedulerList): return true
         case (.schedulerTask(let a), .schedulerTask(let b)): return a == b
+        case (.callMode(let a), .callMode(let b)): return a == b
         default: return false
         }
     }
@@ -167,6 +174,9 @@ public enum Route: Hashable, Sendable {
         case .schedulerTask(let id):
             hasher.combine(17)
             hasher.combine(id)
+        case .callMode(let sessionID):
+            hasher.combine(18)
+            hasher.combine(sessionID)
         }
     }
 }
@@ -182,7 +192,7 @@ extension Route {
     public static let namedScreens: [String] = [
         "session", "terminal", "settings", "createSession", "subagents", "notes", "note", "noteContainers",
         "notePreview", "notifications", "recordings", "arcSpec", "apps", "arcSpecList", "arcReport", "arcOverview",
-        "schedulerList", "schedulerTask",
+        "schedulerList", "schedulerTask", "callMode",
     ]
 
     /// Every spec-scoped fixture route answers under, regardless of which uuid the request
@@ -226,6 +236,7 @@ extension Route {
         case "arcOverview": return .arcOverview(specUuid: fixtureArcSpecUuid)
         case "schedulerList": return .schedulerList
         case "schedulerTask": return .schedulerTask(id: nil)
+        case "callMode": return .callMode(sessionID: sessionID)
         default: return nil
         }
     }
@@ -363,6 +374,7 @@ public final class Router {
             switch route {
             case .session(let id, _): return id
             case .terminal(let sessionID): return sessionID
+            case .callMode(let sessionID): return sessionID
             case .settings, .createSession, .subagents, .notes, .note, .noteContainers, .notePreview,
                 .notifications, .recordings, .arcSpec, .apps, .arcSpecList, .arcReport, .arcOverview,
                 .schedulerList, .schedulerTask:
@@ -378,7 +390,7 @@ public final class Router {
         for route in path.reversed() {
             switch route {
             case .note(let id), .notePreview(let id): return id
-            case .session, .terminal, .settings, .createSession, .subagents, .notes, .noteContainers,
+            case .session, .terminal, .callMode, .settings, .createSession, .subagents, .notes, .noteContainers,
                 .notifications, .recordings, .arcSpec, .apps, .arcSpecList, .arcReport, .arcOverview,
                 .schedulerList, .schedulerTask:
                 continue
