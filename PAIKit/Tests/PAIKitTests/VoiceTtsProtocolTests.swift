@@ -17,6 +17,19 @@ final class VoiceTtsProtocolTests: XCTestCase {
         XCTAssertTrue(query.contains(URLQueryItem(name: "output_format", value: "pcm_24000")))
     }
 
+    /// ElevenLabs closes the whole connection after a default of 20s of no activity on any
+    /// context — far shorter than an ordinary quiet stretch of a call — unless the connection
+    /// asks for a longer ceiling itself.
+    func testConnectionURLRequestsTheMaximumInactivityTimeoutRatherThanTheTwentySecondDefault() throws {
+        let url = try XCTUnwrap(VoiceTtsProtocol.connectionURL(voiceId: "abc123", token: "tok-xyz"))
+        let query = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
+        XCTAssertTrue(
+            query.contains(
+                URLQueryItem(
+                    name: "inactivity_timeout",
+                    value: String(VoiceTtsProtocol.maxInactivityTimeoutSeconds))))
+    }
+
     // MARK: - Uplink frame shapes — only the fields ElevenLabs documents for each message type
 
     private func decodedFrame(_ message: TtsUplinkMessage) throws -> [String: Any] {

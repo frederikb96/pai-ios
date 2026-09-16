@@ -104,14 +104,15 @@ final class SpeechOutputSessionTests: XCTestCase {
         feedbackRecorder: FeedbackRecorder = FeedbackRecorder(),
         mintToken: @escaping @Sendable (VoiceTokenPurpose) async throws -> VoiceToken = { _ in
             VoiceToken(token: "tok", expiresIn: 900)
-        }
+        },
+        sleep: @escaping @Sendable (Duration) async -> Void = { _ in }
     ) -> SpeechOutputSession {
         let dependencies = SpeechOutputDependencies(
             mintToken: mintToken,
             makeTransport: { transport },
             voiceId: { "voice-abc" },
             now: { [clock] in clock.current },
-            sleep: { _ in },
+            sleep: sleep,
             playAudio: { [playback] messageId, samples in playback.play(messageId, samples) },
             markReplyAudioComplete: { [playback] messageId in playback.markComplete(messageId) },
             stopPlayback: { [playback] in playback.stop() },
@@ -400,6 +401,69 @@ final class SpeechOutputSessionTests: XCTestCase {
         XCTAssertEqual(session.state, .speaking(messageId: 1))
     }
 
+    // MARK: - Idle keep-alive: a quiet stretch never looks like a drop
+
+    /// The bug this whole fix answers: ElevenLabs closes the *connection*, not just a context,
+    /// after a default of 20s with nothing sent on it — far shorter than an ordinary quiet
+    /// stretch of a call. Ticking repeatedly simulates a long idle stretch without an actual
+    /// wait; nothing here should ever look like a drop.
+    func testRepeatedIdleKeepAliveTicksPingADedicatedContextAndNeverLookLikeADrop() async {
+        let transport = FakeVoiceTtsTransport()
+        let recorder = FeedbackRecorder()
+        let session = makeSession(transport: transport, feedbackRecorder: recorder)
+
+        session.enqueue(messageId: 1, sentences: ["hi."])
+        await waitUntil { await transport.sentTexts.count >= 2 }
+        await transport.push(#"{"isFinal":true}"#)
+        await waitUntil { session.queue.isEmpty }
+        let sentBeforeIdle = await transport.sentTexts.count
+
+        for _ in 0..<5 { await session.keepAliveTick() }
+
+        let sent = await transport.sentTexts
+        // One InitializeContext to open the dedicated idle context, plus one KeepContextAlive
+        // frame per tick after that.
+        XCTAssertEqual(sent.count, sentBeforeIdle + 1 + 5)
+        XCTAssertTrue(
+            sent.contains { $0.contains("\"text\":\"\"") }, "a keep-alive frame carries an empty text payload")
+        XCTAssertTrue(
+            recorder.events.isEmpty, "pinging the idle context alone must never look like a drop or a reconnect")
+        let connectCalls = await transport.connectCallCount
+        XCTAssertEqual(connectCalls, 1, "keeping the connection alive must never itself force a reconnect")
+        session.end()
+    }
+
+    func testKeepAliveTickIsANoOpWhileAReplyIsStillOnTheWire() async {
+        let transport = FakeVoiceTtsTransport()
+        let session = makeSession(transport: transport)
+
+        session.enqueue(messageId: 1, sentences: ["hi."])
+        await waitUntil { await transport.sentTexts.count >= 2 }
+        let sentBefore = await transport.sentTexts.count
+
+        await session.keepAliveTick()
+
+        let sentAfter = await transport.sentTexts.count
+        XCTAssertEqual(
+            sentAfter, sentBefore,
+            "the reply's own frames already reset the connection's inactivity clock; nothing extra should be sent while it is in flight"
+        )
+        session.end()
+    }
+
+    func testKeepAliveTickBeforeAnyConnectionExistsIsANoOp() async {
+        let transport = FakeVoiceTtsTransport()
+        let session = makeSession(transport: transport)
+
+        await session.keepAliveTick()
+
+        let sentTexts = await transport.sentTexts
+        let connectCalls = await transport.connectCallCount
+        XCTAssertTrue(sentTexts.isEmpty)
+        XCTAssertEqual(connectCalls, 0, "pinging must never itself open a connection")
+        session.end()
+    }
+
     // MARK: - A dropped connection is retried, resends the reply, and eventually gives up
 
     func testATransportFailureFiresTtsDroppedFeedback() async {
@@ -456,6 +520,41 @@ final class SpeechOutputSessionTests: XCTestCase {
         XCTAssertTrue(finalTexts.contains { $0.contains("second.") })
         XCTAssertTrue(
             recorder.events.contains(.ttsReconnected), "the link coming back must be told apart from staying dropped")
+    }
+
+    /// The other half of the goal this fix answers: a reply that lands while an earlier one's
+    /// reconnect is still backing off must still be spoken, not stranded behind a retry that
+    /// never learns about it. The custom `sleep` closure enqueues reply 2 from *inside* the
+    /// backoff wait itself, so it genuinely lands mid-reconnect rather than merely after it.
+    func testAReplyEnqueuedWhileAnEarlierRepliesReconnectIsStillBackingOffIsSpokenAfterward() async {
+        let transport = FakeVoiceTtsTransport()
+        final class SessionBox: @unchecked Sendable { var session: SpeechOutputSession? }
+        let box = SessionBox()
+        let session = makeSession(
+            transport: transport,
+            sleep: { _ in await box.session?.enqueue(messageId: 2, sentences: ["second."]) })
+        box.session = session
+
+        session.enqueue(messageId: 1, sentences: ["first."])
+        await waitUntil { await transport.sentTexts.count >= 2 }
+        let sentBeforeDrop = await transport.sentTexts.count
+
+        await transport.fail()
+
+        // The backoff wait itself enqueued reply 2; reply 1's retry proceeds on a fresh
+        // connection exactly as it would with nothing queued behind it. Waited for explicitly,
+        // the same way the sibling resend test does — pushing `isFinal` any earlier would race
+        // reply 1's own resend still being in flight, finishing the wrong (not-yet-opened)
+        // context.
+        await waitUntil(async: { await transport.connectCallCount >= 2 })
+        await waitUntil(async: { await transport.sentTexts.count > sentBeforeDrop })
+        await transport.push(#"{"isFinal":true}"#)
+
+        await waitUntil(async: { await transport.sentTexts.contains { $0.contains("second.") } })
+        let sent = await transport.sentTexts
+        XCTAssertTrue(
+            sent.contains { $0.contains("second.") },
+            "a reply that lands mid-reconnect must still be sent once the queue reaches it, not lost")
     }
 
     func testARepeatedlyFailingReplyIsEventuallyAbandonedAndTheNextOneStillGetsGenerated() async {

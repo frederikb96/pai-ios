@@ -19,6 +19,14 @@ public enum VoiceTtsProtocol {
     /// the played audio's own `AVAudioUnitTimePitch` node — unbounded, adjustable mid-playback,
     /// and it never asks the model to synthesize at a speed it was not trained for.
     public static let voiceSettingsSpeed = 1.0
+    /// `inactivity_timeout` — ElevenLabs closes the whole connection, not just one context, after
+    /// this many seconds with no activity on any context; documented default is 20s, this is the
+    /// documented ceiling. Requested unconditionally: a call sits quiet between replies for far
+    /// longer than 20s as a matter of course (waiting on Freddy, waiting on a reply to generate),
+    /// so the default would treat an ordinary pause as a dropped connection. `SpeechOutputSession`
+    /// pings a dedicated context well inside this ceiling to keep a genuinely idle connection open
+    /// the rest of the way.
+    public static let maxInactivityTimeoutSeconds = 180
 
     public static func connectionURL(voiceId: String, token: String) -> URL? {
         let encodedVoiceId =
@@ -30,6 +38,7 @@ public enum VoiceTtsProtocol {
             URLQueryItem(name: "output_format", value: outputFormat),
             URLQueryItem(name: "enable_logging", value: "false"),
             URLQueryItem(name: "single_use_token", value: token),
+            URLQueryItem(name: "inactivity_timeout", value: String(maxInactivityTimeoutSeconds)),
         ]
         return components?.url
     }
