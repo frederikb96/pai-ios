@@ -292,11 +292,13 @@ final class VoiceRecorderController {
     func reserveForCallMode() -> Bool {
         guard !isCallModeActive, voiceSession.state == .idle, !isCapturing else { return false }
         isCallModeActive = true
+        AppVoiceDiagnosticsLog.shared.log(.info, .mode, "call mode reserved the microphone")
         return true
     }
 
     func releaseFromCallMode() {
         isCallModeActive = false
+        AppVoiceDiagnosticsLog.shared.log(.info, .mode, "call mode released the microphone")
     }
 
     /// The shared `AVAudioEngine` wrapper call mode's own listener and speech output attach to —
@@ -451,6 +453,7 @@ final class VoiceRecorderController {
         let timestampMs = Date().timeIntervalSince1970 * 1000
         takeTimestampMs = timestampMs
         feedbackNotifier.beginTake(id: RecordingMeta.id(forTimestampMs: timestampMs))
+        AppVoiceDiagnosticsLog.shared.log(.info, .mode, "microphone take started")
         let hardwareRate = capture.hardwareSampleRate
         let transportRate = VoiceAudioRatePolicy.transportRate(hardwareRate: hardwareRate)
         // Told once, at the start of the take — matching the web's `startRecording`, which warns
@@ -923,6 +926,10 @@ final class VoiceRecorderController {
     ) {
         let previous = box.value.state
         let next = box.value.handle(event, now: Date())
+        if previous != next {
+            AppVoiceDiagnosticsLog.shared.log(
+                .info, .connectionHealth, "\(previous.rawValue) -> \(next.rawValue) (\(event))")
+        }
         if previous != .stable, next == .stable {
             notifier.handle(.reconnected)
         }
@@ -966,6 +973,7 @@ final class VoiceRecorderController {
         try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
 
         await persistRecording()
+        AppVoiceDiagnosticsLog.shared.log(.info, .mode, "microphone take stopped")
         return voiceSession.result.prefixedText
     }
 
@@ -1049,7 +1057,9 @@ final class VoiceRecorderController {
     private func observeRouteChanges() {
         routeChangeObserver = NotificationCenter.default.addObserver(
             forName: AVAudioSession.routeChangeNotification, object: audioSession, queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] notification in
+            let reasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+            AppVoiceDiagnosticsLog.shared.log(.info, .audioSession, "route changed (reason \(reasonValue ?? 0))")
             Task { @MainActor [weak self] in self?.refreshAvailableMicrophones() }
         }
     }
@@ -1065,6 +1075,9 @@ final class VoiceRecorderController {
             let optionsValue = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt
             let shouldResume =
                 optionsValue.map { AVAudioSession.InterruptionOptions(rawValue: $0).contains(.shouldResume) } ?? false
+            AppVoiceDiagnosticsLog.shared.log(
+                .info, .audioSession,
+                type == .began ? "interruption began" : "interruption ended (shouldResume: \(shouldResume))")
             Task { @MainActor [weak self] in
                 switch type {
                 case .began: self?.handleInterruptionBegan()

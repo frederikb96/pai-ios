@@ -2,8 +2,9 @@ import PAIKit
 import SwiftUI
 import UIKit
 
-/// The two read-only diagnostic lists at the bottom of the panel — a recovery aid for a message
-/// that did not land, and a record of what voice capture produced, not settings themselves.
+/// The diagnostic lists at the bottom of the panel, not settings themselves — a recovery aid for a
+/// message that did not land, a record of what voice capture produced, and the voice pipeline's
+/// own diagnostics log.
 struct DiagnosticsSection: View {
     let settings: SettingsStore
 
@@ -34,6 +35,49 @@ struct DiagnosticsSection: View {
                 }
             }
         }
+
+        VoiceDiagnosticsLogSection()
+    }
+}
+
+/// A device-test record of the voice pipeline — mode transitions, socket lifecycle, connection
+/// health, everything ``VoiceFeedbackNotifier`` and the call-mode state machine log. Present in
+/// every build, not only debug ones, since a TestFlight run is exactly what nobody can attach a
+/// debugger to. Sharing is the primary path — it works from anywhere, with no session to pick;
+/// the composer's own "Past Recordings" sheet offers a second way to attach the same file directly
+/// to a message.
+private struct VoiceDiagnosticsLogSection: View {
+    @State private var sizeBytes = 0
+    @State private var shareFile: AttachmentShareFile?
+
+    var body: some View {
+        Section {
+            LabeledContent("Log size", value: formatFileSize(sizeBytes))
+            Button("Share Voice Log") {
+                let attachment = AppVoiceDiagnosticsLog.makeAttachment()
+                shareFile = AttachmentSharing.stage(attachment.data, filename: attachment.filename)
+            }
+            .disabled(sizeBytes == 0)
+            .accessibilityIdentifier("share-voice-log")
+            Button("Clear Voice Log", role: .destructive) {
+                AppVoiceDiagnosticsLog.shared.clear()
+                refresh()
+            }
+            .disabled(sizeBytes == 0)
+            .accessibilityIdentifier("clear-voice-log")
+        } header: {
+            Text("Voice Diagnostics Log")
+        } footer: {
+            Text("What the voice pipeline did on this device — mode changes, connection drops, commands heard.")
+        }
+        .onAppear(perform: refresh)
+        .sheet(item: $shareFile) { file in
+            AttachmentShareSheet(activityItems: [file.url])
+        }
+    }
+
+    private func refresh() {
+        sizeBytes = AppVoiceDiagnosticsLog.shared.totalSizeBytes()
     }
 }
 

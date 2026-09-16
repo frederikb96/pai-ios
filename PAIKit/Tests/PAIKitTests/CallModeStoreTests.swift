@@ -29,6 +29,16 @@ private final class SendRecorder: @unchecked Sendable {
 
 private struct SendFailure: Error {}
 
+/// Records every `dependencies.log` call — what the diagnostics-log wiring tests below check
+/// against, without a real `VoiceDiagnosticsLog` or any file I/O.
+private final class LogRecorder: @unchecked Sendable {
+    private(set) var lines: [(level: VoiceLogLevel, category: String, message: String)] = []
+
+    func record(_ level: VoiceLogLevel, _ category: String, _ message: String) {
+        lines.append((level, category, message))
+    }
+}
+
 @MainActor
 final class CallModeStoreTests: XCTestCase {
 
@@ -37,13 +47,18 @@ final class CallModeStoreTests: XCTestCase {
     }
 
     private func makeStore(
-        ledgerBox: LedgerBox, sender: SendRecorder, feedback: @escaping @Sendable (FeedbackEvent) -> Void = { _ in }
+        ledgerBox: LedgerBox, sender: SendRecorder, feedback: @escaping @Sendable (FeedbackEvent) -> Void = { _ in },
+        log: LogRecorder? = nil
     ) -> CallModeStore {
+        let logSink: @Sendable (VoiceLogLevel, String, String) -> Void = { level, category, message in
+            log?.record(level, category, message)
+        }
         let dependencies = CallModeDependencies(
             sleep: { _ in },  // instant — the commit-wait loop must not slow tests down
             currentLedger: { ledgerBox.ledger },
             postMessage: { text in try sender.send(text) },
-            feedback: feedback
+            feedback: feedback,
+            log: logSink
         )
         return CallModeStore(sessionId: "session-1", dependencies: dependencies)
     }
@@ -561,5 +576,57 @@ final class CallModeStoreTests: XCTestCase {
             boundary: MessageBoundary(atOffset: 800, kind: .crashCut), ledger: ledger)
 
         XCTAssertEqual(recovered, "the whole take before it died")
+    }
+
+    // MARK: - Diagnostics log
+
+    func testACommandEventIsLoggedWithItsConfidence() async {
+        let log = LogRecorder()
+        let store = makeStore(ledgerBox: LedgerBox(emptyLedger()), sender: SendRecorder(), log: log)
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+
+        await store.handle(CommandEvent(kind: .stop, atOffset: 500, confidence: 0.87))
+
+        let commandLines = log.lines.filter { $0.category == "command" }
+        XCTAssertEqual(commandLines.count, 1)
+        XCTAssertTrue(commandLines[0].message.contains("stop"))
+        XCTAssertTrue(commandLines[0].message.contains("0.87"))
+    }
+
+    func testASuccessfulSendIsLoggedAtInfo() async throws {
+        let log = LogRecorder()
+        let store = makeStore(ledgerBox: LedgerBox(emptyLedger()), sender: SendRecorder(), log: log)
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+
+        let ledger = TranscriptLedger(
+            takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+            segments: [Segment(range: 0..<1000, text: "send this", source: .live)])
+        let box = LedgerBox(ledger)
+        let sentStore = makeStore(ledgerBox: box, sender: SendRecorder(), log: log)
+        sentStore.startEntering()
+        sentStore.finishEntering(atOffset: 0)
+        await sentStore.handle(CommandEvent(kind: .send, atOffset: 1000, confidence: 1))
+
+        let modeLines = log.lines.filter { $0.category == "mode" && $0.message.contains("sent") }
+        XCTAssertEqual(modeLines.count, 1)
+        XCTAssertEqual(modeLines[0].level, .info)
+    }
+
+    func testASendRefusedByATerminalSessionStatusIsLoggedAtWarning() async {
+        let log = LogRecorder()
+        let ledger = TranscriptLedger(
+            takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+            segments: [Segment(range: 0..<1000, text: "too late", source: .live)])
+        let store = makeStore(ledgerBox: LedgerBox(ledger), sender: SendRecorder(), log: log)
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+        store.sessionStatusChanged(.completed)
+
+        await store.handle(CommandEvent(kind: .send, atOffset: 1000, confidence: 1))
+
+        let warnings = log.lines.filter { $0.level == .warning && $0.message.contains("refused") }
+        XCTAssertEqual(warnings.count, 1)
     }
 }

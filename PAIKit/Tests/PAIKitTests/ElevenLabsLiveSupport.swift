@@ -98,7 +98,7 @@ enum LiveElevenLabsClient {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             let body = String(decoding: data.prefix(200), as: UTF8.self)
-            throw LiveTestError.requestFailed(what: what, status: status, body: ElevenLabsLiveRedacting.redact(body))
+            throw LiveTestError.requestFailed(what: what, status: status, body: VoiceCredentialRedaction.redact(body))
         }
     }
 }

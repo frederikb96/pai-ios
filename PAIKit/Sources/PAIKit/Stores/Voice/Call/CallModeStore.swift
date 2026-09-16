@@ -16,17 +16,23 @@ public struct CallModeDependencies: Sendable {
     /// (keeping the text recoverable, a retry affordance) once the text leaves this store.
     public var postMessage: @Sendable (_ text: String) async throws -> Void
     public var feedback: @Sendable (FeedbackEvent) -> Void
+    /// A diagnostics line for the call's own phase and turn transitions — defaults to discarding
+    /// everything, so a caller that never wires a real sink (a test, or an app build that has not
+    /// connected one yet) pays nothing for it.
+    public var log: @Sendable (VoiceLogLevel, String, String) -> Void
 
     public init(
         sleep: @escaping @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) },
         currentLedger: @escaping @Sendable () -> TranscriptLedger,
         postMessage: @escaping @Sendable (_ text: String) async throws -> Void,
-        feedback: @escaping @Sendable (FeedbackEvent) -> Void = { _ in }
+        feedback: @escaping @Sendable (FeedbackEvent) -> Void = { _ in },
+        log: @escaping @Sendable (VoiceLogLevel, String, String) -> Void = { _, _, _ in }
     ) {
         self.sleep = sleep
         self.currentLedger = currentLedger
         self.postMessage = postMessage
         self.feedback = feedback
+        self.log = log
     }
 }
 
@@ -140,12 +146,14 @@ public final class CallModeStore {
         lastAbandonedTurnText = nil
         lastUnsentTurnText = nil
         phase = .entering
+        dependencies.log(.info, "mode", "call entering")
     }
 
     /// Entering finished — the pipeline is capturing and the command engine is listening.
     public func finishEntering(atOffset offset: Int) {
         guard phase == .entering else { return }
         phase = .collecting(startOffset: offset)
+        dependencies.log(.info, "mode", "call collecting from offset \(offset)")
     }
 
     /// The bound session's own agent-facing state (`SessionState`, from `LiveSessionStatus`) and
@@ -170,16 +178,22 @@ public final class CallModeStore {
     /// standing in for either) accepted. Every accepted command earns its confirmation tone,
     /// whatever it turns out to do to `phase`.
     public func handle(_ command: CommandEvent) async {
+        dependencies.log(
+            .info, "command",
+            "\(command.kind.rawValue) at offset \(command.atOffset), confidence \(String(format: "%.2f", command.confidence))"
+        )
         dependencies.feedback(.commandRecognized(command.kind))
         firedCommandsInTurn.append(command)
         switch command.kind {
         case .start:
             guard case .listening = phase else { return }
             phase = .collecting(startOffset: command.atOffset)
+            dependencies.log(.info, "mode", "call collecting from offset \(command.atOffset)")
         case .stop:
             guard case .collecting(let startOffset) = phase else { return }
             turnRanges.append(startOffset..<command.atOffset)
             phase = .listening
+            dependencies.log(.info, "mode", "call listening (turn held, not sent)")
         case .send:
             switch phase {
             case .collecting(let startOffset):
@@ -201,6 +215,7 @@ public final class CallModeStore {
         case .end:
             finishTurnOnEnd()
             phase = .idle
+            dependencies.log(.info, "mode", "call ended")
         }
     }
 
@@ -224,6 +239,7 @@ public final class CallModeStore {
         let ledger = dependencies.currentLedger()
         guard CallMessageAssembler.isCovered(turnRanges, in: ledger) else {
             phase = .pendingSend
+            dependencies.log(.info, "mode", "send held — turn not yet fully transcribed")
             return
         }
         let assembled = CallMessageAssembler.assembledText(
@@ -234,20 +250,24 @@ public final class CallModeStore {
         lastUnsentTurnText = nil
         guard !text.isEmpty else {
             phase = .listening
+            dependencies.log(.info, "mode", "send fired with nothing transcribed — nothing sent")
             return
         }
         guard !sendingIsRefused else {
             lastUnsentTurnText = text
             phase = .listening
+            dependencies.log(.warning, "mode", "send refused — session status is terminal")
             return
         }
         do {
             try await dependencies.postMessage(text)
             phase = .listening
+            dependencies.log(.info, "mode", "turn sent (\(text.count) chars)")
         } catch {
             lastSendFailure = error
             lastUnsentTurnText = text
             phase = .listening
+            dependencies.log(.error, "mode", "send failed: \(error)")
         }
     }
 
@@ -284,6 +304,9 @@ public final class CallModeStore {
         turnRanges = []
         firedCommandsInTurn = []
         lastAbandonedTurnText = assembled.isEmpty ? nil : "\(VoiceRecordingResult.sttPrefix)\(assembled)"
+        if lastAbandonedTurnText != nil {
+            dependencies.log(.warning, "mode", "call ended with an unsent turn (\(assembled.count) chars)")
+        }
     }
 
     // MARK: - Crash recovery
@@ -301,6 +324,7 @@ public final class CallModeStore {
         let text = CallMessageAssembler.assembledText(
             for: [precedingOffset..<boundary.atOffset], in: ledger)
         phase = .listening
+        dependencies.log(.warning, "mode", "recovered a call cut short by a crash (\(text.count) chars)")
         return text
     }
 }

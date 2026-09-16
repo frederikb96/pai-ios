@@ -68,6 +68,18 @@ struct RecordingsSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
                 }
+                // Reachable here rather than only from Settings, because this sheet already has a
+                // session's composer to attach into — Settings' own "Share Voice Log" has no
+                // session to hand the file to, so it goes through the iOS share sheet instead.
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        attachVoiceLog()
+                    } label: {
+                        Label("Attach Voice Log", systemImage: "doc.text")
+                    }
+                    .disabled(AppVoiceDiagnosticsLog.shared.totalSizeBytes() == 0)
+                    .accessibilityIdentifier("attach-voice-log")
+                }
             }
             .alert("Couldn't transcribe recording", isPresented: errorBinding) {
                 Button("OK", role: .cancel) {}
@@ -167,6 +179,11 @@ struct RecordingsSheet: View {
         }
 
         onAttach(files)
+        dismiss()
+    }
+
+    private func attachVoiceLog() {
+        onAttach([AppVoiceDiagnosticsLog.makeAttachment()])
         dismiss()
     }
 
