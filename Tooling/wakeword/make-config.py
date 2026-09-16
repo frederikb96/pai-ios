@@ -15,8 +15,10 @@ PRESETS = {
     # A few minutes end to end: proves the pipeline runs, not that the model is any good.
     "test": {"n_samples": 200, "n_samples_val": 50, "n_background": 50, "n_background_val": 10,
              "steps": 1000, "model_type": "dnn", "model_size": "small", "fp_target": 1.0},
-    "full": {"n_samples": 10000, "n_samples_val": 2000, "n_background": 1000, "n_background_val": 250,
-             "steps": 50000, "model_type": "conv_attention", "model_size": "small", "fp_target": 0.2},
+    # Speech synthesis dominates the wall clock on a CPU runner (about four positive clips per
+    # second), so this is sized to finish in roughly ninety minutes per command.
+    "full": {"n_samples": 6000, "n_samples_val": 1200, "n_background": 1000, "n_background_val": 250,
+             "steps": 30000, "model_type": "conv_attention", "model_size": "small", "fp_target": 0.2},
 }
 
 # Things said constantly that share a word with a command, plus near-homophones of the name.
