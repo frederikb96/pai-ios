@@ -1,0 +1,74 @@
+name: Train wake words
+
+# Trains one keyword-spotting model per voice command on a free Linux runner and publishes the
+# ONNX classifiers as an artifact. Synthetic speech only: no recordings of anyone go in.
+#
+# Manual only. The `test` preset proves the pipeline end to end in minutes and yields a model that
+# is not worth shipping; `full` is the one whose output goes into the app. Phrases and presets live
+# in Tooling/wakeword/.
+on:
+  workflow_dispatch:
+    inputs:
+      preset:
+        description: 'test (minutes, pipeline check) or full (hours, shippable)'
+        type: choice
+        options: [test, full]
+        default: test
+      commands:
+        description: 'JSON list of command names from Tooling/wakeword/phrases.json'
+        type: string
+        default: '["kai_start","kai_stop","kai_send","kai_skip","kai_end"]'
+
+permissions:
+  contents: read
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        command: ${{ fromJSON(inputs.commands) }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      # The ACAV100M negative features alone are ~16 GB, more than a fresh runner has free.
+      - name: Free disk space
+        if: inputs.preset == 'full'
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+
+      - name: System dependencies
+        run: sudo apt-get update && sudo apt-get install -y espeak-ng libsndfile1 ffmpeg sox portaudio19-dev
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: Tooling/wakeword/requirements.txt
+
+      - name: Install trainer
+        run: pip install -r Tooling/wakeword/requirements.txt
+
+      - name: Write config
+        run: python3 Tooling/wakeword/make-config.py "${{ matrix.command }}" "${{ inputs.preset }}" config.yaml && cat config.yaml
+
+      - name: Download models and data
+        run: livekit-wakeword setup --config config.yaml ${{ inputs.preset == 'test' && '--skip-acav' || '' }}
+
+      - name: Train
+        run: livekit-wakeword run config.yaml
+
+      - name: Evaluate
+        run: livekit-wakeword eval config.yaml
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wakeword-${{ matrix.command }}-${{ inputs.preset }}
+          path: |
+            output/${{ matrix.command }}/*.onnx
+            output/${{ matrix.command }}/*.json
+            config.yaml
+          if-no-files-found: warn
