@@ -36,21 +36,34 @@ public enum SeamMerge {
         return seamTrimmed.filter { !$0.text.isEmpty }
     }
 
-    /// For every segment carrying word timestamps, drops any word whose midpoint falls inside a
-    /// higher-precedence segment's own range — the primary rule: a word belongs to whichever
-    /// segment's declared coverage contains it, ties broken by which pass produced the better
-    /// transcription. A segment left with no surviving words is dropped entirely rather than kept
-    /// as an empty husk.
+    /// For every segment carrying word timestamps: first drops any of its own words whose
+    /// midpoint falls outside its own declared range — a batch segment's audio request reaches a
+    /// margin beyond the gap it was asked to fill, and a word the model returns from that margin
+    /// belongs to whatever segment already covers it, not to this one, however good the
+    /// transcription. Only once that self-trim has narrowed a segment to what it actually owns
+    /// does the cross-segment check apply: a word a higher-precedence segment's (now-narrowed)
+    /// range also claims is dropped from this one. A segment left with no surviving words is
+    /// dropped entirely rather than kept as an empty husk.
     private static func trimByWordOwnership(_ ordered: [Segment]) -> [Segment] {
+        let selfTrimmed = ordered.map { segment -> Segment in
+            guard let words = segment.words else { return segment }
+            let owned = words.filter { word in
+                let midpoint = (word.range.lowerBound + word.range.upperBound) / 2
+                return segment.range.contains(midpoint)
+            }
+            guard owned.count != words.count else { return segment }
+            return Segment(range: segment.range, text: segment.text, words: owned, source: segment.source)
+        }
+
         var result: [Segment] = []
-        for (index, segment) in ordered.enumerated() {
+        for (index, segment) in selfTrimmed.enumerated() {
             guard let words = segment.words else {
                 result.append(segment)
                 continue
             }
             let survivors = words.filter { word in
                 let midpoint = (word.range.lowerBound + word.range.upperBound) / 2
-                return !ordered.enumerated().contains { other in
+                return !selfTrimmed.enumerated().contains { other in
                     other.offset != index && precedence(other.element.source) > precedence(segment.source)
                         && other.element.range.contains(midpoint)
                 }
