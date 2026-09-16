@@ -3,8 +3,8 @@ import SwiftUI
 
 /// The offline command channel's settings: which commands run through the wake-word engine at
 /// all, versus falling back to recognition from the dictated text while recording, and each
-/// loaded command's own bundled-model status. The phrases themselves are no longer shown here —
-/// they are fixed, baked into trained classifiers, never typed.
+/// loaded command's own bundled-model status. The phrases themselves have no field here — they
+/// are fixed, baked into trained classifiers, never typed.
 struct VoiceCommandsSection: View {
     let wakeWord: WakeWordSettingsStore
 

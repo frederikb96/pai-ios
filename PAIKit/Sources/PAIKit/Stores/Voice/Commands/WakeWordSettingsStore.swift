@@ -5,10 +5,10 @@ import Observation
 /// the same shape `SmtpSettingsStore` already is (see that file's own doc comment for the same
 /// reasoning: this is its own persistence wiring, not a property `SettingsStore` needs to carry).
 ///
-/// Replaces `CommandPhrasesStore`'s old role now that the phrases themselves are fixed — baked
-/// into trained classifiers, never typed — so there is nothing left to edit there. What is still
-/// a real Freddy-facing choice is *which* commands run through the offline engine at all, versus
-/// falling back to transcript recognition while recording; that choice is what this store keeps.
+/// The phrases themselves are fixed — baked into trained classifiers, never typed — so there is
+/// nothing to edit there. What is a real Freddy-facing choice is *which* commands run through the
+/// offline engine at all, versus falling back to transcript recognition while recording; that
+/// choice is what this store keeps.
 @MainActor
 @Observable
 public final class WakeWordSettingsStore {

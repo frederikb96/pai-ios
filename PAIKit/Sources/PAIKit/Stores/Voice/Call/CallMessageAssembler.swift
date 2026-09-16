@@ -5,8 +5,8 @@ import Foundation
 /// session that produces it — so this is provable against a hand-built ledger without any of the
 /// pipeline's own machinery existing yet.
 ///
-/// Every function below takes `[SampleRange]` rather than one range: a "stop" no longer sends,
-/// only returns to wake mode with the turn's text held — so a turn can span several start/stop
+/// Every function below takes `[SampleRange]` rather than one range: "stop" only returns to wake
+/// mode with the turn's text held, never sending it — so a turn can span several start/stop
 /// cycles by the time "send" is finally heard, each contributing its own `collecting` range with
 /// a stretch of wake-mode silence between them that must not be assembled into the message.
 public enum CallMessageAssembler {
