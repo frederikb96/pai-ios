@@ -133,11 +133,24 @@ final class FeedbackPolicyTests: XCTestCase {
 
     // MARK: - Healed clears standing errors
 
-    func testBackfillCompletedPlaysHealedAndUpdates() {
+    func testBackfillCompletedAfterARealDropPlaysHealedAndUpdates() {
         var policy = FeedbackPolicy()
-        let action = policy.decide(.backfillCompleted, now: t0)
+        _ = policy.decide(.connectionDropped(reason: nil), now: t0)
+        _ = policy.decide(.reconnected, now: t0.addingTimeInterval(1))
+        let action = policy.decide(.backfillCompleted, now: t0.addingTimeInterval(2))
         XCTAssertEqual(action.cue, .healed)
         XCTAssertEqual(action.notify?.disposition, .update)
+    }
+
+    /// The ordinary shape of a fresh cycle: a pre-connect gap opens and a backfill heals it with
+    /// no connection ever actually dropping. Nothing was ever announced, so there is nothing to
+    /// post a closing update to — this is the fix for the notification firing on every ordinary
+    /// turn.
+    func testBackfillCompletedWithNoHealthNotificationEverPostedIsSilent() {
+        var policy = FeedbackPolicy()
+        let action = policy.decide(.backfillCompleted, now: t0)
+        XCTAssertNil(action.cue)
+        XCTAssertNil(action.notify)
     }
 
     func testBackfillCompletedClearsAPreviouslyFiredCauseSoItCanFireAgain() {
@@ -149,6 +162,44 @@ final class FeedbackPolicyTests: XCTestCase {
 
         let afterHeal = policy.decide(.backfillFailed, now: t0.addingTimeInterval(2))
         XCTAssertNotNil(afterHeal.notify, "a fresh failure after healing is a new problem, not a repeat of the old one")
+    }
+
+    // MARK: - An ordinary multi-cycle call posts nothing; a real drop still does
+
+    /// What a clean call-mode or microphone-mode cycle actually produces: the socket opening
+    /// reads as unstable until proven stable (`gapOpened`), the fresh cycle then proving itself
+    /// (`reconnected`), and the ordinary pre-connect gap healing (`backfillCompleted`) — none of
+    /// it a real hiccup, so none of it should reach Freddy.
+    func testAnOrdinaryCycleWithNoRealDropProducesNoCueOrNotification() {
+        var policy = FeedbackPolicy()
+        let gap = policy.decide(.gapOpened, now: t0)
+        XCTAssertNil(gap.cue)
+        XCTAssertNil(gap.notify)
+
+        let reconnected = policy.decide(.reconnected, now: t0.addingTimeInterval(10))
+        XCTAssertNil(reconnected.cue)
+        XCTAssertNil(reconnected.notify)
+
+        let backfill = policy.decide(.backfillCompleted, now: t0.addingTimeInterval(11))
+        XCTAssertNil(backfill.cue)
+        XCTAssertNil(backfill.notify)
+    }
+
+    /// The same sequence, but a real drop happened first — every step of it must still reach
+    /// Freddy, ending with the backfill's own closing update to the same notification.
+    func testARealDropStillProducesACueAndNotificationThroughToTheFinalBackfillUpdate() {
+        var policy = FeedbackPolicy()
+        let dropped = policy.decide(.connectionDropped(reason: nil), now: t0)
+        XCTAssertEqual(dropped.cue, .drop)
+        XCTAssertEqual(dropped.notify?.disposition, .post)
+
+        let reconnected = policy.decide(.reconnected, now: t0.addingTimeInterval(10))
+        XCTAssertEqual(reconnected.cue, .reconnect)
+        XCTAssertEqual(reconnected.notify?.disposition, .update)
+
+        let backfill = policy.decide(.backfillCompleted, now: t0.addingTimeInterval(11))
+        XCTAssertEqual(backfill.cue, .healed)
+        XCTAssertEqual(backfill.notify?.disposition, .update)
     }
 
     // MARK: - Standalone, once-per-cause notifications

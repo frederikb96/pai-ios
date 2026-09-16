@@ -57,6 +57,11 @@ public struct FeedbackAction: Sendable, Equatable {
 /// tell a flap from a genuine recovery; a caller that instead fires `reconnected` on every bare
 /// socket reconnect will see this policy play the `reconnect` cue on every one of them.
 ///
+/// `backfillCompleted` is not itself drop-class — a fresh cycle's ordinary pre-connect gap opens
+/// and heals with no connection ever actually dropping — so it only posts a closing update when a
+/// "health" notification has actually gone out this take, never on an ordinary gap nothing was
+/// ever announced about.
+///
 /// Every decision is `decide(_:now:)` over `self` and the given time — deterministic, so a test
 /// drives it with a stepped clock instead of sleeping, and never derives "now" itself.
 public struct FeedbackPolicy: Sendable, Equatable {
@@ -68,6 +73,14 @@ public struct FeedbackPolicy: Sendable, Equatable {
     private var healthEpisodeOpen = false
     private var healthDropCount = 0
     private var healthLastNotifiedAt: Date?
+    /// Sticky for the whole take once the "health" notification has actually been posted —
+    /// distinct from `healthEpisodeOpen`, which already closes on `reconnected`/`ttsReconnected`
+    /// while a gap that same episode opened can still be mid-backfill. `backfillCompleted` needs
+    /// to know whether *anything* was ever announced this take, not merely whether an episode
+    /// happens to be open right now: a cycle whose connection never actually dropped opens no
+    /// episode at all, and a `backfillCompleted` landing after the episode already closed still
+    /// belongs on the same notification, never a fresh one.
+    private var healthNotificationPosted = false
     /// Causes that have already fired their one standalone notification this take —
     /// `fatalProtocolError` keyed by its own reason text, everything else by a fixed cause name.
     private var firedCauses: Set<String> = []
@@ -86,6 +99,10 @@ public struct FeedbackPolicy: Sendable, Equatable {
             // A healed episode also clears every standing standalone error for this take: a
             // fresh gap that fails again after this is a new problem, worth its own notice.
             firedCauses.removeAll()
+            // A gap that opened and closed with no connection ever actually dropping — the
+            // ordinary shape of a fresh cycle's pre-connect audio — announced nothing, so there
+            // is nothing to post a closing update to either.
+            guard healthNotificationPosted else { return FeedbackAction() }
             return FeedbackAction(
                 cue: .healed,
                 notify: .init(disposition: .update, key: "health", event: event, episodeDropCount: healthDropCount))
@@ -120,6 +137,7 @@ public struct FeedbackPolicy: Sendable, Equatable {
         healthDropCount += 1
         if isNewEpisode {
             healthLastNotifiedAt = now
+            healthNotificationPosted = true
             return FeedbackAction(
                 cue: .drop,
                 notify: .init(disposition: .post, key: "health", event: event, episodeDropCount: healthDropCount))
