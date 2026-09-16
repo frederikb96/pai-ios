@@ -63,4 +63,50 @@ final class RecordingReconciliationTests: XCTestCase {
         let take = RecordingReconciliation.OrphanedTake(id: "0", sampleRate: 24000, dataSize: 48000, rawStored: false)
         XCTAssertNil(RecordingReconciliation.metadata(for: take))
     }
+
+    // MARK: - reconcile(ledger:takeId:sampleRate:capturedSampleCount:)
+
+    /// A take found on disk with no ledger at all — an app version predating this design, or a
+    /// kill before the very first segment landed. Nothing is covered, so the whole captured range
+    /// becomes one gap.
+    func testReconcileWithNoLedgerTurnsAllCapturedAudioIntoOneGap() {
+        let reconciled = RecordingReconciliation.reconcile(
+            ledger: nil, takeId: "1700000000000", sampleRate: 16000, capturedSampleCount: 48000
+        )
+        XCTAssertEqual(reconciled.mode, .microphone)
+        XCTAssertEqual(reconciled.capturedUpTo, 48000)
+        XCTAssertEqual(reconciled.gaps.map(\.range), [0..<48000])
+    }
+
+    /// A ledger whose last segment stops short of what was actually captured — the crash caught
+    /// audio arriving after the last committed segment. The attempt count on a gap that already
+    /// existed there must survive the reconciliation rather than reset to zero.
+    func testReconcilePreservesAttemptCountsOnAGapThatStillOverlaps() {
+        let ledger = TranscriptLedger(
+            takeId: "1700000000001", mode: .microphone, sampleRate: 16000, draftKey: "session-1", preText: "",
+            segments: [Segment(range: 0..<16000, text: "hello", source: .live)], capturedUpTo: 32000,
+            gaps: [Gap(range: 16000..<32000, attempts: 2, lastError: "timeout")]
+        )
+        let reconciled = RecordingReconciliation.reconcile(
+            ledger: ledger, takeId: ledger.takeId, sampleRate: 16000, capturedSampleCount: 48000
+        )
+        XCTAssertEqual(reconciled.capturedUpTo, 48000)
+        XCTAssertEqual(reconciled.gaps.count, 1)
+        XCTAssertEqual(reconciled.gaps.first?.range, 16000..<48000)
+        XCTAssertEqual(reconciled.gaps.first?.attempts, 2)
+        XCTAssertEqual(reconciled.gaps.first?.lastError, "timeout")
+    }
+
+    /// A ledger whose gaps are already fully covered by later segments must reconcile to no gaps
+    /// at all — recovery does not resurrect work that has already been done.
+    func testReconcileDropsAGapAlreadyFullyCovered() {
+        let ledger = TranscriptLedger(
+            takeId: "1700000000002", mode: .microphone, sampleRate: 16000, draftKey: nil, preText: "",
+            segments: [Segment(range: 0..<32000, text: "all of it", source: .live)], capturedUpTo: 32000
+        )
+        let reconciled = RecordingReconciliation.reconcile(
+            ledger: ledger, takeId: ledger.takeId, sampleRate: 16000, capturedSampleCount: 32000
+        )
+        XCTAssertTrue(reconciled.gaps.isEmpty)
+    }
 }

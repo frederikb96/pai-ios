@@ -62,4 +62,26 @@ public enum RecordingReconciliation {
             endedBy: .crashed
         )
     }
+
+    /// Reconciles one take's ledger against what a launch pass actually found captured on disk —
+    /// the durable-pipeline half of recovery, run for every take alongside `metadata(for:)`.
+    /// `ledger == nil` (audio with no ledger at all — an app version predating this design, or a
+    /// kill before the very first segment) is treated as a fresh ledger whose entire captured
+    /// range is one open gap: nothing has been transcribed, so nothing is covered.
+    ///
+    /// `capturedSampleCount` is expected already clamped through `WavHeaderReader.clampedSampleCount`
+    /// — this function only reconciles gaps against it, it does not itself read the header.
+    public static func reconcile(
+        ledger: TranscriptLedger?, takeId: String, sampleRate: Int, capturedSampleCount: Int
+    ) -> TranscriptLedger {
+        let base =
+            ledger
+            ?? TranscriptLedger(takeId: takeId, mode: .microphone, sampleRate: sampleRate, draftKey: nil, preText: "")
+        return TranscriptLedger(
+            takeId: base.takeId, mode: base.mode, sampleRate: base.sampleRate, draftKey: base.draftKey,
+            preText: base.preText, segments: base.segments, capturedUpTo: capturedSampleCount,
+            gaps: base.derivedGaps(capturedUpTo: capturedSampleCount), boundaries: base.boundaries,
+            collecting: base.collecting, events: base.events, delivered: base.delivered
+        )
+    }
 }

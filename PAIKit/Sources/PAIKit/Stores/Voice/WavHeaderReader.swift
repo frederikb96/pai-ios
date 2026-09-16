@@ -28,4 +28,15 @@ public enum WavHeaderReader {
         UInt32(bytes[offset]) | (UInt32(bytes[offset + 1]) << 8) | (UInt32(bytes[offset + 2]) << 16)
             | (UInt32(bytes[offset + 3]) << 24)
     }
+
+    /// The header's own `dataSize` after a power loss can claim more than the file actually holds
+    /// — header and data both sat in the page cache when the machine went down, so the header
+    /// survives while the tail of the data does not. Clamps to whatever bytes are actually on
+    /// disk past the header, rounded down to whole 16-bit samples, so recovery never reads past
+    /// the real end of the file.
+    public static func clampedSampleCount(headerDataSize: UInt32, fileByteCount: Int) -> Int {
+        let availableBytes = max(0, fileByteCount - headerByteCount)
+        let claimedBytes = min(Int(headerDataSize), availableBytes)
+        return claimedBytes / 2
+    }
 }
