@@ -4,21 +4,24 @@ import XCTest
 
 final class VoiceReconnectPolicyTests: XCTestCase {
 
-    func testBackoffFollowsThePortedAndroidSchedule() {
-        XCTAssertEqual(ReconnectPolicy.delaySeconds(forAttempt: 1), 5)
-        XCTAssertEqual(ReconnectPolicy.delaySeconds(forAttempt: 2), 10)
-        XCTAssertEqual(ReconnectPolicy.delaySeconds(forAttempt: 3), 20)
+    func testBackoffGrowsThroughTheSchedule() {
+        XCTAssertEqual(ReconnectPolicy.delaySeconds(forAttempt: 1), 2)
+        XCTAssertEqual(ReconnectPolicy.delaySeconds(forAttempt: 2), 4)
+        XCTAssertEqual(ReconnectPolicy.delaySeconds(forAttempt: 3), 8)
+        XCTAssertEqual(ReconnectPolicy.delaySeconds(forAttempt: 4), 16)
+        XCTAssertEqual(ReconnectPolicy.delaySeconds(forAttempt: 5), 30)
     }
 
-    /// Attempts past the schedule's length reuse the last delay rather than crashing on an
-    /// out-of-bounds index — a plausible refactor mistake since the schedule (3 entries) and
-    /// `maxAttempts` (5) do not agree in length.
-    func testAttemptsBeyondScheduleLengthReuseTheLastDelay() {
-        XCTAssertEqual(ReconnectPolicy.delaySeconds(forAttempt: 4), 20)
-        XCTAssertEqual(ReconnectPolicy.delaySeconds(forAttempt: 5), 20)
+    /// No attempt limit: an attempt count past the schedule's own length must keep returning the
+    /// ceiling delay forever rather than running out — the ported Android policy this replaces
+    /// gave up after five; this one never does.
+    func testAttemptsFarBeyondTheScheduleStillReturnTheCeilingDelay() {
+        XCTAssertEqual(ReconnectPolicy.delaySeconds(forAttempt: 6), 30)
+        XCTAssertEqual(ReconnectPolicy.delaySeconds(forAttempt: 1000), 30)
     }
 
-    func testNoDelayPastMaxAttempts() {
-        XCTAssertNil(ReconnectPolicy.delaySeconds(forAttempt: 6))
+    func testAttemptZeroOrNegativeIsTreatedAsTheFirstAttempt() {
+        XCTAssertEqual(ReconnectPolicy.delaySeconds(forAttempt: 0), 2)
+        XCTAssertEqual(ReconnectPolicy.delaySeconds(forAttempt: -1), 2)
     }
 }

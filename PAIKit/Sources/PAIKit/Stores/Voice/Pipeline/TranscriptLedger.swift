@@ -165,6 +165,88 @@ public struct TranscriptLedger: Codable, Sendable, Equatable {
     }
 }
 
+extension TranscriptLedger {
+    /// Sample ranges covered by committed segments, merged and sorted — the single source
+    /// `derivedGaps(capturedUpTo:)` and every reader of "what has text" reads from, rather than a
+    /// second field that could disagree with `segments`.
+    public var coveredRanges: [SampleRange] { Self.merge(segments.map(\.range)) }
+
+    /// The ranges eligible to ever become a gap or be transcribed automatically — the whole
+    /// captured take for `microphone` mode, only the stretches between a start and a stop for
+    /// `call` mode (clamped to what has actually been captured, since a `collecting` range still
+    /// open when the take ends would otherwise claim samples that do not exist yet).
+    public func collectingBounds(capturedUpTo: Int) -> [SampleRange] {
+        guard capturedUpTo > 0 else { return [] }
+        switch mode {
+        case .microphone:
+            return [0..<capturedUpTo]
+        case .call:
+            return collecting.compactMap { range -> SampleRange? in
+                let lower = min(range.lowerBound, capturedUpTo)
+                let upper = min(range.upperBound, capturedUpTo)
+                return lower < upper ? lower..<upper : nil
+            }
+        }
+    }
+
+    /// The gap list this ledger should hold right now: every stretch of captured, in-scope audio
+    /// with no committed segment over it, carrying forward the attempt count, last error and
+    /// demotion of whichever persisted `Gap` it overlaps — a retry budget must survive a restart,
+    /// not reset because the hole was recomputed fresh. A gap now fully covered is simply absent
+    /// from the result; nothing here ever deletes a `Segment` or a persisted attempt count itself.
+    public func derivedGaps(capturedUpTo: Int) -> [Gap] {
+        let bounds = collectingBounds(capturedUpTo: capturedUpTo)
+        let uncovered = Self.uncoveredRanges(in: bounds, covered: coveredRanges)
+        return uncovered.map { range in
+            if let previous = gaps.first(where: { $0.range.overlaps(range) }) {
+                return Gap(
+                    range: range, attempts: previous.attempts, lastError: previous.lastError,
+                    demoted: previous.demoted
+                )
+            }
+            return Gap(range: range)
+        }
+    }
+
+    /// The one rule for when a take's audio may ever be deleted: no open gap, and its text has
+    /// already reached the draft or message it belongs to. Retention (which takes the cap
+    /// actually evicts) reads this before counting a take against its limit.
+    public var mayBeDeleted: Bool { gaps.isEmpty && delivered }
+
+    /// Merges overlapping or adjacent ranges into a sorted, disjoint set.
+    static func merge(_ ranges: [SampleRange]) -> [SampleRange] {
+        let sorted = ranges.filter { !$0.isEmpty }.sorted { $0.lowerBound < $1.lowerBound }
+        var result: [SampleRange] = []
+        for range in sorted {
+            if let last = result.last, range.lowerBound <= last.upperBound {
+                result[result.count - 1] = last.lowerBound..<max(last.upperBound, range.upperBound)
+            } else {
+                result.append(range)
+            }
+        }
+        return result
+    }
+
+    /// Every stretch of each `bound` range not covered by any range in `covered`.
+    static func uncoveredRanges(in bounds: [SampleRange], covered: [SampleRange]) -> [SampleRange] {
+        let coveredSorted = merge(covered)
+        return bounds.flatMap { bound -> [SampleRange] in
+            guard !bound.isEmpty else { return [] }
+            var result: [SampleRange] = []
+            var cursor = bound.lowerBound
+            for range in coveredSorted {
+                let lower = max(range.lowerBound, bound.lowerBound)
+                let upper = min(range.upperBound, bound.upperBound)
+                guard lower < upper else { continue }
+                if lower > cursor { result.append(cursor..<lower) }
+                cursor = max(cursor, upper)
+            }
+            if cursor < bound.upperBound { result.append(cursor..<bound.upperBound) }
+            return result
+        }
+    }
+}
+
 /// What `RecordingMeta` (`DiagnosticRecords.swift`) shows about a take's transcription without
 /// reading the ledger itself — the Settings › Recordings row's coverage line is built from this.
 public struct TranscriptionMeta: Codable, Sendable, Equatable {

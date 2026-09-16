@@ -115,14 +115,21 @@ final class VoiceRecordingSessionTests: XCTestCase {
             VoiceToken(token: "tok", expiresIn: 900)
         },
         settings: VoiceSettings = VoiceSettings(),
-        sleep: @escaping @Sendable (Duration) async -> Void = { _ in }
+        sleep: @escaping @Sendable (Duration) async -> Void = { _ in },
+        // `.stable` rather than the dependencies' own `.offline` default: most of this file is
+        // about what happens once a socket drops for a reason *other* than the network path
+        // itself, and a reconnect attempt gated on `dependencies.health()` must actually run for
+        // those scenarios to be reachable at all. Tests of the path-unsatisfied gate itself
+        // override this explicitly.
+        health: @escaping @Sendable () -> HealthState = { .stable }
     ) -> VoiceRecordingSession {
         let dependencies = VoiceRecordingDependencies(
             mintToken: mintToken,
             makeRealtimeTransport: { transport },
             settings: { settings },
             now: { [clock] in clock.current },
-            sleep: sleep  // instant by default — the post-commit wait loop must not slow tests down
+            sleep: sleep,  // instant by default — the post-commit wait loop must not slow tests down
+            health: health
         )
         return VoiceRecordingSession(dependencies: dependencies)
     }
@@ -145,6 +152,27 @@ final class VoiceRecordingSessionTests: XCTestCase {
             if await condition() { return }
             await Task.yield()
         }
+    }
+
+    /// Feeds enough real audio that a subsequent `committed_transcript_with_timestamps`
+    /// message's word timestamps have something in `SessionTimeline` to resolve against —
+    /// realistic call order, since a real connection never commits text before the audio that
+    /// produced it was actually transmitted.
+    private func primeTimeline(_ session: VoiceRecordingSession, seconds: Double = 1.0, sampleRate: Int = 24000) async {
+        let sampleCount = Int(seconds * Double(sampleRate))
+        await session.ingestAudioChunk(pcm16le: [Int16](repeating: 0, count: sampleCount), at: 0)
+    }
+
+    /// Pushes a `committed_transcript_with_timestamps` message carrying one word spanning the
+    /// given connection-relative seconds — the realistic wire shape once a connection always
+    /// requests timestamps, since the plain `committed_transcript` message is now ignored.
+    /// `primeTimeline` must have run first, or the message resolves to no placeable word.
+    private func pushCommittedWithWords(
+        _ transport: FakeVoiceRealtimeTransport, text: String, startSeconds: Double = 0, endSeconds: Double = 0.05
+    ) async {
+        await transport.push(
+            #"{"message_type":"committed_transcript_with_timestamps","text":"\#(text)","words":[{"text":"\#(text)","start":\#(startSeconds),"end":\#(endSeconds),"type":"word"}]}"#
+        )
     }
 
     // MARK: Start
@@ -214,8 +242,8 @@ final class VoiceRecordingSessionTests: XCTestCase {
         await session.start(hardwareSampleRate: 24000)
 
         // Buffered because the state is still .connecting.
-        await session.ingestAudioChunk(pcm16le: [1, 2, 3])
-        await session.ingestAudioChunk(pcm16le: [4, 5, 6])
+        await session.ingestAudioChunk(pcm16le: [1, 2, 3], at: 0)
+        await session.ingestAudioChunk(pcm16le: [4, 5, 6], at: 0)
         let sentBeforeStart = await transport.sentTexts
         XCTAssertEqual(sentBeforeStart.count, 0)
 
@@ -240,7 +268,7 @@ final class VoiceRecordingSessionTests: XCTestCase {
         await transport.push(#"{"message_type":"session_started"}"#)
         await waitUntil { session.state == .recording }
 
-        await session.ingestAudioChunk(pcm16le: [9, 9, 9])
+        await session.ingestAudioChunk(pcm16le: [9, 9, 9], at: 0)
 
         let sentWhileRecording = await transport.sentTexts
         XCTAssertEqual(sentWhileRecording.count, 1)
@@ -256,7 +284,7 @@ final class VoiceRecordingSessionTests: XCTestCase {
         await waitUntil { session.state == .recording }
 
         session.toggleMute()
-        await session.ingestAudioChunk(pcm16le: [Int16.max, Int16.max, Int16.max])
+        await session.ingestAudioChunk(pcm16le: [Int16.max, Int16.max, Int16.max], at: 0)
 
         let silentPayload = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [0, 0, 0])
         let sent = await transport.sentTexts
@@ -271,14 +299,35 @@ final class VoiceRecordingSessionTests: XCTestCase {
         await transport.push(#"{"message_type":"session_started"}"#)
         await waitUntil { session.state == .recording }
 
+        await primeTimeline(session)
         await transport.push(#"{"message_type":"partial_transcript","text":"hel"}"#)
         await waitUntil { session.transcribedText == "hel" }
 
-        await transport.push(#"{"message_type":"committed_transcript","text":"hello there"}"#)
+        await pushCommittedWithWords(transport, text: "hello there")
         await transport.push(#"{"message_type":"partial_transcript","text":"how"}"#)
         await waitUntil { session.transcribedText == "hello there how" }
 
         XCTAssertEqual(session.transcribedText, "hello there how")
+    }
+
+    /// The new rule the timestamped connection requires: with `include_timestamps=true` always
+    /// on, the plain `committed_transcript` message is the timestamped one's un-timestamped
+    /// twin, not independent text — using it too would append the same words a second time.
+    func testPlainCommittedTranscriptIsIgnoredOnceTimestampsAreAlwaysRequested() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+        await primeTimeline(session)
+
+        await transport.push(#"{"message_type":"partial_transcript","text":"hel"}"#)
+        await waitUntil { session.transcribedText == "hel" }
+        await transport.push(#"{"message_type":"committed_transcript","text":"hello there"}"#)
+        // The acknowledgement still clears the partial even though the text is not used.
+        await waitUntil { session.transcribedText == "" }
+
+        XCTAssertEqual(session.transcribedText, "", "the plain message's text must never be appended")
     }
 
     // MARK: Stop, prefixing, interruption, connection loss
@@ -289,7 +338,8 @@ final class VoiceRecordingSessionTests: XCTestCase {
         await session.start(hardwareSampleRate: 24000)
         await transport.push(#"{"message_type":"session_started"}"#)
         await waitUntil { session.state == .recording }
-        await transport.push(#"{"message_type":"committed_transcript","text":"hello"}"#)
+        await primeTimeline(session)
+        await pushCommittedWithWords(transport, text: "hello")
         await waitUntil { session.transcribedText == "hello" }
 
         await session.stop(reason: .user)
@@ -347,7 +397,8 @@ final class VoiceRecordingSessionTests: XCTestCase {
         await session.start(hardwareSampleRate: 24000)
         await transport.push(#"{"message_type":"session_started"}"#)
         await waitUntil { session.state == .recording }
-        await transport.push(#"{"message_type":"committed_transcript","text":"hello"}"#)
+        await primeTimeline(session)
+        await pushCommittedWithWords(transport, text: "hello")
         await waitUntil { session.transcribedText == "hello" }
 
         session.pauseForInterruption()
@@ -467,7 +518,7 @@ final class VoiceRecordingSessionTests: XCTestCase {
 
         await transport.fail()
         await waitUntil { session.state == .reconnecting }
-        await session.ingestAudioChunk(pcm16le: [7, 7, 7])
+        await session.ingestAudioChunk(pcm16le: [7, 7, 7], at: 0)
         let sentWhileDown = await transport.sentTexts
         XCTAssertEqual(sentWhileDown.count, 0)
 
@@ -477,6 +528,68 @@ final class VoiceRecordingSessionTests: XCTestCase {
         let payload = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [7, 7, 7])
         let sent = await transport.sentTexts
         XCTAssertTrue(sent[0].contains(payload))
+    }
+
+    /// `previous_text` rides only the very first chunk sent after a reconnect — a second chunk
+    /// on the same connection carrying it too has been observed to be rejected outright by
+    /// ElevenLabs, per the protocol's own contract.
+    func testPreviousTextRidesOnlyTheFirstChunkAfterAReconnect() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+        await primeTimeline(session)
+        await pushCommittedWithWords(transport, text: "hello")
+        await waitUntil { session.transcribedText == "hello" }
+
+        let sentBeforeReconnect = await transport.sentTexts.count
+        await transport.fail()
+        await waitUntil { session.state == .reconnecting }
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        await session.ingestAudioChunk(pcm16le: [1, 1, 1], at: 24000)
+        await waitUntil(async: { await transport.sentTexts.count >= sentBeforeReconnect + 1 })
+        await session.ingestAudioChunk(pcm16le: [2, 2, 2], at: 24003)
+        await waitUntil(async: { await transport.sentTexts.count >= sentBeforeReconnect + 2 })
+
+        let sent = await transport.sentTexts
+        XCTAssertTrue(
+            sent[sentBeforeReconnect].contains("previous_text"), "the first chunk after reconnecting must carry it"
+        )
+        XCTAssertFalse(
+            sent[sentBeforeReconnect + 1].contains("previous_text"), "never a second time on the same connection"
+        )
+    }
+
+    /// Observed against a live connection: even unrelated `previous_text` can come back with the
+    /// next commit prefixed by a stray `". "` — stripped once, on whichever commit follows.
+    func testALeadingArtifactFromPreviousTextIsStrippedFromTheNextCommit() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+        await primeTimeline(session)
+        await pushCommittedWithWords(transport, text: "hello")
+        await waitUntil { session.transcribedText == "hello" }
+
+        await transport.fail()
+        await waitUntil { session.state == .reconnecting }
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+        await session.ingestAudioChunk(pcm16le: [1, 1, 1], at: 24000)
+        await waitUntil(async: { await transport.sentTexts.count == 1 })
+
+        await transport.push(
+            #"{"message_type":"committed_transcript_with_timestamps","text":". world","words":[{"text":".","start":0.0,"end":0.01,"type":"word"},{"text":"world","start":0.01,"end":0.5,"type":"word"}]}"#
+        )
+        await waitUntil { session.transcribedText == "hello world" }
+
+        XCTAssertEqual(session.transcribedText, "hello world", "the stray leading \". \" must not survive")
+        XCTAssertEqual(
+            session.committedSegments.last?.words?.first?.text, "world", "the stray \".\" word is dropped too")
     }
 
     /// A server close that carries a reason is still a close the take survives — ElevenLabs
@@ -536,9 +649,11 @@ final class VoiceRecordingSessionTests: XCTestCase {
         XCTAssertEqual(session.lastDisconnectDetail, "insufficient_audio_activity: no audio")
     }
 
-    /// A failure a retry cannot fix ends the take straight away rather than spending five
-    /// reconnects on a token or quota that will be refused every time.
-    func testQuotaExceededEndsTheTakeAsErrorWithoutReconnecting() async {
+    /// A failure a retry cannot fix stops transcription attempts straight away rather than
+    /// spending reconnects on a token or quota that will be refused every time — but it must
+    /// never end the take itself: capture keeps accepting audio, and only an explicit `stop()`
+    /// closes it out.
+    func testQuotaExceededStopsTranscriptionAttemptsWithoutEndingTheTake() async {
         let transport = FakeVoiceRealtimeTransport()
         let session = makeSession(transport: transport)
         await session.start(hardwareSampleRate: 24000)
@@ -546,36 +661,48 @@ final class VoiceRecordingSessionTests: XCTestCase {
         await waitUntil { session.state == .recording }
 
         await transport.push(#"{"message_type":"quota_exceeded","message":"out of credits"}"#)
-        await waitUntil { session.state == .idle }
+        await waitUntil { session.state == .transcriptionStopped }
 
-        XCTAssertEqual(session.lastEndReason, .error)
+        XCTAssertNil(session.lastEndReason, "the take has not ended yet")
         XCTAssertEqual(session.lastProtocolErrorMessage, "quota_exceeded: out of credits")
         let connectCalls = await transport.connectCallCount
-        XCTAssertEqual(connectCalls, 1)
+        XCTAssertEqual(connectCalls, 1, "no reconnect is ever attempted after a fatal error")
+
+        // Audio is still accepted — nowhere for it to go, but the call must not be rejected.
+        await session.ingestAudioChunk(pcm16le: [1, 2, 3], at: 100_000)
+
+        await session.stop(reason: .user)
+        XCTAssertEqual(session.state, .idle)
+        XCTAssertEqual(session.lastEndReason, .user)
     }
 
-    /// `ReconnectPolicy.maxAttempts` is 5 — exhausting it must give up rather than retrying
-    /// forever, the same ceiling the ported Android policy already enforces.
-    func testReconnectGivesUpAfterMaxAttemptsRatherThanRetryingForever() async {
+    /// The scenario the block leader's report calls out by name: the earlier design ended the
+    /// whole take once `ReconnectPolicy` ran out of attempts. It no longer has a ceiling at all —
+    /// dozens of consecutive failures to even connect must still leave the take reconnecting,
+    /// rather than the five-attempt give-up the ported Android policy used to enforce.
+    func testReconnectNeverGivesUpEvenAfterManyConsecutiveFailures() async {
         let transport = FakeVoiceRealtimeTransport()
         let session = makeSession(transport: transport)
         await session.start(hardwareSampleRate: 24000)
         await transport.push(#"{"message_type":"session_started"}"#)
         await waitUntil { session.state == .recording }
 
-        // Every reconnect attempt from here on fails to connect at all, so the retry loop must
-        // exhaust `ReconnectPolicy.maxAttempts` on its own rather than looping forever.
+        // Every attempt from here fails to even connect — the fake keeps throwing on `connect()`
+        // forever, so the retry loop chains through `handleConnectionLost` on its own with no
+        // further test intervention needed.
         await transport.setConnectError(URLError(.cannotConnectToHost))
         await transport.fail()
-        await waitUntil({ session.state == .idle }, iterations: 100_000)
 
-        XCTAssertEqual(session.lastEndReason, .connectionLost)
+        // Twenty attempts — four times the old five-attempt ceiling.
+        await waitUntil(async: { await transport.connectCallCount >= 20 }, iterations: 500_000)
+
         let connectCalls = await transport.connectCallCount
-        // The original connect, plus one attempt per `ReconnectPolicy.maxAttempts`.
-        XCTAssertEqual(connectCalls, 1 + ReconnectPolicy.maxAttempts)
+        XCTAssertGreaterThanOrEqual(connectCalls, 20)
+        XCTAssertEqual(session.state, .reconnecting)
+        XCTAssertNil(session.lastEndReason, "an unbounded reconnect must never end the take on its own")
     }
 
-    func testProtocolErrorMessageEndsTheTakeAsErrorAndRecordsTheMessage() async {
+    func testProtocolErrorMessageStopsTranscriptionAttemptsAndRecordsTheMessage() async {
         let transport = FakeVoiceRealtimeTransport()
         let session = makeSession(transport: transport)
         await session.start(hardwareSampleRate: 24000)
@@ -583,10 +710,33 @@ final class VoiceRecordingSessionTests: XCTestCase {
         await waitUntil { session.state == .recording }
 
         await transport.push(#"{"message_type":"error","message":"quota exceeded"}"#)
-        await waitUntil { session.state == .idle }
+        await waitUntil { session.state == .transcriptionStopped }
 
-        XCTAssertEqual(session.lastEndReason, .error)
+        XCTAssertNil(session.lastEndReason, "the take has not ended yet")
         XCTAssertEqual(session.lastProtocolErrorMessage, "quota exceeded")
+        let closeCalls = await transport.closeCallCount
+        XCTAssertEqual(closeCalls, 1, "the dead-end socket is closed rather than left dangling")
+    }
+
+    /// The other half of `ReconnectPolicy` losing its ceiling: while the network path itself is
+    /// unsatisfied, no attempt is made at all — a mint round trip that cannot succeed must never
+    /// be spent, and the take must simply keep waiting rather than reconnecting into nothing.
+    func testNoReconnectAttemptWhileThePathIsUnsatisfied() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport, health: { .offline })
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        await transport.fail()
+        await waitUntil { session.state == .reconnecting }
+
+        // Give the retry loop plenty of scheduler turns to have attempted something.
+        for _ in 0..<500 { await Task.yield() }
+
+        XCTAssertEqual(session.state, .reconnecting, "still trying, not given up")
+        let connectCalls = await transport.connectCallCount
+        XCTAssertEqual(connectCalls, 1, "only the original connect — no attempt while offline")
     }
 
     // MARK: Silence gating, end to end
@@ -616,7 +766,7 @@ final class VoiceRecordingSessionTests: XCTestCase {
 
         // Gated: the chunk's audio must not reach ElevenLabs. Nothing has been sent yet this
         // take, so the one frame that does go out is a keepalive of the same length, all silence.
-        await session.ingestAudioChunk(pcm16le: [Int16.max, Int16.max, Int16.max])
+        await session.ingestAudioChunk(pcm16le: [Int16.max, Int16.max, Int16.max], at: 0)
         let sentWhileGated = await transport.sentTexts
         XCTAssertEqual(sentWhileGated.count, 1)
         XCTAssertTrue(sentWhileGated[0].contains(RealtimeUplinkChunk.audioBase64(fromPCM16LE: [0, 0, 0])))
@@ -637,24 +787,24 @@ final class VoiceRecordingSessionTests: XCTestCase {
 
         clock.current = clock.current.addingTimeInterval(3.0)
         session.ingestLevel(rms: 0.0)
-        await session.ingestAudioChunk(pcm16le: [5, 5, 5])
+        await session.ingestAudioChunk(pcm16le: [5, 5, 5], at: 0)
         clock.current = clock.current.addingTimeInterval(1.0)
         session.ingestLevel(rms: 0.0)  // gates, one second after the last real frame
 
         let interval = TimeInterval(VoiceRealtimeProtocol.keepaliveIntervalMs) / 1000
         clock.current = clock.current.addingTimeInterval(interval - 1.5)
-        await session.ingestAudioChunk(pcm16le: [9, 9, 9])
+        await session.ingestAudioChunk(pcm16le: [9, 9, 9], at: 0)
         let beforeInterval = await transport.sentTexts
         XCTAssertEqual(beforeInterval.count, 1, "only the real frame before the gate")
 
         clock.current = clock.current.addingTimeInterval(0.5)
-        await session.ingestAudioChunk(pcm16le: [9, 9, 9])
+        await session.ingestAudioChunk(pcm16le: [9, 9, 9], at: 0)
         let atInterval = await transport.sentTexts
         XCTAssertEqual(atInterval.count, 2)
         XCTAssertTrue((atInterval.last ?? "").contains(RealtimeUplinkChunk.audioBase64(fromPCM16LE: [0, 0, 0])))
 
         clock.current = clock.current.addingTimeInterval(interval - 0.1)
-        await session.ingestAudioChunk(pcm16le: [9, 9, 9])
+        await session.ingestAudioChunk(pcm16le: [9, 9, 9], at: 0)
         let sent = await transport.sentTexts
         XCTAssertEqual(sent.count, 2, "the next keepalive is measured from the last one")
         XCTAssertEqual(session.state, .recording)
@@ -674,19 +824,19 @@ final class VoiceRecordingSessionTests: XCTestCase {
 
         clock.current = clock.current.addingTimeInterval(3.0)
         session.ingestLevel(rms: 0.0)
-        await session.ingestAudioChunk(pcm16le: [1])
+        await session.ingestAudioChunk(pcm16le: [1], at: 0)
         clock.current = clock.current.addingTimeInterval(1.0)
         session.ingestLevel(rms: 0.0)
 
         // 100ms chunks at 24kHz, each marked by its value; the preroll holds 300ms of them.
         let chunkSamples = 2400
         for marker in Int16(10)...Int16(14) {
-            await session.ingestAudioChunk(pcm16le: [Int16](repeating: marker, count: chunkSamples))
+            await session.ingestAudioChunk(pcm16le: [Int16](repeating: marker, count: chunkSamples), at: 0)
         }
         let sentBeforeResume = await transport.sentTexts.count
 
         session.ingestLevel(rms: 0.5)
-        await session.ingestAudioChunk(pcm16le: [Int16](repeating: 20, count: chunkSamples))
+        await session.ingestAudioChunk(pcm16le: [Int16](repeating: 20, count: chunkSamples), at: 0)
 
         let sent = await transport.sentTexts
         let replayed = Array(sent.dropFirst(sentBeforeResume))
@@ -720,7 +870,7 @@ final class VoiceRecordingSessionTests: XCTestCase {
         await transport.fail(closeReason: "insufficient_audio_activity")
         await waitUntil { session.state == .reconnecting }
         session.ingestLevel(rms: 0.5)
-        await session.ingestAudioChunk(pcm16le: [8, 8, 8])
+        await session.ingestAudioChunk(pcm16le: [8, 8, 8], at: 0)
 
         await transport.push(#"{"message_type":"session_started"}"#)
         let speech = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [8, 8, 8])
@@ -744,15 +894,15 @@ final class VoiceRecordingSessionTests: XCTestCase {
 
         clock.current = clock.current.addingTimeInterval(3.0)
         session.ingestLevel(rms: 0.0)
-        await session.ingestAudioChunk(pcm16le: [1])
+        await session.ingestAudioChunk(pcm16le: [1], at: 0)
         clock.current = clock.current.addingTimeInterval(1.0)
         session.ingestLevel(rms: 0.0)
 
         session.toggleMute()
-        await session.ingestAudioChunk(pcm16le: [Int16.max, Int16.max])
+        await session.ingestAudioChunk(pcm16le: [Int16.max, Int16.max], at: 0)
         session.toggleMute()
         session.ingestLevel(rms: 0.5)
-        await session.ingestAudioChunk(pcm16le: [3, 3])
+        await session.ingestAudioChunk(pcm16le: [3, 3], at: 0)
 
         let sent = await transport.sentTexts
         let loud = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [Int16.max, Int16.max])
@@ -777,13 +927,13 @@ final class VoiceRecordingSessionTests: XCTestCase {
         session.ingestLevel(rms: 0.0)
         clock.current = clock.current.addingTimeInterval(1.0)
         session.ingestLevel(rms: 0.0)
-        await session.ingestAudioChunk(pcm16le: [1, 2, 3])
+        await session.ingestAudioChunk(pcm16le: [1, 2, 3], at: 0)
         let loud = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [1, 2, 3])
         let sentWhileGated = await transport.sentTexts
         XCTAssertFalse(sentWhileGated.contains { $0.contains(loud) })
 
         session.ingestLevel(rms: 0.5)
-        await session.ingestAudioChunk(pcm16le: [4, 5, 6])
+        await session.ingestAudioChunk(pcm16le: [4, 5, 6], at: 0)
         let sentAfterResuming = await transport.sentTexts
         XCTAssertTrue(
             sentAfterResuming.last?.contains(RealtimeUplinkChunk.audioBase64(fromPCM16LE: [4, 5, 6])) == true)
@@ -827,10 +977,129 @@ final class VoiceRecordingSessionTests: XCTestCase {
 
         clock.current = clock.current.addingTimeInterval(10.0)
         session.ingestLevel(rms: 0.5)
-        await session.ingestAudioChunk(pcm16le: [1, 2, 3])
+        await session.ingestAudioChunk(pcm16le: [1, 2, 3], at: 0)
 
         XCTAssertEqual(session.state, .recording)
         let sent = await transport.sentTexts
         XCTAssertEqual(sent.count, 1)
+    }
+
+    // MARK: Durable pipeline — provisional text, uncovered ranges, burst demotion
+
+    /// The first of the four behaviours the block leader's report names: a drop with an
+    /// in-flight partial must keep it as provisional text rather than discarding it — never
+    /// folded into a committed segment, since nothing has actually confirmed it yet.
+    func testDropKeepsTheInFlightPartialAsProvisionalText() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+        await primeTimeline(session)
+
+        await transport.push(#"{"message_type":"partial_transcript","text":"partial words"}"#)
+        await waitUntil { session.transcribedText == "partial words" }
+        XCTAssertEqual(session.provisionalText, "", "not provisional while the socket is still alive")
+
+        await transport.fail()
+        await waitUntil { session.state == .reconnecting }
+
+        XCTAssertEqual(session.provisionalText, "partial words")
+        XCTAssertNotNil(session.provisionalRange)
+        XCTAssertTrue(session.committedSegments.isEmpty, "never folded into a committed segment")
+    }
+
+    /// The second: a drop must leave the uncovered stretch derivable as a gap. Nothing here
+    /// stores a gap directly — `committedSegments` simply never grows to cover what a live
+    /// socket never got to transcribe, which is exactly what `TranscriptLedger.derivedGaps`
+    /// (proven separately in `TranscriptLedgerTests`) turns into a gap once fed
+    /// `capturedUpTo` alongside it.
+    func testDropLeavesTheUncoveredRangeDerivableAsAGap() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        await session.ingestAudioChunk(pcm16le: [Int16](repeating: 5, count: 24000), at: 0)
+        await waitUntil(async: { await transport.sentTexts.count == 1 })
+
+        await transport.fail()
+        await waitUntil { session.state == .reconnecting }
+
+        XCTAssertTrue(session.committedSegments.isEmpty, "nothing was ever committed for this audio")
+        let ledger = TranscriptLedger(
+            takeId: "t", mode: .microphone, sampleRate: 24000, draftKey: "s", preText: "",
+            segments: session.committedSegments
+        )
+        let gaps = ledger.derivedGaps(capturedUpTo: session.capturedUpTo)
+        XCTAssertEqual(gaps.map(\.range), [0..<session.capturedUpTo])
+    }
+
+    /// The fourth: a fatal protocol error must not stop `ingestAudioChunk` from accepting audio
+    /// — `capturedUpTo` keeps advancing even with no transport to send to, since a caller's own
+    /// gap derivation depends on it reflecting everything actually captured.
+    func testFatalErrorStillAcceptsAudioAndAdvancesCapturedUpTo() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        await transport.push(#"{"message_type":"quota_exceeded","message":"out of credits"}"#)
+        await waitUntil { session.state == .transcriptionStopped }
+        XCTAssertEqual(session.capturedUpTo, 0)
+
+        await session.ingestAudioChunk(pcm16le: [1, 2, 3, 4], at: 0)
+        XCTAssertEqual(session.capturedUpTo, 4)
+        XCTAssertEqual(session.state, .transcriptionStopped, "still not reconnecting — nothing to reconnect for")
+        let connectCalls = await transport.connectCallCount
+        XCTAssertEqual(connectCalls, 1, "no attempt is ever made after a fatal error")
+    }
+
+    /// The sharp case named by row order in the block leader's report: a stretch that survives
+    /// two consecutive live-socket bursts without ever being covered must not be burst a third
+    /// time. The original real send plus exactly two re-bursts is three occurrences of the same
+    /// payload — a fourth would mean the demotion never took effect.
+    func testTheBurstTailIsNotResentAThirdTimeAfterTwoFailedAttempts() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 24000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        let marker: Int16 = 42
+        let samples = [Int16](repeating: marker, count: 2400)  // 0.1s at 24kHz — well inside the tail
+        await session.ingestAudioChunk(pcm16le: samples, at: 0)
+        await waitUntil(async: { await transport.sentTexts.count == 1 })
+        let payload = RealtimeUplinkChunk.audioBase64(fromPCM16LE: samples)
+
+        func occurrences() async -> Int {
+            await transport.sentTexts.filter { $0.contains(payload) }.count
+        }
+
+        // Drop, reconnect (burst #1) — `waitUntil { state == .recording }` alone would race the
+        // burst itself, since `state` flips to `.recording` before the async burst/flush run;
+        // waiting for the payload count is what actually confirms the burst happened.
+        await transport.fail()
+        await waitUntil { session.state == .reconnecting }
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil(async: { await occurrences() == 2 })
+
+        // Drop again before anything commits, reconnect (burst #2).
+        await transport.fail()
+        await waitUntil { session.state == .reconnecting }
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil(async: { await occurrences() == 3 })
+
+        // A third drop and reconnect must not burst again — the range is demoted instead.
+        await transport.fail()
+        await waitUntil { session.state == .reconnecting }
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+        for _ in 0..<200 { await Task.yield() }
+
+        let finalOccurrences = await occurrences()
+        XCTAssertEqual(finalOccurrences, 3, "the original send plus exactly two re-bursts, never a third")
     }
 }

@@ -85,4 +85,77 @@ final class VoiceBatchTranscriberTests: XCTestCase {
         XCTAssertTrue(text.contains("filename=\"recording.wav\""))
         XCTAssertTrue(text.contains("Content-Type: audio/wav"))
     }
+
+    func testMultipartBodyOmitsTimestampsGranularityAndKeytermsByDefault() {
+        let body = VoiceBatchTranscriber.multipartBody(wav: Data([1]), language: .auto, boundary: "B")
+        let text = String(decoding: body, as: UTF8.self)
+        XCTAssertFalse(text.contains("timestamps_granularity"))
+        XCTAssertFalse(text.contains("keyterms"))
+    }
+
+    func testMultipartBodyIncludesTimestampsGranularityAndEachKeyterm() {
+        let body = VoiceBatchTranscriber.multipartBody(
+            wav: Data([1]), language: .auto, boundary: "B", timestampsGranularity: "word",
+            keyterms: ["computer start", "invoice number"]
+        )
+        let text = String(decoding: body, as: UTF8.self)
+        XCTAssertTrue(text.contains("name=\"timestamps_granularity\""))
+        XCTAssertTrue(text.contains("\r\nword\r\n"))
+        XCTAssertEqual(text.components(separatedBy: "name=\"keyterms\"").count - 1, 2)
+        XCTAssertTrue(text.contains("computer start"))
+        XCTAssertTrue(text.contains("invoice number"))
+    }
+
+    // MARK: - transcribeWithWordTimestamps
+
+    func testWordTimestampsSuccessReturnsWordsFilteredToTypeWord() async throws {
+        stubJSON(
+            #"""
+            {"text":"hello there","words":[
+                {"text":"hello","start":0.0,"end":0.4,"type":"word","logprob":-0.1},
+                {"text":" ","start":0.4,"end":0.5,"type":"spacing"},
+                {"text":"there","start":0.5,"end":0.9,"type":"word"}
+            ]}
+            """#
+        )
+        let result = try await makeTranscriber().transcribeWithWordTimestamps(
+            wav: Data([1, 2, 3]), token: "tok", language: .auto
+        )
+        guard case let .words(text, words) = result else { return XCTFail("expected .words") }
+        XCTAssertEqual(text, "hello there")
+        XCTAssertEqual(words.map(\.text), ["hello", "there"])
+        XCTAssertEqual(words.first?.start, 0.0)
+        XCTAssertEqual(words.first?.end, 0.4)
+        XCTAssertEqual(words.first?.logprob, -0.1)
+    }
+
+    func testWordTimestampsEmptyTextIsNoSpeechDetected() async throws {
+        stubJSON(#"{"text":""}"#)
+        let result = try await makeTranscriber().transcribeWithWordTimestamps(
+            wav: Data([1, 2, 3]), token: "tok", language: .auto
+        )
+        XCTAssertEqual(result, .noSpeechDetected)
+    }
+
+    func testWordTimestampsNon2xxMapsToFailed() async throws {
+        stubJSON(#"{"detail":"invalid token"}"#, statusCode: 401)
+        let result = try await makeTranscriber().transcribeWithWordTimestamps(
+            wav: Data([1, 2, 3]), token: "tok", language: .auto
+        )
+        guard case let .failed(error) = result else { return XCTFail("expected .failed") }
+        XCTAssertEqual(error, .detail("invalid token", statusCode: 401))
+    }
+
+    func testWordTimestampsRequestCarriesTheGranularityAndKeytermsFields() async throws {
+        stubJSON(#"{"text":"x"}"#)
+        _ = try await makeTranscriber().transcribeWithWordTimestamps(
+            wav: Data([1]), token: "tok", language: .auto, keyterms: ["computer stop"]
+        )
+        let request = try XCTUnwrap(PaiStubURLProtocol.capturedRequest)
+        let sentBody = PaiStubURLProtocol.capturedBody ?? Data()
+        let text = String(decoding: sentBody, as: UTF8.self)
+        XCTAssertTrue(text.contains("timestamps_granularity"))
+        XCTAssertTrue(text.contains("computer stop"))
+        XCTAssertEqual(request.httpMethod, "POST")
+    }
 }

@@ -79,4 +79,95 @@ final class TranscriptLedgerTests: XCTestCase {
         let decoded = try JSONDecoder().decode(RecordingMeta.self, from: data)
         XCTAssertEqual(decoded.transcription, transcription)
     }
+
+    // MARK: - coveredRanges / derivedGaps (microphone mode)
+
+    func testCoveredRangesMergesAdjacentAndOverlappingSegments() {
+        let ledger = TranscriptLedger(
+            takeId: "t", mode: .microphone, sampleRate: 16000, draftKey: nil, preText: "",
+            segments: [
+                Segment(range: 0..<1000, text: "a", source: .live),
+                Segment(range: 1000..<2000, text: "b", source: .live),
+                Segment(range: 1800..<2500, text: "c", source: .batch),
+            ]
+        )
+        XCTAssertEqual(ledger.coveredRanges, [0..<2500])
+    }
+
+    /// The whole point of the ledger: audio captured with no committed segment over it is a gap,
+    /// derived fresh from coverage rather than stored redundantly.
+    func testDerivedGapsIsEverythingCapturedMinusEverythingCovered() {
+        let ledger = TranscriptLedger(
+            takeId: "t", mode: .microphone, sampleRate: 16000, draftKey: nil, preText: "",
+            segments: [Segment(range: 1000..<2000, text: "middle", source: .live)]
+        )
+        let gaps = ledger.derivedGaps(capturedUpTo: 5000)
+        XCTAssertEqual(gaps.map(\.range), [0..<1000, 2000..<5000])
+    }
+
+    func testDerivedGapsIsEmptyWhenEverythingCapturedIsCovered() {
+        let ledger = TranscriptLedger(
+            takeId: "t", mode: .microphone, sampleRate: 16000, draftKey: nil, preText: "",
+            segments: [Segment(range: 0..<5000, text: "all", source: .live)]
+        )
+        XCTAssertTrue(ledger.derivedGaps(capturedUpTo: 5000).isEmpty)
+    }
+
+    /// A persisted gap's attempt count and demotion must survive being recomputed — the retry
+    /// budget is a work item, not something a fresh derivation is allowed to reset.
+    func testDerivedGapsCarriesForwardAttemptCountsFromAnOverlappingPersistedGap() {
+        let ledger = TranscriptLedger(
+            takeId: "t", mode: .microphone, sampleRate: 16000, draftKey: nil, preText: "",
+            gaps: [Gap(range: 1000..<2000, attempts: 3, lastError: "timeout", demoted: true)]
+        )
+        let gaps = ledger.derivedGaps(capturedUpTo: 2000)
+        XCTAssertEqual(gaps.count, 1)
+        XCTAssertEqual(gaps.first?.attempts, 3)
+        XCTAssertEqual(gaps.first?.lastError, "timeout")
+        XCTAssertEqual(gaps.first?.demoted, true)
+    }
+
+    // MARK: - collectingBounds (call mode)
+
+    /// Call mode's gaps only ever come from the stretches between a start and a stop — audio
+    /// captured while merely `listening` (no collecting range open) must never become a gap.
+    func testCallModeOnlyCollectingRangesCanEverBecomeGaps() {
+        let ledger = TranscriptLedger(
+            takeId: "t", mode: .call, sampleRate: 16000, draftKey: "s", preText: "",
+            collecting: [1000..<2000, 4000..<5000]
+        )
+        let gaps = ledger.derivedGaps(capturedUpTo: 6000)
+        // Samples 0..<1000, 2000..<4000 and 5000..<6000 were captured (listening) but never
+        // collecting, so they must not appear as gaps.
+        XCTAssertEqual(gaps.map(\.range), [1000..<2000, 4000..<5000])
+    }
+
+    /// A `collecting` range still open (no stop yet) when the take ends must clamp to what has
+    /// actually been captured rather than claiming samples that do not exist.
+    func testCallModeCollectingRangeClampsToCapturedUpTo() {
+        let ledger = TranscriptLedger(
+            takeId: "t", mode: .call, sampleRate: 16000, draftKey: "s", preText: "", collecting: [1000..<1_000_000]
+        )
+        XCTAssertEqual(ledger.derivedGaps(capturedUpTo: 3000), [Gap(range: 1000..<3000)])
+    }
+
+    // MARK: - mayBeDeleted
+
+    func testMayBeDeletedRequiresBothNoGapsAndDelivered() {
+        let complete = TranscriptLedger(
+            takeId: "t", mode: .microphone, sampleRate: 16000, draftKey: nil, preText: "", delivered: true
+        )
+        XCTAssertTrue(complete.mayBeDeleted)
+
+        let undelivered = TranscriptLedger(
+            takeId: "t", mode: .microphone, sampleRate: 16000, draftKey: nil, preText: "", delivered: false
+        )
+        XCTAssertFalse(undelivered.mayBeDeleted)
+
+        let withOpenGap = TranscriptLedger(
+            takeId: "t", mode: .microphone, sampleRate: 16000, draftKey: nil, preText: "",
+            gaps: [Gap(range: 0..<1000)], delivered: true
+        )
+        XCTAssertFalse(withOpenGap.mayBeDeleted)
+    }
 }

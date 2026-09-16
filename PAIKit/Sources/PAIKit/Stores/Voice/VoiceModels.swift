@@ -11,6 +11,12 @@ import Foundation
 /// `resumeAfterInterruption()`. `.reconnecting` is the same idea for a dropped network
 /// connection — the mic keeps capturing (buffered, same as before `session_started` on the very
 /// first connect), while a fresh connection is negotiated in the background.
+///
+/// `.transcriptionStopped` is distinct from all of these: a fatal protocol error (a rejected
+/// token, an exhausted quota) means no further reconnect attempt can ever succeed, but the take
+/// itself has not ended — capture keeps writing to disk, and whatever never reached ElevenLabs
+/// live is exactly what the batch backfill exists to fill in later. Only `stop()` — the user, or
+/// whatever ends the take on their behalf — ever leaves this state.
 public enum VoiceRecordingState: Sendable, Equatable {
     case idle
     case connecting
@@ -18,6 +24,7 @@ public enum VoiceRecordingState: Sendable, Equatable {
     case paused
     case reconnecting
     case stopping
+    case transcriptionStopped
 }
 
 /// Distinct answers to "why can't I record right now". Collapsing these into one generic error
