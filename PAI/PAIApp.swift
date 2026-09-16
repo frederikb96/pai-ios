@@ -17,6 +17,7 @@ struct PAIApp: App {
         // Unconditional — a TestFlight build is exactly where this matters, and the debug bridge
         // it feeds `/crash` for is the DEBUG-only half of this facility, not the capture itself.
         CrashReporter.install()
+        AppVoiceDiagnosticsLog.startPeriodicFlush()
         #if DEBUG
             FixtureBootstrap.installIfRequested()
             Self.debugBridge.start()

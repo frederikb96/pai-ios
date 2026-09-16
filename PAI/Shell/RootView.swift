@@ -178,12 +178,19 @@ struct RootView: View {
                 .onChange(of: scenePhase) { _, phase in
                     switch phase {
                     case .active:
+                        AppVoiceDiagnosticsLog.shared.log(.info, .lifecycle, "app active")
                         connectNotificationStream(connection)
                         Task {
                             await connection.notifications.refreshSummary()
                             await PushRegistrar.reconcileDeliveredNotifications(against: connection.notifications)
                         }
                     case .background:
+                        // The one place a backgrounding is guaranteed to be observed — flushed here
+                        // rather than trusting the periodic loop alone, since a device suspended
+                        // for hours right after this could otherwise lose everything since its
+                        // last tick.
+                        AppVoiceDiagnosticsLog.shared.log(.info, .lifecycle, "app backgrounded")
+                        AppVoiceDiagnosticsLog.shared.flush()
                         notificationStream?.disconnect()
                         notificationStream = nil
                     case .inactive:
