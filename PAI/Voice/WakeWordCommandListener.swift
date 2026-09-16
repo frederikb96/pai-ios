@@ -85,6 +85,9 @@ final class WakeWordCommandListener {
             model = try WakeWordModel(models: found.map(\.url), sampleRate: UInt32(sampleRate))
             gate = WakeWordCommandGate(manifest: Self.loadManifest(), sampleRate: sampleRate)
             loadedCommands = Set(found.map(\.kind))
+            AppVoiceDiagnosticsLog.shared.log(
+                .info, .command,
+                "offline engine listening for: \(loadedCommands.map(\.rawValue).sorted().joined(separator: ", "))")
             if let firstMissingKind { feedback(.commandModelMissing(firstMissingKind)) }
         } catch {
             // The engine itself never started, so every command that would have loaded is
@@ -148,7 +151,13 @@ final class WakeWordCommandListener {
         guard var gate else { return }
         let events = gate.detect(scores: scores, atOffset: atOffset)
         self.gate = gate
-        for event in events { onCommand?(event) }
+        for event in events {
+            AppVoiceDiagnosticsLog.shared.log(
+                .info, .command,
+                "offline detection: \(event.kind.rawValue) at offset \(event.atOffset), "
+                    + "confidence \(String(format: "%.2f", event.confidence))")
+            onCommand?(event)
+        }
     }
 
     func stop() {

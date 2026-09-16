@@ -37,11 +37,48 @@ final class VoiceFeedbackNotifier {
     /// synchronously first, before that hop, since the cue is what matters most under load.
     func handle(_ event: FeedbackEvent) {
         let action = policy.decide(event, now: Date())
+        AppVoiceDiagnosticsLog.shared.log(Self.logLevel(for: event), .feedback, Self.logMessage(for: event))
         if let cue = action.cue {
             earcons.play(cue)
         }
         guard let notify = action.notify else { return }
         Task { await post(notify) }
+    }
+
+    /// What actually reached the log — deliberately independent of `title(for:)`/`body(for:)`
+    /// below, which only run when `FeedbackPolicy` decided a notification was worth posting.
+    /// Every event is worth a log line even when `FeedbackPolicy` swallows it as a repeat.
+    private static func logLevel(for event: FeedbackEvent) -> VoiceLogLevel {
+        switch event {
+        case .connectionDropped, .serverNotice, .mintFailed, .fatalProtocolError, .captureGaveUp, .backfillFailed,
+            .ttsDropped, .replyNotSpoken, .commandModelMissing:
+            .warning
+        case .reconnected, .gapOpened, .backfillCompleted, .captureRestarted, .interruptionPaused,
+            .interruptionResumed, .ttsReconnected, .commandRecognized:
+            .info
+        }
+    }
+
+    private static func logMessage(for event: FeedbackEvent) -> String {
+        switch event {
+        case .connectionDropped(let reason): "connection dropped\(reason.map { " (\($0))" } ?? "")"
+        case .serverNotice(let reason): "server notice: \(reason)"
+        case .mintFailed: "token mint failed"
+        case .reconnected: "reconnected"
+        case .gapOpened: "transcription gap opened"
+        case .backfillCompleted: "backfill completed — take fully transcribed"
+        case .backfillFailed: "backfill failed"
+        case .fatalProtocolError(let reason): "fatal protocol error: \(reason)"
+        case .captureRestarted: "microphone capture restarted"
+        case .captureGaveUp: "microphone capture gave up"
+        case .interruptionPaused: "audio session interruption began"
+        case .interruptionResumed: "audio session interruption ended"
+        case .ttsDropped: "spoken-reply connection dropped"
+        case .ttsReconnected: "spoken-reply connection reconnected"
+        case .replyNotSpoken: "a reply was not spoken"
+        case .commandRecognized(let kind): "command recognized: \(kind.rawValue)"
+        case .commandModelMissing(let kind): "no offline model bundled for command: \(kind.rawValue)"
+        }
     }
 
     private func post(_ notify: FeedbackAction.Notify) async {
