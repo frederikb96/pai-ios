@@ -135,6 +135,12 @@ public final class SpeechOutputSession {
 
     /// "computer skip" — silences whatever is playing immediately, closes its context, drops it
     /// from the queue, and starts the next reply if there is one.
+    ///
+    /// The silencing is entirely `dependencies.stopPlayback()`, called first and synchronously:
+    /// a live socket probe showed ElevenLabs generating audio far ahead of playback, so by the
+    /// time a person could react and say "skip", the server has typically already finished (or
+    /// nearly finished) sending the reply's whole audio — `close_context` afterward is hygiene,
+    /// not what actually stops the sound.
     public func skip() {
         dependencies.stopPlayback()
         finalizeOpenPlayback(interrupted: true)
