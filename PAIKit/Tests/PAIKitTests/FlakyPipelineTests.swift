@@ -156,11 +156,15 @@ final class FlakyPipelineTests: XCTestCase {
         }
     }
 
-    /// Feeds the take second by second, dropping the connection for the scripted windows and
-    /// never confirming a live commit for anything captured inside one — exactly what happens to
-    /// any stretch older than the 20s burst tail, which every window here exceeds or matches by
-    /// construction. Everything outside a window gets an immediate, correctly-addressed
-    /// `committed_transcript_with_timestamps` the moment it is sent.
+    /// Feeds the take second by second, pushing an immediate, correctly-addressed
+    /// `committed_transcript_with_timestamps` for every second sent live. Buffered-during-a-drop
+    /// audio that is later flushed and committed is never actually lost under the acknowledgment
+    /// model — the server acknowledging *anything* on a connection covers everything sent before
+    /// it, whether or not that specific content ever got its own words — so a scripted window
+    /// does not skip a commit to fake a gap. It instead reproduces the one mechanism that
+    /// genuinely leaves a range permanently uncovered: audio sent live is dropped before any
+    /// commit arrives, and the reconnect's own burst re-send fails the same way
+    /// `maxBurstAttempts` times in a row, demoting the range for the batch pass to recover.
     private func runLivePhase(
         totalSeconds: Int, dropWindows: [(start: Int, duration: Int)]
     ) async -> VoiceRecordingSession {
@@ -179,34 +183,47 @@ final class FlakyPipelineTests: XCTestCase {
         await waitUntil { session.state == .recording }
 
         var chunksThisConnection = 0
-        for second in 0..<totalSeconds {
+        var second = 0
+        while second < totalSeconds {
             if let window = dropWindows.first(where: { $0.start == second }) {
-                for _ in 0..<window.duration {
+                // Every second in the window is sent live, uncommitted, right before the drop —
+                // exactly the "sent but not yet acknowledged" stretch a real drop catches.
+                for offsetSecond in second..<min(second + window.duration, totalSeconds) {
+                    let sentBefore = await transport.sentTexts.count
+                    await session.ingestAudioChunk(
+                        pcm16le: syntheticSamples(forSecond: offsetSecond), at: offsetSecond * sampleRate)
+                    await waitUntil(async: { await transport.sentTexts.count > sentBefore })
+                }
+                // Drop, then fail the reconnect's own burst `maxBurstAttempts` times in a row —
+                // one more than that demotes the range for good, leaving it uncovered until the
+                // batch pass recovers it, rather than burst forever.
+                for _ in 0..<(VoiceRecordingSession.maxBurstAttempts + 1) {
                     await transport.fail()
                     await waitUntil { session.state == .reconnecting }
                     await transport.push(#"{"message_type":"session_started"}"#)
                     await waitUntil { session.state == .recording }
                 }
                 chunksThisConnection = 0
+                second += window.duration
+                continue
             }
-            let insideAnyWindow = dropWindows.contains { second >= $0.start && second < $0.start + $0.duration }
 
             let sentBefore = await transport.sentTexts.count
             await session.ingestAudioChunk(pcm16le: syntheticSamples(forSecond: second), at: second * sampleRate)
             await waitUntil(async: { await transport.sentTexts.count > sentBefore })
 
-            // Every transmitted chunk — committed or not — advances the real session's own
-            // `SessionTimeline` by one connection-relative second, so this counter must too, or
-            // a later scripted commit's timestamp resolves against the wrong chunk entirely.
+            // Every transmitted chunk advances the real session's own `SessionTimeline` by one
+            // connection-relative second, so this counter must too, or a later scripted commit's
+            // timestamp resolves against the wrong chunk entirely.
             let mySessionRelativeSecond = chunksThisConnection
             chunksThisConnection += 1
-            guard !insideAnyWindow else { continue }
             let startSeconds = Double(mySessionRelativeSecond)
             let endSeconds = Double(mySessionRelativeSecond + 1)
             await transport.push(
                 #"{"message_type":"committed_transcript_with_timestamps","text":"\#(oracleWord(forSecond: second))","words":[{"text":"\#(oracleWord(forSecond: second))","start":\#(startSeconds),"end":\#(endSeconds),"type":"word"}]}"#
             )
             await waitUntil { session.committedSegments.last?.range.upperBound == (second + 1) * sampleRate }
+            second += 1
         }
 
         await session.stop(reason: .user)
@@ -224,25 +241,30 @@ final class FlakyPipelineTests: XCTestCase {
     // MARK: Backfilling and assembling
 
     /// Runs every eligible gap through `BackfillPlanner` + `BatchBackfiller` to completion (a
-    /// stable link, so nothing is deferred), returning the `.batch` segments produced.
+    /// stable link, so nothing is deferred), applying each pass through the real
+    /// `TranscriptLedger.applyingBackfill` — the same function the controller uses, not a
+    /// hand-rolled equivalent, so a bug in the real gap-resolution arithmetic shows up here too.
     /// `poisonFirstAttempt`, when set, makes the very first `BatchBackfiller.run` call fail —
     /// schedule 4's "a drop during the batch upload".
-    private func runBackfill(
-        gaps: [Gap], capturedUpTo: Int, sampleData: Data, poisonFirstAttempt: Bool
-    ) async -> [Segment] {
+    /// Returns the final ledger alongside every raw `.batch` segment `BatchBackfiller` actually
+    /// produced, *before* any `SeamMerge` pass — the caller's own sensitivity check needs the
+    /// un-deduplicated segments, since `applyingBackfill` (and therefore the returned ledger's own
+    /// `.segments`) already ran them through `SeamMerge.merge`.
+    private func runBackfill(ledger: TranscriptLedger, sampleData: Data, poisonFirstAttempt: Bool) async
+        -> (ledger: TranscriptLedger, rawBatchSegments: [Segment])
+    {
         let reader = FakeTakeAudioReader(sampleData: sampleData)
-        var remainingGaps = gaps
-        var segments: [Segment] = []
+        var current = ledger
+        var rawBatchSegments: [Segment] = []
         let poison = PoisonFlag(poisonFirstAttempt)
         let sampleRate = self.sampleRate
 
         // Two rounds: the first may fail (schedule 4), a later stable episode always retries.
         for _ in 0..<2 {
             let requests = BackfillPlanner.plan(
-                gaps: remainingGaps, sampleRate: sampleRate, capturedUpTo: capturedUpTo, health: .stable
+                gaps: current.gaps, sampleRate: sampleRate, capturedUpTo: current.capturedUpTo, health: .stable
             )
             guard !requests.isEmpty else { break }
-            var nextGaps = remainingGaps
             for request in requests {
                 let outcome = await BatchBackfiller.run(
                     request, sampleRate: sampleRate, language: .auto, audioReader: reader, takeId: "take",
@@ -256,64 +278,55 @@ final class FlakyPipelineTests: XCTestCase {
                 )
                 switch outcome {
                 case let .segment(segment):
-                    segments.append(segment)
-                    nextGaps.removeAll { request.gapRanges.contains($0.range) }
+                    rawBatchSegments.append(segment)
+                    current = current.applyingBackfill(newSegments: [segment], resolved: request.gapRanges, failed: [])
                 case .noSpeechDetected:
-                    nextGaps.removeAll { request.gapRanges.contains($0.range) }
+                    current = current.applyingBackfill(newSegments: [], resolved: request.gapRanges, failed: [])
                 case let .failed(error):
-                    for gapRange in request.gapRanges {
-                        guard let index = nextGaps.firstIndex(where: { $0.range == gapRange }) else { continue }
-                        nextGaps[index] = BackfillPlanner.recordFailure(nextGaps[index], error: error)
-                    }
+                    current = current.applyingBackfill(
+                        newSegments: [], resolved: [], failed: request.gapRanges.map { (range: $0, error: error) }
+                    )
                 }
             }
-            remainingGaps = nextGaps
         }
-        XCTAssertTrue(remainingGaps.isEmpty, "every gap must resolve within two stable episodes in these schedules")
-        return segments
+        XCTAssertTrue(current.gaps.isEmpty, "every gap must resolve within two stable episodes in these schedules")
+        return (current, rawBatchSegments)
     }
 
-    /// One schedule end to end: live phase, then backfill, then `SeamMerge`, asserting the final
-    /// text equals the oracle with zero gaps left.
+    /// One schedule end to end: live phase, then `TranscriptLedger.folding` (the same fold a
+    /// controller's ledger loop and its final synchronous fold at `stop()` both use), then
+    /// backfill through `applyingBackfill`, asserting the final assembled text equals the oracle
+    /// with zero gaps left.
     private func assertScheduleRecoversPerfectly(
         totalSeconds: Int, dropWindows: [(start: Int, duration: Int)], poisonFirstBackfillAttempt: Bool = false,
         file: StaticString = #filePath, line: UInt = #line
     ) async {
         let session = await runLivePhase(totalSeconds: totalSeconds, dropWindows: dropWindows)
-        let capturedUpTo = session.capturedUpTo
-        let liveLedger = TranscriptLedger(
-            takeId: "take", mode: .microphone, sampleRate: sampleRate, draftKey: "session", preText: "",
-            segments: session.committedSegments
+        let baseLedger = TranscriptLedger(
+            takeId: "take", mode: .microphone, sampleRate: sampleRate, draftKey: "session", preText: ""
         )
-        let gaps = liveLedger.derivedGaps(capturedUpTo: capturedUpTo)
+        let liveLedger = baseLedger.folding(
+            liveSegments: session.committedSegments, capturedUpTo: session.capturedUpTo,
+            newlyAcknowledged: session.acknowledgedRanges
+        )
 
         let sampleData = fullTakeSampleData(totalSeconds: totalSeconds)
-        let batchSegments = await runBackfill(
-            gaps: gaps, capturedUpTo: capturedUpTo, sampleData: sampleData,
-            poisonFirstAttempt: poisonFirstBackfillAttempt
+        let (finalLedger, rawBatchSegments) = await runBackfill(
+            ledger: liveLedger, sampleData: sampleData, poisonFirstAttempt: poisonFirstBackfillAttempt
         )
 
-        let merged = SeamMerge.merge(session.committedSegments + batchSegments)
-        let finalLedger = TranscriptLedger(
-            takeId: "take", mode: .microphone, sampleRate: sampleRate, draftKey: "session", preText: "",
-            segments: merged
-        )
-        XCTAssertTrue(
-            finalLedger.derivedGaps(capturedUpTo: capturedUpTo).isEmpty, "zero gaps once backfill has run",
-            file: file, line: line
-        )
+        XCTAssertTrue(finalLedger.gaps.isEmpty, "zero gaps once backfill has run", file: file, line: line)
 
-        let assembledText = merged.sorted { $0.range.lowerBound < $1.range.lowerBound }.map(\.text).joined(
-            separator: " ")
+        let assembledText = VoiceTextAssembly.assembledText(from: finalLedger)
         XCTAssertEqual(assembledText, oracleText(totalSeconds: totalSeconds), file: file, line: line)
 
         // The sensitivity `SeamMerge` exists to prove: without it, the batch request's own
         // one-second margin re-transcribes words the live path already committed, so a naive
-        // concatenation duplicates them and can never equal the oracle — this is what would turn
-        // red if `SeamMerge.merge` above were bypassed or broken.
-        if !batchSegments.isEmpty {
+        // concatenation of the *raw*, pre-merge segments duplicates them and can never equal the
+        // oracle — this is what would turn red if `SeamMerge.merge` were bypassed or broken.
+        if !rawBatchSegments.isEmpty {
             let naive =
-                (session.committedSegments + batchSegments)
+                (session.committedSegments + rawBatchSegments)
                 .sorted { $0.range.lowerBound < $1.range.lowerBound }.map(\.text).joined(separator: " ")
             XCTAssertNotEqual(
                 naive, oracleText(totalSeconds: totalSeconds),
