@@ -321,6 +321,58 @@ final class SpeechOutputSessionTests: XCTestCase {
         XCTAssertEqual(entry?.text, "hello there. how are you.")
     }
 
+    /// Measured against a live socket: ElevenLabs generates and delivers audio far ahead of
+    /// playback, so a whole reply's PCM can arrive within a second even though it takes much
+    /// longer to actually be heard. The recorded window has to reflect that longer, audible
+    /// duration — not the near-instant wall-clock gap between the first chunk and `isFinal`.
+    func testRecentPlaybackWindowRunsToTheAudioDurationEvenWhenEverythingArrivesInstantly() async throws {
+        let transport = FakeVoiceTtsTransport()
+        let playback = PlaybackSpy()
+        let session = makeSession(transport: transport, playback: playback)
+
+        session.enqueue(messageId: 1, sentences: ["a long reply."])
+        await waitUntil { await transport.sentTexts.count >= 2 }
+
+        // Exactly one second of 24kHz mono PCM, arriving and finishing (`isFinal`) with no
+        // simulated wall-clock advance between the two at all.
+        let oneSecondOfSamples = [Int16](repeating: 0, count: 24000)
+        let base64 = RealtimeUplinkChunk.audioBase64(fromPCM16LE: oneSecondOfSamples)
+        await transport.push(#"{"audio":"\#(base64)"}"#)
+        await waitUntil { !playback.scheduledSamples.isEmpty }
+        await transport.push(#"{"isFinal":true}"#)
+        await waitUntil { !session.recentPlayback.isEmpty }
+
+        let entry = try XCTUnwrap(session.recentPlayback.first)
+        let duration = entry.window.upperBound.timeIntervalSince(entry.window.lowerBound)
+        XCTAssertEqual(duration, 1.0, accuracy: 0.01)
+    }
+
+    /// Skip cuts playback short of whatever audio had already arrived — the window must be capped
+    /// at when skip actually happened, not extended out to the full duration of audio ElevenLabs
+    /// had already generated but that was never actually heard.
+    func testSkipCapsThePlaybackWindowAtTheInterruptionRatherThanTheFullAudioDuration() async throws {
+        let transport = FakeVoiceTtsTransport()
+        let playback = PlaybackSpy()
+        let session = makeSession(transport: transport, playback: playback)
+
+        session.enqueue(messageId: 1, sentences: ["a very long reply."])
+        await waitUntil { await transport.sentTexts.count >= 2 }
+
+        // Ten seconds of audio arrives, but only half a second of wall clock actually passes
+        // before "computer skip" cuts it off.
+        let tenSecondsOfSamples = [Int16](repeating: 0, count: 240_000)
+        let base64 = RealtimeUplinkChunk.audioBase64(fromPCM16LE: tenSecondsOfSamples)
+        await transport.push(#"{"audio":"\#(base64)"}"#)
+        await waitUntil { !playback.scheduledSamples.isEmpty }
+        clock.current = clock.current.addingTimeInterval(0.5)
+
+        session.skip()
+
+        let entry = try XCTUnwrap(session.recentPlayback.first)
+        let duration = entry.window.upperBound.timeIntervalSince(entry.window.lowerBound)
+        XCTAssertEqual(duration, 0.5, accuracy: 0.01)
+    }
+
     // MARK: - End
 
     func testEndClosesTheSocketAndClearsTheQueue() async {

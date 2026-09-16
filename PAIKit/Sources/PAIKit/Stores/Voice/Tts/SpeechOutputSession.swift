@@ -100,9 +100,19 @@ public final class SpeechOutputSession {
     private var resendsForCurrentReply = 0
     private var openPlaybackStart: Date?
     private var openPlaybackText = ""
+    /// Total PCM duration of every audio chunk received for the currently open context —
+    /// measured against a live socket, ElevenLabs generates and delivers audio far ahead of
+    /// playback (11.7s of audio arrived in five chunks within about a second, well before
+    /// `close_context` was even sent), so the *audible* end of a reply is nowhere near when its
+    /// last byte was received. This is what lets `finalizeOpenPlayback` compute the actual
+    /// playback window from PCM duration instead of from receipt timing.
+    private var openPlaybackAccumulatedDuration: TimeInterval = 0
     private var ended = false
 
     private static let playbackHorizonSeconds: TimeInterval = 60
+    /// `VoiceTtsProtocol.outputFormat`'s rate — the divisor for turning a chunk's sample count
+    /// into the seconds of audio it actually represents.
+    private static let sampleRateHz: Double = 24000
 
     public init(dependencies: SpeechOutputDependencies) {
         self.dependencies = dependencies
@@ -127,7 +137,7 @@ public final class SpeechOutputSession {
     /// from the queue, and starts the next reply if there is one.
     public func skip() {
         dependencies.stopPlayback()
-        finalizeOpenPlayback()
+        finalizeOpenPlayback(interrupted: true)
         guard queue.dropHead() != nil else { return }
         resendsForCurrentReply = 0
         let contextIdToClose = currentContextId
@@ -148,7 +158,7 @@ public final class SpeechOutputSession {
         ended = true
         receiveTask?.cancel()
         dependencies.stopPlayback()
-        finalizeOpenPlayback()
+        finalizeOpenPlayback(interrupted: true)
         let transportToClose = transport
         transport = nil
         currentContextId = nil
@@ -213,6 +223,11 @@ public final class SpeechOutputSession {
         guard !ended else { return }
         transport = nil
         currentContextId = nil
+        // Whatever had already played for the dropped context is a real, finished playback
+        // window — recorded now rather than left open, so a fresh context's audio (after this
+        // reconnects) starts its own window instead of silently extending this one across the
+        // gap the drop just opened.
+        finalizeOpenPlayback(interrupted: true)
         dependencies.feedback(.ttsDropped)
 
         guard !queue.isEmpty else {
@@ -269,11 +284,15 @@ public final class SpeechOutputSession {
                 openPlaybackStart = dependencies.now()
                 openPlaybackText = queue.head?.sentences.joined(separator: " ") ?? ""
             }
+            openPlaybackAccumulatedDuration += Double(samples.count) / Self.sampleRateHz
             dependencies.playAudio(samples)
 
         case .contextFinished(let contextId):
             guard contextId == nil || contextId == currentContextId else { return }
-            finalizeOpenPlayback()
+            // Not interrupted: every chunk for this context has now arrived, so the natural end
+            // — `start + openPlaybackAccumulatedDuration` — is when playback actually finishes,
+            // even though that is well after this message itself arrived.
+            finalizeOpenPlayback(interrupted: false)
             queue.completeHead()
             currentContextId = nil
             resendsForCurrentReply = 0
@@ -286,12 +305,20 @@ public final class SpeechOutputSession {
 
     // MARK: - Playback bookkeeping
 
-    private func finalizeOpenPlayback() {
+    /// `interrupted` is `false` only when every chunk for the context actually arrived
+    /// (`.contextFinished`) — then the window runs to its natural end,
+    /// `start + openPlaybackAccumulatedDuration`, which is almost always well after this call
+    /// itself happens, since ElevenLabs generates audio far ahead of when it is actually heard.
+    /// `true` (skip, a drop, or the call ending) caps the window at `now()` instead: playback was
+    /// cut short before whatever had already arrived finished playing.
+    private func finalizeOpenPlayback(interrupted: Bool) {
         guard let start = openPlaybackStart else { return }
-        let end = dependencies.now()
-        let window = start <= end ? start...end : end...start
+        let naturalEnd = start.addingTimeInterval(openPlaybackAccumulatedDuration)
+        let end = interrupted ? min(dependencies.now(), naturalEnd) : naturalEnd
+        let window = start <= end ? start...end : start...start
         recentPlayback.append((window: window, text: openPlaybackText))
         openPlaybackStart = nil
+        openPlaybackAccumulatedDuration = 0
         openPlaybackText = ""
         let horizon = dependencies.now().addingTimeInterval(-Self.playbackHorizonSeconds)
         recentPlayback.removeAll { $0.window.upperBound < horizon }
