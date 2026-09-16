@@ -360,10 +360,15 @@ final class VoiceRecorderController {
     /// (`reserveForCallMode()`), so there is never a genuine second claimant to conflict with.
     /// `onLedgerChanged` fires whenever a write lands for this take while it is still the active
     /// one — see `notifyExternalLedgerObserverIfCurrent`'s own doc comment.
+    ///
+    /// Also resets `feedbackNotifier`'s episode, exactly as `start()` does for a microphone-mode
+    /// take — without this, a call inherits whatever per-cause dedup state the previous take left
+    /// behind, and an error already reported there stays silently suppressed for this one.
     func beginExternalTake(_ ledger: TranscriptLedger, onLedgerChanged: @escaping () -> Void) {
         externalTakeId = ledger.takeId
         externalLedgerChanged = onLedgerChanged
         activeLedger = ledger
+        feedbackNotifier.beginTake(id: ledger.takeId)
     }
 
     /// Releases the slot `beginExternalTake` claimed — a backfill that completes afterward for
