@@ -169,15 +169,53 @@ public final class SettingsStore {
         storage.setValue(sentMessages, forKey: Keys.sentMessages)
     }
 
+    /// Keeps the newest ten *evictable* recordings and every recording that is not — an open gap
+    /// or undelivered text — whatever their count. `all` is newest-first, so counting only the
+    /// evictable ones as we walk it and cutting once that count passes the cap evicts the oldest
+    /// evictable entries, exactly the FIFO behaviour the flat cap used to give every recording;
+    /// the durable pipeline's own rule (`TranscriptLedger.mayBeDeleted`) is just applied per entry
+    /// first now, since deleting a take's only copy of not-yet-backfilled audio is the one thing
+    /// this whole feature exists to stop happening again.
     public func saveRecording(_ meta: RecordingMeta) {
         let all = [meta] + recordings
-        let kept = Array(all.prefix(Self.maxRecordings))
-        let evicted = all.dropFirst(Self.maxRecordings)
+        var kept: [RecordingMeta] = []
+        var evicted: [RecordingMeta] = []
+        var evictableSeen = 0
+        for entry in all {
+            guard Self.mayEvict(entry) else {
+                kept.append(entry)
+                continue
+            }
+            evictableSeen += 1
+            if evictableSeen <= Self.maxRecordings {
+                kept.append(entry)
+            } else {
+                evicted.append(entry)
+            }
+        }
         recordings = kept
         storage.setValue(recordings, forKey: Keys.recordings)
         for entry in evicted {
             onRecordingEvicted?(entry)
         }
+    }
+
+    /// A recording made before the durable pipeline existed carries no `transcription` at all —
+    /// its `transcript` field was already the whole story, so it is evictable exactly as it always
+    /// was. One tracked by the pipeline is evictable only once it agrees with
+    /// `TranscriptLedger.mayBeDeleted`: no open gap, and its text already reached the draft.
+    private static func mayEvict(_ meta: RecordingMeta) -> Bool {
+        guard let transcription = meta.transcription else { return true }
+        return transcription.gapCount == 0 && transcription.delivered
+    }
+
+    /// Replaces an already-saved recording's metadata in place — the durable pipeline updating a
+    /// take's coverage as a backfill fills in its gaps, never adding a new entry (that's
+    /// `saveRecording`'s job) and never disturbing the entry's position in the list.
+    public func updateRecording(_ meta: RecordingMeta) {
+        guard let index = recordings.firstIndex(where: { $0.id == meta.id }) else { return }
+        recordings[index] = meta
+        storage.setValue(recordings, forKey: Keys.recordings)
     }
 
     // MARK: - Secret presence (fetch before Settings is ever opened)

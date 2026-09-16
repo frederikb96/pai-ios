@@ -156,6 +156,65 @@ final class SettingsStoreTests: XCTestCase {
         }
     }
 
+    /// The retention rule's whole point: a take the durable pipeline still owes gaps to must
+    /// never be the one the cap deletes, however many complete recordings pile up behind it.
+    /// Mutated to always allow eviction and watched go red before being trusted.
+    func testTheCapNeverEvictsARecordingWithAnOpenGap() async throws {
+        try await MainActor.run {
+            let store = try Self.makeStore()
+            var evicted: [RecordingMeta] = []
+            store.onRecordingEvicted = { evicted.append($0) }
+
+            let incomplete = RecordingMeta(
+                timestampMs: 0, durationMs: 1000,
+                transcription: TranscriptionMeta(coveredMs: 500, gapMs: 500, gapCount: 1, state: .pending, delivered: false))
+            store.saveRecording(incomplete)
+            for i in 1...10 {
+                store.saveRecording(
+                    RecordingMeta(
+                        timestampMs: Double(i), durationMs: 1000,
+                        transcription: TranscriptionMeta(coveredMs: 1000, gapMs: 0, gapCount: 0, state: .complete, delivered: true))
+                )
+            }
+
+            XCTAssertTrue(evicted.isEmpty, "an open gap must never be the one evicted")
+            XCTAssertEqual(store.recordings.count, 11, "the incomplete take is kept on top of the ordinary cap")
+            XCTAssertTrue(store.recordings.contains { $0.timestampMs == 0 })
+        }
+    }
+
+    /// A recording with no `transcription` at all (made before the durable pipeline existed) is
+    /// evictable exactly as it always was — its `transcript` field was already the whole story.
+    func testARecordingWithNoTranscriptionMetaIsStillEvictable() async throws {
+        try await MainActor.run {
+            let store = try Self.makeStore()
+            var evicted: [RecordingMeta] = []
+            store.onRecordingEvicted = { evicted.append($0) }
+
+            for i in 0..<11 {
+                store.saveRecording(RecordingMeta(timestampMs: Double(i), durationMs: 1000))
+            }
+
+            XCTAssertEqual(evicted.count, 1)
+            XCTAssertEqual(evicted.first?.timestampMs, 0)
+        }
+    }
+
+    func testUpdateRecordingReplacesTheMatchingEntryInPlaceAndIgnoresAnUnknownId() async throws {
+        try await MainActor.run {
+            let store = try Self.makeStore()
+            store.saveRecording(RecordingMeta(timestampMs: 5, durationMs: 1000, transcript: "hello"))
+
+            store.updateRecording(RecordingMeta(timestampMs: 5, durationMs: 1000, transcript: "hello world"))
+            XCTAssertEqual(store.recordings.count, 1)
+            XCTAssertEqual(store.recordings.first?.transcript, "hello world")
+
+            // An id this store never saved is a no-op, not an accidental append.
+            store.updateRecording(RecordingMeta(timestampMs: 999, durationMs: 1000))
+            XCTAssertEqual(store.recordings.count, 1)
+        }
+    }
+
     func testElevenLabsKeyStatusStartsUnknownNotFalse() async throws {
         try await MainActor.run {
             let store = try Self.makeStore()

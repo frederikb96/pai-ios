@@ -8,7 +8,7 @@ import PAIKit
 /// One WAV file per (id, kind) under Application Support rather than Documents: these are app
 /// data Freddy is not meant to browse in the Files app, the same way the web keeps them in
 /// IndexedDB rather than a downloads folder.
-struct FileRecordingAudioStorage: RecordingAudioStorage {
+struct FileRecordingAudioStorage: RecordingAudioStorage, LedgerStorage, TakeAudioReader {
     private let directory: URL
 
     init(fileManager: FileManager = .default) {
@@ -44,6 +44,7 @@ struct FileRecordingAudioStorage: RecordingAudioStorage {
     func delete(id: String) async {
         try? FileManager.default.removeItem(at: sentURL(id: id))
         try? FileManager.default.removeItem(at: rawURL(id: id))
+        try? FileManager.default.removeItem(at: ledgerURL(id: id))
     }
 
     /// Not part of `RecordingAudioStorage` — that protocol only ever saves or deletes, since
@@ -103,5 +104,67 @@ struct FileRecordingAudioStorage: RecordingAudioStorage {
         defer { try? handle.close() }
         guard let bytes = try? handle.read(upToCount: WavHeaderReader.headerByteCount) else { return nil }
         return WavHeaderReader.parse(bytes)
+    }
+
+    /// The sample count a launch pass should trust for this take — the header's own claim,
+    /// clamped to what is actually still on disk (`WavHeaderReader.clampedSampleCount`'s job: a
+    /// power loss can leave a header claiming more than the file's tail survived).
+    func clampedCapturedSampleCount(id: String) -> Int? {
+        guard let header = sentHeader(id: id) else { return nil }
+        guard let fileSize = try? FileManager.default.attributesOfItem(atPath: sentURL(id: id).path)[.size] as? Int
+        else { return nil }
+        return WavHeaderReader.clampedSampleCount(headerDataSize: header.dataSize, fileByteCount: fileSize)
+    }
+
+    // MARK: - LedgerStorage
+
+    /// Beside the take's own audio, same directory — a ledger with no matching `-sent.wav` is
+    /// meaningless, so keeping them together is what makes `idsOnDisk()`'s directory walk single.
+    func ledgerURL(id: String) -> URL { directory.appendingPathComponent("\(id)-ledger.json") }
+
+    // MARK: - TakeAudioReader
+
+    /// Seeks into the take's own sent file and reads exactly the requested byte range, clamped to
+    /// whatever is actually on disk — the same truncation the header clamp exists for, applied at
+    /// the point a backfill request would otherwise read past a short file's end.
+    func readSamples(id: String, range: WavByteRange) async throws -> Data {
+        guard let handle = try? FileHandle(forReadingFrom: sentURL(id: id)) else { return Data() }
+        defer { try? handle.close() }
+        guard let fileSize = try? FileManager.default.attributesOfItem(atPath: sentURL(id: id).path)[.size] as? Int
+        else { return Data() }
+        let start = max(0, range.offset)
+        let end = min(fileSize, range.offset + range.length)
+        guard start < end else { return Data() }
+        try handle.seek(toOffset: UInt64(start))
+        return (try? handle.read(upToCount: end - start)) ?? Data()
+    }
+
+    // MARK: - Free space and storage used
+
+    /// The floor `VoiceRecorderController.start()` refuses below — recording without enough room
+    /// to hold what gets captured is the exact failure this whole design exists to rule out.
+    static let minimumFreeBytes: Int64 = 1_000_000_000
+
+    /// `nil` when the volume's free space cannot be read at all — a caller treats that as "don't
+    /// know", not as "no space", since refusing to record on a read failure would be its own bug.
+    func freeDiskSpaceBytes() -> Int64? {
+        guard
+            let values = try? directory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
+            let bytes = values.volumeAvailableCapacityForImportantUsage
+        else { return nil }
+        return bytes
+    }
+
+    /// The bytes every kept recording's audio actually occupies — what the recordings screen's
+    /// storage line reports.
+    func totalBytesUsed() -> Int64 {
+        guard
+            let entries = try? FileManager.default.contentsOfDirectory(
+                at: directory, includingPropertiesForKeys: [.fileSizeKey])
+        else { return 0 }
+        return entries.reduce(Int64(0)) { total, url in
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+            return total + Int64(size)
+        }
     }
 }

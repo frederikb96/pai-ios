@@ -50,6 +50,11 @@ struct VoiceRecorderButton: View {
             // above the composer is what actually communicates the paused state.
             Image(systemName: "stop.fill")
                 .foregroundStyle(PaiPalette.Semantic.warningText)
+        case .transcriptionStopped:
+            // Still capturing to disk, still a stop shape — the take is not over, only live
+            // transcription is; tapping ends it the same as every other non-idle state.
+            Image(systemName: "stop.fill")
+                .foregroundStyle(PaiPalette.Semantic.warningText)
         case .idle:
             Image(systemName: "mic.fill")
                 .foregroundStyle(canStart ? PaiPalette.Semantic.textSecondary : PaiPalette.Semantic.textFaint)
@@ -63,6 +68,7 @@ struct VoiceRecorderButton: View {
         case .reconnecting: "Reconnecting…"
         case .recording: "Stop recording"
         case .paused: "Paused — stop recording"
+        case .transcriptionStopped: "Transcription stopped — recording continues"
         case .idle: "Start voice recording"
         }
     }
@@ -98,13 +104,14 @@ struct VoiceRecordingIndicator: View {
         case .connecting: "Connecting…"
         case .paused: "Paused"
         case .reconnecting: "Reconnecting…"
+        case .transcriptionStopped: "Not transcribing"
         case .idle: nil
         }
     }
 
     private var color: Color {
         switch controller.state {
-        case .paused, .reconnecting: PaiPalette.Semantic.warningText
+        case .paused, .reconnecting, .transcriptionStopped: PaiPalette.Semantic.warningText
         default: controller.isMuted ? PaiPalette.Semantic.warningText : PaiPalette.Semantic.errorText
         }
     }

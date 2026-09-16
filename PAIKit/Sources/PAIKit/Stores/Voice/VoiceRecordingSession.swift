@@ -27,6 +27,12 @@ public struct VoiceRecordingDependencies: Sendable {
     public var audioReader: any TakeAudioReader
     public var feedback: @Sendable (FeedbackEvent) -> Void
     public var health: @Sendable () -> HealthState
+    /// Everything the app-wide `ConnectionHealth` machine needs from this take's own socket and
+    /// token mint — the session has no health judgement of its own (`health` above is read-only,
+    /// the other direction), so this is the one hook that lets a caller's health machine actually
+    /// see what happened. Fired for the mint, the connect, every downlink message and every close;
+    /// never for a path change, which the app observes directly through `NWPathMonitor`.
+    public var connectionEvent: @Sendable (ConnectionHealthEvent) -> Void
 
     public init(
         mintToken: @escaping @Sendable (VoiceTokenPurpose) async throws -> VoiceToken,
@@ -41,7 +47,8 @@ public struct VoiceRecordingDependencies: Sendable {
         ledgerStorage: any LedgerStorage = UnconfiguredLedgerStorage(),
         audioReader: any TakeAudioReader = UnconfiguredTakeAudioReader(),
         feedback: @escaping @Sendable (FeedbackEvent) -> Void = { _ in },
-        health: @escaping @Sendable () -> HealthState = { .offline }
+        health: @escaping @Sendable () -> HealthState = { .offline },
+        connectionEvent: @escaping @Sendable (ConnectionHealthEvent) -> Void = { _ in }
     ) {
         self.mintToken = mintToken
         self.makeRealtimeTransport = makeRealtimeTransport
@@ -53,6 +60,7 @@ public struct VoiceRecordingDependencies: Sendable {
         self.audioReader = audioReader
         self.feedback = feedback
         self.health = health
+        self.connectionEvent = connectionEvent
     }
 }
 
@@ -330,7 +338,9 @@ public final class VoiceRecordingSession {
             // reconnect would make the retry fail for no reason visible to the user, the same
             // logic that already ruled out caching one across separate takes.
             token = try await dependencies.mintToken(.realtime)
+            dependencies.connectionEvent(.mintSucceeded)
         } catch {
+            dependencies.connectionEvent(.mintFailed)
             throw ConnectFailure.mint(error)
         }
 
@@ -348,6 +358,7 @@ public final class VoiceRecordingSession {
         } catch {
             throw ConnectFailure.transport(error)
         }
+        dependencies.connectionEvent(.socketOpened)
         self.transport = transport
         receiveTask?.cancel()
         receiveTask = Task { [weak self] in await self?.runReceiveLoop() }
@@ -374,6 +385,7 @@ public final class VoiceRecordingSession {
                 await handleConnectionLost(closeReason: reason)
                 return
             }
+            dependencies.connectionEvent(.socketDelivered)
             guard let message = RealtimeDownlinkMessage.decode(text) else { continue }
             await handle(message)
         }
@@ -515,6 +527,7 @@ public final class VoiceRecordingSession {
             recordDropBookkeeping()
             dependencies.feedback(.connectionDropped(reason: closeReason))
         }
+        dependencies.connectionEvent(.socketClosed(reason: closeReason))
         transport = nil
         receiveTask?.cancel()
         receiveTask = nil
