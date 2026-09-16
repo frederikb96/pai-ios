@@ -17,7 +17,7 @@ public struct CommandDetector: Sendable {
     /// Applied only when the observation actually carries word timing — see `passesPauseGate`.
     public static let defaultPauseGateSeconds: TimeInterval = 0.4
 
-    private var phraseSet: CommandPhraseSet
+    private let phraseSet: CommandPhraseSet
     private let sampleRate: Double
     private let pauseGateSamples: Int
     /// The take offset of the last observation a command was actually fired from. An engine
@@ -33,12 +33,6 @@ public struct CommandDetector: Sendable {
         self.phraseSet = phraseSet
         self.sampleRate = sampleRate
         self.pauseGateSamples = Int(sampleRate * pauseGateSeconds)
-    }
-
-    /// Freddy can change the phrases at any time; the detector picks up the new set on the next
-    /// observation rather than needing to be rebuilt.
-    public mutating func updatePhraseSet(_ phraseSet: CommandPhraseSet) {
-        self.phraseSet = phraseSet
     }
 
     /// `nil` when nothing passed every gate — the overwhelmingly common case, since most

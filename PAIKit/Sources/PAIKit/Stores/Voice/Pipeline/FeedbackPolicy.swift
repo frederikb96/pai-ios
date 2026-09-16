@@ -109,6 +109,8 @@ public struct FeedbackPolicy: Sendable, Equatable {
             // Confirmations are exempt from every rate limit here — a swallowed one is worse
             // than a chatty one.
             return FeedbackAction(cue: .command(kind))
+        case .commandModelMissing(let kind):
+            return causeGated("commandModelMissing:\(kind.rawValue)", event: event)
         }
     }
 

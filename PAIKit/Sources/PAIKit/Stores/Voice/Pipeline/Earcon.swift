@@ -57,15 +57,14 @@ public enum Earcon {
         }
     }
 
-    /// One frequency per command — six confirmations that need to be told apart from each other
+    /// One frequency per command — five confirmations that need to be told apart from each other
     /// as much as from the connection-health cues above.
     private static func commandFrequency(_ kind: CommandKind) -> Double {
         switch kind {
         case .start: return 987.77  // B5
         case .stop: return 392.00  // G4
+        case .send: return 659.25  // E5
         case .skip: return 1_174.66  // D6
-        case .mute: return 293.66  // D4
-        case .unmute: return 349.23  // F4
         case .end: return 523.25  // C5
         }
     }

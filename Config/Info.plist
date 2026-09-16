@@ -46,15 +46,5 @@
 			</array>
 		</dict>
 	</array>
-
-	<!-- The offline voice-command channel: Apple's on-device SpeechAnalyzer listens for a
-	     handful of spoken commands (start/stop/skip/mute/unmute/end) even though nothing it
-	     hears leaves the device or reaches a server. A missing usage description is a crash, not
-	     a prompt — it fires the first time the analyzer actually starts, which is the moment
-	     nobody is watching. A scalar key, so it could equally be an INFOPLIST_KEY_ build setting;
-	     placed here instead purely to avoid touching project.pbxproj, the one file in this
-	     project that is genuinely painful to merge by hand. -->
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Listening for spoken commands like "start" and "stop" while you dictate — entirely on this device, never sent anywhere.</string>
 </dict>
 </plist>

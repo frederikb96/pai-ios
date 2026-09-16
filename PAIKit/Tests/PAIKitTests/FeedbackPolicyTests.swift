@@ -216,8 +216,8 @@ final class FeedbackPolicyTests: XCTestCase {
     func testCommandRecognizedAlwaysCuesEvenRepeatedInstantly() {
         var policy = FeedbackPolicy()
         for _ in 0..<5 {
-            let action = policy.decide(.commandRecognized(.mute), now: t0)
-            XCTAssertEqual(action.cue, .command(.mute))
+            let action = policy.decide(.commandRecognized(.send), now: t0)
+            XCTAssertEqual(action.cue, .command(.send))
             XCTAssertNil(action.notify)
         }
     }
@@ -226,5 +226,21 @@ final class FeedbackPolicyTests: XCTestCase {
         var policy = FeedbackPolicy()
         XCTAssertEqual(policy.decide(.commandRecognized(.start), now: t0).cue, .command(.start))
         XCTAssertEqual(policy.decide(.commandRecognized(.end), now: t0).cue, .command(.end))
+    }
+
+    // MARK: - A missing offline command model degrades clearly, once per command per take
+
+    func testCommandModelMissingFiresOncePerCommandPerTake() {
+        var policy = FeedbackPolicy()
+        let first = policy.decide(.commandModelMissing(.start), now: t0)
+        XCTAssertEqual(first.cue, .error)
+        XCTAssertEqual(first.notify?.disposition, .post)
+
+        let second = policy.decide(.commandModelMissing(.start), now: t0.addingTimeInterval(1))
+        XCTAssertNil(second.notify)
+
+        // A different command missing its model is its own, separate notice.
+        let third = policy.decide(.commandModelMissing(.stop), now: t0.addingTimeInterval(2))
+        XCTAssertEqual(third.notify?.disposition, .post)
     }
 }

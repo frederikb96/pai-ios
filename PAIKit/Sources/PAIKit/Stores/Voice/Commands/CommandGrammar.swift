@@ -1,37 +1,38 @@
 import Foundation
 
-/// The configured phrase for every command, plus the built-in variants recognized alongside it.
-/// What `CommandPhrasesStore` persists and `CommandGrammar` matches against.
+/// Every phrase `CommandGrammar` matches text against — the fallback recognition path for a
+/// command not loaded into the offline wake-word engine, and stripping a recognised command's
+/// own words back out of a sent transcript regardless of which path recognised it. Fixed, never
+/// edited by Freddy: a trained classifier hears an acoustic phrase, not typed text, so `.defaults`
+/// is what every caller actually uses; a custom `CommandPhraseSet` exists only for tests.
 public struct CommandPhraseSet: Sendable, Equatable {
-    /// The phrase shown and edited in Settings — always present for every `CommandKind`, so a
-    /// lookup here is never optional at the call site.
+    /// Present for every `CommandKind`, so a lookup here is never optional at the call site.
     public var phrases: [CommandKind: String]
 
     public init(phrases: [CommandKind: String]) {
         self.phrases = phrases
     }
 
-    /// A rare first word plus a pause before it is what the on-device models pick up reliably in
-    /// both German and English — "Kai" is a German name and an English syllable either way,
-    /// which is why it is the shared first word rather than "computer" (collides with ordinary
-    /// dictation) or a fully separate phrase per language.
+    /// A rare first word plus a pause before it is what a listener picks up reliably in both
+    /// German and English — "Kai" is a German name and an English syllable either way, which is
+    /// why it is the shared first word rather than "computer" (collides with ordinary dictation)
+    /// or a fully separate phrase per language.
     public static let defaults = CommandPhraseSet(phrases: [
         .start: "Kai start",
         .stop: "Kai stop",
+        .send: "Kai send",
         .skip: "Kai skip",
-        .mute: "Kai mute",
-        .unmute: "Kai unmute",
         .end: "Kai end",
     ])
 
-    /// Recognized alongside whatever `phrases` holds — never shown as the editable value, and
-    /// never replaced by an edit to it. German inflections of the same defaults: "starte" and
-    /// "stopp" are the imperative/past forms of start/stop, and "weiter" ("carry on") is the
-    /// natural German way to ask for the mic back rather than a literal translation of "unmute".
+    /// Recognized alongside whatever `phrases` holds, never shown in place of it. German
+    /// inflections of the same defaults: "starte" and "stopp" are the imperative/past forms of
+    /// start/stop, common enough in ordinary German speech to need their own variant. "send",
+    /// "skip" and "end" are loanwords already close enough to their German pronunciation not to
+    /// need one.
     static let builtInVariants: [CommandKind: [String]] = [
         .start: ["Kai starte"],
         .stop: ["Kai stopp"],
-        .unmute: ["Kai weiter"],
     ]
 
     /// Every string recognized for `kind` — the configured phrase first, then its variants.

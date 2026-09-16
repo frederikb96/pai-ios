@@ -102,6 +102,8 @@ final class VoiceFeedbackNotifier {
             return "The spoken-reply connection is back."
         case .replyNotSpoken:
             return "A reply was not spoken — it is in the transcript."
+        case .commandModelMissing(let kind):
+            return "The \"\(kind.rawValue)\" voice command has no offline model yet — it won't fire while offline."
         case .interruptionPaused, .interruptionResumed, .commandRecognized:
             // `FeedbackPolicy` never emits a `notify` for these — a cue only, no notification.
             return ""
