@@ -1102,4 +1102,42 @@ final class VoiceRecordingSessionTests: XCTestCase {
         let finalOccurrences = await occurrences()
         XCTAssertEqual(finalOccurrences, 3, "the original send plus exactly two re-bursts, never a third")
     }
+
+    // MARK: Ordinary pauses on a perfectly clean connection
+
+    /// The regression a clean take's own pauses used to trigger: three one-second chunks, one
+    /// word spoken in the middle half of each, every word committed live, nothing ever dropped.
+    /// Deriving coverage from word extents used to read the silence between words as four
+    /// separate "gaps" on a connection that never had a single problem — the acknowledgment model
+    /// must show none at all, since every one of those seconds was sent and acknowledged.
+    func testACleanTakeWithOrdinaryPausesBetweenWordsHasNoGaps() async {
+        let transport = FakeVoiceRealtimeTransport()
+        let session = makeSession(transport: transport)
+        await session.start(hardwareSampleRate: 16000)
+        await transport.push(#"{"message_type":"session_started"}"#)
+        await waitUntil { session.state == .recording }
+
+        for second in 0..<3 {
+            let sentBefore = await transport.sentTexts.count
+            await session.ingestAudioChunk(pcm16le: [Int16](repeating: 100, count: 16000), at: second * 16000)
+            await waitUntil(async: { await transport.sentTexts.count > sentBefore })
+
+            // A word spoken in the middle half of the second, exactly as a real VAD commit would
+            // report it — the point being that the quarter-second of silence on either side of
+            // the word is never itself transcribed, only sent and acknowledged.
+            let wordStart = Double(second) + 0.25
+            let wordEnd = Double(second) + 0.75
+            await transport.push(
+                #"{"message_type":"committed_transcript_with_timestamps","text":"w\#(second)","words":[{"text":"w\#(second)","start":\#(wordStart),"end":\#(wordEnd),"type":"word"}]}"#
+            )
+            await waitUntil { session.committedSegments.count == second + 1 }
+        }
+
+        let ledger = TranscriptLedger(
+            takeId: "t", mode: .microphone, sampleRate: 16000, draftKey: "s", preText: "",
+            segments: session.committedSegments, acknowledged: session.acknowledgedRanges
+        )
+        let gaps = ledger.derivedGaps(capturedUpTo: session.capturedUpTo)
+        XCTAssertTrue(gaps.isEmpty, "an ordinary pause between committed words must never read as a gap")
+    }
 }
