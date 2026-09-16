@@ -1,10 +1,12 @@
 import PAIKit
 import SwiftUI
+import UserNotifications
 
-/// Past Recordings — the last `RecordingsStore.maxRecordings`, strictly local: nothing here has
-/// ever been uploaded, and this list starts empty on a fresh install even though the account's
-/// browser session may have a full one. There is no backend recordings route to sync from, on
-/// the web or here.
+/// Past Recordings — the last `RecordingsStore.maxRecordings` *complete* takes, plus every take
+/// the durable pipeline still owes a gap to, whatever their count (`SettingsStore.saveRecording`'s
+/// own retention rule). Strictly local: nothing here has ever been uploaded, and this list starts
+/// empty on a fresh install even though the account's browser session may have a full one. There
+/// is no backend recordings route to sync from, on the web or here.
 struct RecordingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(SettingsStore.self) private var settings
@@ -16,6 +18,10 @@ struct RecordingsSheet: View {
 
     @State private var transcribingID: String?
     @State private var errorMessage: String?
+    /// `nil` until the one-shot authorization check below resolves — read once, not kept in sync
+    /// with a Settings-app toggle flipped while this sheet is open, which is not a case worth
+    /// polling for.
+    @State private var notificationsAuthorized: Bool?
 
     private let storage = FileRecordingAudioStorage()
 
@@ -29,12 +35,29 @@ struct RecordingsSheet: View {
                     )
                 } else {
                     List {
+                        Section {
+                            storageHeaderLine
+                            if notificationsAuthorized == false {
+                                Text("Notifications are off — only the tone will tell you about a drop.")
+                                    .font(PaiTypography.caption.font)
+                                    .foregroundStyle(PaiPalette.Semantic.warningText)
+                            }
+                        }
                         ForEach(settings.recordings) { meta in
                             RecordingRow(
                                 meta: meta, isTranscribing: transcribingID == meta.id,
-                                onTap: { Task { await retranscribe(meta) } },
+                                onTapRetranscribe: { Task { await retranscribe(meta) } },
+                                onInsert: { insert(meta) },
+                                onTranscribeRemaining: { controller.transcribeRemainingGaps(id: meta.id) },
                                 onAttach: { attach(meta) }
                             )
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    controller.deleteRecording(meta)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
                         }
                     }
                 }
@@ -52,16 +75,32 @@ struct RecordingsSheet: View {
                 Text(errorMessage ?? "")
             }
         }
+        .task {
+            let notificationSettings = await UNUserNotificationCenter.current().notificationSettings()
+            notificationsAuthorized =
+                notificationSettings.authorizationStatus == .authorized
+                || notificationSettings.authorizationStatus == .provisional
+        }
         .accessibilityIdentifier("recordings-sheet")
+    }
+
+    private var storageHeaderLine: some View {
+        let usedMB = Double(storage.totalBytesUsed()) / 1_000_000
+        let freeGB = storage.freeDiskSpaceBytes().map { Double($0) / 1_000_000_000 }
+        let freeText = freeGB.map { String(format: "%.1f GB free", $0) } ?? "free space unknown"
+        return Text("\(String(format: "%.0f", usedMB)) MB in recordings · \(freeText)")
+            .font(PaiTypography.caption.font)
+            .foregroundStyle(PaiPalette.Semantic.textMuted)
     }
 
     private var errorBinding: Binding<Bool> {
         Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })
     }
 
-    /// Re-transcribes from the untouched raw capture where one was kept — the batch model accepts
-    /// any input rate, which is the entire reason a raw copy is worth keeping — falling back to
-    /// the sent audio otherwise.
+    /// A fresh, full pass over the whole take — from the untouched raw capture where one was kept
+    /// (the batch model accepts any input rate, the entire reason a raw copy is worth keeping),
+    /// falling back to the sent audio otherwise. Distinct from `onTranscribeRemaining`, which
+    /// only ever fills in a take's open gaps.
     private func retranscribe(_ meta: RecordingMeta) async {
         guard settings.elevenLabsKey.status?.set == true else {
             errorMessage = "Set the ElevenLabs API key in Settings first."
@@ -91,6 +130,18 @@ struct RecordingsSheet: View {
         } catch {
             errorMessage = (error as? PaiError)?.userMessage ?? "\(error)"
         }
+    }
+
+    /// Inserts whatever this take has transcribed so far — complete or not, an inline `…` marker
+    /// (`VoiceRecorderController.assembledPrefixedText`'s own convention) stands in for anything
+    /// still open.
+    private func insert(_ meta: RecordingMeta) {
+        guard let text = meta.transcript, !text.isEmpty else {
+            errorMessage = "No transcript to insert yet."
+            return
+        }
+        onInsertTranscript("\(VoiceRecordingResult.sttPrefix)\(text)")
+        dismiss()
     }
 
     /// Stages the recording as attachments: `-raw`/`-sent` when both were kept, a single combined
@@ -135,7 +186,9 @@ struct RecordingsSheet: View {
 private struct RecordingRow: View {
     let meta: RecordingMeta
     let isTranscribing: Bool
-    var onTap: () -> Void
+    var onTapRetranscribe: () -> Void
+    var onInsert: () -> Void
+    var onTranscribeRemaining: () -> Void
     var onAttach: () -> Void
 
     var body: some View {
@@ -148,6 +201,11 @@ private struct RecordingRow: View {
                 }
                 Text(headline)
                     .font(PaiTypography.bodyEmphasized.font)
+                if let coverageLine {
+                    Text(coverageLine)
+                        .font(PaiTypography.caption.font)
+                        .foregroundStyle(coverageColor)
+                }
                 if let micLine {
                     Text(micLine)
                         .font(PaiTypography.caption.font)
@@ -164,15 +222,53 @@ private struct RecordingRow: View {
             if isTranscribing {
                 ProgressView()
             } else {
-                Button(action: onAttach) {
-                    Image(systemName: "paperclip")
+                HStack(spacing: 16) {
+                    if hasOpenGaps {
+                        Button(action: onTranscribeRemaining) {
+                            Image(systemName: "waveform.badge.magnifyingglass")
+                        }
+                        .accessibilityLabel("Transcribe remaining audio")
+                    }
+                    if meta.transcript?.isEmpty == false {
+                        Button(action: onInsert) {
+                            Image(systemName: "text.insert")
+                        }
+                        .accessibilityLabel("Insert transcript")
+                    }
+                    Button(action: onAttach) {
+                        Image(systemName: "paperclip")
+                    }
+                    .accessibilityLabel("Attach recording")
                 }
                 .buttonStyle(.borderless)
-                .accessibilityLabel("Attach recording")
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture { if !isTranscribing { onTap() } }
+        .onTapGesture { if !isTranscribing { onTapRetranscribe() } }
+    }
+
+    private var hasOpenGaps: Bool { (meta.transcription?.gapCount ?? 0) > 0 }
+
+    private var coverageLine: String? {
+        guard let transcription = meta.transcription else { return nil }
+        switch transcription.state {
+        case .complete: return "Complete"
+        case .pending: return "\(Self.durationLabel(ms: transcription.gapMs)) untranscribed"
+        case .failed: return "Failed to transcribe \(Self.durationLabel(ms: transcription.gapMs))"
+        }
+    }
+
+    private var coverageColor: Color {
+        switch meta.transcription?.state {
+        case .complete, .none: PaiPalette.Semantic.textMuted
+        case .pending: PaiPalette.Semantic.warningText
+        case .failed: PaiPalette.Semantic.errorText
+        }
+    }
+
+    private static func durationLabel(ms: Double) -> String {
+        let totalSeconds = Int(ms / 1000)
+        return "\(totalSeconds / 60):\(String(format: "%02d", totalSeconds % 60))"
     }
 
     private var headline: String {

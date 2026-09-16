@@ -215,8 +215,8 @@ final class AppEnvironment {
         await connection.staging.loadPersisted()
         await connection.notifications.refreshSummary()
         // Synchronous and disk-only — no reason to make a take Freddy is trying to find wait on
-        // anything above it. See `VoiceRecorderController.reconcileOrphanedRecordings()`.
-        connection.voice.reconcileOrphanedRecordings()
+        // anything above it. See `VoiceRecorderController.reconcileTakes()`.
+        connection.voice.reconcileTakes()
         // Session polling belongs to the app, not to the list screen. Tied to a view it stops
         // the moment a session is opened — so states, titles and warning badges freeze exactly
         // while the user is reading one — and restarting it on return re-fetches the first page,

@@ -6,16 +6,12 @@ import UserNotifications
 /// place rather than stacking on a bad ride. This is what tells Freddy the moment anything flaky
 /// happens, even when recovery is fully automatic and nothing else on screen would show it.
 ///
-/// Distinct from `VoiceInterruptionNotifier`: that one posts a single, final "this take ended"
-/// notice for a reason `VoiceRecorderController` already decided; this one fires throughout a
-/// take that is still very much running, and reuses one notification request rather than posting
-/// a fresh one per event. `VoiceInterruptionNotifier` is not deleted here — `VoiceRecorderController`
-/// still calls it, and rewiring that call site is the controller-integration work, not this
-/// type's; once that lands, `VoiceInterruptionNotifier` has nothing left calling it.
+/// Covers every reason a take can end or hit trouble — the tap, silence, a give-up, an
+/// interruption that could not resume — by reusing one notification request per take rather than
+/// posting a fresh one per event, so a flapping ride produces one banner, not thirty.
 ///
-/// Owns no authorization request of its own, same as `VoiceInterruptionNotifier` — `PushRegistrar`
-/// is the one claimant of the system prompt; this silently no-ops when notifications were never
-/// authorized, same as that type does.
+/// Owns no authorization request of its own — `PushRegistrar` is the one claimant of the system
+/// prompt; this silently no-ops when notifications were never authorized.
 @MainActor
 final class VoiceFeedbackNotifier {
     private var policy = FeedbackPolicy()
