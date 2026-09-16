@@ -81,6 +81,11 @@ public final class CallModeStore {
     /// shows for "message pending" the moment a "stop" leaves something queued, not only once a
     /// send is actually waiting on a gap.
     public private(set) var turnRanges: [SampleRange] = []
+    /// Every command `handle(_:)` accepted since the turn began — what a send strips out of the
+    /// assembled text (`CallMessageAssembler.assembledText(for:in:strippingCommands:)`) so "send"
+    /// itself, heard from `.collecting`, does not land as the tail end of the very message it
+    /// just triggered. Cleared everywhere `turnRanges` is: the two share exactly one lifetime.
+    private var firedCommandsInTurn: [CommandEvent] = []
     public private(set) var sessionState: SessionState?
     public private(set) var blocker: Blocker?
     /// The bound session's own row status (`completed`/`deleted`/`error`, …) — a future send is
@@ -96,8 +101,25 @@ public final class CallModeStore {
     /// the caller's point of view, since the words exist and Freddy never said "send". `nil`
     /// whenever "end" fired with nothing pending, and reset at the start of the next call.
     public private(set) var lastAbandonedTurnText: String?
+    /// Set when a "send" was heard but the send itself never went out — refused by
+    /// `sendingIsRefused`, or thrown by `postMessage`. Distinct from `lastSendFailure`: that is
+    /// only the error, this is the text itself, the one thing a caller actually needs to hand
+    /// back to Freddy rather than silently drop — without it, everything he said since the last
+    /// successful send just disappears the moment a send is refused or fails. `nil` whenever the
+    /// turn's most recent send outcome was itself `nil` (nothing pending) or succeeded.
+    public private(set) var lastUnsentTurnText: String?
 
     private let dependencies: CallModeDependencies
+
+    /// Reads and clears `lastUnsentTurnText` together — the store's own send outcome, and a
+    /// caller's own delayed `.pendingSend` resolution (a ledger commit landing after "send" left
+    /// the turn held on a gap) can both reach a place that would otherwise hand the same text off
+    /// twice. There is exactly one caller for a given unsent turn; this is what makes that true
+    /// rather than merely intended.
+    public func consumeUnsentTurnText() -> String? {
+        defer { lastUnsentTurnText = nil }
+        return lastUnsentTurnText
+    }
 
     /// Session statuses that end the underlying conversation — refuses new sends, but never ends
     /// the call itself: "sending refused", never "call disconnected", matching the design's own
@@ -114,7 +136,9 @@ public final class CallModeStore {
     public func startEntering() {
         guard phase == .idle else { return }
         turnRanges = []
+        firedCommandsInTurn = []
         lastAbandonedTurnText = nil
+        lastUnsentTurnText = nil
         phase = .entering
     }
 
@@ -147,6 +171,7 @@ public final class CallModeStore {
     /// whatever it turns out to do to `phase`.
     public func handle(_ command: CommandEvent) async {
         dependencies.feedback(.commandRecognized(command.kind))
+        firedCommandsInTurn.append(command)
         switch command.kind {
         case .start:
             guard case .listening = phase else { return }
@@ -201,13 +226,18 @@ public final class CallModeStore {
             phase = .pendingSend
             return
         }
-        let text = CallMessageAssembler.assembledText(for: turnRanges, in: ledger)
+        let assembled = CallMessageAssembler.assembledText(
+            for: turnRanges, in: ledger, strippingCommands: firedCommandsInTurn)
+        let text = assembled.isEmpty ? "" : "\(VoiceRecordingResult.sttPrefix)\(assembled)"
         turnRanges = []
+        firedCommandsInTurn = []
+        lastUnsentTurnText = nil
         guard !text.isEmpty else {
             phase = .listening
             return
         }
         guard !sendingIsRefused else {
+            lastUnsentTurnText = text
             phase = .listening
             return
         }
@@ -216,6 +246,7 @@ public final class CallModeStore {
             phase = .listening
         } catch {
             lastSendFailure = error
+            lastUnsentTurnText = text
             phase = .listening
         }
     }
@@ -236,9 +267,11 @@ public final class CallModeStore {
             lastAbandonedTurnText = nil
             return
         }
-        let text = CallMessageAssembler.assembledText(for: turnRanges, in: dependencies.currentLedger())
+        let assembled = CallMessageAssembler.assembledText(
+            for: turnRanges, in: dependencies.currentLedger(), strippingCommands: firedCommandsInTurn)
         turnRanges = []
-        lastAbandonedTurnText = text.isEmpty ? nil : text
+        firedCommandsInTurn = []
+        lastAbandonedTurnText = assembled.isEmpty ? nil : "\(VoiceRecordingResult.sttPrefix)\(assembled)"
     }
 
     // MARK: - Crash recovery

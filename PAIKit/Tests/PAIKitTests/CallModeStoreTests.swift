@@ -130,7 +130,7 @@ final class CallModeStoreTests: XCTestCase {
 
         await store.handle(CommandEvent(kind: .send, atOffset: 1000, confidence: 1))
 
-        XCTAssertEqual(sender.sentTexts, ["hello there"])
+        XCTAssertEqual(sender.sentTexts, ["stt-rec: hello there"])
         XCTAssertEqual(store.phase, .listening)
         XCTAssertTrue(store.turnRanges.isEmpty)
     }
@@ -150,7 +150,7 @@ final class CallModeStoreTests: XCTestCase {
 
         await store.handle(CommandEvent(kind: .send, atOffset: 1500, confidence: 1))
 
-        XCTAssertEqual(sender.sentTexts, ["hello there"])
+        XCTAssertEqual(sender.sentTexts, ["stt-rec: hello there"])
         XCTAssertEqual(store.phase, .listening)
         XCTAssertTrue(store.turnRanges.isEmpty)
     }
@@ -225,7 +225,7 @@ final class CallModeStoreTests: XCTestCase {
         )
         await store.ledgerChanged()
 
-        XCTAssertEqual(sender.sentTexts, ["partial message now complete"])
+        XCTAssertEqual(sender.sentTexts, ["stt-rec: partial message now complete"])
         XCTAssertEqual(store.phase, .listening)
         XCTAssertTrue(store.turnRanges.isEmpty)
     }
@@ -281,7 +281,7 @@ final class CallModeStoreTests: XCTestCase {
 
         XCTAssertTrue(sender.sentTexts.isEmpty, "end never sends — only send does")
         XCTAssertEqual(store.phase, .idle)
-        XCTAssertEqual(store.lastAbandonedTurnText, "never mind")
+        XCTAssertEqual(store.lastAbandonedTurnText, "stt-rec: never mind")
         XCTAssertTrue(store.turnRanges.isEmpty)
     }
 
@@ -365,7 +365,7 @@ final class CallModeStoreTests: XCTestCase {
 
         await store.handle(CommandEvent(kind: .send, atOffset: 1000, confidence: 1))
 
-        XCTAssertEqual(sender.sentTexts, ["hello there"])
+        XCTAssertEqual(sender.sentTexts, ["stt-rec: hello there"])
     }
 
     // MARK: - A failed send is recorded but never leaves the call stuck
@@ -387,6 +387,85 @@ final class CallModeStoreTests: XCTestCase {
         XCTAssertTrue(sender.sentTexts.isEmpty)
         XCTAssertEqual(store.phase, .listening)
         XCTAssertNotNil(store.lastSendFailure)
+        XCTAssertEqual(
+            store.lastUnsentTurnText, "stt-rec: hello there",
+            "a failed postMessage must not silently lose the text it failed to send")
+    }
+
+    // MARK: - Refused/failed sends hand their text back rather than losing it
+
+    func testARefusedSendSetsLastUnsentTurnTextRatherThanLosingIt() async {
+        let ledgerBox = LedgerBox(
+            TranscriptLedger(
+                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+                segments: [Segment(range: 0..<1000, text: "hello there", source: .live)]
+            ))
+        let store = makeStore(ledgerBox: ledgerBox, sender: SendRecorder())
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+        store.sessionStatusChanged(.completed)
+
+        await store.handle(CommandEvent(kind: .send, atOffset: 1000, confidence: 1))
+
+        XCTAssertEqual(store.lastUnsentTurnText, "stt-rec: hello there")
+    }
+
+    func testConsumeUnsentTurnTextReadsAndClearsItInOneStep() async {
+        let ledgerBox = LedgerBox(
+            TranscriptLedger(
+                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+                segments: [Segment(range: 0..<1000, text: "hello there", source: .live)]
+            ))
+        let store = makeStore(ledgerBox: ledgerBox, sender: SendRecorder())
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+        store.sessionStatusChanged(.completed)
+        await store.handle(CommandEvent(kind: .send, atOffset: 1000, confidence: 1))
+        XCTAssertNotNil(store.lastUnsentTurnText)
+
+        let consumed = store.consumeUnsentTurnText()
+
+        XCTAssertEqual(consumed, "stt-rec: hello there")
+        XCTAssertNil(store.lastUnsentTurnText, "a second read must not hand back the same text again")
+    }
+
+    func testASuccessfulSendLeavesNothingInLastUnsentTurnText() async {
+        let ledgerBox = LedgerBox(
+            TranscriptLedger(
+                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+                segments: [Segment(range: 0..<1000, text: "hello there", source: .live)]
+            ))
+        let store = makeStore(ledgerBox: ledgerBox, sender: SendRecorder())
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+
+        await store.handle(CommandEvent(kind: .send, atOffset: 1000, confidence: 1))
+
+        XCTAssertNil(store.lastUnsentTurnText)
+    }
+
+    // MARK: - A "send" command word is stripped from its own turn's text before it is sent
+
+    func testSendCommandWordItselfIsStrippedFromTheTextItTriggeredSending() async {
+        let words = [
+            Word(range: 0..<400, text: "hello"), Word(range: 400..<700, text: "kai"),
+            Word(range: 700..<1000, text: "send"),
+        ]
+        let ledgerBox = LedgerBox(
+            TranscriptLedger(
+                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+                segments: [Segment(range: 0..<1000, text: "hello kai send", words: words, source: .live)]
+            ))
+        let sender = SendRecorder()
+        let store = makeStore(ledgerBox: ledgerBox, sender: sender)
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+
+        await store.handle(CommandEvent(kind: .send, atOffset: 850, confidence: 1))
+
+        XCTAssertEqual(
+            sender.sentTexts, ["stt-rec: hello"],
+            "the command's own spoken words must not land inside the message it sent")
     }
 
     // MARK: - Crash-cut recovery

@@ -415,6 +415,49 @@ final class SpeechOutputSessionTests: XCTestCase {
         await waitUntil { recorder.events.contains(.ttsDropped) }
     }
 
+    /// The bug this whole reconnect path exists to catch: reply 1's own two sentences (plus reply
+    /// 2's one) are all handed to the transport well before any audio would normally arrive
+    /// (generation runs far ahead of playback), so by the time the socket actually dies, `head
+    /// .remaining` — reply 1's own — is already empty. Without resetting it, the reconnected
+    /// context is never told to open at all: `advance()` returns before ever sending
+    /// `initializeContext`, `contextFinished` can then never arrive, the queue never advances, and
+    /// reply 2 is never spoken either, with no `replyNotSpoken` to explain why.
+    func testASingleDropAfterAllSentencesSentResendsOnTheFreshContextAndTheNextReplyStillSpeaks() async {
+        let transport = FakeVoiceTtsTransport()
+        let recorder = FeedbackRecorder()
+        let session = makeSession(transport: transport, feedbackRecorder: recorder)
+
+        session.enqueue(messageId: 1, sentences: ["first one.", "first two."])
+        session.enqueue(messageId: 2, sentences: ["second."])
+
+        // initializeContext + two sendText frames for reply 1 alone.
+        await waitUntil(async: { await transport.sentTexts.count >= 3 })
+        let sentBeforeDrop = await transport.sentTexts.count
+
+        await transport.fail()
+
+        // A fresh connection, and — the fix — reply 1's own sentences resent on it, never left
+        // stranded with nothing more to send. Counted, not merely found: "first one." already
+        // appears once from the pre-drop send, so only a *second* occurrence proves a resend
+        // actually happened rather than the bug's own early return leaving `sentTexts` unchanged.
+        await waitUntil(async: { await transport.connectCallCount >= 2 })
+        await waitUntil(async: { await transport.sentTexts.count > sentBeforeDrop })
+        let textsAfterReconnect = await transport.sentTexts
+        XCTAssertEqual(
+            textsAfterReconnect.filter({ $0.contains("first one.") }).count, 2,
+            "reply 1 must be resent on the fresh context, not left with nothing to send")
+
+        // The reconnected context finishes normally, exactly as an ordinary one would — the queue
+        // must advance, and reply 2 must still be generated, never stuck behind a reply whose
+        // context was never reopened.
+        await transport.push(#"{"isFinal":true}"#)
+        await waitUntil(async: { await transport.sentTexts.contains { $0.contains("second.") } })
+        let finalTexts = await transport.sentTexts
+        XCTAssertTrue(finalTexts.contains { $0.contains("second.") })
+        XCTAssertTrue(
+            recorder.events.contains(.ttsReconnected), "the link coming back must be told apart from staying dropped")
+    }
+
     func testARepeatedlyFailingReplyIsEventuallyAbandonedAndTheNextOneStillGetsGenerated() async {
         let transport = FakeVoiceTtsTransport()
         let recorder = FeedbackRecorder()
