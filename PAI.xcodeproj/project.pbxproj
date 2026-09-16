@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		1A0000000000000000000012 /* PAIKit in Frameworks */ = {isa = PBXBuildFile; productRef = 1A0000000000000000000011 /* PAIKit */; };
+		1A0000000000000000000017 /* LiveKitWakeWord in Frameworks */ = {isa = PBXBuildFile; productRef = 1A0000000000000000000016 /* LiveKitWakeWord */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -29,6 +30,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				1A0000000000000000000012 /* PAIKit in Frameworks */,
+				1A0000000000000000000017 /* LiveKitWakeWord in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -81,6 +83,7 @@
 			name = PAI;
 			packageProductDependencies = (
 				1A0000000000000000000011 /* PAIKit */,
+				1A0000000000000000000016 /* LiveKitWakeWord */,
 			);
 			productName = PAI;
 			productReference = 1A0000000000000000000003 /* PAI.app */;
@@ -112,6 +115,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				1A0000000000000000000010 /* XCLocalSwiftPackageReference "PAIKit" */,
+				1A0000000000000000000015 /* XCRemoteSwiftPackageReference "livekit-wakeword" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 1A0000000000000000000005 /* Products */;
@@ -273,10 +277,26 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		1A0000000000000000000015 /* XCRemoteSwiftPackageReference "livekit-wakeword" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/livekit/livekit-wakeword";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 0.2.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		1A0000000000000000000011 /* PAIKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = PAIKit;
+		};
+		1A0000000000000000000016 /* LiveKitWakeWord */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1A0000000000000000000015 /* XCRemoteSwiftPackageReference "livekit-wakeword" */;
+			productName = LiveKitWakeWord;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
