@@ -300,7 +300,9 @@ final class CallModeController {
                 makeTransport: { URLSessionVoiceTtsTransport() },
                 // `@Sendable`, reading a `@MainActor` store's property — same assertion as
                 // `currentLedger` above, for the same reason.
-                voiceId: { [settingsStore] in MainActor.assumeIsolated { settingsStore.ttsVoiceId } },
+                voiceId: { [settingsStore] in
+                    MainActor.assumeIsolated { VoiceTtsProtocol.resolvedVoiceId(settingsStore.ttsVoiceId) }
+                },
                 playAudio: { [weak output] messageId, samples in
                     output?.schedule(messageId: messageId, samples: samples)
                 },

@@ -19,6 +19,18 @@ public enum VoiceTtsProtocol {
     /// the played audio's own `AVAudioUnitTimePitch` node — unbounded, adjustable mid-playback,
     /// and it never asks the model to synthesize at a speed it was not trained for.
     public static let voiceSettingsSpeed = 1.0
+    /// The voice call mode speaks in when Freddy has never pasted one of his own — a premade
+    /// ElevenLabs voice ("George"), fast and clear. An empty voice id in the connection URL fails
+    /// the handshake outright (ElevenLabs closes with 1002, never sending the 101 that would open
+    /// the socket), so falling through to ElevenLabs' own server-side default was never actually
+    /// happening; this is the one place that fallback is named, so nothing else needs to guess at
+    /// it. `resolvedVoiceId(_:)` is the only caller that should ever read this.
+    public static let defaultVoiceId = "JBFqnCBsd6RMkjVDRZzb"
+    /// `voiceId`, or ``defaultVoiceId`` when Freddy has not pasted one — the single place this
+    /// fallback is decided, so a connection is never attempted with an empty voice id.
+    public static func resolvedVoiceId(_ voiceId: String) -> String {
+        voiceId.isEmpty ? defaultVoiceId : voiceId
+    }
     /// `inactivity_timeout` — ElevenLabs closes the whole connection, not just one context, after
     /// this many seconds with no activity on any context; documented default is 20s, this is the
     /// documented ceiling. Requested unconditionally: a call sits quiet between replies for far

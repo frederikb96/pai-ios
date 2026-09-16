@@ -52,8 +52,7 @@ public actor URLSessionVoiceTtsTransport: VoiceTtsTransport {
             @unknown default: return ""
             }
         } catch {
-            let reason = task.closeReason.map { String(decoding: $0, as: UTF8.self) }
-            throw VoiceTransportError.connectionLost(reason: reason)
+            throw VoiceTransportError.connectionLost(reason: task.closeDescription)
         }
     }
 

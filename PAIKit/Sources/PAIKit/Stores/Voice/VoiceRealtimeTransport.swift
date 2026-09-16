@@ -23,11 +23,26 @@ public protocol VoiceRealtimeTransport: Sendable {
 public enum VoiceTransportError: Error, Sendable, Equatable {
     case notConnected
     /// `receive()` failed — a dropped socket, a server-initiated close, or a plain network
-    /// error. `reason` carries the close reason text when the transport actually got one (a
-    /// clean server close, e.g. ElevenLabs' `resource_exhausted`); `nil` for everything else,
+    /// error. `reason` carries whatever `URLSessionWebSocketTask.closeDescription` below found —
+    /// a numeric close code, the server's own reason text, or both; `nil` for everything else,
     /// including the far more common case of a phone simply losing signal mid-take, which is
     /// exactly the scenario `VoiceRecordingSession`'s reconnect logic exists to survive.
     case connectionLost(reason: String?)
+}
+
+extension URLSessionWebSocketTask {
+    /// A close code plus whatever reason text the server sent, when either is actually present.
+    /// Folds the numeric code in specifically so a handshake refusal — ElevenLabs closing with
+    /// 1002 and never sending the 101 that would have opened the socket — reads differently in
+    /// the log from an ordinary mid-stream drop, rather than both collapsing into the same
+    /// `connectionLost(reason: nil)`. `nil` only when the task never received a close frame at
+    /// all (`.invalid`) and sent no reason text either — a plain network failure.
+    var closeDescription: String? {
+        let reasonText = closeReason.map { String(decoding: $0, as: UTF8.self) }
+        guard closeCode != .invalid else { return reasonText }
+        let codeText = "close \(closeCode.rawValue)"
+        return reasonText.map { "\(codeText): \($0)" } ?? codeText
+    }
 }
 
 /// `URLSessionWebSocketTask`-backed. ElevenLabs is a third party the app talks to directly —
@@ -63,11 +78,7 @@ public actor URLSessionVoiceRealtimeTransport: VoiceRealtimeTransport {
             @unknown default: return ""
             }
         } catch {
-            // Populated only for a clean server-initiated close; a plain network failure leaves
-            // `closeCode` at `.invalid` and this stays `nil` — the caller treats that as "unknown
-            // cause, assume transient" rather than as "no close happened at all".
-            let reason = task.closeReason.map { String(decoding: $0, as: UTF8.self) }
-            throw VoiceTransportError.connectionLost(reason: reason)
+            throw VoiceTransportError.connectionLost(reason: task.closeDescription)
         }
     }
 

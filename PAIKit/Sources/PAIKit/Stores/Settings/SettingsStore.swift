@@ -75,7 +75,9 @@ public final class SettingsStore {
 
     /// Freddy's pasted ElevenLabs voice id for call mode's spoken replies — a plain client-side
     /// setting, not a secret: it names which voice to speak in, nothing that authenticates
-    /// anything. Empty means "use ElevenLabs' own default voice for the token".
+    /// anything. Empty means the app's own built-in default (`VoiceTtsProtocol.defaultVoiceId`) —
+    /// ElevenLabs itself has no server-side default to fall back to; an empty voice id in the
+    /// connection URL fails the handshake outright.
     public private(set) var ttsVoiceId: String
     /// `AVAudioUnitTimePitch.rate` call mode's speech output plays back at — `1.0` is ElevenLabs'
     /// own generation speed, unchanged.

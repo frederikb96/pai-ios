@@ -30,6 +30,24 @@ final class VoiceTtsProtocolTests: XCTestCase {
                     value: String(VoiceTtsProtocol.maxInactivityTimeoutSeconds))))
     }
 
+    // MARK: - Voice id fallback
+
+    func testResolvedVoiceIdPassesThroughAConfiguredVoice() {
+        XCTAssertEqual(VoiceTtsProtocol.resolvedVoiceId("abc123"), "abc123")
+    }
+
+    func testResolvedVoiceIdFallsBackToTheDefaultWhenEmpty() {
+        XCTAssertEqual(VoiceTtsProtocol.resolvedVoiceId(""), VoiceTtsProtocol.defaultVoiceId)
+    }
+
+    func testConnectionURLWithAnEmptyVoiceIdIsWhatFailedTheHandshakeLive() throws {
+        // Regression: the URL this produces is exactly what a live probe confirmed ElevenLabs
+        // refuses outright (close 1002, no 101) — `resolvedVoiceId` exists so nothing ever builds
+        // this URL for a real connection again.
+        let url = try XCTUnwrap(VoiceTtsProtocol.connectionURL(voiceId: "", token: "tok-xyz"))
+        XCTAssertTrue(url.path.contains("/v1/text-to-speech//multi-stream-input"))
+    }
+
     // MARK: - Uplink frame shapes — only the fields ElevenLabs documents for each message type
 
     private func decodedFrame(_ message: TtsUplinkMessage) throws -> [String: Any] {

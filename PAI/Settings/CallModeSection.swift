@@ -25,7 +25,7 @@ struct CallModeSection: View {
             Text("Call Mode")
         } footer: {
             Text(
-                "The ElevenLabs voice id call mode speaks replies in, pasted from your account. Empty uses the default voice for the token."
+                "The ElevenLabs voice id call mode speaks replies in, pasted from your account. Empty uses the app's own built-in default voice."
             )
         }
     }
