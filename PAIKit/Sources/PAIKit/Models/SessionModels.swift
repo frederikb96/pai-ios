@@ -312,6 +312,12 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// What this session has running right now — subagents and background shells/monitors.
     /// `nil` from an agent too old to report it, read the same as "nothing known", never as zero.
     public let activityCounts: ActivityCounts?
+    /// Whether this session's conversation may be granted gated-secret access right now — computed
+    /// once on the server (false for a sandboxed session type, false with no live conversation) so
+    /// every client hides or disables the same menu entry from the same answer instead of
+    /// re-deriving it from `state`/`discovered`/`kind` separately. `nil` from a backend that
+    /// predates the field, read as not grantable rather than as unknown.
+    public let secretGrantable: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -350,6 +356,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         case projectName = "project_name"
         case taskId = "task_id"
         case activityCounts = "activity_counts"
+        case secretGrantable = "secret_grantable"
     }
 
     public init(
@@ -394,7 +401,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         phaseId: String?,
         projectName: String?,
         taskId: String? = nil,
-        activityCounts: ActivityCounts? = nil
+        activityCounts: ActivityCounts? = nil,
+        secretGrantable: Bool? = nil
     ) {
         self.id = id
         self.sessionType = sessionType
@@ -438,6 +446,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.projectName = projectName
         self.taskId = taskId
         self.activityCounts = activityCounts
+        self.secretGrantable = secretGrantable
     }
 
     /// A copy with the session-level fields of a live SSE `status` event applied — the same
@@ -466,7 +475,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
             sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
             projectId: projectId, phaseId: phaseId, projectName: projectName, taskId: taskId,
-            activityCounts: activityCounts
+            activityCounts: activityCounts, secretGrantable: secretGrantable
         )
     }
 }

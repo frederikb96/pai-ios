@@ -12,9 +12,14 @@ import SwiftUI
 /// outlives the sheet that collected it.
 struct SecretGrantSheet: View {
     let sessionID: String
+    /// The session being granted access, for the sheet's own header — `nil` only in the gap
+    /// before the session list has loaded a row for `sessionID`, which the menu entry that opens
+    /// this sheet is gated against (`secretGrantable`), so that gap is not expected to reach here.
+    let session: Session?
 
     @Environment(\.dismiss) private var dismiss
     @Environment(AppEnvironment.self) private var environment
+    @Environment(MachineStore.self) private var machines
 
     @State private var passphrase = ""
     @State private var ttlSeconds = Self.durationChoices[2].seconds
@@ -58,7 +63,15 @@ struct SecretGrantSheet: View {
                 }
             }
         }
-        .onAppear { passphraseFocused = true }
+        .task {
+            // `.onAppear` fires while the sheet's own presentation transition is still animating,
+            // and a focus claimed mid-transition is silently dropped — SwiftUI has nothing that
+            // signals "the sheet has actually settled," so this waits out the transition rather
+            // than racing it. Not verified on a device; flag anew if the delay proves too short
+            // or too eager on a real phone.
+            try? await Task.sleep(for: .milliseconds(400))
+            passphraseFocused = true
+        }
         .onDisappear { passphrase = "" }
         .accessibilityIdentifier("secret-grant-sheet")
     }
@@ -70,9 +83,11 @@ struct SecretGrantSheet: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .focused($passphraseFocused)
+                    .submitLabel(.go)
+                    .onSubmit { Task { await submit() } }
                     .accessibilityIdentifier("secret-grant-passphrase")
             } footer: {
-                Text("Unlocks every gated secret for this session's Claude conversation, for the duration below.")
+                Text("Unlocks every gated secret for \(target)'s Claude conversation, for the duration below.")
             }
 
             Section {
@@ -137,12 +152,27 @@ struct SecretGrantSheet: View {
                 errorMessage = "Wrong passphrase."
             case .sessionUnavailable:
                 errorMessage = "This session isn't running right now — nothing to grant access to."
+            case let .notAuthorized(message):
+                errorMessage = message
+            case let .rateLimited(message):
+                errorMessage = message
+            case let .invalidRequest(message):
+                errorMessage = message
             case .timedOut:
                 errorMessage = "The agent didn't answer in time. Try again."
             }
         } catch {
             errorMessage = (error as? PaiError)?.userMessage ?? "Could not grant access"
         }
+    }
+
+    /// This sheet's own answer to "which conversation am I about to unlock" — title, session
+    /// type and machine, so it is never ambiguous which of possibly several open sessions a Grant
+    /// tap affects. `sessionID` alone if the row has not loaded — see `session`'s doc comment for
+    /// when that gap is expected.
+    private var target: String {
+        guard let session else { return sessionID }
+        return SessionListDomain.secretGrantTarget(for: session, machines: machines.allMachines)
     }
 
     /// Mirrors `SecretField.formatted(_:)` — the backend's six-fractional-digit ISO timestamp
