@@ -122,6 +122,15 @@ final class VoiceRecorderController {
     /// idle, and for every take that is not the one currently running — those are read from disk.
     private var activeLedger: TranscriptLedger?
     private var ledgerTask: Task<Void, Never>?
+    /// Call mode's own active take id — the `voiceSession`-shaped counterpart for a take this
+    /// type does not itself drive. `reserveForCallMode()`'s mutual exclusion is what makes sharing
+    /// `activeLedger`/`currentTakeId` between the two safe: only one of `takeTimestampMs`/
+    /// `externalTakeId` is ever non-`nil` at a time.
+    private var externalTakeId: String?
+    /// Fires whenever a write to `externalTakeId`'s ledger lands while it is still the active
+    /// take — call mode's own hook for `CallModeStore.ledgerChanged()`, which needs to know the
+    /// moment a held send's gap might have closed, not only when its own cycle ends.
+    private var externalLedgerChanged: (() -> Void)?
     /// One backfill loop per take still owed a gap — the active take's, and any take
     /// `reconcileTakes()` found still incomplete at launch. Keyed so a second call for a take
     /// already being worked is a no-op rather than a duplicate loop racing itself.
@@ -336,6 +345,47 @@ final class VoiceRecorderController {
         try? configureAudioSession()
     }
 
+    /// The audio-storage handle call mode's own streaming file and backfill reads share with a
+    /// microphone-mode take's — a fresh `FileRecordingAudioStorage` rather than this type's own
+    /// private one, but not a second copy of anything: the type is a stateless wrapper around a
+    /// deterministic sandboxed path, so any number of instances resolve the identical directory
+    /// and the identical URL for a given take id.
+    var externalAudioStorage: FileRecordingAudioStorage { audioStorage }
+
+    /// Claims the shared `activeLedger`/`currentTakeId` slot for a take call mode drives rather
+    /// than `voiceSession` — mutually exclusive with a microphone-mode take by construction
+    /// (`reserveForCallMode()`), so there is never a genuine second claimant to conflict with.
+    /// `onLedgerChanged` fires whenever a write lands for this take while it is still the active
+    /// one — see `notifyExternalLedgerObserverIfCurrent`'s own doc comment.
+    func beginExternalTake(_ ledger: TranscriptLedger, onLedgerChanged: @escaping () -> Void) {
+        externalTakeId = ledger.takeId
+        externalLedgerChanged = onLedgerChanged
+        activeLedger = ledger
+    }
+
+    /// Releases the slot `beginExternalTake` claimed — a backfill that completes afterward for
+    /// this same take id still lands correctly (`applyBackfillOutcome`'s own `takeId ==
+    /// currentTakeId` check now reads `false`, so it falls through to appending healed text into
+    /// the take's draft instead, exactly as a microphone-mode take already does once it has ended).
+    func endExternalTake() {
+        externalTakeId = nil
+        externalLedgerChanged = nil
+        activeLedger = nil
+    }
+
+    /// Call mode's own entry into the identical ledger write `persistLedger` already gives a
+    /// microphone-mode take — gap derivation, backfill scheduling and the "still catching up" cue
+    /// all follow from this one call, unchanged.
+    func persistExternalLedger(takeId: String, segments: [Segment], capturedUpTo: Int, collecting: [SampleRange]) {
+        persistLedger(takeId: takeId, segments: segments, capturedUpTo: capturedUpTo, collecting: collecting)
+    }
+
+    /// The call's own ledger as of the last write — `nil` once `endExternalTake()` has released
+    /// the slot, exactly mirroring how `activeLedger` itself already goes stale for a
+    /// microphone-mode take the moment `currentTakeId` no longer names it. What
+    /// `CallModeStore.currentLedger` and this type's own delete-on-exit check both read.
+    var currentExternalLedger: TranscriptLedger? { externalTakeId != nil ? activeLedger : nil }
+
     // MARK: - Start / stop
 
     /// `draftKey` names where the live transcript is written as it arrives — a session id for the
@@ -543,7 +593,9 @@ final class VoiceRecorderController {
 
     // MARK: - Durable pipeline: ledger and backfill
 
-    private var currentTakeId: String? { takeTimestampMs.map { RecordingMeta.id(forTimestampMs: $0) } }
+    private var currentTakeId: String? {
+        takeTimestampMs.map { RecordingMeta.id(forTimestampMs: $0) } ?? externalTakeId
+    }
 
     /// The active take's own ledger, kept in memory; a take that is not the one currently running
     /// is read straight off disk — the same split `readLedger`'s every caller relies on.
@@ -562,30 +614,41 @@ final class VoiceRecorderController {
         while !Task.isCancelled, voiceSession.state != .idle {
             if voiceSession.committedSegments.count != lastSegmentCount {
                 lastSegmentCount = voiceSession.committedSegments.count
-                persistLedger(takeId: takeId)
+                persistLedger(
+                    takeId: takeId, segments: voiceSession.committedSegments, capturedUpTo: voiceSession.capturedUpTo)
             }
             try? await Task.sleep(for: .seconds(1))
         }
         // One last write regardless of how the loop above ended — the final segment or the
         // final `capturedUpTo` can land in the gap between the loop's last tick and the state
         // actually flipping to `.idle`.
-        persistLedger(takeId: takeId)
+        persistLedger(takeId: takeId, segments: voiceSession.committedSegments, capturedUpTo: voiceSession.capturedUpTo)
     }
 
-    /// Folds the session's own `committedSegments`/`capturedUpTo` into the ledger, merges in
-    /// whatever backfill has already recovered for this take, and writes the result — the write
-    /// order the design calls for (audio already on disk by the time this runs; the ledger is
-    /// therefore never ahead of it). A new gap appearing since the last write schedules a backfill
-    /// loop for it and sounds the "still catching up" cue.
-    private func persistLedger(takeId: String) {
-        guard let base = activeLedger else { return }
+    /// Folds newly committed segments and how much has been captured into `takeId`'s ledger,
+    /// merges in whatever backfill has already recovered for it, and writes the result — the
+    /// write order the design calls for (audio already on disk by the time this runs; the ledger
+    /// is therefore never ahead of it). A new gap appearing since the last write schedules a
+    /// backfill loop for it and sounds the "still catching up" cue.
+    ///
+    /// Generic over which mode produced `segments`/`capturedUpTo`/`collecting`: a microphone-mode
+    /// take passes `voiceSession`'s own (`collecting` left `nil`, carrying forward whatever the
+    /// ledger already has — always `[]` for that mode); call mode passes its own cycle-shifted
+    /// running totals (`CallCycleAddressing`) and a freshly computed `collecting`, since that is
+    /// the one field `.call` mode's own `derivedGaps` bounds itself to. Nothing below this line
+    /// knows or cares which caller it was.
+    private func persistLedger(
+        takeId: String, segments: [Segment], capturedUpTo: Int, collecting: [SampleRange]? = nil
+    ) {
+        guard let base = activeLedger, base.takeId == takeId else { return }
         let recoveredSegments = base.segments.filter { $0.source == .batch || $0.source == .recovery }
-        let merged = SeamMerge.merge(voiceSession.committedSegments + recoveredSegments)
-        let capturedUpTo = voiceSession.capturedUpTo
+        let merged = SeamMerge.merge(segments + recoveredSegments)
+        let resolvedCollecting = collecting ?? base.collecting
         let candidate = TranscriptLedger(
             takeId: base.takeId, mode: base.mode, sampleRate: base.sampleRate, draftKey: base.draftKey,
             preText: base.preText, segments: merged, capturedUpTo: capturedUpTo, gaps: base.gaps,
-            boundaries: base.boundaries, collecting: base.collecting, events: base.events, delivered: base.delivered
+            boundaries: base.boundaries, collecting: resolvedCollecting, events: base.events,
+            delivered: base.delivered
         )
         let newGaps = candidate.derivedGaps(capturedUpTo: capturedUpTo)
         let previousGapCount = base.gaps.count
@@ -603,6 +666,17 @@ final class VoiceRecorderController {
             }
             scheduleBackfillIfNeeded(takeId: takeId)
         }
+        notifyExternalLedgerObserverIfCurrent(takeId: takeId)
+    }
+
+    /// `externalLedgerChanged`'s one caller — after either write path (`persistLedger`'s own live
+    /// writes, `applyBackfillOutcome`'s backfilled ones) lands for the take call mode is currently
+    /// driving. A no-op for a microphone-mode take, or for a call take that has already ended
+    /// (`endExternalTake()` clears both fields, so a backfill completing afterward correctly falls
+    /// through to `applyBackfillOutcome`'s own post-hoc draft healing instead).
+    private func notifyExternalLedgerObserverIfCurrent(takeId: String) {
+        guard takeId == externalTakeId else { return }
+        externalLedgerChanged?()
     }
 
     /// One backfill loop per take still owed a gap. A second call for a take already being
@@ -686,6 +760,7 @@ final class VoiceRecorderController {
 
         if takeId == currentTakeId {
             activeLedger = final
+            notifyExternalLedgerObserverIfCurrent(takeId: takeId)
         } else if final.gaps.isEmpty, !newSegments.isEmpty, let draftKey = final.draftKey {
             appendHealedText(final, draftKey: draftKey)
         }

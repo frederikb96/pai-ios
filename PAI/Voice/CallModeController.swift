@@ -10,23 +10,24 @@ import PAIKit
 /// `VoiceIntentBridge`'s Action Button handler can reach whichever call is running without a
 /// screen mounted at all.
 ///
-/// **The audio/transcription design, and why it is simpler than microphone mode's:** call mode's
-/// own live transcription runs through a fresh `VoiceRecordingSession` per "collecting" cycle
-/// (one per `start`→`stop`/`send`), not the single continuous session microphone mode uses for a
-/// whole take. Each cycle addresses its own audio from zero, exactly as a microphone-mode take
-/// does — never fed a non-zero starting offset, so every internal invariant that type already
-/// relies on holds unchanged. Once a cycle ends, its `committedSegments` are shifted by the
-/// number of samples the call's own ledger has already collected and merged in — a post-processing
-/// step this type fully controls, rather than an assumption about how the session would behave if
-/// handed a non-zero offset, which nothing here could verify without a device.
+/// **The audio/transcription design:** call mode's own live transcription runs through a fresh
+/// `VoiceRecordingSession` per "collecting" cycle (one per `start`→`stop`/`send`), not the single
+/// continuous session microphone mode uses for a whole take. Each cycle addresses its own audio
+/// from zero, exactly as a microphone-mode take does — never fed a non-zero starting offset, so
+/// every internal invariant that type already relies on holds unchanged. While a cycle is open,
+/// its `committedSegments` are shifted (`CallCycleAddressing`) by however many samples the call's
+/// own ledger has already collected across every earlier cycle and written through — reusing
+/// `VoiceRecorderController`'s own ledger-write and backfill machinery directly
+/// (`persistExternalLedger`/`beginExternalTake`), never a second copy of either. That is also what
+/// makes a connection drop mid-cycle heal exactly as a microphone-mode take's does: audio keeps
+/// being captured to disk regardless of the socket, `capturedUpTo` keeps advancing with it
+/// (`VoiceRecordingSession.ingestAudioChunk`'s own contract), and whatever stretch a drop leaves
+/// uncommitted derives as an ordinary gap the same `BackfillPlanner`/`BatchBackfiller` already
+/// heal for microphone mode, bounded to `TranscriptLedger.collecting` — the one field `.call`
+/// mode's own gap derivation bounds itself to, kept current here on every write.
 ///
-/// **What this simplifies away, deliberately:** the call-wide ledger this type builds carries no
-/// `gaps` — a live-socket drop mid-cycle has no batch-backfill recovery the way a microphone-mode
-/// take's does. `VoiceRecordingSession.stop()` already waits for the final commit before
-/// returning (`WaitForCommitPolicy`), which covers the common case; an actual mid-cycle drop
-/// would leave that cycle's text short with nothing here to heal it. Speaking a blocker the
-/// session is waiting on out loud is likewise not built here — flagged elsewhere rather than
-/// guessed at under time pressure.
+/// **What this does not build:** speaking a blocker the session is waiting on out loud — flagged
+/// elsewhere rather than guessed at under time pressure.
 @MainActor
 @Observable
 final class CallModeController {
@@ -50,15 +51,32 @@ final class CallModeController {
 
     // MARK: - The call-wide ledger and the currently-open collecting cycle
 
-    private var callLedger: TranscriptLedger?
+    /// The pipeline's own id for this call's take — `nil` whenever no call is active. Distinct
+    /// from `boundSessionID`: this is what `VoiceRecorderController`'s durable pipeline addresses
+    /// files and the ledger by, never the chat session id itself.
+    private var callTakeId: String?
+    /// The call's own audio, written incrementally exactly as a microphone-mode take's is — only
+    /// while `collecting`, since wake-mode audio is never part of this design (see the type's own
+    /// doc comment on why a dropped connection can still heal without it).
+    private var callAudioFile: StreamingRecordingFile?
     private var cycleSession: VoiceRecordingSession?
+    /// Every earlier cycle's own committed segments, already shifted into the call ledger's
+    /// addressing — `persistCallLedger()` merges these with whichever cycle is currently open (if
+    /// any) on every write, the same way `voiceSession.committedSegments` already represents a
+    /// microphone-mode take's *whole* history rather than growing incrementally call to call.
+    private var completedCycleSegments: [Segment] = []
+    /// Every earlier cycle's own closed range, in the call ledger's addressing — what
+    /// `TranscriptLedger.collecting` is built from, since `.call` mode's own gap derivation bounds
+    /// itself to exactly this field.
+    private var completedCollectingRanges: [SampleRange] = []
     /// How many samples the call's own ledger has collected across every cycle *before* the one
-    /// currently open, if any — the shift every one of that cycle's segments gets once it ends.
+    /// currently open, if any — the shift every one of that cycle's segments gets while it runs.
     /// Also what a command's own `atOffset` is built from: the ledger's own addressing, which
     /// only advances across `collecting` stretches, never across a wake-mode gap between them.
     private var callTakeCollectedSamples = 0
     private var cycleSamplesFed = 0
     private var callSampleRate = 16_000
+    private var callLedgerTask: Task<Void, Never>?
     private var fallbackCommandTask: Task<Void, Never>?
     private var fallbackLastScannedSegmentCount = 0
 
@@ -119,9 +137,30 @@ final class CallModeController {
             hardwareRate: controller.microphoneCapture.hardwareSampleRate)
         callSampleRate = sampleRate
         callTakeCollectedSamples = 0
-        callLedger = TranscriptLedger(
-            takeId: "call-\(sessionID)-\(Int(Date().timeIntervalSince1970 * 1000))", mode: .call,
-            sampleRate: sampleRate, draftKey: sessionID, preText: "")
+        completedCycleSegments = []
+        completedCollectingRanges = []
+        // The exact id scheme a microphone-mode take uses — never prefixed or otherwise marked as
+        // a call's — so a crashed call is reconciled at the next launch through the identical
+        // path a crashed dictation already is: `RecordingReconciliation.metadata(for:)` only
+        // accepts an id that parses back to a timestamp, and it is what gives a recovered call a
+        // real `RecordingMeta` row (Insert, Transcribe remaining) rather than a healed ledger
+        // nothing in the UI can ever point at. Collision-safe because a call and a
+        // microphone-mode take can never be entered at the same instant (`reserveForCallMode()`'s
+        // mutual exclusion).
+        let takeId = RecordingMeta.id(forTimestampMs: Date().timeIntervalSince1970 * 1000)
+        callTakeId = takeId
+
+        // The call's own audio, written incrementally exactly as a microphone-mode take's is —
+        // through `VoiceRecorderController`'s own storage, never a second one (see
+        // `externalAudioStorage`'s own doc comment for why a fresh handle is not a fresh copy).
+        let storage = controller.externalAudioStorage
+        callAudioFile = StreamingRecordingFile(url: storage.sentURL(id: takeId), sampleRate: sampleRate)
+
+        controller.beginExternalTake(
+            TranscriptLedger(takeId: takeId, mode: .call, sampleRate: sampleRate, draftKey: sessionID, preText: "")
+        ) { [weak self] in
+            Task { @MainActor in await self?.store?.ledgerChanged() }
+        }
 
         let store = CallModeStore(
             sessionId: sessionID,
@@ -132,10 +171,10 @@ final class CallModeController {
                     // closures, and true for the same reason: every real caller is this
                     // `@MainActor` type's own `store`, itself only ever driven from the main actor.
                     MainActor.assumeIsolated {
-                        self?.callLedger
+                        self?.controller.currentExternalLedger
                             ?? TranscriptLedger(
-                                takeId: "call-\(sessionID)", mode: .call, sampleRate: sampleRate,
-                                draftKey: sessionID, preText: "")
+                                takeId: takeId, mode: .call, sampleRate: sampleRate, draftKey: sessionID,
+                                preText: "")
                     }
                 },
                 postMessage: { [weak self] text in
@@ -161,7 +200,7 @@ final class CallModeController {
         do {
             try controller.microphoneCapture.start(targetSampleRate: sampleRate)
         } catch {
-            teardown()
+            await teardown()
             controller.releaseFromCallMode()
             return false
         }
@@ -236,6 +275,7 @@ final class CallModeController {
         wakeWordListener?.ingest(pcm16le: samples, atOffset: wakeWordOffset)
 
         guard case .collecting = store.phase, let session = cycleSession else { return }
+        callAudioFile?.append(pcm16le: samples)
         let offset = cycleSamplesFed
         cycleSamplesFed += samples.count
         await session.ingestAudioChunk(pcm16le: samples, at: offset)
@@ -320,18 +360,15 @@ final class CallModeController {
             if segments.count > fallbackLastScannedSegmentCount {
                 for segment in segments[fallbackLastScannedSegmentCount...] {
                     let base = callTakeCollectedSamples
+                    let shifted = CallCycleAddressing.shift(segment, by: base)
                     // Only trusted when the engine's own word count agrees with the segment
                     // text's whitespace split — `CommandDetector`'s pause gate already falls back
                     // to the position gate alone (`nil`) whenever that is not the case, rather
                     // than trusting a misaligned mapping.
                     let rawWordCount = segment.text.split(separator: " ").count
-                    let shiftedWords: [SampleRange]? =
-                        (segment.words?.count == rawWordCount)
-                        ? segment.words?.map { (base + $0.range.lowerBound)..<(base + $0.range.upperBound) }
-                        : nil
+                    let wordTimes = shifted.words?.count == rawWordCount ? shifted.words?.map(\.range) : nil
                     let observation = CommandObservation(
-                        text: segment.text, isFinal: true, wordTimes: shiftedWords,
-                        atOffset: base + segment.range.lowerBound)
+                        text: shifted.text, isFinal: true, wordTimes: wordTimes, atOffset: shifted.range.lowerBound)
                     if let event = detector.detect(observation) {
                         routeDetectedCommand(event, isOffline: false)
                     }
@@ -409,38 +446,61 @@ final class CallModeController {
         await startTask.value
         fallbackCommandTask?.cancel()
         fallbackCommandTask = Task { [weak self] in await self?.watchFallbackCommands() }
+        callLedgerTask?.cancel()
+        callLedgerTask = Task { [weak self] in await self?.runCallLedgerLoop() }
+    }
+
+    /// Writes this instant's picture of the call — every earlier cycle's own segments plus
+    /// whichever cycle is currently open, if any — through `VoiceRecorderController`'s own
+    /// `persistExternalLedger`, the identical write a microphone-mode take's ledger loop already
+    /// gives it. An open cycle's own range is registered with no upper bound (`Int.max`):
+    /// `TranscriptLedger.collectingBounds(capturedUpTo:)` clamps every entry to `capturedUpTo` on
+    /// its own, so this tracks the cycle's still-growing audio without needing to be re-closed on
+    /// every call — only `endCollectingCycle()` ever writes the real, closed bound, once.
+    private func persistCallLedger() {
+        guard let callTakeId else { return }
+        var segments = completedCycleSegments
+        var capturedUpTo = callTakeCollectedSamples
+        var collecting = completedCollectingRanges
+        if let session = cycleSession {
+            let base = callTakeCollectedSamples
+            segments += CallCycleAddressing.shift(session.committedSegments, by: base)
+            capturedUpTo = base + session.capturedUpTo
+            collecting.append(base..<Int.max)
+        }
+        controller.persistExternalLedger(
+            takeId: callTakeId, segments: segments, capturedUpTo: capturedUpTo, collecting: collecting)
+    }
+
+    /// Call mode's own counterpart to `VoiceRecorderController.runLedgerLoop` — one running for
+    /// the whole call rather than restarted per cycle, since a wake-mode stretch between cycles
+    /// has nothing for it to write; it simply idles until the next cycle opens.
+    private func runCallLedgerLoop() async {
+        while !Task.isCancelled, cycleSession != nil {
+            persistCallLedger()
+            try? await Task.sleep(for: .seconds(1))
+        }
     }
 
     /// Stops the cycle's own session — which already waits for ElevenLabs' final commit before
     /// returning (`VoiceRecordingSession.stop`'s own `WaitForCommitPolicy` wait) — then folds its
-    /// segments into the call ledger, shifted into the ledger's own addressing.
+    /// segments into the call's running history and writes the result, closing this cycle's own
+    /// `collecting` range for good rather than leaving it open-ended.
     private func endCollectingCycle() async {
         fallbackCommandTask?.cancel()
         fallbackCommandTask = nil
+        callLedgerTask?.cancel()
+        callLedgerTask = nil
         guard let session = cycleSession else { return }
         await session.stop(reason: .user)
 
         let base = callTakeCollectedSamples
-        let shiftedSegments = session.committedSegments.map { segment in
-            Segment(
-                range: (base + segment.range.lowerBound)..<(base + segment.range.upperBound), text: segment.text,
-                words: segment.words?.map {
-                    Word(
-                        range: (base + $0.range.lowerBound)..<(base + $0.range.upperBound), text: $0.text,
-                        logprob: $0.logprob)
-                }, source: segment.source)
-        }
-        let cycleRange = base..<(base + cycleSamplesFed)
+        completedCycleSegments += CallCycleAddressing.shift(session.committedSegments, by: base)
+        completedCollectingRanges.append(base..<(base + cycleSamplesFed))
         callTakeCollectedSamples += cycleSamplesFed
         cycleSession = nil
 
-        guard let ledger = callLedger else { return }
-        callLedger = TranscriptLedger(
-            takeId: ledger.takeId, mode: .call, sampleRate: ledger.sampleRate, draftKey: ledger.draftKey,
-            preText: ledger.preText, segments: ledger.segments + shiftedSegments,
-            capturedUpTo: callTakeCollectedSamples, gaps: [], boundaries: ledger.boundaries,
-            collecting: ledger.collecting + [cycleRange], events: ledger.events, delivered: ledger.delivered)
-        await store?.ledgerChanged()
+        persistCallLedger()
     }
 
     // MARK: - Exit
@@ -460,25 +520,45 @@ final class CallModeController {
             drafts.setDraftText(key: sessionID, text: current.isEmpty ? text : "\(current) \(text)")
         }
 
-        teardown()
+        await teardown()
         controller.releaseFromCallMode()
         self.store = nil
     }
 
     /// The shared parts of ending a call, whether it ran a single second or an hour, and whether
     /// it is ending normally or because entry itself failed partway through.
-    private func teardown() {
+    private func teardown() async {
         replyFeed?.disconnect()
         replyFeed = nil
         fallbackCommandTask?.cancel()
         fallbackCommandTask = nil
+        callLedgerTask?.cancel()
+        callLedgerTask = nil
         speech?.end()
         speech = nil
         speechOutput = nil
         wakeWordListener?.stop()
         wakeWordListener = nil
         cycleSession = nil
-        callLedger = nil
+
+        callAudioFile?.finalize()
+        callAudioFile = nil
+        // No open gap left (including the trivial case of a take that never captured anything at
+        // all, whose ledger has nothing to derive a gap against either way) — safe to remove
+        // immediately. An open one is left on disk on purpose: the backfill loop
+        // `persistExternalLedger` already scheduled for it keeps running after this call has
+        // ended, healing the ledger and appending the result into the session's draft once it
+        // finishes (`VoiceRecorderController.applyBackfillOutcome`'s own post-hoc path, the same
+        // one a microphone-mode take's late backfill already uses) — and if the app dies before
+        // that finishes, `reconcileTakes()` finds the same files at the next launch and picks up
+        // exactly where this left off, the same recovery a crashed microphone-mode take gets.
+        if let callTakeId, controller.currentExternalLedger?.gaps.isEmpty ?? true {
+            await controller.externalAudioStorage.delete(id: callTakeId)
+        }
+        controller.endExternalTake()
+        callTakeId = nil
+        completedCycleSegments = []
+        completedCollectingRanges = []
         boundSessionID = nil
 
         let capture = controller.microphoneCapture
