@@ -136,6 +136,15 @@ public enum MessagesAroundResult: Sendable, Equatable {
     case notFound
 }
 
+/// `grantSecretAccess`'s four outcomes — see that method's doc comment for why 403 is a case
+/// here rather than a thrown `PaiError`.
+public enum SecretGrantResult: Sendable, Equatable {
+    case granted(expiresAt: String)
+    case wrongPassphrase
+    case sessionUnavailable
+    case timedOut
+}
+
 // MARK: - PaiApiClient
 
 /// Swift port of `pai-cloud/web/src/api/client.ts`. One `send()` chokepoint mirrors the web
@@ -874,6 +883,51 @@ public struct PaiApiClient: Sendable {
             method: "POST",
             body: try Self.jsonBody(Body(key: key))
         )
+    }
+
+    // MARK: Gated secret grant
+
+    /// `POST /api/session/{id}/secret-grant` — grants this session's Claude conversation every
+    /// gated secret for `ttlSeconds` (60...604800, enforced server-side). The three non-2xx
+    /// shapes the contract names are outcomes for the sheet to show distinctly, not one thrown
+    /// `PaiError` collapsing them together.
+    ///
+    /// 🚨 This endpoint's 403 means "wrong passphrase", never a rejected bearer token — but
+    /// `PaiError.isAuthenticationFailure` treats every 403 as one, and `checkStatus` signs the
+    /// whole app out on that signal. Routed through `sendPassingThrough` instead of `send` so a
+    /// mistyped passphrase never reaches `checkStatus` at all.
+    public func grantSecretAccess(
+        sessionId: String, passphrase: String, ttlSeconds: Int
+    ) async throws -> SecretGrantResult {
+        struct Body: Encodable {
+            let passphrase: String
+            let ttlSeconds: Int
+            enum CodingKeys: String, CodingKey {
+                case passphrase
+                case ttlSeconds = "ttl_seconds"
+            }
+        }
+        struct Response: Decodable {
+            let expiresAt: String
+            enum CodingKeys: String, CodingKey { case expiresAt = "expires_at" }
+        }
+        let (status, data) = try await sendPassingThrough(
+            path: "/api/session/\(sessionId)/secret-grant",
+            method: "POST",
+            body: try Self.jsonBody(Body(passphrase: passphrase, ttlSeconds: ttlSeconds)),
+            passthrough: [403, 409, 504]
+        )
+        switch status {
+        case 403: return .wrongPassphrase
+        case 409: return .sessionUnavailable
+        case 504: return .timedOut
+        default:
+            do {
+                return .granted(expiresAt: try JSONDecoder().decode(Response.self, from: data).expiresAt)
+            } catch {
+                throw PaiError.decoding("\(error)")
+            }
+        }
     }
 
     // MARK: App secrets

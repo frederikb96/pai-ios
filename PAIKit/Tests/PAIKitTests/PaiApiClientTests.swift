@@ -527,4 +527,58 @@ final class PaiApiClientTests: XCTestCase {
         }
         XCTAssertEqual(error.userMessage, "boom")
     }
+
+    // MARK: - grantSecretAccess
+
+    func testGrantSecretAccessSendsPassphraseAndTtlSecondsToTheContractPath() async throws {
+        stubJSON(#"{"expires_at":"2026-09-17T12:00:00+00:00"}"#)
+        let client = try makeClient()
+        _ = try await client.grantSecretAccess(sessionId: "s1", passphrase: "hunter2", ttlSeconds: 3600)
+
+        XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.httpMethod, "POST")
+        let path = PaiStubURLProtocol.capturedRequest?.url?.path ?? ""
+        XCTAssertTrue(path.hasSuffix("/api/session/s1/secret-grant"), path)
+        let body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains(#""passphrase":"hunter2""#), body)
+        XCTAssertTrue(body.contains(#""ttl_seconds":3600"#), body)
+    }
+
+    func testGrantSecretAccessDecodesExpiresAtOnSuccess() async throws {
+        stubJSON(#"{"expires_at":"2026-09-17T12:00:00+00:00"}"#)
+        let client = try makeClient()
+        let result = try await client.grantSecretAccess(sessionId: "s1", passphrase: "x", ttlSeconds: 60)
+
+        XCTAssertEqual(result, .granted(expiresAt: "2026-09-17T12:00:00+00:00"))
+    }
+
+    /// The contract's three non-2xx shapes are outcomes the caller switches on, not one thrown
+    /// `PaiError` — each has to map to its own case rather than collapsing into the others.
+    func testGrantSecretAccessMapsEachContractStatusToItsOwnOutcome() async throws {
+        let client = try makeClient()
+
+        stubJSON(#"{"detail":"wrong passphrase"}"#, statusCode: 403)
+        var result = try await client.grantSecretAccess(sessionId: "s1", passphrase: "x", ttlSeconds: 60)
+        XCTAssertEqual(result, .wrongPassphrase)
+
+        stubJSON(#"{"detail":"no running conversation"}"#, statusCode: 409)
+        result = try await client.grantSecretAccess(sessionId: "s1", passphrase: "x", ttlSeconds: 60)
+        XCTAssertEqual(result, .sessionUnavailable)
+
+        stubJSON(#"{"detail":"agent did not answer"}"#, statusCode: 504)
+        result = try await client.grantSecretAccess(sessionId: "s1", passphrase: "x", ttlSeconds: 60)
+        XCTAssertEqual(result, .timedOut)
+    }
+
+    /// Any OTHER non-2xx status still throws normally — the three contract shapes above are the
+    /// only carved-out outcomes, not a general "swallow every error" shape.
+    func testGrantSecretAccessStillThrowsOnAnUnrelatedServerError() async throws {
+        stubJSON(#"{"detail":"boom"}"#, statusCode: 500)
+        let client = try makeClient()
+        do {
+            _ = try await client.grantSecretAccess(sessionId: "s1", passphrase: "x", ttlSeconds: 60)
+            XCTFail("expected a throw")
+        } catch {
+            // Any throw is correct here; the point is it does not return a `.wrongPassphrase`-like case.
+        }
+    }
 }

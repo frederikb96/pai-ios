@@ -63,6 +63,19 @@ final class PaiApiClientAuthFailureTests: XCTestCase {
         _ = try? await client.getSessions()
         XCTAssertEqual(box.count, 0)
     }
+
+    /// `grantSecretAccess`'s 403 means "wrong passphrase", not a rejected bearer token — unlike
+    /// every other 403 in this client, it must NOT sign the app out. This is the one route where
+    /// `testA403AlsoNotifies`'s rule deliberately does not apply.
+    func testGrantSecretAccessWrongPassphraseDoesNotSignOutTheUser() async {
+        let box = FailureBox()
+        let client = makeClient(status: 403, body: #"{"detail":"wrong passphrase"}"#) { box.record($0) }
+
+        let result = try? await client.grantSecretAccess(sessionId: "s1", passphrase: "wrong", ttlSeconds: 60)
+
+        XCTAssertEqual(result, .wrongPassphrase)
+        XCTAssertEqual(box.count, 0)
+    }
 }
 
 private final class FailureBox: @unchecked Sendable {
