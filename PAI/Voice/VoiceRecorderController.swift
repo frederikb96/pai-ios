@@ -261,7 +261,79 @@ final class VoiceRecorderController {
     }
 
     var canStart: Bool {
-        !isStarting && voiceSession.canStart && settingsStore.elevenLabsKey.status?.set != false
+        !isStarting && !isCallModeActive && voiceSession.canStart && settingsStore.elevenLabsKey.status?.set != false
+    }
+
+    // MARK: - Sharing state with call mode
+
+    /// Set while call mode owns the microphone — the one thing this and a microphone-mode take
+    /// both need exclusively. `canStart` above is what a composer's record button actually reads;
+    /// call mode's own entry checks `reserveForCallMode()`'s return value instead of racing a
+    /// second read of this flag.
+    private(set) var isCallModeActive = false
+
+    /// Call mode's own entry point, never a composer's. Fails (returns `false`) while a
+    /// microphone-mode take is already running — the two can never share the one microphone — and
+    /// succeeds otherwise, claiming it so a microphone-mode take cannot start underneath a running
+    /// call either.
+    func reserveForCallMode() -> Bool {
+        guard !isCallModeActive, voiceSession.state == .idle, !isCapturing else { return false }
+        isCallModeActive = true
+        return true
+    }
+
+    func releaseFromCallMode() {
+        isCallModeActive = false
+    }
+
+    /// The shared `AVAudioEngine` wrapper call mode's own listener and speech output attach to —
+    /// the same instance a microphone-mode take captures through, never a second one. Safe to
+    /// reach only while `isCallModeActive`, matching the mutual exclusion `reserveForCallMode()`
+    /// enforces; nothing here stops a caller reaching it outside that window, since the type
+    /// itself is passive when nothing has called `start(targetSampleRate:)`.
+    var microphoneCapture: MicrophoneCapture { capture }
+
+    var sharedEarconPlayer: EarconPlayer { earconPlayer }
+
+    /// Routes a call-mode `FeedbackEvent` through the same notifier a microphone-mode take
+    /// already uses — one cue player, one set of connection-health notifications, never two.
+    func handleFeedback(_ event: FeedbackEvent) {
+        feedbackNotifier.handle(event)
+    }
+
+    /// Feeds a call-mode socket's own mint/connect/deliver/close into the same app-wide
+    /// `ConnectionHealth` machine a microphone-mode take's socket already reports into — the
+    /// architect's "one machine, not one per mode" read literally, through the one accessor this
+    /// type exposes for it.
+    func reportConnectionEvent(_ event: ConnectionHealthEvent) {
+        Self.applyConnectionHealthEvent(event, box: connectionHealthBox, notifier: feedbackNotifier)
+    }
+
+    var connectionHealthState: HealthState { connectionHealthBox.value.state }
+
+    /// The same permission gate `start()` already applies to a microphone-mode take, exposed for
+    /// call mode's own entry to reuse rather than duplicating the `AVAudioApplication` dance.
+    func ensureMicrophonePermission() async -> Bool {
+        await requestMicrophonePermission()
+    }
+
+    /// Call mode's own `AVAudioSession` configuration — `.voiceChat` rather than `.measurement`,
+    /// which is what turns on the system's own echo cancellation and gain control tuned for a
+    /// two-way conversation instead of a dictation. Never touches capture state; call mode's own
+    /// entry sequence starts the engine separately once this returns.
+    func configureAudioSessionForCallMode() throws {
+        try audioSession.setCategory(
+            .playAndRecord, mode: .voiceChat,
+            options: [.duckOthers, .allowBluetooth, .overrideMutedMicrophoneInterruption, .defaultToSpeaker])
+        try audioSession.setActive(true)
+        applyPreferredMicrophone()
+    }
+
+    /// Restores microphone mode's own session configuration — what call mode's exit leaves the
+    /// shared session in, so a microphone-mode take started right after a call behaves exactly as
+    /// it would have if the call had never happened.
+    func restoreMicrophoneModeAudioSession() {
+        try? configureAudioSession()
     }
 
     // MARK: - Start / stop
@@ -1234,8 +1306,10 @@ final class VoiceRecorderController {
     /// `SettingsStore` persists `SttLanguage` (this app's own enum, deliberately with no
     /// provider-fallback case); `VoiceRecordingSession` speaks `VoiceSettings.Language` (the
     /// package's port of the same three web values). Same three cases, two independent enums —
-    /// this is the one place that needs to know that.
-    private static func voiceSettings(from settingsStore: SettingsStore) -> VoiceSettings {
+    /// this is the one place that needs to know that. Internal rather than `private`: call mode's
+    /// own per-cycle `VoiceRecordingSession`s need the identical mapping and reuse this directly
+    /// rather than carrying a second copy of the same three-way switch.
+    static func voiceSettings(from settingsStore: SettingsStore) -> VoiceSettings {
         let language: VoiceSettings.Language =
             switch settingsStore.sttLanguage {
             case .auto: .auto

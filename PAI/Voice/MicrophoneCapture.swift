@@ -163,6 +163,24 @@ final class MicrophoneCapture: @unchecked Sendable {
         node.play()
     }
 
+    /// Attaches call mode's speech output into this same engine, ahead of `setVoiceProcessingEnabled`
+    /// — see `SpeechOutput.attach(to:mixer:)`'s own doc comment for why that order matters: voice
+    /// processing needs the playback graph already connected to have an echo reference at all.
+    func attachSpeechOutput(_ speechOutput: SpeechOutput) {
+        speechOutput.attach(to: engine, mixer: engine.mainMixerNode)
+    }
+
+    /// Call mode's own acoustic echo cancellation and gain control — `false` again on exit, so a
+    /// microphone-mode take right after a call captures at `.measurement`'s own untouched signal,
+    /// exactly as it always has. Must run after `attachSpeechOutput`, never before, per that
+    /// method's own doc comment; safe to call before `start(targetSampleRate:)` installs the tap,
+    /// since `AVAudioInputNode`/`AVAudioOutputNode` exist on the engine regardless of whether it
+    /// is running yet.
+    func setVoiceProcessingEnabled(_ enabled: Bool) throws {
+        try engine.inputNode.setVoiceProcessingEnabled(enabled)
+        try engine.outputNode.setVoiceProcessingEnabled(enabled)
+    }
+
     /// Runs on the tap's real-time thread. `AVAudioConverter.convert` allocates internally, which
     /// is not real-time-safe in the strict sense — accepted here because the tap buffer is
     /// generous (2048 frames, tens of milliseconds at any of the rates this app negotiates) and
