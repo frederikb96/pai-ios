@@ -75,9 +75,6 @@ final class AppEnvironment {
         /// to outlive the screen that started it — see `VoiceRecorderController`'s doc comment.
         /// There is one microphone, so there is one of these.
         let voice: VoiceRecorderController
-        /// Which commands the offline wake-word engine listens for — its own persistence,
-        /// independent of `SettingsStore`, the same shape `SmtpSettingsStore` already is.
-        let wakeWordSettings: WakeWordSettingsStore
         /// Call mode — app-wide for the same reason `voice` is: a call outlives the screen that
         /// started it, and the Action Button's own intent needs to reach it with no screen open.
         let callMode: CallModeController
@@ -184,7 +181,6 @@ final class AppEnvironment {
         let transcript = TranscriptStore()
         let voice = VoiceRecorderController(
             apiClient: client, settingsStore: settingsStore, drafts: draftStore, toasts: toasts)
-        let wakeWordSettings = WakeWordSettingsStore(storage: defaults)
 
         connection = Connection(
             requestFactory: factory,
@@ -204,10 +200,9 @@ final class AppEnvironment {
             notesBrowse: NotesBrowseStore(api: client, storage: defaults),
             staging: StagedAttachmentStore(),
             voice: voice,
-            wakeWordSettings: wakeWordSettings,
             callMode: CallModeController(
                 controller: voice, apiClient: client, requestFactory: factory, transcript: transcript,
-                drafts: draftStore, settingsStore: settingsStore, wakeWordSettings: wakeWordSettings),
+                drafts: draftStore, settingsStore: settingsStore),
             notifications: NotificationCenterStore(api: client),
             transcriptJumps: TranscriptJumpRequests()
         )

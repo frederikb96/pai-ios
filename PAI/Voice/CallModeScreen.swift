@@ -101,7 +101,7 @@ struct CallModeScreen: View {
             transcriptBox
 
             if !store.turnRanges.isEmpty {
-                Text("Message pending — say \"Kai send\" or tap Send")
+                Text("Message pending — say \"computer send the message\" or tap Send")
                     .font(PaiTypography.caption.font)
                     .foregroundStyle(PaiPalette.Semantic.textMuted)
             }
@@ -180,7 +180,7 @@ struct CallModeScreen: View {
         switch store.phase {
         case .idle: return "Ended"
         case .entering: return "Connecting…"
-        case .listening: return "Listening for \"Kai start\""
+        case .listening: return "Listening for \"computer\""
         case .collecting: return "Recording"
         case .sending: return "Sending…"
         case .pendingSend: return "Message pending transcription…"

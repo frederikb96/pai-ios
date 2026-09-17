@@ -22,10 +22,6 @@ struct SettingsScreen: View {
 
             VoiceSection(settings: settings)
 
-            if let wakeWordSettings = environment.connection?.wakeWordSettings {
-                VoiceCommandsSection(wakeWord: wakeWordSettings)
-            }
-
             CallModeSection(settings: settings)
 
             NotificationsSection()

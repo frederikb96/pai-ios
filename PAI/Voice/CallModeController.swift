@@ -50,7 +50,6 @@ final class CallModeController {
     private let transcript: TranscriptStore
     private let drafts: DraftStore
     private let settingsStore: SettingsStore
-    private let wakeWordSettings: WakeWordSettingsStore
 
     private var speechOutput: SpeechOutput?
     private var wakeWordListener: WakeWordCommandListener?
@@ -94,11 +93,11 @@ final class CallModeController {
     private var cycleSamplesFed = 0
     /// A monotonic count of every sample this call has ever captured, in every phase — unlike
     /// `callTakeCollectedSamples`/`cycleSamplesFed`, which only advance while `collecting`. The
-    /// wake-word listener's own offset is built from this and only this: `WakeWordCommandGate`
-    /// debounces a repeated detection by comparing its offset against the last one accepted for
-    /// that command, so an offset that stalls while `.listening` (as the ledger-addressed one
-    /// does, since nothing advances it between cycles) makes a second "Kai skip" indistinguishable
-    /// from the echo of the first and silently drops it forever.
+    /// wake-word listener's own offset is built from this and only this: `WakeWordDetectionGate`
+    /// debounces a repeated detection by comparing its offset against the last one accepted, so
+    /// an offset that stalls while `.listening` (as the ledger-addressed one does, since nothing
+    /// advances it between cycles) makes a second "computer" indistinguishable from the echo of
+    /// the first and silently drops it forever.
     private var wakeWordCaptureOffset = 0
     /// `wakeWordCaptureOffset` as of the moment the currently-open cycle started collecting — what
     /// translates an offline detection's own `atOffset` (addressed from call entry, in
@@ -129,8 +128,7 @@ final class CallModeController {
 
     init(
         controller: VoiceRecorderController, apiClient: PaiApiClient, requestFactory: PaiRequestFactory,
-        transcript: TranscriptStore, drafts: DraftStore, settingsStore: SettingsStore,
-        wakeWordSettings: WakeWordSettingsStore
+        transcript: TranscriptStore, drafts: DraftStore, settingsStore: SettingsStore
     ) {
         self.controller = controller
         self.apiClient = apiClient
@@ -138,7 +136,6 @@ final class CallModeController {
         self.transcript = transcript
         self.drafts = drafts
         self.settingsStore = settingsStore
-        self.wakeWordSettings = wakeWordSettings
 
         // Freddy's Action Button replacement for a hardware mute: stop while recording, start
         // while listening with nothing else in flight. Registered once, for the app's whole
@@ -201,7 +198,7 @@ final class CallModeController {
     }
 
     /// Whether a spoken reply may start while recording — the call screen's toggle and
-    /// "Kai interrupt" both flip the same persisted setting.
+    /// "computer interrupt on"/"computer interrupt off" both set the same persisted setting.
     var interruptsAllowed: Bool { settingsStore.callInterruptsAllowed }
 
     func setInterruptsAllowed(_ allowed: Bool) {
@@ -395,12 +392,10 @@ final class CallModeController {
     private func setUpWakeWordListener(sampleRate: Int) {
         let listener = WakeWordCommandListener()
         listener.start(
-            config: wakeWordSettings.config, sampleRate: Double(sampleRate),
-            feedback: { [weak self] event in self?.controller.handleFeedback(event) })
+            sampleRate: Double(sampleRate), feedback: { [weak self] event in self?.controller.handleFeedback(event) })
         listener.onCommand = { [weak self] event in
             Task { @MainActor in self?.routeDetectedCommand(event, isOffline: true) }
         }
-        listener.isApplicable = { [weak self] kind in self?.isApplicable(kind) ?? false }
         wakeWordListener = listener
     }
 
@@ -604,9 +599,15 @@ final class CallModeController {
                 event.atOffset, wakeOffsetAtCycleStart: wakeOffsetAtCycleStart,
                 callTakeCollectedSamples: callTakeCollectedSamples)
             : event.atOffset
+        // The offline engine never carries a `phraseRange` (there are no transcript words to
+        // strip for it); the fallback's own is already ledger-addressed exactly like its
+        // `atOffset` is, so it passes straight through with no translation of its own.
+        let spokenPhraseRange = isOffline ? nil : event.phraseRange
         Task {
             await serialized { [weak self] in
-                await self?.dispatch(event.kind, confidence: event.confidence, spokenAtOffset: spokenAtOffset)
+                await self?.dispatch(
+                    event.kind, confidence: event.confidence, spokenAtOffset: spokenAtOffset,
+                    spokenPhraseRange: spokenPhraseRange)
             }
         }
     }
@@ -617,8 +618,10 @@ final class CallModeController {
     /// while `collecting` (the paid transcript is the only thing running then). One `CommandObservation` per newly
     /// committed segment, matching `CommandDetector`'s own contract: `isFinal: true`, word timing
     /// shifted into the call ledger's own addressing when the engine supplied it and its count
-    /// agrees with the segment's own word split, `nil` otherwise — `CommandDetector`'s pause gate
-    /// already degrades gracefully without it.
+    /// agrees with the segment's own word split, `nil` otherwise — `CommandDetector` already
+    /// degrades gracefully without it, at the cost of losing precise phrase stripping for that
+    /// detection. A phrase found but rejected by a gate is logged rather than dropped silently —
+    /// otherwise indistinguishable from the phrase never having been heard at all.
     private func watchFallbackCommands() async {
         var detector = CommandDetector(phraseSet: .defaults, sampleRate: Double(callSampleRate))
         fallbackLastScannedSegmentCount = 0
@@ -629,15 +632,23 @@ final class CallModeController {
                     let base = callTakeCollectedSamples
                     let shifted = CallCycleAddressing.shift(segment, by: base)
                     // Only trusted when the engine's own word count agrees with the segment
-                    // text's whitespace split — `CommandDetector`'s pause gate already falls back
-                    // to the position gate alone (`nil`) whenever that is not the case, rather
-                    // than trusting a misaligned mapping.
+                    // text's whitespace split — `CommandDetector` already falls back to no timing
+                    // at all (`nil`) whenever that is not the case, rather than trusting a
+                    // misaligned mapping.
                     let rawWordCount = segment.text.split(separator: " ").count
                     let wordTimes = shifted.words?.count == rawWordCount ? shifted.words?.map(\.range) : nil
                     let observation = CommandObservation(
                         text: shifted.text, isFinal: true, wordTimes: wordTimes, atOffset: shifted.range.upperBound)
-                    if let event = detector.detect(observation) {
+                    switch detector.detect(observation) {
+                    case .accepted(let event):
                         routeDetectedCommand(event, isOffline: false)
+                    case .rejected(let rejectedKind, let reason):
+                        AppVoiceDiagnosticsLog.shared.log(
+                            .info, .command,
+                            "transcript command rejected: \(rejectedKind.rawValue) — \(reason.rawValue)"
+                        )
+                    case .none:
+                        break
                     }
                 }
                 fallbackLastScannedSegmentCount = segments.count
@@ -662,7 +673,9 @@ final class CallModeController {
     /// the wait for the final commit. That is what lets the turn range close there too
     /// (`CallModeStore.handle(.stop)`/`.send` both close it at the event's own `atOffset`), so the
     /// command's own audio ends up outside the turn instead of merely being stripped out of it.
-    private func dispatch(_ kind: CommandKind, confidence: Double, spokenAtOffset: Int? = nil) async {
+    private func dispatch(
+        _ kind: CommandKind, confidence: Double, spokenAtOffset: Int? = nil, spokenPhraseRange: SampleRange? = nil
+    ) async {
         guard let store else { return }
         switch kind {
         case .start:
@@ -684,7 +697,9 @@ final class CallModeController {
                 stampOffset = CallCycleAddressing.closingStamp(
                     spokenAtOffset: spokenAtOffset, collectedAfterCycleEnd: callTakeCollectedSamples)
             }
-            await store.handle(CommandEvent(kind: kind, atOffset: stampOffset, confidence: confidence))
+            await store.handle(
+                CommandEvent(kind: kind, atOffset: stampOffset, confidence: confidence, phraseRange: spokenPhraseRange)
+            )
             applyReplyHold()
             drainUnsentTurnText()
             if store.phase == .pendingSend { armHeldSendTimeout() }
@@ -700,13 +715,13 @@ final class CallModeController {
             await store.handle(
                 CommandEvent(
                     kind: .skip, atOffset: spokenAtOffset ?? callTakeCollectedSamples + cycleSamplesFed,
-                    confidence: confidence))
-        case .interrupt:
+                    confidence: confidence, phraseRange: spokenPhraseRange))
+        case .interruptOn, .interruptOff:
             await store.handle(
                 CommandEvent(
-                    kind: .interrupt, atOffset: spokenAtOffset ?? callTakeCollectedSamples + cycleSamplesFed,
-                    confidence: confidence))
-            setInterruptsAllowed(!settingsStore.callInterruptsAllowed)
+                    kind: kind, atOffset: spokenAtOffset ?? callTakeCollectedSamples + cycleSamplesFed,
+                    confidence: confidence, phraseRange: spokenPhraseRange))
+            setInterruptsAllowed(kind == .interruptOn)
         case .end:
             await performExit()
         }
