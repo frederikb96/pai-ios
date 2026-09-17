@@ -7,6 +7,10 @@ struct SettingsScreen: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(SettingsStore.self) private var settings
 
+    /// `true` from `CallModeSettingsSheet`: signing out tears down the whole connection the call
+    /// itself is running on, which is not a choice to offer from on top of a running call.
+    var hidesSignOut = false
+
     /// What `CallModeSettingsSheet` scrolls to when it opens this screen over the call screen —
     /// the one id both sides share, so the anchor and the target can never drift apart.
     static let callModeSectionAnchorID = "settings-call-mode-section"
@@ -44,9 +48,11 @@ struct SettingsScreen: View {
 
             DiagnosticsSection(settings: settings)
 
-            Section {
-                Button("Sign out", role: .destructive) { environment.signOut() }
-                    .accessibilityIdentifier("sign-out")
+            if !hidesSignOut {
+                Section {
+                    Button("Sign out", role: .destructive) { Task { await environment.signOut() } }
+                        .accessibilityIdentifier("sign-out")
+                }
             }
         }
         .paiListBackground()

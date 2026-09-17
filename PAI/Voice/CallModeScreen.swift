@@ -125,7 +125,7 @@ struct CallModeScreen: View {
             }
 
             if store.lastSendFailure != nil {
-                Text("The last message could not be sent.")
+                Text("The last message may not have gone through — check before sending it again.")
                     .font(PaiTypography.caption.font)
                     .foregroundStyle(PaiPalette.Semantic.errorText)
             }

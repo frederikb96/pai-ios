@@ -154,7 +154,12 @@ final class VoiceFeedbackNotifier {
         case .recordingStartFailed(let reason):
             return "Recording is not live (\(reason)) — the audio is kept and transcribed later."
         case .sendFailed:
-            return "Your message was not sent — the text is back in the draft."
+            // Deliberately hedged: a network failure here can be the request never reaching the
+            // server, or the server's own reply to an accepted send never reaching us — this app
+            // has no idempotency key to tell the two apart, and claiming "not sent" outright would
+            // be wrong exactly when it matters most, encouraging a duplicate send.
+            return
+                "Your message may not have gone through — the text is back in the draft. Check before sending it again."
         case .commandModelMissing:
             return "The \"computer\" wake word has no offline model bundled yet — a call won't start listening for it."
         case .callEndedUnexpectedly(let hadUnsentText):

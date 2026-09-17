@@ -1018,13 +1018,14 @@ final class CallModeController {
 
     // MARK: - Exit
 
-    /// Ends call mode from outside the command channel — the composer's own "End Call" entry, or
-    /// a handover that must stop this call to start another one — always a foreground action
-    /// Freddy just took, so this counts as manual the same way the call screen's own End button
-    /// does. `reason` is a short, human phrase logged with every exit, so a device log answers
-    /// "why did the call stop" without guessing.
-    func exit(reason: String = "requested") async {
-        await serialized { [weak self] in await self?.performExit(manual: true, reason: reason) }
+    /// Ends call mode from outside the command channel — the composer's own "End Call" entry, a
+    /// handover that must stop this call to start another one, or a sign-out. `reason` is a
+    /// short, human phrase logged with every exit, so a device log answers "why did the call
+    /// stop" without guessing. `manual` defaults to `true`: every existing caller is a foreground
+    /// action Freddy just took, the same as the call screen's own End button — a caller that can
+    /// fire without him looking at the screen (a rejected token, say) passes `false`.
+    func exit(reason: String = "requested", manual: Bool = true) async {
+        await serialized { [weak self] in await self?.performExit(manual: manual, reason: reason) }
     }
 
     /// `manual` is `false` only for a spoken "computer end" — everything else reaching this

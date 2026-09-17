@@ -116,18 +116,27 @@ final class AppEnvironment {
     /// The token is cleared as well as the gate moved: leaving a rejected credential in the
     /// Keychain means the next launch tries it again and lands back here, which reads as the app
     /// being broken rather than as needing a new token.
-    func handleAuthenticationFailure(detail: String?) {
+    /// `manual: false`: a token rejection can land at any moment, not only while Freddy is
+    /// looking at the screen making a deliberate choice, so a running call ending here plays the
+    /// cue and posts the notification the same as any other unattended end — otherwise the call's
+    /// own resources (the microphone, the audio session, its sockets) would simply be discarded
+    /// along with the rest of the connection, unfinalized and unannounced.
+    func handleAuthenticationFailure(detail: String?) async {
         connection?.sessions.stopPolling()
         connection?.claudeAuth.stopPolling()
+        await connection?.callMode.exit(reason: "signed out (token rejected)", manual: false)
         tokens.write(nil)
         connection = nil
         lastAuthFailure = detail
         router.rejectToken()
     }
 
-    func signOut() {
+    /// A deliberate tap, with Settings already on screen — the call's own confirmation tone is
+    /// enough, same as the call screen's own End button.
+    func signOut() async {
         connection?.sessions.stopPolling()
         connection?.claudeAuth.stopPolling()
+        await connection?.callMode.exit(reason: "signed out (sign out tapped)")
         tokens.write(nil)
         connection = nil
         lastAuthFailure = nil
@@ -150,7 +159,7 @@ final class AppEnvironment {
         // connection holds.
         let client = PaiApiClient(requestFactory: factory) { [weak self] error in
             Task { @MainActor [weak self] in
-                self?.handleAuthenticationFailure(detail: error.userMessage)
+                await self?.handleAuthenticationFailure(detail: error.userMessage)
             }
         }
         // Built ahead of the literal rather than inside it: the recorder needs both of these, and
