@@ -133,8 +133,11 @@ jobs:
       # want later, for symbolicating a crash report.
       # gym writes its own dSYM zip into output_directory alongside the ipa. Globbing for an
       # .xcarchive under build/ found nothing and failed silently, attaching no artifact.
+      # A failed dSYM upload to the release page must not keep an uploaded build from being
+      # attached to the beta group, which is what makes it installable.
       - name: GitHub release
         if: github.ref_type == 'tag'
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
