@@ -92,6 +92,72 @@ final class CommandWindowStripperTests: XCTestCase {
         XCTAssertEqual(result, "hello world")
     }
 
+    // MARK: - A manual tap has no spoken words at all — it strips nothing
+
+    /// The exact probe-confirmed bug: a manual Send tap used to sweep the whole "send" vocabulary
+    /// across a wide window with no phrase actually spoken, cutting real dictated words nowhere
+    /// near a command.
+    func testAManualCommandStripsNothingEvenWithinItsOwnWindow() {
+        let words = [
+            word("please", at: 0), word("send", at: 5_000), word("the", at: 10_000), word("message", at: 15_000),
+            word("to", at: 20_000), word("the", at: 25_000), word("team", at: 30_000),
+        ]
+        let commands = [CommandEvent(kind: .send, atOffset: 20_000, confidence: 1, source: .manual)]
+
+        let result = CommandWindowStripper.strip(
+            words: words, commands: commands, phraseSet: .defaults, sampleRate: rate)
+        XCTAssertEqual(result, "please send the message to the team")
+    }
+
+    // MARK: - An offline "start" strips only a leading run of the new cycle's own first words
+
+    func testOfflineStartStripsTheFullLeadingTail() {
+        let words = [
+            word("start", at: 100), word("the", at: 4_900), word("message", at: 9_700), word("hello", at: 14_500),
+        ]
+        let commands = [CommandEvent(kind: .start, atOffset: 0, confidence: 1, source: .offline)]
+
+        let result = CommandWindowStripper.strip(
+            words: words, commands: commands, phraseSet: .defaults, sampleRate: rate)
+        XCTAssertEqual(result, "hello")
+    }
+
+    func testOfflineStartStripsAShorterLeadingTailWhenThatIsAllThatWasTranscribed() {
+        // Freddy's own "computer" already fired the offline engine before he finished saying
+        // "start" — only "the message" made it into the transcript.
+        let words = [word("the", at: 100), word("message", at: 4_900), word("hello", at: 9_700)]
+        let commands = [CommandEvent(kind: .start, atOffset: 0, confidence: 1, source: .offline)]
+
+        let result = CommandWindowStripper.strip(
+            words: words, commands: commands, phraseSet: .defaults, sampleRate: rate)
+        XCTAssertEqual(result, "hello")
+    }
+
+    func testOfflineStartWithNoMatchingLeadingRunStripsNothing() {
+        // Freddy said "computer" and then dictated something unrelated to "start" at all.
+        let words = [word("write", at: 100), word("a", at: 4_900), word("summary", at: 9_700)]
+        let commands = [CommandEvent(kind: .start, atOffset: 0, confidence: 1, source: .offline)]
+
+        let result = CommandWindowStripper.strip(
+            words: words, commands: commands, phraseSet: .defaults, sampleRate: rate)
+        XCTAssertEqual(result, "write a summary")
+    }
+
+    /// A previous cycle's own last words, in their own segment, must never be reached — the
+    /// historical bug this fixes: an offline start's ±2s window used to eat the previous cycle's
+    /// last couple of seconds along with the new cycle's own leading tail. `strip` is called once
+    /// per segment in production (`CallMessageAssembler`), so the previous cycle's own segment is
+    /// its own call here — its first word sits before the detection's own offset, so nothing
+    /// about this command applies to it at all.
+    func testOfflineStartNeverTouchesAnEarlierSegmentsOwnWords() {
+        let previousCycleWords = [word("wrapping", at: 8_000), word("up", at: 8_500)]
+        let commands = [CommandEvent(kind: .start, atOffset: 9_700, confidence: 1, source: .offline)]
+
+        let result = CommandWindowStripper.strip(
+            words: previousCycleWords, commands: commands, phraseSet: .defaults, sampleRate: rate)
+        XCTAssertEqual(result, "wrapping up")
+    }
+
     func testMultipleCommandsEachStripTheirOwnRange() {
         let words = [
             word("computer", at: 0), word("start", at: 5_000), word("the", at: 10_000), word("message", at: 15_000),

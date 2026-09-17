@@ -58,6 +58,6 @@ public struct WakeWordDetectionGate: Sendable {
         guard score >= threshold else { return nil }
         if let last = lastFiredAtOffset, atOffset - last < debounceSamples { return nil }
         lastFiredAtOffset = atOffset
-        return CommandEvent(kind: .start, atOffset: atOffset, confidence: Double(score))
+        return CommandEvent(kind: .start, atOffset: atOffset, confidence: Double(score), source: .offline)
     }
 }

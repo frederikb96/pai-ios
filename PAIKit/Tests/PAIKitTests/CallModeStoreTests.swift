@@ -750,6 +750,48 @@ final class CallModeStoreTests: XCTestCase {
             "the command's own spoken words must not land inside the message it sent")
     }
 
+    // MARK: - A phrase that matched but meant nothing right now is still stripped, silently
+
+    /// "computer start the message" heard while already recording is a phrase `CommandDetector`
+    /// found but nothing acts on — `stripSilently` is what keeps its own words out of the turn
+    /// anyway, with no tone and no phase change.
+    func testStripSilentlyRemovesThePhraseFromTheSentTextWithoutAToneOrPhaseChange() async {
+        let words = [
+            Word(range: 0..<400, text: "hello"), Word(range: 400..<700, text: "computer"),
+            Word(range: 700..<1_000, text: "start"), Word(range: 1_000..<1_300, text: "the"),
+            Word(range: 1_300..<1_600, text: "message"), Word(range: 1_600..<1_900, text: "world"),
+        ]
+        let ledgerBox = LedgerBox(
+            TranscriptLedger(
+                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+                segments: [
+                    Segment(
+                        range: 0..<1_900, text: "hello computer start the message world", words: words, source: .live)
+                ]
+            ))
+        let sender = SendRecorder()
+        final class ToneBox: @unchecked Sendable {
+            private(set) var kinds: [CommandKind] = []
+            func record(_ kind: CommandKind) { kinds.append(kind) }
+        }
+        let tones = ToneBox()
+        let store = makeStore(
+            ledgerBox: ledgerBox, sender: sender,
+            feedback: { event in
+                if case .commandRecognized(let kind) = event { tones.record(kind) }
+            })
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+
+        store.stripSilently(
+            CommandEvent(kind: .start, atOffset: 700, confidence: 1, phraseRange: 400..<1_600, source: .transcript))
+        XCTAssertEqual(store.phase, .collecting(startOffset: 0), "no phase change from a silent strip")
+        XCTAssertTrue(tones.kinds.isEmpty, "no tone from a silent strip")
+
+        await store.handle(CommandEvent(kind: .send, atOffset: 1_900, confidence: 1))
+        XCTAssertEqual(sender.sentTexts, ["stt-rec: hello world"])
+    }
+
     // MARK: - Crash-cut recovery
 
     func testRecoverCrashCutAssemblesTheStrandedTextWithoutSendingItAutomatically() {

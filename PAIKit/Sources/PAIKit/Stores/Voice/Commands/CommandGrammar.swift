@@ -28,17 +28,68 @@ public struct CommandPhraseSet: Sendable, Equatable {
         .interruptOff: "computer interrupt off",
     ])
 
-    /// Recognized alongside whatever `phrases` holds, never shown in place of it. "End the
-    /// message" is as natural a way to say it as "end the call", and both mean the same thing.
-    static let builtInVariants: [CommandKind: [String]] = [
-        .end: ["computer end the message"]
+    /// Verb inflections tolerated for the "start"/"stop"/"send"/"skip" family, alongside each
+    /// kind's own base verb — dictation rarely comes back in the exact base form every time
+    /// ("sent the message" for a "send" spoken a beat late is ordinary, not a misfire), and
+    /// tolerating it here is far cheaper than training around it.
+    private static let messageVerbInflections: [CommandKind: [String]] = [
+        .start: ["started"],
+        .stop: ["stopped"],
+        .send: ["sent", "sends"],
+        .skip: ["skipped"],
     ]
+    /// `nil` stands for no article at all — "computer send message" is as natural as "computer
+    /// send the message".
+    private static let articles: [String?] = ["the", "a", nil]
 
-    /// Every string recognized for `kind` — the configured phrase first, then its variants.
+    /// Every "computer <verb> <article> message" combination for `kind`'s own verb family,
+    /// derived from `basePhrase`'s own verb (its second word) rather than a hardcoded one, so a
+    /// phrase set that overrides the base phrase carries its variants with it rather than a test
+    /// override leaving the *default* verb's variants still matching underneath it. Includes the
+    /// base form itself — a harmless duplicate of `basePhrase`, never a second distinct match.
+    private static func messageCommandVariants(for kind: CommandKind, basePhrase: String) -> [String] {
+        guard let base = basePhrase.split(separator: " ").dropFirst().first else { return [] }
+        let verbs = [String(base)] + (messageVerbInflections[kind] ?? [])
+        return verbs.flatMap { verb in
+            articles.map { article in ["computer", verb, article, "message"].compactMap { $0 }.joined(separator: " ") }
+        }
+    }
+
+    /// Every "computer <verb> <article> <call/message>" combination "end" accepts — "ended",
+    /// "the"/"a"/no article, and either object, since Freddy says both. The verb itself is
+    /// likewise derived from `basePhrase`'s own second word.
+    private static func endVariants(basePhrase: String) -> [String] {
+        guard let base = basePhrase.split(separator: " ").dropFirst().first else { return [] }
+        let verbs = [String(base), "\(base)ed"]
+        let objects = ["call", "message"]
+        return verbs.flatMap { verb in
+            objects.flatMap { object in
+                articles.map { article in ["computer", verb, article, object].compactMap { $0 }.joined(separator: " ") }
+            }
+        }
+    }
+
+    /// Every variant `kind`'s own configured phrase gets, computed from that phrase rather than
+    /// a fixed default — `allPhrases(for:)`'s own private half.
+    private func variants(for kind: CommandKind) -> [String] {
+        guard let basePhrase = phrases[kind], !basePhrase.isEmpty else { return [] }
+        switch kind {
+        case .start, .stop, .send, .skip: return Self.messageCommandVariants(for: kind, basePhrase: basePhrase)
+        case .end: return Self.endVariants(basePhrase: basePhrase)
+        case .interruptOn, .interruptOff: return []
+        }
+    }
+
+    /// Every string recognized for `kind` — the configured phrase first, then its variants,
+    /// deduplicated: a variant that happens to equal the base phrase itself is never a second,
+    /// distinct entry — `CommandGrammar.matches` would otherwise report the identical match twice.
     public func allPhrases(for kind: CommandKind) -> [String] {
+        var seen = Set<String>()
         var result = [String]()
-        if let phrase = phrases[kind], !phrase.isEmpty { result.append(phrase) }
-        result.append(contentsOf: Self.builtInVariants[kind] ?? [])
+        for phrase in [phrases[kind]].compactMap({ $0 }) + variants(for: kind) where !phrase.isEmpty {
+            guard seen.insert(phrase).inserted else { continue }
+            result.append(phrase)
+        }
         return result
     }
 }

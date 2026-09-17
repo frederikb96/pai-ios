@@ -33,6 +33,14 @@ public struct CommandObservation: Sendable, Equatable {
     }
 }
 
+/// Which channel produced a command — carried on every `CommandEvent` so a device log can say
+/// where it came from, and so `CommandWindowStripper` knows whether there are real spoken words
+/// to strip at all: a manual tap has none, and an offline "computer" detection is acoustic, never
+/// transcribed, so neither behaves like a transcript match under stripping.
+public enum CommandSource: String, Sendable, Equatable {
+    case offline, transcript, manual
+}
+
 /// A command `CommandDetector` accepted — past the grammar and the position gate — or a manual
 /// tap or offline wake-word detection standing in for one.
 public struct CommandEvent: Sendable, Equatable {
@@ -45,12 +53,19 @@ public struct CommandEvent: Sendable, Equatable {
     /// `CommandWindowStripper` uses this to remove precisely the phrase's own words rather than
     /// approximating from a time window.
     public let phraseRange: SampleRange?
+    /// Defaults to `.transcript` — the shape every `CommandDetector`-produced event already is,
+    /// and what every existing manually-built test event meant before this field existed.
+    public let source: CommandSource
 
-    public init(kind: CommandKind, atOffset: Int, confidence: Double, phraseRange: SampleRange? = nil) {
+    public init(
+        kind: CommandKind, atOffset: Int, confidence: Double, phraseRange: SampleRange? = nil,
+        source: CommandSource = .transcript
+    ) {
         self.kind = kind
         self.atOffset = atOffset
         self.confidence = confidence
         self.phraseRange = phraseRange
+        self.source = source
     }
 }
 
@@ -59,13 +74,17 @@ public struct CommandEvent: Sendable, Equatable {
 /// alone rather than guessed at.
 public enum CommandRejectReason: String, Sendable, Equatable {
     case position = "not at the end of the utterance"
+    /// Neither preceded by a real gap nor opening the observation — words butt straight up
+    /// against the phrase, the shape of a sentence that merely ends on the phrase ("I say
+    /// computer end the call") rather than a deliberate command.
+    case pause = "no pause before the phrase"
     case notFinal = "still volatile"
 }
 
-/// `CommandDetector.detect(_:)`'s result: nothing matched, a match was found but a gate rejected
-/// it, or a command was accepted.
+/// One entry of `CommandDetector.detect(_:)`'s result — a match was found but a gate rejected it,
+/// or a command was accepted. An observation with no phrase in it at all produces no entries;
+/// there is no "nothing matched" case here because there is nothing to hold one.
 public enum CommandDetectionOutcome: Sendable, Equatable {
-    case none
     case rejected(kind: CommandKind, reason: CommandRejectReason)
     case accepted(CommandEvent)
 }

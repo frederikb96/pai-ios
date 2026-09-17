@@ -295,6 +295,16 @@ public final class CallModeStore {
         firedCommandsInTurn.append(command)
     }
 
+    /// A phrase `CommandDetector` matched but that meant nothing right now — "computer start the
+    /// message" heard while already recording, "computer skip the message" with no reply playing
+    /// — still occupied real dictated words. This adds it to the turn's own strip list without
+    /// `accept`'s tone or any phase change, so those words are cut from the eventual message the
+    /// same as an acted command's are, rather than surviving into it just because nothing happened
+    /// in response.
+    public func stripSilently(_ command: CommandEvent) {
+        firedCommandsInTurn.append(command)
+    }
+
     /// Sends a held turn as it stands, without waiting on its gaps any longer — what a caller
     /// uses once a held turn has waited long enough.
     public func forceSend() async {
