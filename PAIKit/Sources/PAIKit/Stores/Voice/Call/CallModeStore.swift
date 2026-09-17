@@ -59,6 +59,17 @@ public enum CallModePhase: Sendable, Equatable {
     case pendingSend
 }
 
+/// An open call cycle's live socket output, as `CallModeStore.previewText` reads it.
+public struct CallOpenCycleText: Sendable, Equatable {
+    public var segments: [Segment]
+    public var partial: String
+
+    public init(segments: [Segment], partial: String) {
+        self.segments = segments
+        self.partial = partial
+    }
+}
+
 /// The call-mode state machine: what "start"/"stop"/"send"/"skip"/"end" do to the call, message
 /// assembly from a ledger's own committed segments, and the hold-while-gap rule for a "send"
 /// whose turn lands before the pipeline has finished transcribing it.
@@ -285,23 +296,30 @@ public final class CallModeStore {
     /// a caller showing this as a live preview polls it as often as it likes, gap or no gap,
     /// without disturbing what a later "send" will actually do.
     ///
-    /// `openRangeLiveText` is the open cycle's own socket text — committed words plus the
-    /// in-flight partial, what microphone mode shows live. The ledger only ever holds committed
-    /// segments, and the service commits on a pause, so reading the open cycle from the ledger
-    /// alone shows nothing while someone is still talking. Empty falls back to the ledger, which
-    /// is what covers a cycle whose socket never produced text but whose gap was backfilled.
-    public func previewText(openRange: SampleRange?, openRangeLiveText: String, in ledger: TranscriptLedger) -> String {
+    /// `openCycle` is the open cycle's own socket output — its committed segments (shifted into
+    /// the call's addressing) and the in-flight partial, what microphone mode shows live. The
+    /// ledger only ever holds committed segments, folded in behind the socket, and the service
+    /// commits on a pause, so reading the open cycle from the ledger alone shows nothing while
+    /// someone is still talking. Command words are stripped from the committed part the same way
+    /// a send strips them; the partial is shown raw until its commit replaces it. With no socket
+    /// text at all the ledger stands in, which covers a cycle whose gap was backfilled instead.
+    public func previewText(openRange: SampleRange?, openCycle: CallOpenCycleText, in ledger: TranscriptLedger)
+        -> String
+    {
         let closed =
             turnRanges.isEmpty
             ? ""
             : CallMessageAssembler.assembledText(for: turnRanges, in: ledger, strippingCommands: firedCommandsInTurn)
         var open = ""
         if let openRange {
-            open =
-                openRangeLiveText.isEmpty
-                ? CallMessageAssembler.assembledText(
+            if openCycle.segments.isEmpty, openCycle.partial.isEmpty {
+                open = CallMessageAssembler.assembledText(
                     for: [openRange], in: ledger, strippingCommands: firedCommandsInTurn)
-                : openRangeLiveText
+            } else {
+                let committed = CallMessageAssembler.assembledText(
+                    of: openCycle.segments, sampleRate: ledger.sampleRate, strippingCommands: firedCommandsInTurn)
+                open = [committed, openCycle.partial].filter { !$0.isEmpty }.joined(separator: " ")
+            }
         }
         return [closed, open].filter { !$0.isEmpty }.joined(separator: " ")
     }

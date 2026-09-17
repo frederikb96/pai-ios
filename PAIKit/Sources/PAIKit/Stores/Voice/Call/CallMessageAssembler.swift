@@ -43,15 +43,23 @@ public enum CallMessageAssembler {
         phraseSet: CommandPhraseSet = .defaults
     ) -> String {
         guard !commands.isEmpty else { return assembledText(for: ranges, in: ledger) }
-        let sampleRate = Double(ledger.sampleRate)
-        return
-            ledger.segments
-            .filter { segment in ranges.contains { $0.overlaps(segment.range) } }
+        return assembledText(
+            of: ledger.segments.filter { segment in ranges.contains { $0.overlaps(segment.range) } },
+            sampleRate: ledger.sampleRate, strippingCommands: commands, phraseSet: phraseSet)
+    }
+
+    /// The same stripping over segments that are not in a ledger yet — an open cycle's own socket
+    /// segments, already shifted into the call's addressing.
+    public static func assembledText(
+        of segments: [Segment], sampleRate: Int, strippingCommands commands: [CommandEvent],
+        phraseSet: CommandPhraseSet = .defaults
+    ) -> String {
+        segments
             .sorted { $0.range.lowerBound < $1.range.lowerBound }
             .map { segment in
-                guard let words = segment.words else { return segment.text }
+                guard !commands.isEmpty, let words = segment.words else { return segment.text }
                 return CommandWindowStripper.strip(
-                    words: words, commands: commands, phraseSet: phraseSet, sampleRate: sampleRate)
+                    words: words, commands: commands, phraseSet: phraseSet, sampleRate: Double(sampleRate))
             }
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)

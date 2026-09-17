@@ -208,7 +208,9 @@ public final class VoiceRecordingSession {
     /// When a frame last reached the socket — what the keepalive measures against, so any stretch
     /// without one is covered, whether it began at a gate or a reconnect.
     private var lastUplinkAt: Date?
-    private var partial = ""
+    /// The in-flight partial transcript on the live connection — replaced as the service revises
+    /// it and cleared on every commit.
+    public private(set) var partial = ""
     /// The furthest take offset any committed segment has covered — advances only on a real
     /// commit, never on a drop, which is exactly what leaves the uncovered stretch derivable as a
     /// gap rather than needing to be recorded twice.

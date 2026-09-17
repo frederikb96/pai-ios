@@ -143,12 +143,16 @@ final class CallModeStoreTests: XCTestCase {
         store.finishEntering(atOffset: 0)
 
         XCTAssertEqual(
-            store.previewText(openRange: 0..<1000, openRangeLiveText: "", in: ledgerBox.ledger), "hello there")
+            store.previewText(
+                openRange: 0..<1000, openCycle: CallOpenCycleText(segments: [], partial: ""), in: ledgerBox.ledger),
+            "hello there")
     }
 
     func testPreviewTextIsEmptyWithNoOpenRangeAndNothingHeld() {
         let store = makeStore(ledgerBox: LedgerBox(emptyLedger()), sender: SendRecorder())
-        XCTAssertEqual(store.previewText(openRange: nil, openRangeLiveText: "", in: emptyLedger()), "")
+        XCTAssertEqual(
+            store.previewText(
+                openRange: nil, openCycle: CallOpenCycleText(segments: [], partial: ""), in: emptyLedger()), "")
     }
 
     func testPreviewTextCombinesAHeldTurnFromAnEarlierStopWithTheNewOpenRange() async {
@@ -166,13 +170,15 @@ final class CallModeStoreTests: XCTestCase {
         await store.handle(CommandEvent(kind: .stop, atOffset: 500, confidence: 1))
 
         XCTAssertEqual(
-            store.previewText(openRange: 800..<1200, openRangeLiveText: "", in: ledgerBox.ledger),
+            store.previewText(
+                openRange: 800..<1200, openCycle: CallOpenCycleText(segments: [], partial: ""), in: ledgerBox.ledger),
             "first cycle second cycle")
     }
 
     /// The service commits on a pause, so mid-sentence the ledger holds nothing for the open
-    /// cycle — the socket's own live text is what makes words appear while still talking.
-    func testPreviewTextShowsTheOpenCycleLiveTextBeforeAnythingIsCommitted() async {
+    /// cycle — the socket's own committed words and partial are what make text appear while still
+    /// talking.
+    func testPreviewTextShowsTheOpenCycleSocketTextBeforeTheLedgerHasIt() async {
         let ledgerBox = LedgerBox(
             TranscriptLedger(
                 takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
@@ -182,10 +188,33 @@ final class CallModeStoreTests: XCTestCase {
         store.startEntering()
         store.finishEntering(atOffset: 0)
         await store.handle(CommandEvent(kind: .stop, atOffset: 500, confidence: 1))
+        let openCycle = CallOpenCycleText(
+            segments: [Segment(range: 800..<1000, text: "still", source: .live)], partial: "talking")
 
         XCTAssertEqual(
-            store.previewText(openRange: 800..<1200, openRangeLiveText: "still talk", in: ledgerBox.ledger),
-            "first cycle still talk")
+            store.previewText(openRange: 800..<1200, openCycle: openCycle, in: ledgerBox.ledger),
+            "first cycle still talking")
+    }
+
+    /// "Kai skip" spoken mid-recording belongs to the reply, not to the message being dictated,
+    /// so the live preview drops it once committed, exactly as a send would.
+    func testPreviewTextStripsAFiredCommandFromTheOpenCycleSocketText() async {
+        let ledgerBox = LedgerBox(emptyLedger())
+        let store = makeStore(ledgerBox: ledgerBox, sender: SendRecorder())
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+        await store.handle(CommandEvent(kind: .start, atOffset: 0, confidence: 1))
+        await store.handle(CommandEvent(kind: .skip, atOffset: 32000, confidence: 1))
+        let words = [
+            Word(range: 0..<8000, text: "hello"), Word(range: 30000..<31000, text: "Kai"),
+            Word(range: 31000..<32000, text: "skip"), Word(range: 48000..<50000, text: "again"),
+        ]
+        let openCycle = CallOpenCycleText(
+            segments: [Segment(range: 0..<50000, text: "hello Kai skip again", words: words, source: .live)],
+            partial: "")
+
+        XCTAssertEqual(
+            store.previewText(openRange: 0..<50000, openCycle: openCycle, in: ledgerBox.ledger), "hello again")
     }
 
     func testPreviewTextNeverConsumesTheTurnTheWaySendDoes() async {
@@ -199,8 +228,10 @@ final class CallModeStoreTests: XCTestCase {
         store.finishEntering(atOffset: 0)
         await store.handle(CommandEvent(kind: .stop, atOffset: 500, confidence: 1))
 
-        _ = store.previewText(openRange: nil, openRangeLiveText: "", in: ledgerBox.ledger)
-        _ = store.previewText(openRange: nil, openRangeLiveText: "", in: ledgerBox.ledger)
+        _ = store.previewText(
+            openRange: nil, openCycle: CallOpenCycleText(segments: [], partial: ""), in: ledgerBox.ledger)
+        _ = store.previewText(
+            openRange: nil, openCycle: CallOpenCycleText(segments: [], partial: ""), in: ledgerBox.ledger)
 
         XCTAssertEqual(store.turnRanges, [0..<500], "reading the preview twice must not touch the turn")
     }
