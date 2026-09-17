@@ -121,6 +121,9 @@ final class CallModeController {
     /// The last preview text actually written — skips a redundant write on every poll tick where
     /// nothing has changed, matching `ComposerBar`'s own live-transcript poll.
     private var lastWrittenPreviewText: String?
+    /// The whole draft as this call last wrote it — a draft that differs from it was edited by
+    /// something else (typing, a send, a sync), and the preview rebuilds on top of that edit.
+    private var lastWrittenDraftText: String?
     private var previewTask: Task<Void, Never>?
     /// Set synchronously, before the first `await`, for the whole of a "start"/"stop"/"send"
     /// dispatch's own cycle transition — `beginCollectingCycle()`/`endCollectingCycle()` mutate
@@ -151,7 +154,7 @@ final class CallModeController {
         // ever having been on top.
         VoiceIntentBridge.shared.toggleCallMode = { [weak self] in
             guard let self, let phase = self.store?.phase, phase != .idle else { return false }
-            if case .listening = phase {
+            if phase == .listening || phase == .pendingSend {
                 Task { await self.handleManual(.start) }
             } else if case .collecting = phase {
                 Task { await self.handleManual(.stop) }
@@ -169,8 +172,30 @@ final class CallModeController {
     /// elsewhere" (`ComposerCallMenu.state`).
     var activeSessionID: String? { boundSessionID }
 
-    private var lastDetectedCommandAt: [CommandKind: Date] = [:]
+    /// The last detection per command and which channel heard it — a repeat on the other channel
+    /// inside the window is the same spoken command heard twice.
+    private var lastDetectedCommand: [CommandKind: (at: Date, isOffline: Bool)] = [:]
     private static let detectedCommandDedupSeconds: TimeInterval = 4
+    /// How long a send held on an untranscribed stretch waits before going out as it stands.
+    private static let heldSendTimeout: Duration = .seconds(30)
+    private var heldSendTimeoutTask: Task<Void, Never>?
+
+    /// Entry, exit and every command run one at a time, in arrival order. Each awaits pipeline
+    /// work for seconds (a final commit, a send), and two interleaving would fold one cycle twice
+    /// or tear the call down under a transition still running.
+    private var commandTail: Task<Void, Never>?
+    private var chunkContinuation: AsyncStream<[Int16]>.Continuation?
+    private var chunkConsumerTask: Task<Void, Never>?
+
+    private func serialized<T: Sendable>(_ work: @escaping @MainActor @Sendable () async -> T) async -> T {
+        let previous = commandTail
+        let task = Task { @MainActor () -> T in
+            await previous?.value
+            return await work()
+        }
+        commandTail = Task { _ = await task.value }
+        return await task.value
+    }
 
     private func isApplicable(_ kind: CommandKind) -> Bool {
         guard let store else { return false }
@@ -207,6 +232,10 @@ final class CallModeController {
     /// microphone-mode take, permission was refused, or the audio session could not be configured.
     /// The caller (the call screen's own `.task`) is expected to show that and dismiss itself.
     func enter(sessionID: String) async -> Bool {
+        await serialized { [weak self] in await self?.performEnter(sessionID: sessionID) ?? false }
+    }
+
+    private func performEnter(sessionID: String) async -> Bool {
         // Reopening the call screen for the call already running (left with Back, then reached
         // again through the plus menu's "Return to Call", say) reattaches rather than
         // double-entering; a different session while one is already live is refused, the same as
@@ -228,6 +257,7 @@ final class CallModeController {
         boundSessionID = sessionID
         preCallDraftText = drafts.draft(for: sessionID).text
         lastWrittenPreviewText = nil
+        lastWrittenDraftText = nil
         let sampleRate = VoiceAudioRatePolicy.transportRate(
             hardwareRate: controller.microphoneCapture.hardwareSampleRate)
         callSampleRate = sampleRate
@@ -257,8 +287,10 @@ final class CallModeController {
             TranscriptLedger(takeId: takeId, mode: .call, sampleRate: sampleRate, draftKey: sessionID, preText: "")
         ) { [weak self] in
             Task { @MainActor in
-                await self?.store?.ledgerChanged()
-                self?.drainUnsentTurnText()
+                await self?.serialized { [weak self] in
+                    await self?.store?.ledgerChanged()
+                    self?.drainUnsentTurnText()
+                }
             }
         }
 
@@ -381,15 +413,64 @@ final class CallModeController {
         capture.onConfigurationChange = { [weak self] in
             Task { @MainActor in self?.restartCaptureAfterConfigurationChange() }
         }
-        capture.onChunk = { [weak self] samples in
-            Task { @MainActor in await self?.handleCapturedChunk(samples) }
+        // One ordered consumer, the same shape microphone mode uses: a task per chunk can resume
+        // out of order across the session's own awaits.
+        let (chunkStream, continuation) = AsyncStream<[Int16]>.makeStream()
+        chunkContinuation = continuation
+        chunkConsumerTask?.cancel()
+        chunkConsumerTask = Task { [weak self] in
+            for await samples in chunkStream {
+                await self?.handleCapturedChunk(samples)
+            }
+        }
+        capture.onChunk = { samples in continuation.yield(samples) }
+        controller.callModeInterruptionHandler = { [weak self] began, _ in
+            await self?.handleInterruption(began: began)
         }
     }
 
     private func restartCaptureAfterConfigurationChange() {
         guard store != nil else { return }
         controller.microphoneCapture.stop()
-        try? controller.microphoneCapture.start(targetSampleRate: callSampleRate)
+        speech?.setHeld(true)
+        do {
+            try controller.microphoneCapture.start(targetSampleRate: callSampleRate)
+            releaseRepliesAfterEngineRestart()
+        } catch {
+            AppVoiceDiagnosticsLog.shared.log(.error, "mode", "call capture restart failed: \(error)")
+            controller.handleFeedback(.captureGaveUp)
+        }
+    }
+
+    /// A phone call or Siri takes the microphone; the call keeps going and takes it back when
+    /// the system lets go. Tried even without `shouldResume` — a call left deaf is worse than an
+    /// attempt that fails with a cue.
+    private func handleInterruption(began: Bool) async {
+        guard store != nil else { return }
+        let capture = controller.microphoneCapture
+        if began {
+            capture.stop()
+            speech?.setHeld(true)
+            controller.handleFeedback(.interruptionPaused)
+            return
+        }
+        do {
+            try controller.configureAudioSessionForCallMode()
+            try capture.start(targetSampleRate: callSampleRate)
+            releaseRepliesAfterEngineRestart()
+            controller.handleFeedback(.interruptionResumed)
+        } catch {
+            AppVoiceDiagnosticsLog.shared.log(.error, "mode", "call capture did not resume: \(error)")
+            controller.handleFeedback(.captureGaveUp)
+        }
+    }
+
+    /// Stopping the engine may never report the playing reply as finished, which would leave
+    /// speech stuck on it — so every engine stop holds replies first, re-queueing the playing one
+    /// from its start, and this lets them play again once the engine runs.
+    private func releaseRepliesAfterEngineRestart() {
+        speech?.setHeld(false)
+        applyReplyHold()
     }
 
     private func handleCapturedChunk(_ samples: [Int16]) async {
@@ -410,7 +491,11 @@ final class CallModeController {
         // cycle's own `cycleSamplesFed` (and therefore the collecting range `endCollectingCycle()`
         // closes) with dead air past the point the command was actually spoken, which is exactly
         // the stretch `CommandWindowStripper` then had no hope of reaching.
-        guard session.canIngestAudio else { return }
+        //
+        // A cycle whose connection never opened is the exception: its audio is still saved and
+        // counted, so it derives as a gap and is transcribed once the network is back.
+        let startFailed = session.state == .idle && session.lastStartFailure != nil
+        guard session.canIngestAudio || startFailed else { return }
         callAudioFile?.append(pcm16le: samples)
         let offset = cycleSamplesFed
         cycleSamplesFed += samples.count
@@ -479,12 +564,13 @@ final class CallModeController {
         // Both channels may hear the same spoken command while recording — the transcript is the
         // more reliable ear for a phrase, the offline engine the faster one — so whichever lands
         // first acts and the other is dropped as the same utterance.
+        // A repeat on the same channel is a real repeat — each channel already debounces itself.
         let now = Date()
-        if let last = lastDetectedCommandAt[event.kind], now.timeIntervalSince(last) < Self.detectedCommandDedupSeconds
+        if let last = lastDetectedCommand[event.kind], last.isOffline != isOffline,
+            now.timeIntervalSince(last.at) < Self.detectedCommandDedupSeconds
         {
             return
         }
-        lastDetectedCommandAt[event.kind] = now
 
         // Wall-clock is approximated at the moment this fires — neither channel has a genuine
         // take-to-wall-clock mapping the way `VoiceRecordingSession`'s own `SessionTimeline` does
@@ -499,6 +585,7 @@ final class CallModeController {
             !EchoWindowRejection.isEcho(
                 commandWindow: window, commandText: phrase, playbackWindows: speech.playbackWindows(now: now))
         else { return }
+        lastDetectedCommand[event.kind] = (now, isOffline)
 
         // The offline engine's own `atOffset` is in `wakeWordCaptureOffset`'s addressing (from
         // call entry, advancing through wake-mode gaps a cycle never sees) — translated into the
@@ -514,7 +601,11 @@ final class CallModeController {
                 event.atOffset, wakeOffsetAtCycleStart: wakeOffsetAtCycleStart,
                 callTakeCollectedSamples: callTakeCollectedSamples)
             : event.atOffset
-        Task { await dispatch(event.kind, confidence: event.confidence, spokenAtOffset: spokenAtOffset) }
+        Task {
+            await serialized { [weak self] in
+                await self?.dispatch(event.kind, confidence: event.confidence, spokenAtOffset: spokenAtOffset)
+            }
+        }
     }
 
     /// A background poll over the currently-open cycle's own `committedSegments` — Freddy's
@@ -541,7 +632,7 @@ final class CallModeController {
                     let rawWordCount = segment.text.split(separator: " ").count
                     let wordTimes = shifted.words?.count == rawWordCount ? shifted.words?.map(\.range) : nil
                     let observation = CommandObservation(
-                        text: shifted.text, isFinal: true, wordTimes: wordTimes, atOffset: shifted.range.lowerBound)
+                        text: shifted.text, isFinal: true, wordTimes: wordTimes, atOffset: shifted.range.upperBound)
                     if let event = detector.detect(observation) {
                         routeDetectedCommand(event, isOffline: false)
                     }
@@ -555,7 +646,7 @@ final class CallModeController {
     // MARK: - Manual controls
 
     func handleManual(_ kind: CommandKind) async {
-        await dispatch(kind, confidence: 1)
+        await serialized { [weak self] in await self?.dispatch(kind, confidence: 1) }
     }
 
     /// The one place every accepted command — offline, fallback, or a manual tap — actually acts.
@@ -572,12 +663,13 @@ final class CallModeController {
         guard let store else { return }
         switch kind {
         case .start:
-            guard case .listening = store.phase, !isTransitioningCycle else { return }
+            guard store.phase == .listening || store.phase == .pendingSend, !isTransitioningCycle else { return }
             isTransitioningCycle = true
             await beginCollectingCycle()
             isTransitioningCycle = false
             await store.handle(CommandEvent(kind: .start, atOffset: callTakeCollectedSamples, confidence: confidence))
             applyReplyHold()
+            drainUnsentTurnText()
         case .stop, .send:
             guard !isTransitioningCycle else { return }
             let previewBeforeSend = lastWrittenPreviewText ?? ""
@@ -592,6 +684,7 @@ final class CallModeController {
             await store.handle(CommandEvent(kind: kind, atOffset: stampOffset, confidence: confidence))
             applyReplyHold()
             drainUnsentTurnText()
+            if store.phase == .pendingSend { armHeldSendTimeout() }
             // A send that found nothing to send must never take the words on screen with it.
             if kind == .send, store.lastSendFoundNothing, !previewBeforeSend.isEmpty {
                 AppVoiceDiagnosticsLog.shared.log(
@@ -612,7 +705,23 @@ final class CallModeController {
                     confidence: confidence))
             setInterruptsAllowed(!settingsStore.callInterruptsAllowed)
         case .end:
-            await exit()
+            await performExit()
+        }
+    }
+
+    /// A held turn waits for its missing stretch only so long; then it goes out as it stands,
+    /// and the audio stays in Past Recordings for whatever it lacked.
+    private func armHeldSendTimeout() {
+        heldSendTimeoutTask?.cancel()
+        heldSendTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.heldSendTimeout)
+            guard !Task.isCancelled else { return }
+            await self?.serialized { [weak self] in
+                guard let self, let store = self.store, store.phase == .pendingSend else { return }
+                AppVoiceDiagnosticsLog.shared.log(.warning, "mode", "held send timed out; sending what is transcribed")
+                await store.forceSend()
+                self.drainUnsentTurnText()
+            }
         }
     }
 
@@ -639,8 +748,11 @@ final class CallModeController {
                 }
             ))
         cycleSession = session
+        let sampleRate = callSampleRate
         let startTask = Task {
-            await session.start(hardwareSampleRate: controller.microphoneCapture.hardwareSampleRate)
+            // The rate capture converts to, fixed for the call — a headset joining mid-call changes
+            // the hardware rate but never what this call sends.
+            await session.start(hardwareSampleRate: sampleRate)
         }
         // Matches `VoiceRecorderController.start()`'s own wait: `state` leaves `.idle`
         // synchronously, before the connect's own `await` — waiting for that (never the full
@@ -673,7 +785,7 @@ final class CallModeController {
         Task { @MainActor [weak self] in
             await startTask.value
             guard let self, self.cycleSession === session, let failure = session.lastStartFailure else { return }
-            self.controller.handleFeedback(.connectionDropped(reason: failure.userMessage))
+            self.controller.handleFeedback(.recordingStartFailed(reason: failure.userMessage))
         }
     }
 
@@ -695,7 +807,7 @@ final class CallModeController {
             let base = callTakeCollectedSamples
             segments += CallCycleAddressing.shift(session.committedSegments, by: base)
             acknowledged += CallCycleAddressing.shift(session.acknowledgedRanges, by: base)
-            capturedUpTo = base + session.capturedUpTo
+            capturedUpTo = base + max(session.capturedUpTo, cycleSamplesFed)
             collecting.append(base..<Int.max)
             pendingLiveRange = session.pendingLiveRange.map { CallCycleAddressing.shift($0, by: base) }
         }
@@ -771,15 +883,34 @@ final class CallModeController {
                 ?? TranscriptLedger(
                     takeId: callTakeId ?? "", mode: .call, sampleRate: callSampleRate, draftKey: sessionID,
                     preText: "")
+            rebaseOnExternalDraftEdit(sessionID: sessionID)
             let preview = store.previewText(openRange: openRange, openCycle: openCycle, in: ledger)
             if preview != lastWrittenPreviewText {
                 lastWrittenPreviewText = preview
-                drafts.setDraftText(
-                    key: sessionID,
-                    text: VoiceRecorderController.composeLiveText(pre: preCallDraftText, partial: preview))
+                let text = VoiceRecorderController.composeLiveText(pre: preCallDraftText, partial: preview)
+                lastWrittenDraftText = text
+                drafts.setDraftText(key: sessionID, text: text)
             }
             try? await Task.sleep(for: .milliseconds(150))
         }
+    }
+
+    /// Keeps whatever else changed the draft since the preview last wrote it. An edit that leaves
+    /// the preview at the end, or removes it entirely, becomes the new base; an edit inside the
+    /// preview cannot be told apart from the preview itself and is overwritten.
+    private func rebaseOnExternalDraftEdit(sessionID: String) {
+        let current = drafts.draft(for: sessionID).text
+        guard let written = lastWrittenDraftText, current != written else { return }
+        let previewPart = VoiceRecorderController.composeLiveText(pre: "", partial: lastWrittenPreviewText ?? "")
+        if previewPart.isEmpty || !current.contains(previewPart) {
+            preCallDraftText = current
+        } else if current.hasSuffix(previewPart) {
+            preCallDraftText = String(current.dropLast(previewPart.count)).trimmingCharacters(in: .whitespaces)
+        } else {
+            return
+        }
+        lastWrittenPreviewText = nil
+        lastWrittenDraftText = nil
     }
 
     /// Restores the draft to whatever it held before this call's own live preview started writing
@@ -791,6 +922,7 @@ final class CallModeController {
         guard let sessionID = boundSessionID, !text.isEmpty else { return }
         lastWrittenPreviewText = nil
         let combined = preCallDraftText.isEmpty ? text : "\(preCallDraftText) \(text)"
+        lastWrittenDraftText = combined
         drafts.setDraftText(key: sessionID, text: combined)
         preCallDraftText = combined
     }
@@ -801,6 +933,10 @@ final class CallModeController {
     /// or a teardown after a failed entry — always through this one path, so the microphone is
     /// never left claimed and a pending turn is never silently dropped.
     func exit() async {
+        await serialized { [weak self] in await self?.performExit() }
+    }
+
+    private func performExit() async {
         guard let store else { return }
         if case .collecting = store.phase {
             await endCollectingCycle()
@@ -831,6 +967,11 @@ final class CallModeController {
         fallbackCommandTask = nil
         callLedgerTask?.cancel()
         callLedgerTask = nil
+        heldSendTimeoutTask?.cancel()
+        heldSendTimeoutTask = nil
+        if let session = cycleSession {
+            await session.stop(reason: .user)
+        }
         speech?.end()
         speech = nil
         speechOutput = nil
@@ -863,6 +1004,11 @@ final class CallModeController {
         let capture = controller.microphoneCapture
         capture.stop()
         capture.onChunk = nil
+        chunkContinuation?.finish()
+        chunkContinuation = nil
+        chunkConsumerTask?.cancel()
+        chunkConsumerTask = nil
+        controller.callModeInterruptionHandler = nil
         capture.onRawChunk = nil
         capture.onLevel = nil
         capture.onConfigurationChange = nil

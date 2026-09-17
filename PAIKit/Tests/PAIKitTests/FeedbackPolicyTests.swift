@@ -265,6 +265,16 @@ final class FeedbackPolicyTests: XCTestCase {
         XCTAssertEqual(second.notify?.disposition, .post, "each failed reply names a different message")
     }
 
+    func testEveryFailedCallRecordingStartIsAnnouncedEvenMidDropEpisode() {
+        var policy = FeedbackPolicy()
+        _ = policy.decide(.connectionDropped(reason: nil), now: t0)
+        let first = policy.decide(.recordingStartFailed(reason: "offline"), now: t0.addingTimeInterval(1))
+        let second = policy.decide(.recordingStartFailed(reason: "offline"), now: t0.addingTimeInterval(2))
+        XCTAssertEqual(first.cue, .error)
+        XCTAssertEqual(second.cue, .error, "each failed start is a separate recording that is not live")
+        XCTAssertEqual(second.notify?.disposition, .post)
+    }
+
     // MARK: - Cue-only, no-notification events
 
     func testInterruptionPausedPlaysPauseWithNoNotification() {

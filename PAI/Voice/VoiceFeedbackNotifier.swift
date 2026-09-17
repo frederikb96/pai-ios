@@ -51,7 +51,7 @@ final class VoiceFeedbackNotifier {
     private static func logLevel(for event: FeedbackEvent) -> VoiceLogLevel {
         switch event {
         case .connectionDropped, .serverNotice, .mintFailed, .fatalProtocolError, .captureGaveUp, .backfillFailed,
-            .ttsDropped, .ttsRejected, .replyNotSpoken, .commandModelMissing:
+            .ttsDropped, .ttsRejected, .replyNotSpoken, .commandModelMissing, .recordingStartFailed, .sendFailed:
             .warning
         case .reconnected, .gapOpened, .backfillCompleted, .captureRestarted, .interruptionPaused,
             .interruptionResumed, .ttsReconnected, .commandRecognized:
@@ -77,6 +77,8 @@ final class VoiceFeedbackNotifier {
         case .ttsReconnected: "spoken-reply connection reconnected"
         case .ttsRejected(let reason, let message): "spoken-reply request rejected (\(reason)): \(message)"
         case .replyNotSpoken: "a reply was not spoken"
+        case .recordingStartFailed(let reason): "call recording could not connect: \(reason)"
+        case .sendFailed: "call turn was not sent"
         case .commandRecognized(let kind): "command recognized: \(kind.rawValue)"
         case .commandModelMissing(let kind): "no offline model bundled for command: \(kind.rawValue)"
         }
@@ -145,6 +147,10 @@ final class VoiceFeedbackNotifier {
             }
         case .replyNotSpoken:
             return "A reply was not spoken — it is in the transcript."
+        case .recordingStartFailed(let reason):
+            return "Recording is not live (\(reason)) — the audio is kept and transcribed later."
+        case .sendFailed:
+            return "Your message was not sent — the text is back in the draft."
         case .commandModelMissing(let kind):
             return "The \"\(kind.rawValue)\" voice command has no offline model yet — it won't fire while offline."
         case .interruptionPaused, .interruptionResumed, .commandRecognized:

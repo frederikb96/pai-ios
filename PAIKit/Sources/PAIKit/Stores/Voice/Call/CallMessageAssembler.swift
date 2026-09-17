@@ -11,11 +11,12 @@ import Foundation
 /// a stretch of wake-mode silence between them that must not be assembled into the message.
 public enum CallMessageAssembler {
 
-    /// Every range is ready to send when nothing in `ledger.gaps` overlaps any of them — the same
+    /// Every range is ready to send when no retryable gap in `ledger.gaps` overlaps any of them — the same
     /// "no gap, no send" rule `TranscriptLedger.delivered` is built on, applied to one turn's
-    /// ranges rather than the whole take.
+    /// ranges rather than the whole take. A demoted gap is never retried, so waiting on it would
+    /// hold the turn forever.
     public static func isCovered(_ ranges: [SampleRange], in ledger: TranscriptLedger) -> Bool {
-        !ledger.gaps.contains { gap in ranges.contains { $0.overlaps(gap.range) } }
+        !ledger.gaps.contains { gap in !gap.demoted && ranges.contains { $0.overlaps(gap.range) } }
     }
 
     /// Joins every committed segment whose range falls inside any of `ranges`, in offset order,

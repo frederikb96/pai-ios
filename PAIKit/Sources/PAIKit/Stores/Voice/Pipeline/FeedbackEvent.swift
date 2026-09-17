@@ -25,6 +25,11 @@ public enum FeedbackEvent: Sendable, Equatable {
     /// `message` is ElevenLabs' own human-readable text, logged verbatim.
     case ttsRejected(reason: String, message: String)
     case replyNotSpoken
+    /// A call's recording cycle could not open its transcription connection. The audio is still
+    /// saved and transcribed later, but nothing is live until the next start.
+    case recordingStartFailed(reason: String)
+    /// A call's turn was not sent — refused or failed. Its text is back in the draft.
+    case sendFailed
     case commandRecognized(CommandKind)
     /// A command configured to run offline has no `.onnx` classifier in the app bundle — that
     /// command is silently unreachable by voice until this is fixed, never a crash.

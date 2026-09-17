@@ -430,9 +430,9 @@ final class CallModeStoreTests: XCTestCase {
         XCTAssertNil(store.lastAbandonedTurnText)
     }
 
-    // MARK: - Every accepted command earns its confirmation tone
+    // MARK: - Only an accepted command earns its confirmation tone
 
-    func testEveryCommandKindFiresACommandRecognizedFeedbackEvent() async {
+    func testOnlyAcceptedCommandsFireACommandRecognizedFeedbackEvent() async {
         actor Recorder {
             private(set) var kinds: [CommandKind] = []
             func record(_ kind: CommandKind) { kinds.append(kind) }
@@ -448,14 +448,114 @@ final class CallModeStoreTests: XCTestCase {
         store.startEntering()
         store.finishEntering(atOffset: 0)
 
-        for kind in CommandKind.allCases {
+        let sequence: [CommandKind] = [.start, .stop, .stop, .start, .interrupt, .skip, .send, .end]
+        for kind in sequence {
             await store.handle(CommandEvent(kind: kind, atOffset: 0, confidence: 1))
         }
-        // Yield so the detached recording tasks above actually land before asserting.
         for _ in 0..<100 { await Task.yield() }
 
         let recorded = await recorder.kinds
-        XCTAssertEqual(Set(recorded), Set(CommandKind.allCases))
+        XCTAssertEqual(recorded, [.stop, .start, .interrupt, .skip, .send, .end])
+    }
+
+    // MARK: - Ending mid-recording and releasing a held turn
+
+    func testEndWhileRecordingKeepsTheOpenCyclesWords() async {
+        let ledgerBox = LedgerBox(
+            TranscriptLedger(
+                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+                segments: [
+                    Segment(range: 0..<500, text: "first part", source: .live),
+                    Segment(range: 1000..<1500, text: "second part", source: .live),
+                ]))
+        let store = makeStore(ledgerBox: ledgerBox, sender: SendRecorder())
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+        await store.handle(CommandEvent(kind: .stop, atOffset: 600, confidence: 1))
+        await store.handle(CommandEvent(kind: .start, atOffset: 900, confidence: 1))
+
+        await store.handle(CommandEvent(kind: .end, atOffset: 1600, confidence: 1))
+
+        XCTAssertEqual(store.lastAbandonedTurnText, "stt-rec: first part second part")
+    }
+
+    private func heldTurnLedger(gapDemoted: Bool = false) -> TranscriptLedger {
+        TranscriptLedger(
+            takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+            segments: [Segment(range: 0..<500, text: "partial", source: .live)],
+            gaps: [Gap(range: 500..<1000, demoted: gapDemoted)])
+    }
+
+    func testStartWhileATurnIsHeldSendsItAsItStandsAndRecordsAgain() async {
+        let sender = SendRecorder()
+        let store = makeStore(ledgerBox: LedgerBox(heldTurnLedger()), sender: sender)
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+        await store.handle(CommandEvent(kind: .send, atOffset: 1000, confidence: 1))
+        XCTAssertEqual(store.phase, .pendingSend)
+
+        await store.handle(CommandEvent(kind: .start, atOffset: 1200, confidence: 1))
+
+        XCTAssertEqual(sender.sentTexts, ["stt-rec: partial"])
+        XCTAssertEqual(store.phase, .collecting(startOffset: 1200))
+    }
+
+    func testASecondSendWhileHeldSendsWithoutWaitingForTheGap() async {
+        let sender = SendRecorder()
+        let store = makeStore(ledgerBox: LedgerBox(heldTurnLedger()), sender: sender)
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+        await store.handle(CommandEvent(kind: .send, atOffset: 1000, confidence: 1))
+
+        await store.handle(CommandEvent(kind: .send, atOffset: 1000, confidence: 1))
+
+        XCTAssertEqual(sender.sentTexts, ["stt-rec: partial"])
+        XCTAssertEqual(store.phase, .listening)
+    }
+
+    func testADemotedGapNeverHoldsTheTurn() async {
+        let sender = SendRecorder()
+        let store = makeStore(ledgerBox: LedgerBox(heldTurnLedger(gapDemoted: true)), sender: sender)
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+
+        await store.handle(CommandEvent(kind: .send, atOffset: 1000, confidence: 1))
+
+        XCTAssertEqual(sender.sentTexts, ["stt-rec: partial"])
+    }
+
+    func testAFailedSendIsAnnouncedAndALaterSuccessClearsTheFailure() async {
+        actor Recorder {
+            private(set) var failures = 0
+            func record() { failures += 1 }
+        }
+        let recorder = Recorder()
+        let ledgerBox = LedgerBox(
+            TranscriptLedger(
+                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+                segments: [
+                    Segment(range: 0..<500, text: "hello", source: .live),
+                    Segment(range: 700..<780, text: "again", source: .live),
+                ]))
+        let sender = SendRecorder()
+        sender.nextFailure = SendFailure()
+        let store = makeStore(
+            ledgerBox: ledgerBox, sender: sender,
+            feedback: { event in
+                if event == .sendFailed { Task { await recorder.record() } }
+            })
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+
+        await store.handle(CommandEvent(kind: .send, atOffset: 600, confidence: 1))
+        XCTAssertNotNil(store.lastSendFailure)
+        await store.handle(CommandEvent(kind: .start, atOffset: 700, confidence: 1))
+        await store.handle(CommandEvent(kind: .send, atOffset: 800, confidence: 1))
+        for _ in 0..<100 { await Task.yield() }
+
+        XCTAssertNil(store.lastSendFailure)
+        let failures = await recorder.failures
+        XCTAssertEqual(failures, 1)
     }
 
     // MARK: - Session status refuses sending, never ends the call

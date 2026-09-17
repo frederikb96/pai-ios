@@ -57,7 +57,7 @@ public struct CommandDetector: Sendable {
 
         lastFiredOffset = observation.atOffset
         return CommandEvent(
-            kind: match.kind, atOffset: observation.atOffset,
+            kind: match.kind, atOffset: phraseStart(match, observation: observation, wordCount: words.count),
             confidence: confidence(isFinal: observation.isFinal, hadTiming: pauseGate.hadTiming))
     }
 
@@ -84,6 +84,17 @@ public struct CommandDetector: Sendable {
         let previousWordEnd = wordTimes[match.range.lowerBound - 1].upperBound
         let phraseStart = wordTimes[match.range.lowerBound].lowerBound
         return (phraseStart - previousWordEnd >= pauseGateSamples, true)
+    }
+
+    /// Where the phrase itself began, when word timing lines up with the text — otherwise the
+    /// observation's own offset, which is where the observed text ends. A "stop" or "send" closes
+    /// the turn at this offset, so stamping it earlier than the phrase would cut dictated words
+    /// spoken in the same breath out of the message.
+    private func phraseStart(_ match: CommandGrammar.Match, observation: CommandObservation, wordCount: Int) -> Int {
+        guard let wordTimes = observation.wordTimes,
+            wordTimes.count == observation.text.split(separator: " ").count, wordTimes.count == wordCount
+        else { return observation.atOffset }
+        return wordTimes[match.range.lowerBound].lowerBound
     }
 
     private func confidence(isFinal: Bool, hadTiming: Bool) -> Double {

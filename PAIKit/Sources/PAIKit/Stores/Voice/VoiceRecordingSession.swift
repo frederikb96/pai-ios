@@ -169,6 +169,9 @@ public final class VoiceRecordingSession {
     private var reconnectTask: Task<Void, Never>?
     private var reconnectAttempt = 0
     private var preconnectBuffer = PreconnectAudioBuffer<BufferedChunk>()
+    /// True while a fresh connection replays the tail burst and the preconnect buffer. Live audio
+    /// keeps queueing behind them until both are sent, so the service hears it in capture order.
+    private var isDrainingOnConnect = false
     private var recentAudioTail = RecentAudioTail(windowSamples: 24000 * VoiceRecordingSession.burstTailSeconds)
     private var sessionTimeline = SessionTimeline()
     /// The stretch of the burst tail still owed a live-socket resend after a drop — cleared once
@@ -342,6 +345,7 @@ public final class VoiceRecordingSession {
         gatePreroll = []
         lastUplinkAt = nil
         preconnectBuffer = PreconnectAudioBuffer()
+        isDrainingOnConnect = false
         reconnectAttempt = 0
         reconnectTask?.cancel()
         reconnectTask = nil
@@ -395,6 +399,11 @@ public final class VoiceRecordingSession {
         } catch {
             throw ConnectFailure.transport(error)
         }
+        // Stopped while connecting: nothing will ever close this socket otherwise.
+        guard state == .connecting || state == .reconnecting else {
+            await transport.close(code: 1000, reason: nil)
+            return
+        }
         dependencies.connectionEvent(.socketOpened)
         self.transport = transport
         receiveTask?.cancel()
@@ -437,6 +446,7 @@ public final class VoiceRecordingSession {
             // makes a mid-take reconnect land in exactly the same place a first connect does.
             guard state == .connecting || state == .reconnecting else { return }
             let isReconnect = state == .reconnecting
+            isDrainingOnConnect = true
             state = .recording
             reconnectAttempt = 0
             sessionTimeline.reset()
@@ -449,6 +459,7 @@ public final class VoiceRecordingSession {
                 await burstPendingTailIfNeeded()
             }
             await flushPreconnectBuffer()
+            isDrainingOnConnect = false
 
         case let .partialTranscript(text):
             partial = text
@@ -582,6 +593,7 @@ public final class VoiceRecordingSession {
             dependencies.feedback(.connectionDropped(reason: closeReason))
         }
         dependencies.connectionEvent(.socketClosed(reason: closeReason))
+        isDrainingOnConnect = false
         transport = nil
         receiveTask?.cancel()
         receiveTask = nil
@@ -818,7 +830,7 @@ public final class VoiceRecordingSession {
             audioBase64: RealtimeUplinkChunk.audioBase64(fromPCM16LE: effectiveSamples), commit: false,
             sampleRate: transportRateHz
         )
-        if state == .recording {
+        if state == .recording && !isDrainingOnConnect {
             await send(chunk, offset: offset, sampleCount: samples.count, isRealAudio: true)
         } else {
             preconnectBuffer.enqueue(BufferedChunk(chunk: chunk, offset: offset, sampleCount: samples.count))
@@ -858,9 +870,15 @@ public final class VoiceRecordingSession {
         await send(chunk, offset: capturedUpTo, sampleCount: sampleCount)
     }
 
+    /// Drains until nothing is left, since live chunks keep queueing while each send awaits.
     private func flushPreconnectBuffer() async {
-        for buffered in preconnectBuffer.drain() {
-            await send(buffered.chunk, offset: buffered.offset, sampleCount: buffered.sampleCount, isRealAudio: true)
+        while state == .recording {
+            let drained = preconnectBuffer.drain()
+            guard !drained.isEmpty else { return }
+            for buffered in drained {
+                await send(
+                    buffered.chunk, offset: buffered.offset, sampleCount: buffered.sampleCount, isRealAudio: true)
+            }
         }
     }
 

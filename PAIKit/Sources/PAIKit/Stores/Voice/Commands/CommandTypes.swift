@@ -38,6 +38,7 @@ public struct CommandObservation: Sendable, Equatable {
     /// Take-offset ranges for each recognised word, when the engine can supply them — the
     /// position and pause gates need to know where in the take a phrase actually sat.
     public let wordTimes: [SampleRange]?
+    /// Where the observed text ends in the take.
     public let atOffset: Int
 
     public init(text: String, isFinal: Bool, wordTimes: [SampleRange]? = nil, atOffset: Int) {

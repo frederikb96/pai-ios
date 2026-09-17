@@ -76,9 +76,9 @@ public enum CallCommandApplicability {
         let collecting: Bool
         if case .collecting = phase { collecting = true } else { collecting = false }
         switch kind {
-        case .start: return phase == .listening
+        case .start: return phase == .listening || phase == .pendingSend
         case .stop, .interrupt: return collecting
-        case .send: return collecting || phase == .listening
+        case .send: return collecting || phase == .listening || phase == .pendingSend
         case .skip: return hasReplyAudio
         case .end: return true
         }
@@ -215,22 +215,31 @@ public final class CallModeStore {
     // MARK: - Commands
 
     /// One command the offline engine (or the fallback transcript recognizer, or a manual button
-    /// standing in for either) accepted. Every accepted command earns its confirmation tone,
-    /// whatever it turns out to do to `phase`.
+    /// standing in for either) handed over. Only a command that changes something earns its
+    /// confirmation tone and a place in the turn's stripping list — a rejected one would otherwise
+    /// cut real dictated words near its offset.
     public func handle(_ command: CommandEvent) async {
         dependencies.log(
             .info, "command",
             "\(command.kind.rawValue) at offset \(command.atOffset), confidence \(String(format: "%.2f", command.confidence))"
         )
-        dependencies.feedback(.commandRecognized(command.kind))
-        firedCommandsInTurn.append(command)
         switch command.kind {
         case .start:
-            guard case .listening = phase else { return }
+            switch phase {
+            case .listening:
+                accept(command)
+            case .pendingSend:
+                // Starting again must never wait on a held turn: it goes out as it stands.
+                accept(command)
+                await trySend(force: true)
+            default:
+                return
+            }
             phase = .collecting(startOffset: command.atOffset)
             dependencies.log(.info, "mode", "call collecting from offset \(command.atOffset)")
         case .stop:
             guard case .collecting(let startOffset) = phase else { return }
+            accept(command)
             turnRanges.append(startOffset..<command.atOffset)
             phase = .listening
             dependencies.log(.info, "mode", "call listening (turn held, not sent)")
@@ -239,24 +248,46 @@ public final class CallModeStore {
             case .collecting(let startOffset):
                 // Acts as stop-and-send: the range still open when "send" was heard belongs to
                 // the turn too.
+                accept(command)
                 turnRanges.append(startOffset..<command.atOffset)
                 await requestSend()
             case .listening where !turnRanges.isEmpty:
+                accept(command)
                 await requestSend()
+            case .pendingSend:
+                // A second send while held means "send it now", gaps or not.
+                accept(command)
+                await trySend(force: true)
             default:
-                // `.listening` with nothing pending, or already `.sending`/`.pendingSend`: no
-                // turn to send, or one is already on its way.
+                // `.listening` with nothing pending, or already `.sending`: no turn to send, or
+                // one is already on its way.
                 break
             }
         case .skip, .interrupt:
             // Speech-out's own concern (`SpeechOutputSession.skip()`) — nothing about the call's
-            // own phase changes for it.
-            break
+            // own phase changes for it. Its words still come out of the dictated text.
+            accept(command)
         case .end:
+            accept(command)
+            if case .collecting(let startOffset) = phase, startOffset < command.atOffset {
+                turnRanges.append(startOffset..<command.atOffset)
+            }
             finishTurnOnEnd()
             phase = .idle
             dependencies.log(.info, "mode", "call ended")
         }
+    }
+
+    private func accept(_ command: CommandEvent) {
+        dependencies.feedback(.commandRecognized(command.kind))
+        firedCommandsInTurn.append(command)
+    }
+
+    /// Sends a held turn as it stands, without waiting on its gaps any longer — what a caller
+    /// uses once a held turn has waited long enough.
+    public func forceSend() async {
+        guard case .pendingSend = phase else { return }
+        await trySend(force: true)
     }
 
     private var sendingIsRefused: Bool {
@@ -275,10 +306,10 @@ public final class CallModeStore {
         await trySend()
     }
 
-    private func trySend() async {
+    private func trySend(force: Bool = false) async {
         lastSendFoundNothing = false
         let ledger = dependencies.currentLedger()
-        guard CallMessageAssembler.isCovered(turnRanges, in: ledger) else {
+        guard force || CallMessageAssembler.isCovered(turnRanges, in: ledger) else {
             phase = .pendingSend
             dependencies.log(.info, "mode", "send held — turn not yet fully transcribed")
             return
@@ -298,17 +329,20 @@ public final class CallModeStore {
         guard !sendingIsRefused else {
             lastUnsentTurnText = text
             phase = .listening
+            dependencies.feedback(.sendFailed)
             dependencies.log(.warning, "mode", "send refused — session status is terminal")
             return
         }
         do {
             try await dependencies.postMessage(text)
+            lastSendFailure = nil
             phase = .listening
             dependencies.log(.info, "mode", "turn sent (\(text.count) chars)")
         } catch {
             lastSendFailure = error
             lastUnsentTurnText = text
             phase = .listening
+            dependencies.feedback(.sendFailed)
             dependencies.log(.error, "mode", "send failed: \(error)")
         }
     }

@@ -28,6 +28,16 @@ final class CommandDetectorTests: XCTestCase {
         XCTAssertEqual(detector.detect(observation)?.kind, .stop)
     }
 
+    /// A "send" closes the turn at the event's offset, so it must sit where the phrase began —
+    /// not at the start of the segment, which would cut the words said before it.
+    func testTheEventIsStampedWhereThePhraseBegins() {
+        var detector = CommandDetector(phraseSet: .defaults, sampleRate: rate)
+        let times = wordTimes(count: 4, gapSeconds: 0.6, sampleRate: rate)
+        let observation = CommandObservation(
+            text: "deploy it Kai send", isFinal: true, wordTimes: times, atOffset: times[3].upperBound)
+        XCTAssertEqual(detector.detect(observation)?.atOffset, times[2].lowerBound)
+    }
+
     // MARK: - The position gate: nothing spoken after it
 
     func testAPhraseNotAtTheEndOfTheUtteranceDoesNotFire() {

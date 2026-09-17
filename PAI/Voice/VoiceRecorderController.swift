@@ -343,12 +343,16 @@ final class VoiceRecorderController {
         applyPreferredMicrophone()
     }
 
-    /// Restores microphone mode's own session configuration — what call mode's exit leaves the
-    /// shared session in, so a microphone-mode take started right after a call behaves exactly as
-    /// it would have if the call had never happened.
+    /// Ends call mode's hold on the audio session. A microphone-mode take configures and activates
+    /// its own session when it starts, so deactivating here is all a call leaves behind — and it
+    /// is what lets other apps' audio come back up from ducking.
     func restoreMicrophoneModeAudioSession() {
-        try? configureAudioSession()
+        try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
     }
+
+    /// Where an audio-session interruption goes while a call owns the microphone — `true` when it
+    /// began, and whether the system says the session may resume.
+    var callModeInterruptionHandler: ((_ began: Bool, _ shouldResume: Bool) async -> Void)?
 
     /// The audio-storage handle call mode's own streaming file and backfill reads share with a
     /// microphone-mode take's — a fresh `FileRecordingAudioStorage` rather than this type's own
@@ -1094,6 +1098,10 @@ final class VoiceRecorderController {
                 .info, .audioSession,
                 type == .began ? "interruption began" : "interruption ended (shouldResume: \(shouldResume))")
             Task { @MainActor [weak self] in
+                if let self, self.isCallModeActive, let handler = self.callModeInterruptionHandler {
+                    await handler(type == .began, shouldResume)
+                    return
+                }
                 switch type {
                 case .began: self?.handleInterruptionBegan()
                 case .ended: await self?.handleInterruptionEnded(shouldResume: shouldResume)

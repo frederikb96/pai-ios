@@ -373,6 +373,12 @@ struct ComposerBar: View {
 
     private func send(draftStore: DraftStore) {
         guard canSend, !isSending, let connection = environment.connection else { return }
+        // A call bound here owns the live text in this draft: Send sends the call's turn, the
+        // same as saying "send", rather than posting the preview and sending it again later.
+        if connection.callMode.activeSessionID == sessionID {
+            Task { await connection.callMode.handleManual(.send) }
+            return
+        }
 
         let messageText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let attachmentsSnapshot = stagedAttachments

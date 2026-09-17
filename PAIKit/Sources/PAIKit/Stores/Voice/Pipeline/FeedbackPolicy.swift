@@ -114,6 +114,14 @@ public struct FeedbackPolicy: Sendable, Equatable {
             return causeGated("ttsRejected:\(reason)", event: event)
         case .captureGaveUp:
             return causeGated("captureGaveUp", event: event)
+        case .recordingStartFailed:
+            // Never deduped: each is a separate recording Freddy believes is live.
+            return FeedbackAction(
+                cue: .error,
+                notify: .init(disposition: .post, key: "recordingStartFailed", event: event, episodeDropCount: 0))
+        case .sendFailed:
+            return FeedbackAction(
+                cue: .error, notify: .init(disposition: .post, key: "sendFailed", event: event, episodeDropCount: 0))
         case .replyNotSpoken:
             // Never deduped: each occurrence names a different reply that was not spoken, not a
             // recurrence of the same standing problem the way a fatal error or a stuck gap is.
