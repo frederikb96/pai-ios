@@ -181,6 +181,16 @@ public enum SecretRequestsResult: Sendable, Equatable {
     case notGrantable
 }
 
+/// `declineSecretPrompt`'s outcomes.
+public enum SecretPromptDeclineResult: Sendable, Equatable {
+    case declined
+    /// 409 — the prompt was already answered from elsewhere (another client's grant or decline,
+    /// or the conversation stopped asking) by the time this reached the server. Not an error the
+    /// caller needs to show: whichever client answered it first already told the session, and the
+    /// live status update that follows clears the prompt here too.
+    case alreadyAnswered
+}
+
 // MARK: - PaiApiClient
 
 /// Swift port of `pai-cloud/web/src/api/client.ts`. One `send()` chokepoint mirrors the web
@@ -1012,6 +1022,22 @@ public struct PaiApiClient: Sendable {
                 throw PaiError.decoding("\(error)")
             }
         }
+    }
+
+    /// `POST /api/session/{id}/secret-prompt/decline` — turns down the gated-secret prompt this
+    /// session raised for itself. No body: unlike `grantSecretAccess`, there is no passphrase to
+    /// check and no scope to choose, only which prompt to clear. Owner-only, same as every other
+    /// session route. The agent that raised the prompt is queued a message saying so server-side —
+    /// this call itself is silent about that.
+    public func declineSecretPrompt(sessionId: String) async throws -> SecretPromptDeclineResult {
+        let (status, _) = try await sendPassingThrough(
+            path: "/api/session/\(sessionId)/secret-prompt/decline",
+            method: "POST",
+            body: nil,
+            contentType: nil,
+            passthrough: [409]
+        )
+        return status == 409 ? .alreadyAnswered : .declined
     }
 
     // MARK: App secrets

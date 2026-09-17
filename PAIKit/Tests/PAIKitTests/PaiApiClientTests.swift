@@ -683,4 +683,47 @@ final class PaiApiClientTests: XCTestCase {
             // Any throw is correct here; the point is it does not return a `.notGrantable`-like case.
         }
     }
+
+    // MARK: - declineSecretPrompt
+
+    func testDeclineSecretPromptSendsPostToTheContractPathWithNoBody() async throws {
+        stubJSON(#"{"status":"declined"}"#)
+        let client = try makeClient()
+        _ = try await client.declineSecretPrompt(sessionId: "s1")
+
+        XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.httpMethod, "POST")
+        let path = PaiStubURLProtocol.capturedRequest?.url?.path ?? ""
+        XCTAssertTrue(path.hasSuffix("/api/session/s1/secret-prompt/decline"), path)
+        XCTAssertNil(PaiStubURLProtocol.capturedRequest?.value(forHTTPHeaderField: "Content-Type"))
+        XCTAssertTrue(PaiStubURLProtocol.capturedBody?.isEmpty ?? true, "expected no request body")
+    }
+
+    func testDeclineSecretPromptReturnsDeclinedOnSuccess() async throws {
+        stubJSON(#"{"status":"declined"}"#)
+        let client = try makeClient()
+        let result = try await client.declineSecretPrompt(sessionId: "s1")
+
+        XCTAssertEqual(result, .declined)
+    }
+
+    /// 409 is a distinct outcome, not a thrown error — another client can have answered the same
+    /// prompt first, and that is not a failure this caller needs to report.
+    func testDeclineSecretPromptMaps409ToAlreadyAnswered() async throws {
+        stubJSON(#"{"detail":"no grant prompt is pending for this session"}"#, statusCode: 409)
+        let client = try makeClient()
+        let result = try await client.declineSecretPrompt(sessionId: "s1")
+
+        XCTAssertEqual(result, .alreadyAnswered)
+    }
+
+    func testDeclineSecretPromptStillThrowsOnAnUnrelatedServerError() async throws {
+        stubJSON(#"{"detail":"boom"}"#, statusCode: 500)
+        let client = try makeClient()
+        do {
+            _ = try await client.declineSecretPrompt(sessionId: "s1")
+            XCTFail("expected a throw")
+        } catch {
+            // Any throw is correct here; the point is it does not return a `.alreadyAnswered`-like case.
+        }
+    }
 }

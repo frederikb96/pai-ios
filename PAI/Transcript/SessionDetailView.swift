@@ -63,7 +63,16 @@ struct SessionDetailView: View {
                     )
                     .overlay { TranscriptLoadState(sessionID: sessionID) }
                     .overlay(alignment: .top) { TranscriptOlderPageState(sessionID: sessionID) }
-                    .overlay(alignment: .bottom) { TranscriptStreamStallBanner(sessionID: sessionID) }
+                    .overlay(alignment: .bottom) {
+                        // Stacked rather than two separate `.overlay`s at the same alignment,
+                        // which would draw one on top of the other — an `EmptyView` here
+                        // contributes no height, so whichever of the two is actually showing
+                        // still lands flush against the composer.
+                        VStack(spacing: 0) {
+                            SecretPromptBanner(sessionID: sessionID)
+                            TranscriptStreamStallBanner(sessionID: sessionID)
+                        }
+                    }
                     Divider()
                     if searchState.isActive {
                         TranscriptSearchBar(state: searchState)
@@ -437,6 +446,138 @@ private struct TranscriptOlderPageState: View {
             .background(.bar, in: Capsule())
             .padding(.top, 8)
             .accessibilityIdentifier("transcript-older-error")
+        }
+    }
+}
+
+/// The gated-secret prompt a session raises for itself (`Session.secretPrompt`), answered right
+/// here rather than through `SecretGrantSheet`'s plus-menu path — that sheet is still how a
+/// grant with a different scope or duration is made, but the prompt itself is meant to be
+/// answered where it appears, with the passphrase typed directly into this banner rather than a
+/// second sheet opened from it.
+///
+/// An overlay, not a sibling row, for the same reason `TranscriptStreamStallBanner` is one: it
+/// must never resize the collection view underneath it. Non-blocking falls out of that same
+/// choice — this is state the session carries (`SecretPrompt` threaded through `withLiveStatus`
+/// in the session model), not anything owned by this view, so leaving the screen and coming back
+/// finds it exactly as it was, with no sheet to have dismissed or state to have lost.
+private struct SecretPromptBanner: View {
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(TranscriptStore.self) private var transcript
+    @Environment(SessionListStore.self) private var sessions
+    let sessionID: String
+
+    @State private var passphrase = ""
+    @State private var isSubmitting = false
+    @State private var errorMessage: String?
+    @FocusState private var passphraseFocused: Bool
+
+    /// This banner is the fast, inline path and does not offer a duration picker — mirrors
+    /// `SecretGrantSheet`'s own middle preset (`durationChoices[2]`). A different duration still
+    /// goes through that sheet, reachable from the session's actions menu.
+    private static let ttlSeconds = 86_400
+
+    var body: some View {
+        // The live SSE status wins once it has reported anything for this session, same
+        // precedence `SessionDetailView.currentActivityCounts` uses — the session's own
+        // last-known value is the fallback for a screen just opened.
+        if let prompt = transcript.liveStatus[sessionID]?.secretPrompt
+            ?? sessions.session(withId: sessionID)?.secretPrompt
+        {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(promptText(prompt))
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Semantic.textPrimary)
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(PaiTypography.caption.font)
+                        .foregroundStyle(PaiPalette.Semantic.errorText)
+                }
+                HStack(spacing: 8) {
+                    SecureField("Passphrase", text: $passphrase)
+                        .textFieldStyle(.roundedBorder)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($passphraseFocused)
+                        .submitLabel(.go)
+                        .onSubmit { Task { await grant(prompt) } }
+                        .accessibilityIdentifier("secret-prompt-passphrase")
+                    if isSubmitting {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button("Grant") { Task { await grant(prompt) } }
+                            .disabled(passphrase.isEmpty)
+                            .accessibilityIdentifier("secret-prompt-grant")
+                        Button("Decline", role: .destructive) { Task { await decline() } }
+                            .accessibilityIdentifier("secret-prompt-decline")
+                    }
+                }
+            }
+            .font(PaiTypography.caption.font)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.bar)
+            .accessibilityIdentifier("secret-prompt-banner")
+        }
+    }
+
+    private func promptText(_ prompt: SecretPrompt) -> String {
+        let names = prompt.names.isEmpty ? "a gated secret" : prompt.names.joined(separator: ", ")
+        guard let reason = prompt.reason, !reason.isEmpty else {
+            return "This session asked to unlock \(names)"
+        }
+        return "This session asked to unlock \(names) — \(reason)"
+    }
+
+    private func grant(_ prompt: SecretPrompt) async {
+        guard let client = environment.connection?.apiClient, !passphrase.isEmpty else { return }
+        isSubmitting = true
+        errorMessage = nil
+        defer { isSubmitting = false }
+        do {
+            let result = try await client.grantSecretAccess(
+                sessionId: sessionID, passphrase: passphrase, ttlSeconds: Self.ttlSeconds, scope: .requested)
+            switch result {
+            case .granted:
+                // Cleared here rather than waiting on the prompt to disappear — a granted
+                // passphrase has done its job and has no reason to sit in memory any longer,
+                // same as `SecretGrantSheet`. The banner itself clears once the live status
+                // update carrying `secretPrompt: nil` arrives, same path that clears it after a
+                // decline.
+                passphrase = ""
+            case .wrongPassphrase:
+                errorMessage = "Wrong passphrase."
+            case .sessionUnavailable:
+                errorMessage = "This session isn't running right now."
+            case .nothingRequested:
+                // A race: something else (the web client, a terminal grant) answered the same
+                // prompt first. Not an error to show — the live status update that follows
+                // clears this banner on its own.
+                break
+            case let .notAuthorized(message):
+                errorMessage = message
+            case let .rateLimited(message):
+                errorMessage = message
+            case let .invalidRequest(message):
+                errorMessage = message
+            case .timedOut:
+                errorMessage = "The agent didn't answer in time. Try again."
+            }
+        } catch {
+            errorMessage = (error as? PaiError)?.userMessage ?? "Could not grant access."
+        }
+    }
+
+    private func decline() async {
+        guard let client = environment.connection?.apiClient else { return }
+        isSubmitting = true
+        errorMessage = nil
+        defer { isSubmitting = false }
+        do {
+            _ = try await client.declineSecretPrompt(sessionId: sessionID)
+            passphrase = ""
+        } catch {
+            errorMessage = (error as? PaiError)?.userMessage ?? "Could not decline."
         }
     }
 }
