@@ -138,6 +138,11 @@ public struct FeedbackPolicy: Sendable, Equatable {
             return FeedbackAction(cue: .command(kind))
         case .commandModelMissing(let kind):
             return causeGated("commandModelMissing:\(kind.rawValue)", event: event)
+        case .callEndedUnexpectedly:
+            // Never deduped: each is a separate call Freddy believes is still running.
+            return FeedbackAction(
+                cue: .error,
+                notify: .init(disposition: .post, key: "callEndedUnexpectedly", event: event, episodeDropCount: 0))
         }
     }
 

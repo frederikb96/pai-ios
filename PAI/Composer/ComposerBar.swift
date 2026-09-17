@@ -146,7 +146,7 @@ struct ComposerBar: View {
                     onSecretGrant: { showingSecretGrant = true },
                     onCancel: { Task { await cancelSession() } },
                     onStartOrReturnToCall: { startOrReturnToCall(voiceController: voiceController) },
-                    onEndCall: { Task { await environment.connection?.callMode.exit() } }
+                    onEndCall: { Task { await environment.connection?.callMode.exit(reason: "End Call tapped") } }
                 )
 
                 VoiceRecorderButton(
@@ -322,7 +322,7 @@ struct ComposerBar: View {
             // tap-to-stop in that composer would.
             await voiceController.stop()
         case .stopCallMode:
-            await environment.connection?.callMode.exit()
+            await environment.connection?.callMode.exit(reason: "microphone take started elsewhere")
         case .startOnly, .alreadyHere:
             break
         }
@@ -357,7 +357,7 @@ struct ComposerBar: View {
             case .stopMicrophoneTake:
                 await voiceController.stop()
             case .stopCallMode:
-                await environment.connection?.callMode.exit()
+                await environment.connection?.callMode.exit(reason: "call switched to another session")
             case .startOnly, .alreadyHere:
                 break
             }

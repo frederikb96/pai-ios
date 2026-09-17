@@ -343,8 +343,13 @@ final class CallModeController {
         do {
             try controller.microphoneCapture.start(targetSampleRate: sampleRate)
         } catch {
+            // `store` was already assigned above — `teardown()` alone never clears it, so without
+            // this a failed entry leaves a zombie store behind: `isActive` reads true forever, and
+            // the next `enter()` call sees `store != nil` and reattaches to it instead of trying
+            // again.
             await teardown()
             controller.releaseFromCallMode()
+            self.store = nil
             return false
         }
 
@@ -607,7 +612,7 @@ final class CallModeController {
             await serialized { [weak self] in
                 await self?.dispatch(
                     event.kind, confidence: event.confidence, spokenAtOffset: spokenAtOffset,
-                    spokenPhraseRange: spokenPhraseRange)
+                    spokenPhraseRange: spokenPhraseRange, source: isOffline ? .offline : .transcript)
             }
         }
     }
@@ -660,8 +665,12 @@ final class CallModeController {
     // MARK: - Manual controls
 
     func handleManual(_ kind: CommandKind) async {
-        await serialized { [weak self] in await self?.dispatch(kind, confidence: 1) }
+        await serialized { [weak self] in await self?.dispatch(kind, confidence: 1, source: .manual) }
     }
+
+    /// Which channel a command reached `dispatch` from — logged with every command so a device
+    /// log answers "did that fire from the wake word, the transcript, or a tap" without guessing.
+    private enum CommandSource: String { case offline, transcript, manual }
 
     /// The one place every accepted command — offline, fallback, or a manual tap — actually acts.
     /// `spokenAtOffset` is `nil` for a manual tap, which has no spoken moment to stamp: those, and
@@ -674,9 +683,11 @@ final class CallModeController {
     /// (`CallModeStore.handle(.stop)`/`.send` both close it at the event's own `atOffset`), so the
     /// command's own audio ends up outside the turn instead of merely being stripped out of it.
     private func dispatch(
-        _ kind: CommandKind, confidence: Double, spokenAtOffset: Int? = nil, spokenPhraseRange: SampleRange? = nil
+        _ kind: CommandKind, confidence: Double, spokenAtOffset: Int? = nil, spokenPhraseRange: SampleRange? = nil,
+        source: CommandSource = .manual
     ) async {
         guard let store else { return }
+        AppVoiceDiagnosticsLog.shared.log(.info, .command, "\(kind.rawValue) command from \(source.rawValue)")
         switch kind {
         case .start:
             guard store.phase == .listening || store.phase == .pendingSend, !isTransitioningCycle else { return }
@@ -723,7 +734,9 @@ final class CallModeController {
                     confidence: confidence, phraseRange: spokenPhraseRange))
             setInterruptsAllowed(kind == .interruptOn)
         case .end:
-            await performExit()
+            let manual = source == .manual
+            await performExit(
+                manual: manual, reason: manual ? "End button tapped" : "\"computer end\" heard")
         }
     }
 
@@ -921,15 +934,24 @@ final class CallModeController {
 
     // MARK: - Exit
 
-    /// Ends call mode from any of its own three doors — the "end" command, the manual End button,
-    /// or a teardown after a failed entry — always through this one path, so the microphone is
-    /// never left claimed and a pending turn is never silently dropped.
-    func exit() async {
-        await serialized { [weak self] in await self?.performExit() }
+    /// Ends call mode from outside the command channel — the composer's own "End Call" entry, or
+    /// a handover that must stop this call to start another one — always a foreground action
+    /// Freddy just took, so this counts as manual the same way the call screen's own End button
+    /// does. `reason` is a short, human phrase logged with every exit, so a device log answers
+    /// "why did the call stop" without guessing.
+    func exit(reason: String = "requested") async {
+        await serialized { [weak self] in await self?.performExit(manual: true, reason: reason) }
     }
 
-    private func performExit() async {
+    /// `manual` is `false` only for a spoken "computer end" — everything else reaching this
+    /// (the call screen's own End button, every `exit()` caller) is a foreground action Freddy
+    /// just took, with the screen already in front of him. A non-manual end plays a cue and posts
+    /// a notification (`.callEndedUnexpectedly`) — a call that stops while he cannot see the
+    /// screen, hands-free, is exactly the case a "the call ended, your text is in the draft" push
+    /// exists for; a manual one keeps only the command's own confirmation tone.
+    private func performExit(manual: Bool, reason: String) async {
         guard let store else { return }
+        AppVoiceDiagnosticsLog.shared.log(.info, "mode", "call ending: \(reason)")
         if case .collecting = store.phase {
             await endCollectingCycle()
         }
@@ -939,6 +961,7 @@ final class CallModeController {
         // would otherwise race this append and either clobber it or duplicate it.
         previewTask?.cancel()
         previewTask = nil
+        let hadUnsentText = store.lastAbandonedTurnText != nil
         if let text = store.lastAbandonedTurnText {
             appendToDraftClearingPreview(text)
         }
@@ -946,6 +969,9 @@ final class CallModeController {
         await teardown()
         controller.releaseFromCallMode()
         self.store = nil
+        if !manual {
+            controller.handleFeedback(.callEndedUnexpectedly(hadUnsentText: hadUnsentText))
+        }
     }
 
     /// The shared parts of ending a call, whether it ran a single second or an hour, and whether

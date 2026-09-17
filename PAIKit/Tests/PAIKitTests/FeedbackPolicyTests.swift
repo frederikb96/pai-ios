@@ -275,6 +275,15 @@ final class FeedbackPolicyTests: XCTestCase {
         XCTAssertEqual(second.notify?.disposition, .post)
     }
 
+    func testEveryUnexpectedCallEndIsAnnouncedEvenRepeated() {
+        var policy = FeedbackPolicy()
+        let first = policy.decide(.callEndedUnexpectedly(hadUnsentText: true), now: t0)
+        let second = policy.decide(.callEndedUnexpectedly(hadUnsentText: false), now: t0.addingTimeInterval(1))
+        XCTAssertEqual(first.cue, .error)
+        XCTAssertEqual(first.notify?.disposition, .post)
+        XCTAssertEqual(second.notify?.disposition, .post, "each is a separate call Freddy believes is still running")
+    }
+
     // MARK: - Cue-only, no-notification events
 
     func testInterruptionPausedPlaysPauseWithNoNotification() {

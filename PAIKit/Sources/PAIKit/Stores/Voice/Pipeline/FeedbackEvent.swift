@@ -35,6 +35,12 @@ public enum FeedbackEvent: Sendable, Equatable {
     /// silently unreachable by voice until this is fixed, never a crash. Always carries `.start`,
     /// the only command the offline engine ever means.
     case commandModelMissing(CommandKind)
+    /// A call ended for a reason other than a deliberate End tap — a spoken "computer end", or a
+    /// teardown neither channel asked for. Worth its own cue and notification: the whole point of
+    /// call mode is running hands-free with the phone out of sight, so an ending Freddy did not
+    /// just watch happen on screen needs telling about, especially when `hadUnsentText` — the
+    /// draft now holds words he never got to review before they stopped being collected.
+    case callEndedUnexpectedly(hadUnsentText: Bool)
 }
 
 /// The earcon `EarconPlayer` plays for a `FeedbackEvent` — `Earcon.samples(kind:rate:)` is what

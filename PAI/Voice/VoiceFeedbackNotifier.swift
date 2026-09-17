@@ -56,6 +56,8 @@ final class VoiceFeedbackNotifier {
         case .reconnected, .gapOpened, .backfillCompleted, .captureRestarted, .interruptionPaused,
             .interruptionResumed, .ttsReconnected, .commandRecognized:
             .info
+        case .callEndedUnexpectedly:
+            .warning
         }
     }
 
@@ -81,6 +83,7 @@ final class VoiceFeedbackNotifier {
         case .sendFailed: "call turn was not sent"
         case .commandRecognized(let kind): "command recognized: \(kind.rawValue)"
         case .commandModelMissing(let kind): "no offline model bundled for command: \(kind.rawValue)"
+        case .callEndedUnexpectedly(let hadUnsentText): "call ended unexpectedly (unsent text: \(hadUnsentText))"
         }
     }
 
@@ -104,6 +107,7 @@ final class VoiceFeedbackNotifier {
     private func title(for event: FeedbackEvent) -> String {
         switch event {
         case .captureGaveUp: return "Voice recording stopped"
+        case .callEndedUnexpectedly: return "Call ended"
         default: return "Voice"
         }
     }
@@ -153,6 +157,9 @@ final class VoiceFeedbackNotifier {
             return "Your message was not sent — the text is back in the draft."
         case .commandModelMissing(let kind):
             return "The \"\(kind.rawValue)\" voice command has no offline model yet — it won't fire while offline."
+        case .callEndedUnexpectedly(let hadUnsentText):
+            return hadUnsentText
+                ? "The call ended — your unsent text is in the draft." : "The call ended."
         case .interruptionPaused, .interruptionResumed, .commandRecognized:
             // `FeedbackPolicy` never emits a `notify` for these — a cue only, no notification.
             return ""
