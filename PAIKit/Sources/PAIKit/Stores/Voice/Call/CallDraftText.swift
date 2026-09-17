@@ -21,6 +21,12 @@ public struct CallDraftText: Sendable, Equatable {
     /// the preview at the end, or removes it, becomes the new base. A draft that is an older
     /// state of the last write — the same base with only part of the preview — is a stale echo
     /// and is overwritten, as is any edit inside the preview.
+    ///
+    /// Accepted limitation: a backspace landing exactly at the end, right where the preview was
+    /// last written, looks identical to that same stale-echo shape (a shorter draft that is a
+    /// prefix of the last write) and is restored rather than kept — the far more common case by
+    /// construction, since the preview rewrites the tail on almost every tick, is what this
+    /// guards.
     public mutating func adopt(currentDraft current: String) {
         guard let written = writtenDraft, current != written else { return }
         let previewPart = VoiceRecordingResult.composeLiveText(pre: "", partial: writtenPreview ?? "")
@@ -57,13 +63,18 @@ public struct CallDraftText: Sendable, Equatable {
         return [trimmedBase, turnText].filter { !$0.isEmpty }.joined(separator: " ")
     }
 
-    /// A send carrying `sentBase` went out — that part of the base is gone from the draft. Text
-    /// added after it while the send was in flight stays. Returns the draft to write.
+    /// A send carrying `sentBase` went out — that part of the base is gone from the draft,
+    /// wherever it sits: text typed or pasted *before* the sent part while the send was still in
+    /// flight is common (the composer stays editable the whole time), not only text added after
+    /// it, so a prefix check alone left the sent text stuck in the draft — and resent again on the
+    /// next turn — whenever something landed ahead of it. Returns the draft to write.
     public mutating func baseSent(_ sentBase: String) -> String {
         let sent = sentBase.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.hasPrefix(sent) {
-            base = String(trimmed.dropFirst(sent.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        if !sent.isEmpty, let range = trimmed.range(of: sent) {
+            let before = trimmed[..<range.lowerBound].trimmingCharacters(in: .whitespaces)
+            let after = trimmed[range.upperBound...].trimmingCharacters(in: .whitespaces)
+            base = [before, after].filter { !$0.isEmpty }.joined(separator: " ")
         }
         return write(preview: writtenPreview ?? "")
     }

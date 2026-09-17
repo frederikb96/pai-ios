@@ -32,4 +32,20 @@ final class CallDraftTextTests: XCTestCase {
         XCTAssertEqual(afterSend, "and a note")
         XCTAssertEqual(draft.message(turnText: "stt-rec: next"), "and a note stt-rec: next")
     }
+
+    /// Text typed *ahead of* the sent base while the send is still in flight is just as common as
+    /// text typed after it — the composer stays editable the whole time a send is out — so the
+    /// sent text must be removed wherever it sits, not only when it is still the draft's prefix.
+    func testTextTypedBeforeTheSentBaseWhileASendIsInFlightSurvivesTheSend() {
+        var draft = CallDraftText(base: "pasted logs")
+        _ = draft.draft(forPreview: "check these")
+        let sentBase = draft.base
+
+        draft.adopt(currentDraft: "URGENT: pasted logs stt-rec: check these")
+        _ = draft.draft(forPreview: "")
+        let afterSend = draft.baseSent(sentBase)
+
+        XCTAssertEqual(afterSend, "URGENT:")
+        XCTAssertEqual(draft.message(turnText: "stt-rec: next"), "URGENT: stt-rec: next")
+    }
 }
