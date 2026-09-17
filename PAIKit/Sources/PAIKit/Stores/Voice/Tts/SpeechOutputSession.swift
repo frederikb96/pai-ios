@@ -382,6 +382,11 @@ public final class SpeechOutputSession {
             await sendFrame(.sendText(contextId: contextId, text: sentenceText + " ", flush: isLast))
             queue.recordSentencesSent()
         }
+        // ElevenLabs sends a context's `isFinal` only once the context is closed — a flush alone
+        // generates the audio and then leaves the context open forever, so the reply would never
+        // finish playing and nothing queued behind it would ever speak. Closing keeps flushing
+        // what is still buffered, and a later close from `skip()` on the same context is harmless.
+        await sendFrame(.closeContext(contextId: contextId))
         if recoveringFromDrop {
             recoveringFromDrop = false
             dependencies.log(.info, "tts", "reconnected")

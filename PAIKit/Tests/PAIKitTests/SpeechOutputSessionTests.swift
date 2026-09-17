@@ -168,15 +168,18 @@ final class SpeechOutputSessionTests: XCTestCase {
         XCTAssertEqual(purposes, [.tts])
     }
 
-    func testEnqueueSendsInitializeContextThenEverySentenceWithFlushOnlyOnTheLast() async {
+    /// The closing frame is load-bearing: the service never reports a context finished until it
+    /// is closed, so a reply whose last sentence is only flushed plays forever and blocks every
+    /// reply queued behind it.
+    func testEnqueueSendsInitializeContextThenEverySentenceWithFlushOnlyOnTheLastThenCloses() async {
         let transport = FakeVoiceTtsTransport()
         let session = makeSession(transport: transport)
 
         session.enqueue(messageId: 1, sentences: ["first.", "second."])
-        await waitUntil { await transport.sentTexts.count >= 3 }
+        await waitUntil { await transport.sentTexts.count >= 4 }
 
         let sent = await transport.sentTexts
-        XCTAssertEqual(sent.count, 3)
+        XCTAssertEqual(sent.count, 4)
         XCTAssertTrue(
             sent[0].contains("\"voice_settings\""), "expected the InitializeContext frame first, got: \(sent[0])")
         XCTAssertFalse(sent[0].contains("\"flush\""))
@@ -184,6 +187,7 @@ final class SpeechOutputSessionTests: XCTestCase {
         XCTAssertFalse(sent[1].contains("\"flush\":true"))
         XCTAssertTrue(sent[2].contains("second."))
         XCTAssertTrue(sent[2].contains("\"flush\":true"))
+        XCTAssertTrue(sent[3].contains("\"close_context\":true"), "expected the context closed last, got: \(sent[3])")
 
         // No audio has arrived yet — generation and playback are decoupled, so sending every
         // sentence does not by itself mean anything is audible.
