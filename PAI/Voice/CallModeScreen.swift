@@ -10,6 +10,7 @@ struct CallModeScreen: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.dismiss) private var dismiss
     @State private var entryFailed = false
+    @State private var showingSettings = false
 
     private var callMode: CallModeController? { environment.connection?.callMode }
 
@@ -37,6 +38,9 @@ struct CallModeScreen: View {
         .onChange(of: callMode?.isActive) { _, isActive in
             guard isActive == false else { return }
             dismiss()
+        }
+        .sheet(isPresented: $showingSettings) {
+            CallModeSettingsSheet()
         }
         .accessibilityIdentifier("call-mode-screen")
     }
@@ -74,6 +78,13 @@ struct CallModeScreen: View {
                 }
                 .accessibilityIdentifier("call-mode-back")
                 Spacer()
+                Button {
+                    showingSettings = true
+                } label: {
+                    Image(systemName: "gearshape")
+                        .foregroundStyle(PaiPalette.Semantic.textSecondary)
+                }
+                .accessibilityIdentifier("call-mode-settings")
                 Toggle(
                     "Replies interrupt",
                     isOn: Binding(

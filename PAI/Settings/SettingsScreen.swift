@@ -7,6 +7,10 @@ struct SettingsScreen: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(SettingsStore.self) private var settings
 
+    /// What `CallModeSettingsSheet` scrolls to when it opens this screen over the call screen —
+    /// the one id both sides share, so the anchor and the target can never drift apart.
+    static let callModeSectionAnchorID = "settings-call-mode-section"
+
     var body: some View {
         Form {
             Section("Appearance") {
@@ -23,6 +27,7 @@ struct SettingsScreen: View {
             VoiceSection(settings: settings)
 
             CallModeSection(settings: settings)
+                .id(Self.callModeSectionAnchorID)
 
             NotificationsSection()
 
