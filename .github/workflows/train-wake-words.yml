@@ -1,6 +1,6 @@
 name: Train wake words
 
-# Trains one keyword-spotting model per voice command on a free Linux runner and publishes the
+# Trains one keyword-spotting model per wake word on a free Linux runner and publishes the
 # ONNX classifiers as an artifact. Synthetic speech only: no recordings of anyone go in.
 #
 # Manual only. The `test` preset proves the pipeline end to end in minutes and yields a model that
@@ -15,9 +15,9 @@ on:
         options: [test, full]
         default: test
       commands:
-        description: 'JSON list of command names from Tooling/wakeword/phrases.json'
+        description: 'JSON list of model names from Tooling/wakeword/phrases.json'
         type: string
-        default: '["kai_start","kai_stop","kai_send","kai_skip","kai_end"]'
+        default: '["computer"]'
 
 permissions:
   contents: read

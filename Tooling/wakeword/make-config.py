@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Writes the training config for one voice command.
+"""Writes the training config for one wake word.
 
-Every command's model treats the other commands as hard negatives, so saying one never fires
-another. Phrases live in phrases.json; the preset decides how much synthetic data is generated.
+Every model treats the other entries' phrases as hard negatives. Phrases live in phrases.json; the
+preset decides how much synthetic data is generated.
 """
 
 import json
@@ -21,12 +21,13 @@ PRESETS = {
              "steps": 30000, "model_type": "conv_attention", "model_size": "small", "fp_target": 0.2},
 }
 
-# Things said constantly that share a word with a command, plus near-homophones of the name.
+# Near-homophones of the wake word and words that share its sounds, said constantly in dictation.
 SHARED_NEGATIVES = [
-    "kai", "hi", "hey", "okay", "high", "guy", "sky", "my", "why", "try", "tie",
-    "start", "stop", "send", "skip", "end",
-    "car start", "high stop", "i said", "okay then", "the end", "just stop",
-    "kaiser", "kite", "kind", "and then", "get started", "stop it",
+    "compute", "computed", "computing", "computation", "commute", "commuter", "competitor",
+    "complete", "completely", "compare", "composer", "company", "command", "comment", "come here",
+    "come on", "cucumber", "jupiter", "scooter", "tutor", "counter", "encounter", "copter", "cooper",
+    "pewter", "router", "shooter", "commander", "conductor", "the message", "send the message",
+    "interrupt", "okay", "hey",
 ]
 
 
