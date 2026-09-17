@@ -53,4 +53,12 @@ public struct VoiceRecordingResult: Sendable, Equatable {
     public var prefixedText: String {
         text.isEmpty ? "" : "\(Self.sttPrefix)\(text)"
     }
+
+    /// `pre` and a running transcript, joined the way a draft shows live dictation: the prefix is
+    /// written once and only the text after it keeps growing.
+    public static func composeLiveText(pre: String, partial: String) -> String {
+        guard !partial.isEmpty else { return pre }
+        let prefixed = "\(sttPrefix)\(partial)"
+        return pre.isEmpty ? prefixed : "\(pre) \(prefixed)"
+    }
 }

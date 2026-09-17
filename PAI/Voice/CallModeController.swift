@@ -114,16 +114,8 @@ final class CallModeController {
 
     // MARK: - The turn's live preview, written into the bound session's own draft
 
-    /// Whatever was already in the draft the moment this call began — the live preview below is
-    /// built on top of it, and it is what the draft returns to once a turn is sent or the call
-    /// ends, the same "append to whatever was already there" rule a microphone-mode take follows.
-    private var preCallDraftText = ""
-    /// The last preview text actually written — skips a redundant write on every poll tick where
-    /// nothing has changed, matching `ComposerBar`'s own live-transcript poll.
-    private var lastWrittenPreviewText: String?
-    /// The whole draft as this call last wrote it — a draft that differs from it was edited by
-    /// something else (typing, a send, a sync), and the preview rebuilds on top of that edit.
-    private var lastWrittenDraftText: String?
+    /// The bound draft: its text outside the live turn, and what this call last wrote into it.
+    private var draftText = CallDraftText(base: "")
     private var previewTask: Task<Void, Never>?
     /// Set synchronously, before the first `await`, for the whole of a "start"/"stop"/"send"
     /// dispatch's own cycle transition — `beginCollectingCycle()`/`endCollectingCycle()` mutate
@@ -255,9 +247,7 @@ final class CallModeController {
         }
 
         boundSessionID = sessionID
-        preCallDraftText = drafts.draft(for: sessionID).text
-        lastWrittenPreviewText = nil
-        lastWrittenDraftText = nil
+        draftText = CallDraftText(base: drafts.draft(for: sessionID).text)
         let sampleRate = VoiceAudioRatePolicy.transportRate(
             hardwareRate: controller.microphoneCapture.hardwareSampleRate)
         callSampleRate = sampleRate
@@ -322,6 +312,19 @@ final class CallModeController {
                         self.transcript.trackSend(sessionId: sessionID, text: text, send: sendTask)
                     }
                     _ = try await sendTask.value
+                },
+                draftBase: { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self else { return "" }
+                        self.draftText.adopt(currentDraft: self.drafts.draft(for: sessionID).text)
+                        return self.draftText.base
+                    }
+                },
+                baseSent: { [weak self] base in
+                    MainActor.assumeIsolated {
+                        guard let self, self.boundSessionID == sessionID else { return }
+                        self.drafts.setDraftText(key: sessionID, text: self.draftText.baseSent(base))
+                    }
                 },
                 feedback: { [weak self] event in MainActor.assumeIsolated { self?.controller.handleFeedback(event) } },
                 log: { level, category, message in AppVoiceDiagnosticsLog.shared.log(level, category, message) }
@@ -672,7 +675,7 @@ final class CallModeController {
             drainUnsentTurnText()
         case .stop, .send:
             guard !isTransitioningCycle else { return }
-            let previewBeforeSend = lastWrittenPreviewText ?? ""
+            let previewBeforeSend = draftText.writtenPreview ?? ""
             var stampOffset = callTakeCollectedSamples
             if case .collecting = store.phase {
                 isTransitioningCycle = true
@@ -883,48 +886,22 @@ final class CallModeController {
                 ?? TranscriptLedger(
                     takeId: callTakeId ?? "", mode: .call, sampleRate: callSampleRate, draftKey: sessionID,
                     preText: "")
-            rebaseOnExternalDraftEdit(sessionID: sessionID)
+            draftText.adopt(currentDraft: drafts.draft(for: sessionID).text)
             let preview = store.previewText(openRange: openRange, openCycle: openCycle, in: ledger)
-            if preview != lastWrittenPreviewText {
-                lastWrittenPreviewText = preview
-                let text = VoiceRecorderController.composeLiveText(pre: preCallDraftText, partial: preview)
-                lastWrittenDraftText = text
+            if let text = draftText.draft(forPreview: preview) {
                 drafts.setDraftText(key: sessionID, text: text)
             }
             try? await Task.sleep(for: .milliseconds(150))
         }
     }
 
-    /// Keeps whatever else changed the draft since the preview last wrote it. An edit that leaves
-    /// the preview at the end, or removes it entirely, becomes the new base; an edit inside the
-    /// preview cannot be told apart from the preview itself and is overwritten.
-    private func rebaseOnExternalDraftEdit(sessionID: String) {
-        let current = drafts.draft(for: sessionID).text
-        guard let written = lastWrittenDraftText, current != written else { return }
-        let previewPart = VoiceRecorderController.composeLiveText(pre: "", partial: lastWrittenPreviewText ?? "")
-        if previewPart.isEmpty || !current.contains(previewPart) {
-            preCallDraftText = current
-        } else if current.hasSuffix(previewPart) {
-            preCallDraftText = String(current.dropLast(previewPart.count)).trimmingCharacters(in: .whitespaces)
-        } else {
-            return
-        }
-        lastWrittenPreviewText = nil
-        lastWrittenDraftText = nil
-    }
-
-    /// Restores the draft to whatever it held before this call's own live preview started writing
-    /// to it, then appends `text` — the shared step `drainUnsentTurnText()` and `exit()`'s own
-    /// abandoned-turn handling both need: without it, the text they append lands after a preview
-    /// that already shows the identical words, duplicating them. Updates `preCallDraftText` to the
-    /// result, so a second append later in the same call stacks rather than overwriting the first.
+    /// Puts `text` into the draft in place of the preview showing the same words — the shared step
+    /// `drainUnsentTurnText()` and `exit()`'s abandoned-turn handling both need, so the words are
+    /// never shown twice. The result becomes the base, so a later append stacks after it.
     private func appendToDraftClearingPreview(_ text: String) {
         guard let sessionID = boundSessionID, !text.isEmpty else { return }
-        lastWrittenPreviewText = nil
-        let combined = preCallDraftText.isEmpty ? text : "\(preCallDraftText) \(text)"
-        lastWrittenDraftText = combined
-        drafts.setDraftText(key: sessionID, text: combined)
-        preCallDraftText = combined
+        draftText.adopt(currentDraft: drafts.draft(for: sessionID).text)
+        drafts.setDraftText(key: sessionID, text: draftText.appendReplacingPreview(text))
     }
 
     // MARK: - Exit

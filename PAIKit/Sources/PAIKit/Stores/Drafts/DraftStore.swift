@@ -51,6 +51,9 @@ public final class DraftStore {
     /// unbounded map in an otherwise careful type, one `Date` held for the process lifetime per
     /// discard. Not `private`, so a test can observe the prune directly.
     var clearedAt: [String: Date] = [:]
+    /// Bumped on every local change to a key. A poll whose request left before a change carries
+    /// that key's older server copy, however its response is ordered against the write.
+    private var localRevision: [String: Int] = [:]
 
     public init(
         api: some DraftsFetching, clock: WallClock = SystemWallClock(), scheduler: DraftScheduler = RealDraftScheduler()
@@ -129,6 +132,7 @@ public final class DraftStore {
         pendingFlush[key] = nil
         drafts[key] = nil
         clearedAt[key] = clock.now()
+        localRevision[key, default: 0] += 1
 
         // A discard must not overtake a write already in flight for the same key, or the delete
         // could land first and the write resurrect an entry that was just cleared.
@@ -143,6 +147,7 @@ public final class DraftStore {
     // MARK: - Flush (debounced write)
 
     private func scheduleFlush(_ key: String) {
+        localRevision[key, default: 0] += 1
         pendingFlush[key]?.cancel()
         pendingFlush[key] = Task { [weak self, scheduler] in
             try? await scheduler.sleep(seconds: Self.flushDebounceSeconds)
@@ -196,6 +201,7 @@ public final class DraftStore {
     /// Adopts every server row this device does not have a fresher local claim on, and drops any
     /// local row the server no longer has and this device once agreed with.
     public func syncFromServer() async {
+        let revisionsAtRequest = localRevision
         let remote: [Draft]
         do {
             remote = try await api.getDrafts()
@@ -210,6 +216,9 @@ public final class DraftStore {
             seen.insert(row.key)
             // A key with an unwritten local edit is newer than anything the server can report.
             if pendingFlush[row.key] != nil { continue }
+            // A write still in the air, or any local change since this request left, is newer
+            // than the row — adopting it would put back text the device already replaced.
+            if inFlightFlush[row.key] != nil || localRevision[row.key] != revisionsAtRequest[row.key] { continue }
             // A key just discarded, whose delete this response may predate.
             if let clearedTime = clearedAt[row.key],
                 clock.now().timeIntervalSince(clearedTime) < Self.clearedGraceSeconds
@@ -224,7 +233,8 @@ public final class DraftStore {
         }
 
         for key in Array(drafts.keys) {
-            guard !seen.contains(key), let local = drafts[key], local.remoteUpdatedAt != nil, pendingFlush[key] == nil
+            guard !seen.contains(key), let local = drafts[key], local.remoteUpdatedAt != nil, pendingFlush[key] == nil,
+                inFlightFlush[key] == nil, localRevision[key] == revisionsAtRequest[key]
             else {
                 continue
             }
