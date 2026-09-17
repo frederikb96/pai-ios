@@ -29,6 +29,16 @@ private final class SendRecorder: @unchecked Sendable {
 
 private struct SendFailure: Error {}
 
+/// The draft outside the live turn, as the call's draft owner would report it.
+private final class DraftBaseBox: @unchecked Sendable {
+    var base = ""
+    private(set) var sentBases: [String] = []
+
+    func sent(_ base: String) {
+        sentBases.append(base)
+    }
+}
+
 /// Records every `dependencies.log` call — what the diagnostics-log wiring tests below check
 /// against, without a real `VoiceDiagnosticsLog` or any file I/O.
 private final class LogRecorder: @unchecked Sendable {
@@ -48,7 +58,7 @@ final class CallModeStoreTests: XCTestCase {
 
     private func makeStore(
         ledgerBox: LedgerBox, sender: SendRecorder, feedback: @escaping @Sendable (FeedbackEvent) -> Void = { _ in },
-        log: LogRecorder? = nil
+        log: LogRecorder? = nil, draft: DraftBaseBox = DraftBaseBox()
     ) -> CallModeStore {
         let logSink: @Sendable (VoiceLogLevel, String, String) -> Void = { level, category, message in
             log?.record(level, category, message)
@@ -57,6 +67,8 @@ final class CallModeStoreTests: XCTestCase {
             sleep: { _ in },  // instant — the commit-wait loop must not slow tests down
             currentLedger: { ledgerBox.ledger },
             postMessage: { text in try sender.send(text) },
+            draftBase: { draft.base },
+            baseSent: { draft.sent($0) },
             feedback: feedback,
             log: logSink
         )
@@ -292,6 +304,49 @@ final class CallModeStoreTests: XCTestCase {
         await store.handle(CommandEvent(kind: .send, atOffset: 100, confidence: 1))
 
         XCTAssertTrue(sender.sentTexts.isEmpty)
+        XCTAssertEqual(store.phase, .listening)
+    }
+
+    func testASendPostsTheDraftTextAheadOfTheTurnAndOnlyThenDropsIt() async {
+        let ledgerBox = LedgerBox(
+            TranscriptLedger(
+                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+                segments: [
+                    Segment(range: 0..<1000, text: "hello there", source: .live),
+                    Segment(range: 2000..<3000, text: "second try", source: .live),
+                ]))
+        let sender = SendRecorder()
+        let draft = DraftBaseBox()
+        draft.base = "pasted log line"
+        let store = makeStore(ledgerBox: ledgerBox, sender: sender, draft: draft)
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+
+        sender.nextFailure = SendFailure()
+        await store.handle(CommandEvent(kind: .send, atOffset: 1000, confidence: 1))
+        XCTAssertTrue(draft.sentBases.isEmpty, "a failed send dropped the draft text")
+        XCTAssertEqual(store.consumeUnsentTurnText(), "stt-rec: hello there")
+
+        await store.handle(CommandEvent(kind: .start, atOffset: 2000, confidence: 1))
+        await store.handle(CommandEvent(kind: .send, atOffset: 3000, confidence: 1))
+
+        XCTAssertEqual(sender.sentTexts, ["pasted log line stt-rec: second try"])
+        XCTAssertEqual(draft.sentBases, ["pasted log line"])
+    }
+
+    func testSendWhileListeningWithNoTurnSendsTheDraftAsItStands() async {
+        let sender = SendRecorder()
+        let draft = DraftBaseBox()
+        let store = makeStore(ledgerBox: LedgerBox(emptyLedger()), sender: sender, draft: draft)
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+        await store.handle(CommandEvent(kind: .stop, atOffset: 0, confidence: 1))
+        draft.base = "typed while listening"
+
+        await store.handle(CommandEvent(kind: .send, atOffset: 100, confidence: 1))
+
+        XCTAssertEqual(sender.sentTexts, ["typed while listening"])
+        XCTAssertEqual(draft.sentBases, ["typed while listening"])
         XCTAssertEqual(store.phase, .listening)
     }
 

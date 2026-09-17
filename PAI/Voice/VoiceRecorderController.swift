@@ -338,14 +338,14 @@ final class VoiceRecorderController {
     func configureAudioSessionForCallMode() throws {
         try audioSession.setCategory(
             .playAndRecord, mode: .voiceChat,
-            options: [.duckOthers, .allowBluetooth, .overrideMutedMicrophoneInterruption, .defaultToSpeaker])
+            options: [.allowBluetooth, .overrideMutedMicrophoneInterruption, .defaultToSpeaker])
         try audioSession.setActive(true)
         applyPreferredMicrophone()
     }
 
     /// Ends call mode's hold on the audio session. A microphone-mode take configures and activates
     /// its own session when it starts, so deactivating here is all a call leaves behind — and it
-    /// is what lets other apps' audio come back up from ducking.
+    /// is what tells the app whose audio it paused that it may resume.
     func restoreMicrophoneModeAudioSession() {
         try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
     }
@@ -542,19 +542,11 @@ final class VoiceRecorderController {
             let partial = voiceSession.transcribedText
             if partial != lastPartial, let draftKey = activeDraftKey {
                 lastPartial = partial
-                drafts.setDraftText(key: draftKey, text: Self.composeLiveText(pre: preVoiceText, partial: partial))
+                drafts.setDraftText(
+                    key: draftKey, text: VoiceRecordingResult.composeLiveText(pre: preVoiceText, partial: partial))
             }
             try? await Task.sleep(for: .milliseconds(150))
         }
-    }
-
-    /// `pre` and the running partial, joined the way the composer used to join them — the
-    /// `stt-rec: ` prefix is written once and only the text after it keeps growing, matching
-    /// `VoiceRecordingSession`'s own contract for `transcribedText` against `result.prefixedText`.
-    static func composeLiveText(pre: String, partial: String) -> String {
-        guard !partial.isEmpty else { return pre }
-        let prefixed = "\(VoiceRecordingResult.sttPrefix)\(partial)"
-        return pre.isEmpty ? prefixed : "\(pre) \(prefixed)"
     }
 
     /// The one place a finished take's text reaches the draft, called from `persistRecording()`
@@ -1024,13 +1016,17 @@ final class VoiceRecorderController {
     /// which ends a take rather than producing silence in it. For a recorder that is expected to
     /// run unattended in the user's pocket, silence is the far better failure.
     ///
+    /// No mixing option, in either mode: activating the session pauses other apps' audio instead
+    /// of playing it on underneath the headset's call profile, and every deactivation notifies
+    /// them so they can resume.
+    ///
     /// `.defaultToSpeaker` is what keeps an earcon audible with no headset connected:
     /// `.playAndRecord` alone routes output to the receiver, which nobody hears with the phone in
     /// a pocket — exactly the case a connection-health cue exists to reach.
     private func configureAudioSession() throws {
         try audioSession.setCategory(
             .playAndRecord, mode: .measurement,
-            options: [.duckOthers, .allowBluetooth, .overrideMutedMicrophoneInterruption, .defaultToSpeaker])
+            options: [.allowBluetooth, .overrideMutedMicrophoneInterruption, .defaultToSpeaker])
         try audioSession.setActive(true)
         applyPreferredMicrophone()
     }

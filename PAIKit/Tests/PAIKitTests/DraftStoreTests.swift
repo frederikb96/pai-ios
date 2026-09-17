@@ -53,10 +53,15 @@ private final class FakeDraftsFetching: DraftsFetching, @unchecked Sendable {
 
     var remoteDrafts: [Draft] = []
     var putGate: Gate?
+    var getGate: Gate?
 
     func getDrafts() async throws -> [Draft] {
         record("getDrafts")
-        return remoteDrafts
+        let snapshot = remoteDrafts
+        if let getGate {
+            await getGate.wait()
+        }
+        return snapshot
     }
 
     func putDraft(
@@ -283,6 +288,49 @@ final class DraftStoreTests: XCTestCase {
 
         XCTAssertEqual(
             store.draft(for: "s1").text, "still typing", "an in-flight local edit was overwritten by a stale poll")
+    }
+
+    /// A poll landing while the debounced write is on the wire must not put back the text the
+    /// write is replacing — live dictation writes the draft many times a second, so this window
+    /// is open most of the time.
+    func testSyncNeverOverwritesAKeyWhoseWriteIsStillInFlight() async {
+        let fake = FakeDraftsFetching()
+        fake.remoteDrafts = [
+            Draft(key: "s1", text: "older text", sessionType: nil, workingDir: nil, updatedAt: "server-older text")
+        ]
+        let gate = Gate()
+        fake.putGate = gate
+        let store = DraftStore(api: fake, scheduler: InstantDraftScheduler())
+
+        store.setDraftText(key: "s1", text: "older text and newer words")
+        await waitUntil { fake.callLog.contains("putDraft:start:s1") }
+        await store.syncFromServer()
+
+        XCTAssertEqual(store.draft(for: "s1").text, "older text and newer words")
+        await gate.open()
+    }
+
+    /// A poll whose request left before a local change answers with the copy that change
+    /// replaced, even when the change's own write has finished by the time the answer arrives.
+    func testSyncIgnoresARowFetchedBeforeALaterLocalEdit() async {
+        let fake = FakeDraftsFetching()
+        fake.remoteDrafts = [
+            Draft(key: "s1", text: "sent message", sessionType: nil, workingDir: nil, updatedAt: "t-old")
+        ]
+        let getGate = Gate()
+        fake.getGate = getGate
+        let store = DraftStore(api: fake, scheduler: InstantDraftScheduler())
+
+        let sync = Task { await store.syncFromServer() }
+        await waitUntil { fake.callLog.contains("getDrafts") }
+        store.setDraftText(key: "s1", text: "")
+        store.setDraftText(key: "s1", text: "next message")
+        await waitUntil { fake.callLog.contains("putDraft:done:s1") }
+        await waitUntil { store.draft(for: "s1").remoteUpdatedAt == "server-next message" }
+        await getGate.open()
+        await sync.value
+
+        XCTAssertEqual(store.draft(for: "s1").text, "next message")
     }
 
     func testSyncSkipsAKeyWithinTheClearedGraceWindow() async {

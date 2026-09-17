@@ -460,7 +460,7 @@ struct CreateSessionView: View {
                     lastPartial = partial
                     drafts.setDraftText(
                         key: DraftKey.newSession,
-                        text: VoiceRecorderController.composeLiveText(pre: preVoiceText, partial: partial))
+                        text: VoiceRecordingResult.composeLiveText(pre: preVoiceText, partial: partial))
                     scrollToTailOnNextUpdate = true
                 }
                 try? await Task.sleep(for: .milliseconds(150))

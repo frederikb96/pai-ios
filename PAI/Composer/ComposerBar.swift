@@ -373,8 +373,8 @@ struct ComposerBar: View {
 
     private func send(draftStore: DraftStore) {
         guard canSend, !isSending, let connection = environment.connection else { return }
-        // A call bound here owns the live text in this draft: Send sends the call's turn, the
-        // same as saying "send", rather than posting the preview and sending it again later.
+        // A call bound here owns the live text in this draft: Send goes through the call, the
+        // same as saying "send", which posts the draft together with the turn and clears both.
         if connection.callMode.activeSessionID == sessionID {
             Task { await connection.callMode.handleManual(.send) }
             return

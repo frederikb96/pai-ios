@@ -15,6 +15,10 @@ public struct CallModeDependencies: Sendable {
     /// (`postMessage`/`trackSend`), already responsible for its own failed-send handling
     /// (keeping the text recoverable, a retry affordance) once the text leaves this store.
     public var postMessage: @Sendable (_ text: String) async throws -> Void
+    /// The draft text outside the live turn, read at send time — a send posts it ahead of the turn.
+    public var draftBase: @Sendable () -> String
+    /// A send carrying this base succeeded, so it no longer belongs in the draft.
+    public var baseSent: @Sendable (_ base: String) -> Void
     public var feedback: @Sendable (FeedbackEvent) -> Void
     /// A diagnostics line for the call's own phase and turn transitions — defaults to discarding
     /// everything, so a caller that never wires a real sink (a test, or an app build that has not
@@ -25,12 +29,16 @@ public struct CallModeDependencies: Sendable {
         sleep: @escaping @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) },
         currentLedger: @escaping @Sendable () -> TranscriptLedger,
         postMessage: @escaping @Sendable (_ text: String) async throws -> Void,
+        draftBase: @escaping @Sendable () -> String = { "" },
+        baseSent: @escaping @Sendable (_ base: String) -> Void = { _ in },
         feedback: @escaping @Sendable (FeedbackEvent) -> Void = { _ in },
         log: @escaping @Sendable (VoiceLogLevel, String, String) -> Void = { _, _, _ in }
     ) {
         self.sleep = sleep
         self.currentLedger = currentLedger
         self.postMessage = postMessage
+        self.draftBase = draftBase
+        self.baseSent = baseSent
         self.feedback = feedback
         self.log = log
     }
@@ -129,8 +137,8 @@ public final class CallModeStore {
     /// itself, heard from `.collecting`, does not land as the tail end of the very message it
     /// just triggered. Cleared everywhere `turnRanges` is: the two share exactly one lifetime.
     private var firedCommandsInTurn: [CommandEvent] = []
-    /// Whether the most recent send assembled no text at all — a caller still showing live text
-    /// for that turn keeps it rather than letting it vanish with the empty turn.
+    /// Whether the most recent send assembled no turn text — a caller still showing live text for
+    /// that turn keeps it rather than letting it vanish with the empty turn.
     public private(set) var lastSendFoundNothing = false
     public private(set) var sessionState: SessionState?
     public private(set) var blocker: Blocker?
@@ -254,6 +262,10 @@ public final class CallModeStore {
             case .listening where !turnRanges.isEmpty:
                 accept(command)
                 await requestSend()
+            case .listening where !draftBaseText.isEmpty:
+                // No turn, but the draft holds text: send it as it stands.
+                accept(command)
+                await trySend(force: true)
             case .pendingSend:
                 // A second send while held means "send it now", gaps or not.
                 accept(command)
@@ -290,6 +302,10 @@ public final class CallModeStore {
         await trySend(force: true)
     }
 
+    private var draftBaseText: String {
+        dependencies.draftBase().trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var sendingIsRefused: Bool {
         if let sessionStatus, Self.terminalStatuses.contains(sessionStatus) { return true }
         return false
@@ -316,18 +332,21 @@ public final class CallModeStore {
         }
         let assembled = CallMessageAssembler.assembledText(
             for: turnRanges, in: ledger, strippingCommands: firedCommandsInTurn)
-        let text = assembled.isEmpty ? "" : "\(VoiceRecordingResult.sttPrefix)\(assembled)"
+        let turnText = assembled.isEmpty ? "" : "\(VoiceRecordingResult.sttPrefix)\(assembled)"
+        let unsentTurnText = turnText.isEmpty ? nil : turnText
+        let base = draftBaseText
+        let text = CallDraftText(base: base).message(turnText: turnText)
         turnRanges = []
         firedCommandsInTurn = []
         lastUnsentTurnText = nil
+        lastSendFoundNothing = turnText.isEmpty
         guard !text.isEmpty else {
             phase = .listening
-            lastSendFoundNothing = true
             dependencies.log(.info, "mode", "send fired with nothing transcribed — nothing sent")
             return
         }
         guard !sendingIsRefused else {
-            lastUnsentTurnText = text
+            lastUnsentTurnText = unsentTurnText
             phase = .listening
             dependencies.feedback(.sendFailed)
             dependencies.log(.warning, "mode", "send refused — session status is terminal")
@@ -336,11 +355,12 @@ public final class CallModeStore {
         do {
             try await dependencies.postMessage(text)
             lastSendFailure = nil
+            dependencies.baseSent(base)
             phase = .listening
             dependencies.log(.info, "mode", "turn sent (\(text.count) chars)")
         } catch {
             lastSendFailure = error
-            lastUnsentTurnText = text
+            lastUnsentTurnText = unsentTurnText
             phase = .listening
             dependencies.feedback(.sendFailed)
             dependencies.log(.error, "mode", "send failed: \(error)")
