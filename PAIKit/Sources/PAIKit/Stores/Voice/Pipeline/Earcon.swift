@@ -30,6 +30,13 @@ public enum Earcon {
         tones(for: kind).flatMap { render($0, sampleRate: sampleRate) }
     }
 
+    /// How long `kind` takes to play. A caller that tears the audio engine down right after
+    /// scheduling a cue has to wait this out first, or the cue is cut off mid-tone and is heard
+    /// as a click or not at all — which is the whole of the feedback for an ending call.
+    public static func durationMs(kind: EarconKind) -> Double {
+        tones(for: kind).reduce(0) { $0 + $1.durationMs + toneGapMs }
+    }
+
     /// The tones for each kind, in playback order. Frequencies are named notes for the melodic
     /// ones (`healed`'s rising triad) and plain round numbers for the rest — nothing here is a
     /// measured or documented constant, only a deliberately distinct pattern per kind.
@@ -58,6 +65,12 @@ public enum Earcon {
         case .command(.interruptOff):
             // Falling, the interruptOn pair in reverse — replies hold while recording.
             return [Tone(frequency: 783.99, durationMs: 70), Tone(frequency: 587.33, durationMs: 70)]
+        case .command(.end):
+            // Three falling tones — the call shutting down, heard as such with the phone away.
+            return [
+                Tone(frequency: 783.99, durationMs: 90), Tone(frequency: 659.25, durationMs: 90),
+                Tone(frequency: 523.25, durationMs: 140),
+            ]
         case .command(let commandKind):
             return [Tone(frequency: commandFrequency(commandKind), durationMs: 90)]
         }
@@ -72,7 +85,7 @@ public enum Earcon {
         case .stop: return 392.00  // G4
         case .send: return 659.25  // E5
         case .skip: return 1_174.66  // D6
-        case .end: return 523.25  // C5
+        case .end: return 523.25  // unreachable — handled in tones(for:)
         case .interruptOn, .interruptOff: return 783.99  // unreachable — handled in tones(for:)
         }
     }

@@ -55,10 +55,11 @@ public struct VoiceRecordingResult: Sendable, Equatable {
     }
 
     /// `pre` and a running transcript, joined the way a draft shows live dictation: the prefix is
-    /// written once and only the text after it keeps growing.
-    public static func composeLiveText(pre: String, partial: String) -> String {
+    /// written once and only the text after it keeps growing. `separator` is a newline for a call,
+    /// where each stretch of dictation is its own line under whatever is already in the draft.
+    public static func composeLiveText(pre: String, partial: String, separator: String = " ") -> String {
         guard !partial.isEmpty else { return pre }
         let prefixed = "\(sttPrefix)\(partial)"
-        return pre.isEmpty ? prefixed : "\(pre) \(prefixed)"
+        return pre.isEmpty ? prefixed : "\(pre)\(separator)\(prefixed)"
     }
 }

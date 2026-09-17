@@ -52,6 +52,13 @@ private final class LogRecorder: @unchecked Sendable {
 @MainActor
 final class CallModeStoreTests: XCTestCase {
 
+    /// What `CallModeController` does with a settled turn: it goes into the draft, on its own
+    /// line under whatever is already there.
+    private func appendToDraft(_ base: String, _ settled: String?) -> String {
+        guard let settled, !settled.isEmpty else { return base }
+        return base.isEmpty ? settled : "\(base)\n\(settled)"
+    }
+
     private func emptyLedger(sampleRate: Int = 16000) -> TranscriptLedger {
         TranscriptLedger(takeId: "take-1", mode: .call, sampleRate: sampleRate, draftKey: "session-1", preText: "")
     }
@@ -107,9 +114,17 @@ final class CallModeStoreTests: XCTestCase {
         XCTAssertEqual(store.phase, .collecting(startOffset: 500))
     }
 
-    func testStopReturnsToListeningWithoutSendingAndKeepsTheTextInTheTurn() async {
+    /// A stop hands its words over as ordinary draft text rather than leaving them standing as a
+    /// preview: between a stop and the next start the draft is Freddy's to edit, and a preview
+    /// rebuilt from the ledger on every tick would undo whatever he changed.
+    func testStopSettlesTheTurnIntoTheDraftInsteadOfHoldingItAsAPreview() async {
+        let ledgerBox = LedgerBox(
+            TranscriptLedger(
+                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+                segments: [Segment(range: 0..<1000, text: "hello there", source: .live)]
+            ))
         let sender = SendRecorder()
-        let store = makeStore(ledgerBox: LedgerBox(emptyLedger()), sender: sender)
+        let store = makeStore(ledgerBox: ledgerBox, sender: sender)
         store.startEntering()
         store.finishEntering(atOffset: 0)
 
@@ -117,7 +132,37 @@ final class CallModeStoreTests: XCTestCase {
 
         XCTAssertTrue(sender.sentTexts.isEmpty, "stop must never send — only send does")
         XCTAssertEqual(store.phase, .listening)
-        XCTAssertEqual(store.turnRanges, [0..<1000])
+        XCTAssertTrue(store.turnRanges.isEmpty)
+        XCTAssertEqual(store.consumeUnsentTurnText(), "stt-rec: hello there")
+        XCTAssertEqual(
+            store.previewText(
+                openRange: nil, openCycle: CallOpenCycleText(segments: [], partial: ""), in: ledgerBox.ledger),
+            "", "the words live in the draft now, not in a preview that keeps being rewritten")
+    }
+
+    /// A turn stopped while a stretch is still missing cannot go into the draft yet — it would
+    /// land there short of its own words. It stays held, and settles the moment the backfill
+    /// covers it.
+    func testAStopWhoseTurnIsNotFullyTranscribedStaysHeldUntilTheGapCloses() async {
+        let ledgerBox = LedgerBox(heldTurnLedger())
+        let store = makeStore(ledgerBox: ledgerBox, sender: SendRecorder())
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+
+        await store.handle(CommandEvent(kind: .stop, atOffset: 1000, confidence: 1))
+        XCTAssertEqual(store.turnRanges, [0..<1000], "held — its text is not all there yet")
+        XCTAssertNil(store.lastUnsentTurnText)
+
+        ledgerBox.ledger = TranscriptLedger(
+            takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+            segments: [
+                Segment(range: 0..<500, text: "partial", source: .live),
+                Segment(range: 500..<1000, text: "and the rest", source: .batch),
+            ])
+        await store.ledgerChanged()
+
+        XCTAssertTrue(store.turnRanges.isEmpty)
+        XCTAssertEqual(store.consumeUnsentTurnText(), "stt-rec: partial and the rest")
     }
 
     func testStopIsIgnoredWhenNotCurrentlyCollecting() async {
@@ -129,17 +174,32 @@ final class CallModeStoreTests: XCTestCase {
         XCTAssertEqual(store.phase, .idle)
     }
 
-    func testASecondStartAfterAStopExtendsTheSameTurnAcrossTwoRanges() async {
-        let store = makeStore(ledgerBox: LedgerBox(emptyLedger()), sender: SendRecorder())
+    /// Dictating in several stretches still sends one message: each stretch settles into the
+    /// draft as its own line as it is stopped, and the send posts what the draft holds.
+    func testEachStretchSettlesIntoTheDraftAndASendPostsThemTogether() async {
+        let ledgerBox = LedgerBox(
+            TranscriptLedger(
+                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+                segments: [
+                    Segment(range: 0..<500, text: "first cycle", source: .live),
+                    Segment(range: 800..<1200, text: "second cycle", source: .live),
+                ]))
+        let sender = SendRecorder()
+        let draft = DraftBaseBox()
+        let store = makeStore(ledgerBox: ledgerBox, sender: sender, draft: draft)
         store.startEntering()
         store.finishEntering(atOffset: 0)
 
         await store.handle(CommandEvent(kind: .stop, atOffset: 500, confidence: 1))
-        XCTAssertEqual(store.turnRanges, [0..<500])
+        draft.base = appendToDraft(draft.base, store.consumeUnsentTurnText())
 
         await store.handle(CommandEvent(kind: .start, atOffset: 800, confidence: 1))
         await store.handle(CommandEvent(kind: .stop, atOffset: 1200, confidence: 1))
-        XCTAssertEqual(store.turnRanges, [0..<500, 800..<1200], "both collecting stretches belong to one turn")
+        draft.base = appendToDraft(draft.base, store.consumeUnsentTurnText())
+
+        await store.handle(CommandEvent(kind: .send, atOffset: 1300, confidence: 1))
+
+        XCTAssertEqual(sender.sentTexts, ["stt-rec: first cycle\nstt-rec: second cycle"])
     }
 
     // MARK: - Live preview: what a caller shows before "send" or even "stop"
@@ -167,7 +227,7 @@ final class CallModeStoreTests: XCTestCase {
                 openRange: nil, openCycle: CallOpenCycleText(segments: [], partial: ""), in: emptyLedger()), "")
     }
 
-    func testPreviewTextCombinesAHeldTurnFromAnEarlierStopWithTheNewOpenRange() async {
+    func testPreviewTextShowsOnlyTheOpenRangeOnceAnEarlierStretchSettledIntoTheDraft() async {
         let ledgerBox = LedgerBox(
             TranscriptLedger(
                 takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
@@ -184,7 +244,7 @@ final class CallModeStoreTests: XCTestCase {
         XCTAssertEqual(
             store.previewText(
                 openRange: 800..<1200, openCycle: CallOpenCycleText(segments: [], partial: ""), in: ledgerBox.ledger),
-            "first cycle second cycle")
+            "second cycle", "the stopped stretch is draft text, and only the live one is previewed")
     }
 
     /// The service commits on a pause, so mid-sentence the ledger holds nothing for the open
@@ -205,7 +265,7 @@ final class CallModeStoreTests: XCTestCase {
 
         XCTAssertEqual(
             store.previewText(openRange: 800..<1200, openCycle: openCycle, in: ledgerBox.ledger),
-            "first cycle still talking")
+            "still talking")
     }
 
     /// "computer skip" spoken mid-recording belongs to the reply, not to the message being
@@ -230,22 +290,20 @@ final class CallModeStoreTests: XCTestCase {
     }
 
     func testPreviewTextNeverConsumesTheTurnTheWaySendDoes() async {
-        let ledgerBox = LedgerBox(
-            TranscriptLedger(
-                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
-                segments: [Segment(range: 0..<500, text: "still here", source: .live)]
-            ))
+        // A turn still short a stretch, so a stop leaves it held rather than settling it — the
+        // only state in which reading a preview could consume anything at all.
+        let ledgerBox = LedgerBox(heldTurnLedger())
         let store = makeStore(ledgerBox: ledgerBox, sender: SendRecorder())
         store.startEntering()
         store.finishEntering(atOffset: 0)
-        await store.handle(CommandEvent(kind: .stop, atOffset: 500, confidence: 1))
+        await store.handle(CommandEvent(kind: .stop, atOffset: 1000, confidence: 1))
 
         _ = store.previewText(
             openRange: nil, openCycle: CallOpenCycleText(segments: [], partial: ""), in: ledgerBox.ledger)
         _ = store.previewText(
             openRange: nil, openCycle: CallOpenCycleText(segments: [], partial: ""), in: ledgerBox.ledger)
 
-        XCTAssertEqual(store.turnRanges, [0..<500], "reading the preview twice must not touch the turn")
+        XCTAssertEqual(store.turnRanges, [0..<1000], "reading the preview twice must not touch the turn")
     }
 
     func testRepliesAreHeldOnlyWhileRecordingWithInterruptsOff() {
@@ -274,18 +332,20 @@ final class CallModeStoreTests: XCTestCase {
         XCTAssertTrue(store.turnRanges.isEmpty)
     }
 
-    func testSendFromListeningSendsThePendingTurnLeftByAnEarlierStop() async {
+    func testSendFromListeningSendsWhatAnEarlierStopSettledIntoTheDraft() async {
         let ledgerBox = LedgerBox(
             TranscriptLedger(
                 takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
                 segments: [Segment(range: 0..<1000, text: "hello there", source: .live)]
             ))
         let sender = SendRecorder()
-        let store = makeStore(ledgerBox: ledgerBox, sender: sender)
+        let draft = DraftBaseBox()
+        let store = makeStore(ledgerBox: ledgerBox, sender: sender, draft: draft)
         store.startEntering()
         store.finishEntering(atOffset: 0)
         await store.handle(CommandEvent(kind: .stop, atOffset: 1000, confidence: 1))
         XCTAssertEqual(store.phase, .listening)
+        draft.base = appendToDraft(draft.base, store.consumeUnsentTurnText())
 
         await store.handle(CommandEvent(kind: .send, atOffset: 1500, confidence: 1))
 
@@ -330,7 +390,7 @@ final class CallModeStoreTests: XCTestCase {
         await store.handle(CommandEvent(kind: .start, atOffset: 2000, confidence: 1))
         await store.handle(CommandEvent(kind: .send, atOffset: 3000, confidence: 1))
 
-        XCTAssertEqual(sender.sentTexts, ["pasted log line stt-rec: second try"])
+        XCTAssertEqual(sender.sentTexts, ["pasted log line\nstt-rec: second try"])
         XCTAssertEqual(draft.sentBases, ["pasted log line"])
     }
 
@@ -447,11 +507,9 @@ final class CallModeStoreTests: XCTestCase {
     }
 
     func testEndWithAPendingTurnHandsItsTextToLastAbandonedTurnTextRatherThanSendingOrLosingIt() async {
-        let ledgerBox = LedgerBox(
-            TranscriptLedger(
-                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
-                segments: [Segment(range: 0..<1000, text: "never mind", source: .live)]
-            ))
+        // Held rather than settled — a stop whose turn was still short a stretch is the only turn
+        // an "end" can still find standing.
+        let ledgerBox = LedgerBox(heldTurnLedger())
         let sender = SendRecorder()
         let store = makeStore(ledgerBox: ledgerBox, sender: sender)
         store.startEntering()
@@ -463,7 +521,7 @@ final class CallModeStoreTests: XCTestCase {
 
         XCTAssertTrue(sender.sentTexts.isEmpty, "end never sends — only send does")
         XCTAssertEqual(store.phase, .idle)
-        XCTAssertEqual(store.lastAbandonedTurnText, "stt-rec: never mind")
+        XCTAssertEqual(store.lastAbandonedTurnText, "stt-rec: partial")
         XCTAssertTrue(store.turnRanges.isEmpty)
     }
 
@@ -476,7 +534,6 @@ final class CallModeStoreTests: XCTestCase {
         let store = makeStore(ledgerBox: ledgerBox, sender: SendRecorder())
         store.startEntering()
         store.finishEntering(atOffset: 0)
-        await store.handle(CommandEvent(kind: .stop, atOffset: 1000, confidence: 1))
         await store.handle(CommandEvent(kind: .end, atOffset: 1000, confidence: 1))
         XCTAssertNotNil(store.lastAbandonedTurnText)
 
@@ -525,9 +582,6 @@ final class CallModeStoreTests: XCTestCase {
         let store = makeStore(ledgerBox: ledgerBox, sender: SendRecorder())
         store.startEntering()
         store.finishEntering(atOffset: 0)
-        await store.handle(CommandEvent(kind: .stop, atOffset: 600, confidence: 1))
-        await store.handle(CommandEvent(kind: .start, atOffset: 900, confidence: 1))
-
         await store.handle(CommandEvent(kind: .end, atOffset: 1600, confidence: 1))
 
         XCTAssertEqual(store.lastAbandonedTurnText, "stt-rec: first part second part")

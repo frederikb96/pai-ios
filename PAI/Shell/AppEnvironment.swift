@@ -116,7 +116,7 @@ final class AppEnvironment {
     /// The token is cleared as well as the gate moved: leaving a rejected credential in the
     /// Keychain means the next launch tries it again and lands back here, which reads as the app
     /// being broken rather than as needing a new token.
-    /// `manual: false`: a token rejection can land at any moment, not only while Freddy is
+    /// `deliberate: false`: a token rejection can land at any moment, not only while Freddy is
     /// looking at the screen making a deliberate choice, so a running call ending here plays the
     /// cue and posts the notification the same as any other unattended end — otherwise the call's
     /// own resources (the microphone, the audio session, its sockets) would simply be discarded
@@ -124,7 +124,7 @@ final class AppEnvironment {
     func handleAuthenticationFailure(detail: String?) async {
         connection?.sessions.stopPolling()
         connection?.claudeAuth.stopPolling()
-        await connection?.callMode.exit(reason: "signed out (token rejected)", manual: false)
+        await connection?.callMode.exit(reason: "signed out (token rejected)", deliberate: false)
         tokens.write(nil)
         connection = nil
         lastAuthFailure = detail

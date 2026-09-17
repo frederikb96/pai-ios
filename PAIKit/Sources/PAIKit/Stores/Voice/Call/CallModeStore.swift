@@ -159,7 +159,8 @@ public final class CallModeStore {
     /// the caller's point of view, since the words exist and Freddy never said "send". `nil`
     /// whenever "end" fired with nothing pending, and reset at the start of the next call.
     public private(set) var lastAbandonedTurnText: String?
-    /// Set when a "send" was heard but the send itself never went out — refused by
+    /// Set when a "stop" settled its turn into the draft, and when a "send" was heard but the
+    /// send itself never went out — refused by
     /// `sendingIsRefused`, or thrown by `postMessage`. Distinct from `lastSendFailure`: that is
     /// only the error, this is the text itself, the one thing a caller actually needs to hand
     /// back to Freddy rather than silently drop — without it, everything he said since the last
@@ -254,7 +255,7 @@ public final class CallModeStore {
             accept(command)
             turnRanges.append(startOffset..<command.atOffset)
             phase = .listening
-            dependencies.log(.info, "mode", "call listening (turn held, not sent)")
+            settleTurnIntoDraft()
         case .send:
             switch phase {
             case .collecting(let startOffset):
@@ -385,6 +386,12 @@ public final class CallModeStore {
     /// here reacts to every ledger write, matching "only `collecting` ranges are ever
     /// transcribed automatically or counted as a gap" from the design.
     public func ledgerChanged() async {
+        if case .listening = phase, !turnRanges.isEmpty {
+            // A turn stopped while a stretch was still missing: settle it the moment the backfill
+            // covers it, so the draft becomes editable text rather than staying a live preview.
+            settleTurnIntoDraft()
+            return
+        }
         guard case .pendingSend = phase else { return }
         await trySend()
     }
@@ -421,6 +428,32 @@ public final class CallModeStore {
             }
         }
         return [closed, open].filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    /// A "stop" hands the turn to the draft as ordinary text rather than leaving it standing as a
+    /// live preview the next write would rebuild: between a stop and the next start the draft is
+    /// Freddy's to edit — typing into it, pasting into it, deleting from it — and a preview that
+    /// keeps being rewritten from the ledger would restore what he just changed. The next start
+    /// then dictates a new line under whatever the draft holds by then.
+    ///
+    /// A turn still missing a stretch stays held: its text is not all there yet, so the preview
+    /// keeps showing what there is until the backfill covers it, exactly as before.
+    private func settleTurnIntoDraft() {
+        guard !turnRanges.isEmpty else {
+            dependencies.log(.info, "mode", "call listening (nothing recorded)")
+            return
+        }
+        let ledger = dependencies.currentLedger()
+        guard CallMessageAssembler.isCovered(turnRanges, in: ledger) else {
+            dependencies.log(.info, "mode", "call listening (turn held — not yet fully transcribed)")
+            return
+        }
+        let assembled = CallMessageAssembler.assembledText(
+            for: turnRanges, in: ledger, strippingCommands: firedCommandsInTurn)
+        turnRanges = []
+        firedCommandsInTurn = []
+        lastUnsentTurnText = assembled.isEmpty ? nil : "\(VoiceRecordingResult.sttPrefix)\(assembled)"
+        dependencies.log(.info, "mode", "call listening (turn settled into the draft, not sent)")
     }
 
     /// Whatever the turn held is assembled best-effort (never waiting on a gap the way `send`

@@ -25,12 +25,12 @@ final class CallDraftTextTests: XCTestCase {
         _ = draft.draft(forPreview: "check these")
         let sentBase = draft.base
 
-        draft.adopt(currentDraft: "pasted logs and a note stt-rec: check these")
+        draft.adopt(currentDraft: "pasted logs\nand a note\nstt-rec: check these")
         _ = draft.draft(forPreview: "")
         let afterSend = draft.baseSent(sentBase)
 
         XCTAssertEqual(afterSend, "and a note")
-        XCTAssertEqual(draft.message(turnText: "stt-rec: next"), "and a note stt-rec: next")
+        XCTAssertEqual(draft.message(turnText: "stt-rec: next"), "and a note\nstt-rec: next")
     }
 
     /// Text typed *ahead of* the sent base while the send is still in flight is just as common as
@@ -41,11 +41,11 @@ final class CallDraftTextTests: XCTestCase {
         _ = draft.draft(forPreview: "check these")
         let sentBase = draft.base
 
-        draft.adopt(currentDraft: "URGENT: pasted logs stt-rec: check these")
+        draft.adopt(currentDraft: "URGENT:\npasted logs\nstt-rec: check these")
         _ = draft.draft(forPreview: "")
         let afterSend = draft.baseSent(sentBase)
 
         XCTAssertEqual(afterSend, "URGENT:")
-        XCTAssertEqual(draft.message(turnText: "stt-rec: next"), "URGENT: stt-rec: next")
+        XCTAssertEqual(draft.message(turnText: "stt-rec: next"), "URGENT:\nstt-rec: next")
     }
 }

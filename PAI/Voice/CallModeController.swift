@@ -829,9 +829,11 @@ final class CallModeController {
                     confidence: confidence, phraseRange: spokenPhraseRange, source: source))
             setInterruptsAllowed(kind == .interruptOn)
         case .end:
-            let manual = source == .manual
+            // Both channels are Freddy ending the call on purpose — the screen's End button and
+            // the spoken "computer end the call" — so neither posts a notification.
             await performExit(
-                manual: manual, reason: manual ? "End button tapped" : "\"computer end\" heard")
+                deliberate: true,
+                reason: source == .manual ? "End button tapped" : "\"computer end\" heard")
         }
     }
 
@@ -1036,17 +1038,16 @@ final class CallModeController {
     /// stop" without guessing. `manual` defaults to `true`: every existing caller is a foreground
     /// action Freddy just took, the same as the call screen's own End button — a caller that can
     /// fire without him looking at the screen (a rejected token, say) passes `false`.
-    func exit(reason: String = "requested", manual: Bool = true) async {
-        await serialized { [weak self] in await self?.performExit(manual: manual, reason: reason) }
+    func exit(reason: String = "requested", deliberate: Bool = true) async {
+        await serialized { [weak self] in await self?.performExit(deliberate: deliberate, reason: reason) }
     }
 
-    /// `manual` is `false` only for a spoken "computer end" — everything else reaching this
-    /// (the call screen's own End button, every `exit()` caller) is a foreground action Freddy
-    /// just took, with the screen already in front of him. A non-manual end plays a cue and posts
-    /// a notification (`.callEndedUnexpectedly`) — a call that stops while he cannot see the
-    /// screen, hands-free, is exactly the case a "the call ended, your text is in the draft" push
-    /// exists for; a manual one keeps only the command's own confirmation tone.
-    private func performExit(manual: Bool, reason: String) async {
+    /// Every ending plays the shutdown cue — a call that stops is always audible, since the phone
+    /// is usually out of sight. `deliberate` is what decides the notification on top of it: `true`
+    /// for an ending Freddy asked for (the End button, a spoken "computer end the call"), `false`
+    /// for one nothing of his caused, which is exactly the case a "the call ended, your text is in
+    /// the draft" push exists for — he has no other way of finding out it stopped.
+    private func performExit(deliberate: Bool, reason: String) async {
         guard let store else { return }
         AppVoiceDiagnosticsLog.shared.log(.info, "mode", "call ending: \(reason)")
         if case .collecting = store.phase {
@@ -1054,7 +1055,8 @@ final class CallModeController {
         }
         await store.handle(
             CommandEvent(
-                kind: .end, atOffset: callTakeCollectedSamples, confidence: 1, source: manual ? .manual : .transcript))
+                kind: .end, atOffset: callTakeCollectedSamples, confidence: 1,
+                source: deliberate ? .manual : .transcript))
 
         // Stopped before reading `lastAbandonedTurnText` below — the preview loop's own next tick
         // would otherwise race this append and either clobber it or duplicate it.
@@ -1068,9 +1070,14 @@ final class CallModeController {
         // Before `teardown()`, never after: the cue plays through the capture engine
         // (`MicrophoneCapture.playEarcon`), which restarts it if it isn't running — exactly what
         // `teardown()` just stopped, on an `AVAudioSession` it is about to deactivate too.
-        if !manual {
+        var cueMs = Earcon.durationMs(kind: .command(.end))
+        if !deliberate {
             controller.handleFeedback(.callEndedUnexpectedly(hadUnsentText: hadUnsentText))
+            cueMs += Earcon.durationMs(kind: .error)
         }
+        // Scheduling a cue is not playing it: `teardown()` stops the very engine it plays through,
+        // so without this wait the end cue is cut off within milliseconds and is never heard.
+        try? await Task.sleep(for: .milliseconds(Int(cueMs.rounded()) + 120))
 
         await teardown()
         controller.releaseFromCallMode()

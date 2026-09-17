@@ -7,6 +7,11 @@ import Foundation
 /// A send posts the base together with the turn, so the draft on screen is exactly what goes out,
 /// and the base is dropped once the send succeeds.
 public struct CallDraftText: Sendable, Equatable {
+    /// Each stretch of dictation is its own line under whatever the draft already holds, so text
+    /// typed or pasted between two stretches stays a paragraph of its own rather than running into
+    /// the next thing spoken.
+    private static let separator = "\n"
+
     public private(set) var base: String
     /// The preview as last written — `nil` forces the next preview to be written.
     public private(set) var writtenPreview: String?
@@ -36,7 +41,7 @@ public struct CallDraftText: Sendable, Equatable {
         if previewPart.isEmpty || !current.contains(previewPart) {
             base = current
         } else if current.hasSuffix(previewPart) {
-            base = String(current.dropLast(previewPart.count)).trimmingCharacters(in: .whitespaces)
+            base = String(current.dropLast(previewPart.count)).trimmingCharacters(in: .whitespacesAndNewlines)
         } else {
             return
         }
@@ -53,14 +58,14 @@ public struct CallDraftText: Sendable, Equatable {
     /// Appends `text` to the base in place of the preview showing it — for turn text handed back
     /// rather than sent. Returns the draft to write.
     public mutating func appendReplacingPreview(_ text: String) -> String {
-        base = base.isEmpty ? text : "\(base) \(text)"
+        base = base.isEmpty ? text : "\(base)\(Self.separator)\(text)"
         return write(preview: "")
     }
 
     /// The message a send posts for `turnText`: the base first, then the turn.
     public func message(turnText: String) -> String {
         let trimmedBase = base.trimmingCharacters(in: .whitespacesAndNewlines)
-        return [trimmedBase, turnText].filter { !$0.isEmpty }.joined(separator: " ")
+        return [trimmedBase, turnText].filter { !$0.isEmpty }.joined(separator: Self.separator)
     }
 
     /// A send carrying `sentBase` went out — that part of the base is gone from the draft,
@@ -72,15 +77,15 @@ public struct CallDraftText: Sendable, Equatable {
         let sent = sentBase.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
         if !sent.isEmpty, let range = trimmed.range(of: sent) {
-            let before = trimmed[..<range.lowerBound].trimmingCharacters(in: .whitespaces)
-            let after = trimmed[range.upperBound...].trimmingCharacters(in: .whitespaces)
-            base = [before, after].filter { !$0.isEmpty }.joined(separator: " ")
+            let before = trimmed[..<range.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+            let after = trimmed[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+            base = [before, after].filter { !$0.isEmpty }.joined(separator: Self.separator)
         }
         return write(preview: writtenPreview ?? "")
     }
 
     private mutating func write(preview: String) -> String {
-        let text = VoiceRecordingResult.composeLiveText(pre: base, partial: preview)
+        let text = VoiceRecordingResult.composeLiveText(pre: base, partial: preview, separator: Self.separator)
         writtenPreview = preview
         writtenDraft = text
         return text
