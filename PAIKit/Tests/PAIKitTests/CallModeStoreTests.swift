@@ -525,6 +525,33 @@ final class CallModeStoreTests: XCTestCase {
         XCTAssertTrue(store.turnRanges.isEmpty)
     }
 
+    /// "computer end the call" is spoken into the open cycle, so its own words are transcribed
+    /// with everything else — the command carries where it was said, and the text handed back to
+    /// the draft must not contain it.
+    func testEndStripsItsOwnSpokenPhraseFromTheTextItHandsBack() async {
+        let words = [
+            Word(range: 0..<8000, text: "buy"), Word(range: 8000..<16000, text: "some"),
+            Word(range: 16000..<24000, text: "bread"), Word(range: 32000..<36000, text: "computer"),
+            Word(range: 36000..<40000, text: "end"), Word(range: 40000..<44000, text: "the"),
+            Word(range: 44000..<48000, text: "call"),
+        ]
+        let ledgerBox = LedgerBox(
+            TranscriptLedger(
+                takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
+                segments: [
+                    Segment(
+                        range: 0..<48000, text: "buy some bread computer end the call", words: words, source: .live)
+                ]))
+        let store = makeStore(ledgerBox: ledgerBox, sender: SendRecorder())
+        store.startEntering()
+        store.finishEntering(atOffset: 0)
+
+        await store.handle(
+            CommandEvent(kind: .end, atOffset: 32000, confidence: 1, phraseRange: 32000..<48000))
+
+        XCTAssertEqual(store.lastAbandonedTurnText, "stt-rec: buy some bread")
+    }
+
     func testStartEnteringResetsLastAbandonedTurnTextFromAPreviousCall() async {
         let ledgerBox = LedgerBox(
             TranscriptLedger(

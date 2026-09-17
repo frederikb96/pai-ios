@@ -336,7 +336,8 @@ final class CallModeController {
                     // — never left to the reply feed alone, which only speaks a new assistant
                     // message and has nothing to say about Freddy's own send still in flight.
                     let sendTask = Task<PostMessageResponse, Error> {
-                        try await self.apiClient.postMessage(sessionId: sessionID, message: text)
+                        try await self.apiClient.postMessage(
+                            sessionId: sessionID, message: text, clientMode: "call")
                     }
                     await MainActor.run {
                         self.transcript.trackSend(sessionId: sessionID, text: text, send: sendTask)
@@ -375,6 +376,7 @@ final class CallModeController {
         try? controller.microphoneCapture.setVoiceProcessingEnabled(true)
         do {
             try controller.microphoneCapture.start(targetSampleRate: sampleRate)
+            beginCaptureWatchdog()
         } catch {
             // `store` was already assigned above — `teardown()` alone never clears it, so without
             // this a failed entry leaves a zombie store behind: `isActive` reads true forever, and
@@ -470,6 +472,13 @@ final class CallModeController {
         controller.microphoneCapture.stop()
         speech?.setHeld(true)
         do {
+            // A configuration change invalidates every connection on the engine, the speech
+            // output's among them — without re-attaching it the call keeps listening and every
+            // spoken reply after the first route change is silent.
+            if let speechOutput {
+                controller.microphoneCapture.attachSpeechOutput(speechOutput)
+            }
+            try? controller.microphoneCapture.setVoiceProcessingEnabled(true)
             try controller.microphoneCapture.start(targetSampleRate: callSampleRate)
             releaseRepliesAfterEngineRestart()
         } catch {
@@ -499,6 +508,10 @@ final class CallModeController {
         interruptionGiveUpTask = nil
         do {
             try controller.configureAudioSessionForCallMode()
+            if let speechOutput {
+                capture.attachSpeechOutput(speechOutput)
+            }
+            try? capture.setVoiceProcessingEnabled(true)
             try capture.start(targetSampleRate: callSampleRate)
             releaseRepliesAfterEngineRestart()
             controller.handleFeedback(.interruptionResumed)
@@ -516,6 +529,33 @@ final class CallModeController {
     /// something needs his attention), so there is no reason for a second wording.
     private static let interruptionGiveUpTimeout: Duration = .seconds(20)
     private var interruptionGiveUpTask: Task<Void, Never>?
+
+    /// A call's microphone can go quiet without anything reporting it — no error, no interruption,
+    /// just an engine that stopped delivering — and a call runs with the screen off, so nothing on
+    /// screen would show it either. Microphone mode already watches for this; a call, which runs
+    /// far longer, had nothing. Long enough that an ordinary pause in delivery is never mistaken
+    /// for a stall.
+    private static let captureStallSeconds: TimeInterval = 6
+    private var captureWatchdogTask: Task<Void, Never>?
+    private var lastChunkAt: Date?
+
+    private func beginCaptureWatchdog() {
+        captureWatchdogTask?.cancel()
+        lastChunkAt = Date()
+        captureWatchdogTask = Task { [weak self] in await self?.watchForSilentCapture() }
+    }
+
+    private func watchForSilentCapture() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled, store != nil, let last = lastChunkAt else { continue }
+            guard Date().timeIntervalSince(last) > Self.captureStallSeconds else { continue }
+            AppVoiceDiagnosticsLog.shared.log(
+                .warning, "mode", "call capture delivered nothing for \(Int(Self.captureStallSeconds))s — restarting")
+            lastChunkAt = Date()
+            restartCaptureAfterConfigurationChange()
+        }
+    }
 
     private func armInterruptionGiveUpTimer() {
         interruptionGiveUpTask?.cancel()
@@ -536,6 +576,7 @@ final class CallModeController {
 
     private func handleCapturedChunk(_ samples: [Int16]) async {
         guard store != nil else { return }
+        lastChunkAt = Date()
         wakeWordListener?.ingest(pcm16le: samples, atOffset: wakeWordCaptureOffset)
         wakeWordCaptureOffset += samples.count
         updateCycleLiveness()
@@ -830,10 +871,12 @@ final class CallModeController {
             setInterruptsAllowed(kind == .interruptOn)
         case .end:
             // Both channels are Freddy ending the call on purpose — the screen's End button and
-            // the spoken "computer end the call" — so neither posts a notification.
+            // the spoken "computer end the call" — so neither posts a notification. The spoken
+            // one carries where it was said, so the words of the command itself are cut from the
+            // text handed back to the draft instead of ending up in it.
             await performExit(
-                deliberate: true,
-                reason: source == .manual ? "End button tapped" : "\"computer end\" heard")
+                deliberate: true, reason: source == .manual ? "End button tapped" : "\"computer end\" heard",
+                spokenAtOffset: spokenAtOffset, spokenPhraseRange: spokenPhraseRange)
         }
     }
 
@@ -1047,15 +1090,22 @@ final class CallModeController {
     /// for an ending Freddy asked for (the End button, a spoken "computer end the call"), `false`
     /// for one nothing of his caused, which is exactly the case a "the call ended, your text is in
     /// the draft" push exists for — he has no other way of finding out it stopped.
-    private func performExit(deliberate: Bool, reason: String) async {
+    private func performExit(
+        deliberate: Bool, reason: String, spokenAtOffset: Int? = nil, spokenPhraseRange: SampleRange? = nil
+    ) async {
         guard let store else { return }
         AppVoiceDiagnosticsLog.shared.log(.info, "mode", "call ending: \(reason)")
+        var stampOffset = callTakeCollectedSamples
         if case .collecting = store.phase {
             await endCollectingCycle()
+            // Where "end" was actually spoken, not wherever the cycle's own final commit landed —
+            // the same stamp a "stop" uses, so the turn closes ahead of the command's own words.
+            stampOffset = CallCycleAddressing.closingStamp(
+                spokenAtOffset: spokenAtOffset, collectedAfterCycleEnd: callTakeCollectedSamples)
         }
         await store.handle(
             CommandEvent(
-                kind: .end, atOffset: callTakeCollectedSamples, confidence: 1,
+                kind: .end, atOffset: stampOffset, confidence: 1, phraseRange: spokenPhraseRange,
                 source: deliberate ? .manual : .transcript))
 
         // Stopped before reading `lastAbandonedTurnText` below — the preview loop's own next tick
@@ -1087,6 +1137,9 @@ final class CallModeController {
     /// The shared parts of ending a call, whether it ran a single second or an hour, and whether
     /// it is ending normally or because entry itself failed partway through.
     private func teardown() async {
+        captureWatchdogTask?.cancel()
+        captureWatchdogTask = nil
+        lastChunkAt = nil
         previewTask?.cancel()
         previewTask = nil
         replyFeed?.disconnect()

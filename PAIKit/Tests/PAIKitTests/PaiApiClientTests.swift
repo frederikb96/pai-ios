@@ -357,6 +357,23 @@ final class PaiApiClientTests: XCTestCase {
         XCTAssertFalse(body.contains("name=\"working_dir\""), body)
     }
 
+    /// A call carries how it was dictated, so the session can be told it is being listened to
+    /// through a speech engine rather than read. An ordinary send carries nothing — the field
+    /// must not appear at all, since the server reads its presence as the claim it is.
+    func testPostMessageCarriesTheClientModeOnlyWhenOneIsGiven() async throws {
+        stubJSON(#"{"session_id":"s1","message_id":9}"#)
+        let client = try makeClient()
+
+        _ = try await client.postMessage(sessionId: "s1", message: "hello", clientMode: "call")
+        var body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains("name=\"client_mode\""), body)
+        XCTAssertTrue(body.contains("call"), body)
+
+        _ = try await client.postMessage(sessionId: "s1", message: "hello")
+        body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertFalse(body.contains("name=\"client_mode\""), body)
+    }
+
     /// The regression this guards: `.urlPathAllowed` alone leaves `/` untouched (it is a legal
     /// *path* character), so a slash inside a draft key was previously carried straight through
     /// into a second path segment instead of staying part of the key.

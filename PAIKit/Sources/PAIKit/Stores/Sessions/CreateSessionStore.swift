@@ -7,7 +7,7 @@ public protocol CreateSessionApiClient: Sendable {
     func getSessionModels() async throws -> SessionModelsResponse
     func postMessage(
         sessionId: String?, message: String, files: [PaiFileUpload], sessionType: String?, workingDir: String?,
-        agent: String?, model: String?, thinking: String?
+        agent: String?, model: String?, thinking: String?, clientMode: String?
     ) async throws -> PostMessageResponse
 }
 
@@ -240,7 +240,7 @@ public final class CreateSessionStore {
         do {
             let result = try await api.postMessage(
                 sessionId: nil, message: message, files: files, sessionType: type, workingDir: dir, agent: machine,
-                model: model, thinking: thinking
+                model: model, thinking: thinking, clientMode: nil
             )
             let now = ISO8601DateFormatter().string(from: Date())
             let optimistic = Session(

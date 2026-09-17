@@ -40,6 +40,8 @@ final class WakeWordCommandListener {
     private var lastPredictAt: Date = .distantPast
     private var inflight = false
     private var takeOffset = 0
+    private var heartbeat = WakeWordHeartbeat()
+    private var failureLog = LogThrottle(interval: 5)
 
     /// Loads the "computer" classifier from the app bundle — a no-op, `isLoaded` left `false`,
     /// when it was never bundled (training still running, or a build predating it), never a
@@ -55,7 +57,11 @@ final class WakeWordCommandListener {
             return
         }
         do {
-            model = try WakeWordModel(models: [url], sampleRate: UInt32(sampleRate))
+            // CPU inference, never CoreML: iOS refuses GPU work to a backgrounded app, and the
+            // phone is locked in a pocket for most of a call — the one state this engine exists
+            // for. A denied round returns nothing, which is indistinguishable from nobody having
+            // said the word.
+            model = try WakeWordModel(models: [url], sampleRate: UInt32(sampleRate), executionProvider: .cpu)
             gate = WakeWordDetectionGate(manifest: Self.loadManifest(), sampleRate: sampleRate)
             isLoaded = true
             AppVoiceDiagnosticsLog.shared.log(.info, .command, "offline engine listening for \"computer\"")
@@ -74,6 +80,10 @@ final class WakeWordCommandListener {
     func ingest(pcm16le: [Int16], atOffset: Int) {
         takeOffset = atOffset
         guard let model, !ring.isEmpty, !pcm16le.isEmpty else { return }
+        heartbeat.chunkIngested()
+        if let line = heartbeat.due(at: Date()) {
+            AppVoiceDiagnosticsLog.shared.log(.info, .command, line)
+        }
 
         var index = writeIndex
         for sample in pcm16le {
@@ -108,13 +118,27 @@ final class WakeWordCommandListener {
         // Off the main actor: inference is real work, and nothing here may block the UI thread.
         let offset = takeOffset
         Task.detached { [weak self] in
-            let scores = (try? model.predict(snapshot)) ?? [:]
-            await self?.handle(score: scores[WakeWordManifest.modelName], atOffset: offset)
+            do {
+                let scores = try model.predict(snapshot)
+                await self?.handle(score: scores[WakeWordManifest.modelName], atOffset: offset)
+            } catch {
+                await self?.handleFailure(error)
+            }
         }
+    }
+
+    /// Clears `inflight` exactly as `handle` does — a failure path that forgets it stops the
+    /// engine for the rest of the call, since no further round is ever allowed to start.
+    private func handleFailure(_ error: Error) {
+        inflight = false
+        heartbeat.roundFailed()
+        guard failureLog.allows(at: Date()) else { return }
+        AppVoiceDiagnosticsLog.shared.log(.error, .command, "offline prediction failed: \(error)")
     }
 
     private func handle(score: Float?, atOffset: Int) {
         inflight = false
+        heartbeat.roundCompleted(score: score)
         guard var gate, let score else { return }
         let event = gate.detect(score: score, atOffset: atOffset)
         self.gate = gate
@@ -126,6 +150,8 @@ final class WakeWordCommandListener {
     }
 
     func stop() {
+        heartbeat = WakeWordHeartbeat()
+        failureLog = LogThrottle(interval: 5)
         model = nil
         gate = nil
         ring = []

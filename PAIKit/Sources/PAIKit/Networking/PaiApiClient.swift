@@ -482,7 +482,8 @@ public struct PaiApiClient: Sendable {
         workingDir: String? = nil,
         agent: String? = nil,
         model: String? = nil,
-        thinking: String? = nil
+        thinking: String? = nil,
+        clientMode: String? = nil
     ) async throws -> PostMessageResponse {
         let boundary = "PAIKit-\(UUID().uuidString)"
         var body = Data()
@@ -501,6 +502,12 @@ public struct PaiApiClient: Sendable {
         // Fixed at creation — ignored server-side once `sessionId` names an existing one.
         if let model { Self.appendFormField(&body, boundary: boundary, name: "model", value: model) }
         if let thinking { Self.appendFormField(&body, boundary: boundary, name: "thinking", value: thinking) }
+        // How the message was dictated — the session is told when it is being listened to through
+        // a speech engine rather than read, so it can answer in a shape that survives being
+        // spoken aloud.
+        if let clientMode {
+            Self.appendFormField(&body, boundary: boundary, name: "client_mode", value: clientMode)
+        }
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 
         return try await send(

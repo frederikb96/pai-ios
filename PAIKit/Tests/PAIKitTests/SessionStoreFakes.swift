@@ -261,7 +261,7 @@ actor FakeCreateSessionApi: CreateSessionApiClient {
 
     func postMessage(
         sessionId: String?, message: String, files: [PaiFileUpload], sessionType: String?, workingDir: String?,
-        agent: String?, model: String?, thinking: String?
+        agent: String?, model: String?, thinking: String?, clientMode: String?
     ) async throws -> PostMessageResponse {
         postMessageCalls.append(
             (
