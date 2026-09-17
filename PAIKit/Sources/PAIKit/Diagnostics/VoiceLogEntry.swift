@@ -52,4 +52,8 @@ public enum VoiceLogCategory: String, Sendable {
     case audioSession = "audio-session"
     /// App foreground/background.
     case lifecycle
+    /// A draft's clear, flush and reconcile-with-server decisions — not every edit (that would be
+    /// once per keystroke, and once every 150ms while a take is live), only the events that decide
+    /// whether text a person typed or spoke actually reaches the server and stays there.
+    case drafts
 }
