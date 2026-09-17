@@ -714,6 +714,7 @@ final class CallModeController {
     private func watchFallbackCommands() async {
         var detector = CommandDetector(phraseSet: .defaults, sampleRate: Double(callSampleRate))
         fallbackLastScannedSegmentCount = 0
+        var previousShifted: Segment?
         while !Task.isCancelled, let session = cycleSession, session.state != .idle {
             let segments = session.committedSegments
             if segments.count > fallbackLastScannedSegmentCount {
@@ -726,18 +727,29 @@ final class CallModeController {
                     // misaligned mapping.
                     let rawWordCount = segment.text.split(separator: " ").count
                     let wordTimes = shifted.words?.count == rawWordCount ? shifted.words?.map(\.range) : nil
-                    let observation = CommandObservation(
-                        text: shifted.text, isFinal: true, wordTimes: wordTimes, atOffset: shifted.range.upperBound)
-                    switch detector.detect(observation) {
-                    case .accepted(let event):
-                        routeDetectedCommand(event, isOffline: false)
-                    case .rejected(let rejectedKind, let reason):
-                        AppVoiceDiagnosticsLog.shared.log(
-                            .info, .command,
-                            "transcript command rejected: \(rejectedKind.rawValue) — \(reason.rawValue)"
-                        )
-                    case .none:
-                        break
+                    var previousWords: [Word] = []
+                    if let previous = previousShifted, let words = previous.words,
+                        CommandObservationJoin.shouldJoin(
+                            previousSegmentEnd: previous.range.upperBound,
+                            currentSegmentStart: shifted.range.lowerBound,
+                            sampleRate: Double(callSampleRate))
+                    {
+                        previousWords = words
+                    }
+                    previousShifted = shifted
+                    let observation = CommandObservationJoin.joinedObservation(
+                        previousWords: previousWords, currentText: shifted.text, currentWordTimes: wordTimes,
+                        currentAtOffset: shifted.range.upperBound)
+                    for outcome in detector.detect(observation) {
+                        switch outcome {
+                        case .accepted(let event):
+                            routeDetectedCommand(event, isOffline: false)
+                        case .rejected(let rejectedKind, let reason):
+                            AppVoiceDiagnosticsLog.shared.log(
+                                .info, .command,
+                                "transcript command rejected: \(rejectedKind.rawValue) — \(reason.rawValue)"
+                            )
+                        }
                     }
                 }
                 fallbackLastScannedSegmentCount = segments.count
