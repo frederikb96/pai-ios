@@ -78,6 +78,13 @@ final class AppEnvironment {
         /// Call mode — app-wide for the same reason `voice` is: a call outlives the screen that
         /// started it, and the Action Button's own intent needs to reach it with no screen open.
         let callMode: CallModeController
+        /// Metadata for every recorded wake-word training take — the settings screen this drives
+        /// is the only reader, but the store lives here rather than inside that screen so its
+        /// samples survive the screen being dismissed mid-run.
+        let wakeWordSamples: WakeWordSampleStore
+        /// Drives wake-word sample capture — a third claimant on the one shared microphone,
+        /// alongside `voice` and `callMode` (`VoiceRecorderController.reserveForSampleCapture()`).
+        let wakeWordSampleCapture: WakeWordSampleCaptureController
         /// The notification feed (row 5.27) — app-wide rather than scoped to its own screen,
         /// since the unread count drives a badge visible from the session list's toolbar and the
         /// springboard, neither of which is that screen.
@@ -190,6 +197,12 @@ final class AppEnvironment {
         let transcript = TranscriptStore()
         let voice = VoiceRecorderController(
             apiClient: client, settingsStore: settingsStore, drafts: draftStore, toasts: toasts)
+        let wakeWordSampleStore = WakeWordSampleStore(storage: defaults)
+        let wakeWordSampleAudio = WakeWordSampleAudioStorage()
+        // The list evicts on demand (Freddy's own delete/Clear All); the audio follows — same
+        // split `settingsStore.onRecordingEvicted` already uses for Past Recordings, so a sample's
+        // bytes can never outlive its metadata.
+        wakeWordSampleStore.onSampleRemoved = { sample in wakeWordSampleAudio.delete(fileName: sample.fileName) }
 
         connection = Connection(
             requestFactory: factory,
@@ -212,6 +225,9 @@ final class AppEnvironment {
             callMode: CallModeController(
                 controller: voice, apiClient: client, requestFactory: factory, transcript: transcript,
                 drafts: draftStore, settingsStore: settingsStore),
+            wakeWordSamples: wakeWordSampleStore,
+            wakeWordSampleCapture: WakeWordSampleCaptureController(
+                voice: voice, store: wakeWordSampleStore, audioStorage: wakeWordSampleAudio),
             notifications: NotificationCenterStore(api: client),
             transcriptJumps: TranscriptJumpRequests()
         )

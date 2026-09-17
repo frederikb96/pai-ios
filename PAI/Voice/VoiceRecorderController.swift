@@ -274,23 +274,33 @@ final class VoiceRecorderController {
     }
 
     var canStart: Bool {
-        !isStarting && !isCallModeActive && voiceSession.canStart && settingsStore.elevenLabsKey.status?.set != false
+        !isStarting && !isCallModeActive && !isSampleCaptureActive && voiceSession.canStart
+            && settingsStore.elevenLabsKey.status?.set != false
     }
 
-    // MARK: - Sharing state with call mode
+    // MARK: - Sharing state with call mode and wake-word sample capture
 
-    /// Set while call mode owns the microphone — the one thing this and a microphone-mode take
-    /// both need exclusively. `canStart` above is what a composer's record button actually reads;
-    /// call mode's own entry checks `reserveForCallMode()`'s return value instead of racing a
-    /// second read of this flag.
+    /// Set while call mode owns the microphone — one of the two things (the other being
+    /// ``isSampleCaptureActive``) this and a microphone-mode take all need exclusively. `canStart`
+    /// above is what a composer's record button actually reads; call mode's own entry checks
+    /// `reserveForCallMode()`'s return value instead of racing a second read of this flag.
     private(set) var isCallModeActive = false
 
+    /// Set while the wake-word sample screen (`WakeWordSampleCaptureController`, `PAI/Voice/WakeWordSamples/`)
+    /// owns the microphone — the third claimant on the one shared `MicrophoneCapture`, alongside a
+    /// microphone-mode take and call mode. Same shape as ``isCallModeActive``: a flag read by
+    /// `canStart`/`canStartSampleCapture` for display, and by `reserveForCallMode()` for the
+    /// actual guard.
+    private(set) var isSampleCaptureActive = false
+
     /// Call mode's own entry point, never a composer's. Fails (returns `false`) while a
-    /// microphone-mode take is already running — the two can never share the one microphone — and
-    /// succeeds otherwise, claiming it so a microphone-mode take cannot start underneath a running
-    /// call either.
+    /// microphone-mode take or a wake-word sample capture is already running — none of the three
+    /// can ever share the one microphone — and succeeds otherwise, claiming it so neither of the
+    /// other two can start underneath a running call either.
     func reserveForCallMode() -> Bool {
-        guard !isCallModeActive, voiceSession.state == .idle, !isCapturing else { return false }
+        guard !isCallModeActive, !isSampleCaptureActive, voiceSession.state == .idle, !isCapturing else {
+            return false
+        }
         isCallModeActive = true
         AppVoiceDiagnosticsLog.shared.log(.info, .mode, "call mode reserved the microphone")
         return true
@@ -301,11 +311,38 @@ final class VoiceRecorderController {
         AppVoiceDiagnosticsLog.shared.log(.info, .mode, "call mode released the microphone")
     }
 
+    /// The wake-word sample screen's own entry point, mirroring `reserveForCallMode()` exactly:
+    /// fails while call mode or a microphone-mode take already owns the microphone, and succeeds
+    /// otherwise, claiming it so neither of the other two can start underneath a sample run.
+    func reserveForSampleCapture() -> Bool {
+        guard !isCallModeActive, !isSampleCaptureActive, voiceSession.state == .idle, !isCapturing else {
+            return false
+        }
+        isSampleCaptureActive = true
+        AppVoiceDiagnosticsLog.shared.log(.info, .mode, "wake-word sample capture reserved the microphone")
+        return true
+    }
+
+    func releaseFromSampleCapture() {
+        isSampleCaptureActive = false
+        AppVoiceDiagnosticsLog.shared.log(.info, .mode, "wake-word sample capture released the microphone")
+    }
+
+    /// Whether `reserveForSampleCapture()` would currently succeed — what the wake-word sample
+    /// screen's own Start button reads to disable itself, mirroring `canStart`'s role for a
+    /// microphone-mode take rather than duplicating this same three-flag check in that screen's
+    /// own controller.
+    var canStartSampleCapture: Bool {
+        !isCallModeActive && !isSampleCaptureActive && voiceSession.state == .idle && !isCapturing
+    }
+
     /// The shared `AVAudioEngine` wrapper call mode's own listener and speech output attach to —
-    /// the same instance a microphone-mode take captures through, never a second one. Safe to
-    /// reach only while `isCallModeActive`, matching the mutual exclusion `reserveForCallMode()`
-    /// enforces; nothing here stops a caller reaching it outside that window, since the type
-    /// itself is passive when nothing has called `start(targetSampleRate:)`.
+    /// the same instance a microphone-mode take, and a wake-word sample capture, both capture
+    /// through, never a second one. Safe to reach only while `isCallModeActive` or
+    /// `isSampleCaptureActive`, matching whichever of `reserveForCallMode()`/
+    /// `reserveForSampleCapture()`'s mutual exclusion is in effect; nothing here stops a caller
+    /// reaching it outside that window, since the type itself is passive when nothing has called
+    /// `start(targetSampleRate:)`.
     var microphoneCapture: MicrophoneCapture { capture }
 
     var sharedEarconPlayer: EarconPlayer { earconPlayer }
@@ -1018,7 +1055,11 @@ final class VoiceRecorderController {
     /// `.defaultToSpeaker` is what keeps an earcon audible with no headset connected:
     /// `.playAndRecord` alone routes output to the receiver, which nobody hears with the phone in
     /// a pocket — exactly the case a connection-health cue exists to reach.
-    private func configureAudioSession() throws {
+    ///
+    /// Internal rather than `private`: `WakeWordSampleCaptureController` wants this exact same
+    /// untouched-signal configuration for its own raw capture, and duplicating the four options
+    /// above would be a second copy of the same decision rather than a different one.
+    func configureAudioSession() throws {
         try activateExclusiveThenMixable(mode: .measurement)
     }
 

@@ -33,6 +33,22 @@ struct SettingsScreen: View {
             CallModeSection(settings: settings)
                 .id(Self.callModeSectionAnchorID)
 
+            if let connection = environment.connection {
+                Section {
+                    NavigationLink("Wake Word Samples") {
+                        WakeWordSampleScreen(
+                            controller: connection.wakeWordSampleCapture, store: connection.wakeWordSamples)
+                    }
+                    .accessibilityIdentifier("open-wake-word-samples")
+                } header: {
+                    Text("Wake Word")
+                } footer: {
+                    Text(
+                        "Record real \"Computer\" utterances through this microphone to help retrain the offline wake word."
+                    )
+                }
+            }
+
             NotificationsSection()
 
             Section {
