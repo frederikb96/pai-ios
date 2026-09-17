@@ -534,6 +534,22 @@ extension PaiFixtures {
         ]
         """#
 
+    /// The same page, with the ready session waiting on a gated-secret grant it raised itself —
+    /// `-PaiFixtureSecretPrompt`. Nothing in fixture mode has a live conversation to raise one,
+    /// so a screenshot of the banner that answers it needs the state handed over like this.
+    public static let sessionsWithSecretPrompt: String = sessions.replacingOccurrences(
+        of: #""claude_session_id": "20da6f97-8766-4c18-816f-75b5690aca4a","#,
+        with: #"""
+            "claude_session_id": "20da6f97-8766-4c18-816f-75b5690aca4a",
+              "secret_grantable": true,
+              "secret_prompt": {
+                "at": "2026-08-29T09:41:00Z",
+                "names": ["GH_TOKEN_ADMIN", "KUBECONFIG_HOMELAB"],
+                "reason": "deploying the cluster"
+              },
+            """#
+    )
+
     // MARK: - Search
 
     /// `GET /api/sessions/search` — one fuzzy hit (`score: null`, per the interface's own doc

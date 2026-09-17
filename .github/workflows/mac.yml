@@ -294,6 +294,13 @@ jobs:
           screenshot fullscreen-image -PaiFixtureRoute session -PaiFixtureOpenImage
           xcrun simctl terminate "$udid" "$bundle" || true
 
+          # The banner a session raises for itself when it needs a gated secret, over the
+          # transcript it belongs to — a passphrase field and two buttons in the overlay stack
+          # above the composer, which is the phone width where it either wraps sensibly or does
+          # not. Nothing in fixture mode has a live conversation to raise a real one.
+          screenshot secret-prompt -PaiFixtureRoute session -PaiFixtureSecretPrompt
+          xcrun simctl terminate "$udid" "$bundle" || true
+
           # The exact navigation a real "New Session" send button drives — pushing the new
           # session's transcript onto the stack while its own presenting sheet is mid-dismissal —
           # with no device interaction to trigger the tap. `/transcript/landing` is the proof that

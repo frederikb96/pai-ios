@@ -90,6 +90,21 @@ final class PaiFixturesTests: XCTestCase {
         XCTAssertEqual(states, ["starting", "ready", "blocked", "attention", "closed"])
     }
 
+    /// The secret-prompt variant is built by rewriting a line of the ordinary page, which is
+    /// exactly the edit that stops a fixture parsing without anything noticing — the screenshot
+    /// run would then photograph an error screen and still report success.
+    func testSecretPromptFixtureStillParsesAndCarriesThePrompt() {
+        let waiting = jsonArray(PaiFixtures.sessionsWithSecretPrompt).first {
+            ($0["secret_prompt"] as? [String: Any]) != nil
+        }
+        let prompt = waiting?["secret_prompt"] as? [String: Any]
+        XCTAssertEqual(prompt?["names"] as? [String], ["GH_TOKEN_ADMIN", "KUBECONFIG_HOMELAB"])
+        XCTAssertEqual(
+            jsonArray(PaiFixtures.sessionsWithSecretPrompt).count,
+            jsonArray(PaiFixtures.sessions).count,
+            "the rewrite must not drop or duplicate a session")
+    }
+
     /// Same argument for `BlockerKind` — `sessionBlockedTrust` isn't in the main list (it is its
     /// own constant, exercised on its own), so it is added back in here explicitly.
     func testBlockersCoverEveryKind() {

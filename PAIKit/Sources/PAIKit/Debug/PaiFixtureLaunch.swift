@@ -19,6 +19,7 @@
         static let openImageFlag = "-PaiFixtureOpenImage"
         static let jumpMessageFlag = "-PaiFixtureJumpMessage"
         static let autoCreateSessionFlag = "-PaiFixtureAutoCreateSession"
+        static let secretPromptFlag = "-PaiFixtureSecretPrompt"
 
         /// The session id every session-scoped fixture route answers under, regardless of which
         /// id the request actually named — fixed so a screenshot workflow can always ask for this
@@ -82,6 +83,14 @@
         /// not the creation call.
         public static func autoCreatesSession(arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
             arguments.contains(autoCreateSessionFlag)
+        }
+
+        /// Whether `-PaiFixtureSecretPrompt` was passed — the session list then answers with a
+        /// session waiting on a gated-secret grant, which is the only way the banner that offers
+        /// it can be drawn at all: nothing in fixture mode has a live conversation to raise one.
+        /// Absent leaves every other screenshot unaffected, exactly like the auth-state flag.
+        public static func showsSecretPrompt(arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
+            arguments.contains(secretPromptFlag)
         }
 
         static func value(for flag: String, in arguments: [String]) -> String? {

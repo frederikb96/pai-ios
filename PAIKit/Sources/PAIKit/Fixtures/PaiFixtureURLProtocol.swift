@@ -127,6 +127,14 @@
             }
         }
 
+        /// Whether the session list hands back a session waiting on a gated-secret grant —
+        /// `-PaiFixtureSecretPrompt`, the only way a screenshot reaches that banner, since
+        /// fixture mode has no live conversation to raise a real prompt from.
+        private static func sessionsFixtureBody() -> String {
+            PaiFixtureLaunch.showsSecretPrompt()
+                ? PaiFixtures.sessionsWithSecretPrompt : PaiFixtures.sessions
+        }
+
         /// Matches a request under `/api/notes/{id}/…`, regardless of which id was asked for —
         /// the corpus has one note, and a screenshot run never needs to tell notes apart.
         private static func noteScoped(
@@ -147,7 +155,7 @@
             exact("GET", "/api/session-types") { PaiFixtures.sessionTypes },
             exact("GET", "/api/me") { PaiFixtures.me },
             exact("GET", "/api/agents") { PaiFixtures.agents },
-            exact("GET", "/api/sessions") { PaiFixtures.sessions },
+            exact("GET", "/api/sessions") { sessionsFixtureBody() },
             exact("GET", "/api/sessions/search") { PaiFixtures.sessionSearchResults },
             exact("GET", "/api/drafts") { PaiFixtures.drafts },
             exact("GET", "/api/usage") { PaiFixtures.usage },
