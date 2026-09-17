@@ -36,6 +36,11 @@ public final class DraftStore {
     private let api: any DraftsFetching
     private let clock: WallClock
     private let scheduler: DraftScheduler
+    /// `nil` in every test and in any caller that does not care — the app wires its own shared
+    /// log in. Logs only the events that decide whether text survives (a clear, a flush, a sync
+    /// dropping a key), never every edit: a live take writes this store many times a second, and a
+    /// line per keystroke would flood the very log meant to make a loss like this one legible.
+    private let diagnosticsLog: VoiceDiagnosticsLog?
 
     /// Keys with a local edit not yet written to the server — including one waiting out a retry
     /// backoff after a failed write, which schedules into this same slot (`scheduleRetry`).
@@ -47,6 +52,14 @@ public final class DraftStore {
     /// `inFlightFlush` should forget" — a newer flush started while it was in the air must not
     /// have its own in-flight marker erased from under it.
     private var flushSequence: [String: Int] = [:]
+    /// The currently in-flight delete per key — what `flush()` waits out before putting anything
+    /// back. A delete removes a key from the server, not the row `clearDraft` was reacting to, so
+    /// a fresh edit's own write landing on the server *before* a slow delete arrives there would
+    /// have the delete remove that newer text right back out from under it, by name, the moment it
+    /// finally lands — waiting here is what keeps the two from ever being in flight together.
+    private var inFlightDelete: [String: Task<Void, Never>] = [:]
+    /// `inFlightDelete`'s own cleanup guard, the same shape as `flushSequence`.
+    private var deleteSequence: [String: Int] = [:]
     /// Recently discarded keys, so a sync already in flight cannot resurrect one. Pruned in
     /// `syncFromServer` once an entry's grace window has passed — left unpruned this is the one
     /// unbounded map in an otherwise careful type, one `Date` held for the process lifetime per
@@ -61,11 +74,14 @@ public final class DraftStore {
     private var retryAttempt: [String: Int] = [:]
 
     public init(
-        api: some DraftsFetching, clock: WallClock = SystemWallClock(), scheduler: DraftScheduler = RealDraftScheduler()
+        api: some DraftsFetching, clock: WallClock = SystemWallClock(),
+        scheduler: DraftScheduler = RealDraftScheduler(),
+        diagnosticsLog: VoiceDiagnosticsLog? = nil
     ) {
         self.api = api
         self.clock = clock
         self.scheduler = scheduler
+        self.diagnosticsLog = diagnosticsLog
     }
 
     /// The draft for a key, or an empty one — callers never handle a missing entry themselves.
@@ -138,15 +154,27 @@ public final class DraftStore {
         drafts[key] = nil
         clearedAt[key] = clock.now()
         localRevision[key, default: 0] += 1
+        diagnosticsLog?.log(.info, .drafts, "clear key=\(key)")
+
+        deleteSequence[key, default: 0] += 1
+        let mySequence = deleteSequence[key]!
 
         // A discard must not overtake a write already in flight for the same key, or the delete
         // could land first and the write resurrect an entry that was just cleared.
         let priorFlush = inFlightFlush[key]
         let api = self.api
-        Task {
+        let log = diagnosticsLog
+        let deleteTask = Task { [weak self] in
             _ = await priorFlush?.value
             _ = try? await api.deleteDraft(key: key)
+            log?.log(.info, .drafts, "delete key=\(key) done")
+            // Only forget the marker if no newer delete has started since — see `deleteSequence`'s
+            // doc comment. `flush()` is what actually reads `inFlightDelete`, and it is a fresh
+            // edit that starts a newer delete, so this mirrors `flush()`'s own cleanup exactly.
+            guard let self, self.deleteSequence[key] == mySequence else { return }
+            self.inFlightDelete[key] = nil
         }
+        inFlightDelete[key] = deleteTask
     }
 
     // MARK: - Flush (debounced write)
@@ -176,11 +204,22 @@ public final class DraftStore {
     /// this directly (not through the debounce) when it is about to disappear, so leaving a
     /// session cannot strand an edit inside the debounce window.
     public func flush(key: String) async {
+        // A delete already on the wire for this key must land — and actually delete — before
+        // this write may start, or a delete an earlier `clearDraft` sent for a now-stale reason
+        // can arrive at the server *after* this PUT and remove the very text it just wrote, by
+        // key rather than by row. Waiting here means "clear, then edit again before the delete
+        // has even reached the server" ends with the server agreeing with the client. Re-reading
+        // `drafts[key]` only after this wait is what lets a fresher edit made during it still win.
+        if inFlightDelete[key] != nil {
+            diagnosticsLog?.log(.info, .drafts, "flush key=\(key) waiting for in-flight delete")
+        }
+        await inFlightDelete[key]?.value
         guard let entry = drafts[key] else { return }
 
         flushSequence[key, default: 0] += 1
         let mySequence = flushSequence[key]!
 
+        let log = diagnosticsLog
         let write = Task { [weak self, api] in
             guard let self else { return }
             do {
@@ -198,12 +237,14 @@ public final class DraftStore {
                 current.remoteUpdatedAt = updatedAt
                 self.drafts[key] = current
                 self.retryAttempt[key] = nil
+                log?.log(.info, .drafts, "flush key=\(key) chars=\(entry.text.count) done")
             } catch {
                 // Keep the local copy and retry — scheduled into `pendingFlush`, the same slot a
                 // fresh edit's own debounce uses, so `syncFromServer` treats a write still
                 // waiting to retry exactly like one still waiting to happen for the first time:
                 // strictly newer than anything the server can report, never overwritten by an
                 // older row landing in between.
+                log?.log(.warning, .drafts, "flush key=\(key) failed, retrying: \(error)")
                 self.scheduleRetry(key)
             }
         }
@@ -277,6 +318,8 @@ public final class DraftStore {
             }
             // Reconciled with the server once and gone from it now: another client sent or
             // discarded it.
+            diagnosticsLog?.log(
+                .warning, .drafts, "sync dropped key=\(key) — reconciled once, server no longer lists it")
             drafts[key] = nil
         }
     }

@@ -98,6 +98,7 @@ private final class FakeDraftsFetching: DraftsFetching, @unchecked Sendable {
     var remoteDrafts: [Draft] = []
     var putGate: Gate?
     var getGate: Gate?
+    var deleteGate: Gate?
     /// Consecutive `putDraft` calls left to fail before succeeding — what a retry test uses to
     /// prove a failed flush is retried rather than swallowed.
     private var _putFailuresRemaining = 0
@@ -149,7 +150,11 @@ private final class FakeDraftsFetching: DraftsFetching, @unchecked Sendable {
     }
 
     func deleteDraft(key: String) async throws -> PaiDraftDeleteResult {
-        record("deleteDraft:\(key)")
+        record("deleteDraft:start:\(key)")
+        if let deleteGate {
+            await deleteGate.wait()
+        }
+        record("deleteDraft:done:\(key)")
         return PaiDraftDeleteResult(key: key, deleted: true)
     }
 
@@ -401,7 +406,68 @@ final class DraftStoreTests: XCTestCase {
         await gate.open()
         await waitUntil { fake.callLog.contains { $0.hasPrefix("deleteDraft") } }
 
-        XCTAssertEqual(fake.callLog, ["putDraft:start:s1", "putDraft:done:s1", "deleteDraft:s1"])
+        XCTAssertEqual(
+            fake.callLog, ["putDraft:start:s1", "putDraft:done:s1", "deleteDraft:start:s1", "deleteDraft:done:s1"])
+    }
+
+    /// A write started *after* the clear — the next take dictating into the same key while the
+    /// clear's own delete is still on the wire — has no ordering against that delete at all: only
+    /// a write already in flight *before* the clear is protected (the test above). A delete is by
+    /// key, not by the row it was meant to remove, so it deletes *whatever the server currently
+    /// holds* — including the newer write — leaving the server with nothing for this key even
+    /// though the client's own copy has moved on. The next `syncFromServer` then reads "reconciled
+    /// once, gone now" and wipes the local copy too, destroying dictation nobody asked to discard.
+    func testANewEditAfterClearDraftSurvivesTheStaleDelete() async {
+        let fake = FakeDraftsFetching()
+        let deleteGate = Gate()
+        fake.deleteGate = deleteGate
+        let store = DraftStore(api: fake, scheduler: InstantDraftScheduler())
+
+        store.setDraftText(key: "s1", text: "first message")
+        await waitUntil { fake.callLog.contains("putDraft:done:s1") }
+
+        store.clearDraft(key: "s1")
+        // The delete has reached the server but is held there — exactly the window a slow or
+        // congested connection opens wide, and the log shows every take in the reported bug
+        // reconnecting for several seconds.
+        await waitUntil { fake.callLog.contains("deleteDraft:start:s1") }
+
+        store.setDraftText(key: "s1", text: "new dictation")
+        XCTAssertEqual(
+            store.draft(for: "s1").text, "new dictation", "the local copy must never wait on any network round trip")
+
+        // The new edit's own write must not reach the server while the stale delete is still on
+        // the wire — give it every chance to (wrongly) race ahead before proving it did not.
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(
+            fake.callLog.filter { $0.hasPrefix("putDraft:start") }.count, 1,
+            "the new edit's write reached the server before the stale delete did")
+
+        await deleteGate.open()
+        await waitUntil {
+            fake.callLog.filter { $0.hasPrefix("putDraft:start") }.count == 2
+                && fake.callLog.filter { $0.hasPrefix("putDraft:done") }.count == 2
+        }
+
+        XCTAssertEqual(
+            fake.callLog,
+            [
+                "putDraft:start:s1", "putDraft:done:s1", "deleteDraft:start:s1", "deleteDraft:done:s1",
+                "putDraft:start:s1", "putDraft:done:s1",
+            ], "the new edit's write must not have reached the server before the stale delete did")
+
+        // The delete removed the key by name, not by the row it was meant to remove — without the
+        // ordering above, the server would end up with nothing for "s1" even though the newer
+        // write landed, and the next poll would read that as "reconciled once, gone now" and wipe
+        // the local copy too.
+        fake.remoteDrafts = [
+            Draft(
+                key: "s1", text: "new dictation", sessionType: nil, workingDir: nil,
+                updatedAt: "server-new dictation")
+        ]
+        await store.syncFromServer()
+
+        XCTAssertEqual(store.draft(for: "s1").text, "new dictation")
     }
 
     // MARK: - syncFromServer
