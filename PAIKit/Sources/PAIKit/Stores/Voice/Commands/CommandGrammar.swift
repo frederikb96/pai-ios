@@ -23,6 +23,7 @@ public struct CommandPhraseSet: Sendable, Equatable {
         .send: "Kai send",
         .skip: "Kai skip",
         .end: "Kai end",
+        .interrupt: "Kai interrupt",
     ])
 
     /// Recognized alongside whatever `phrases` holds, never shown in place of it. German

@@ -251,6 +251,58 @@ final class SpeechOutputSessionTests: XCTestCase {
         XCTAssertEqual(session.state, .speaking(messageId: 1), "reply 1 is still the one actually playing")
     }
 
+    // MARK: - Holding replies while recording
+
+    func testAHeldSessionGeneratesButDoesNotPlayUntilReleased() async {
+        let transport = FakeVoiceTtsTransport()
+        let playback = PlaybackSpy()
+        let session = makeSession(transport: transport, playback: playback)
+        session.setHeld(true)
+
+        session.enqueue(messageId: 1, sentences: ["first."])
+        await waitUntil { await transport.sentTexts.count >= 2 }
+        let audio = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [1, 1, 1])
+        await transport.push(#"{"audio":"\#(audio)"}"#)
+        await transport.push(#"{"isFinal":true}"#)
+        await waitUntil { session.queue.isEmpty }
+
+        XCTAssertTrue(playback.scheduledSamples.isEmpty, "a held reply must not reach the player")
+        XCTAssertEqual(session.waitingReplyCount, 1)
+
+        session.setHeld(false)
+
+        XCTAssertEqual(playback.scheduledSamples.map(\.messageId), [1])
+        XCTAssertEqual(session.state, .speaking(messageId: 1))
+    }
+
+    /// Holding mid-reply stops what is audible and plays that reply again from its first chunk
+    /// once released — nothing heard halfway is lost.
+    func testHoldingMidReplyReplaysItFromTheStartOnRelease() async {
+        let transport = FakeVoiceTtsTransport()
+        let playback = PlaybackSpy()
+        let session = makeSession(transport: transport, playback: playback)
+
+        session.enqueue(messageId: 1, sentences: ["first."])
+        await waitUntil { await transport.sentTexts.count >= 2 }
+        let chunk1 = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [1, 1])
+        await transport.push(#"{"audio":"\#(chunk1)"}"#)
+        await waitUntil { !playback.scheduledSamples.isEmpty }
+
+        session.setHeld(true)
+        XCTAssertEqual(playback.stopCount, 1)
+
+        let chunk2 = RealtimeUplinkChunk.audioBase64(fromPCM16LE: [2, 2, 2])
+        await transport.push(#"{"audio":"\#(chunk2)"}"#)
+        await transport.push(#"{"isFinal":true}"#)
+        await waitUntil { session.queue.isEmpty }
+        XCTAssertEqual(playback.scheduledSamples.count, 1, "nothing more plays while held")
+
+        session.setHeld(false)
+
+        XCTAssertEqual(playback.scheduledSamples.map(\.samples.count), [2, 2, 3])
+        XCTAssertEqual(session.state, .speaking(messageId: 1))
+    }
+
     // MARK: - Skip interrupts exactly the reply being heard, never one still queued behind it
 
     /// The scenario a live socket probe surfaced directly: skip while reply 1 plays and reply 2's

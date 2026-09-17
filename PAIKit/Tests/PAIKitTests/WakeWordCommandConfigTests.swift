@@ -19,7 +19,8 @@ final class WakeWordManifestTests: XCTestCase {
 
 final class WakeWordListeningConfigTests: XCTestCase {
     func testFullChartListsEveryCommand() {
-        XCTAssertEqual(WakeWordListeningConfig.fullChart.offlineCommands, Set(CommandKind.allCases))
+        XCTAssertEqual(
+            WakeWordListeningConfig.fullChart.offlineCommands, Set(CommandKind.allCases.filter { $0 != .interrupt }))
     }
 
     func testStartOnlyFallbackListsOnlyStart() {

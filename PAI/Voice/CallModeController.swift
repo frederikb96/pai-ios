@@ -414,11 +414,14 @@ final class CallModeController {
     /// backend directly for the newest message id is the same fallback `PaiSseClient.onInit`
     /// already relies on to catch a client back up correctly on a genuine reconnect — this only
     /// covers the one gap that isn't: getting a correct starting point before the first connect.
+    ///
+    /// Both sources are read and the newer wins: a loaded window can lag behind replies that
+    /// arrived while its screen was not live, and speaking those again on every call entry is
+    /// the same history replay from the other side.
     private func resolveReplyBaseline(sessionID: String) async -> Int {
-        if let loaded = transcript.window(for: sessionID).newestLoadedId { return loaded }
-        guard let tail = try? await apiClient.getMessages(sessionId: sessionID, page: .tail(limit: 1))
-        else { return 0 }
-        return tail.map(\.id).max() ?? 0
+        let loaded = transcript.window(for: sessionID).newestLoadedId ?? 0
+        let tail = (try? await apiClient.getMessages(sessionId: sessionID, page: .tail(limit: 1)))?.map(\.id).max() ?? 0
+        return max(loaded, tail)
     }
 
     private func speak(_ messages: [Message]) {
@@ -458,7 +461,7 @@ final class CallModeController {
         let phrase = CommandPhraseSet.defaults.allPhrases(for: event.kind).first ?? ""
         guard
             !EchoWindowRejection.isEcho(
-                commandWindow: window, commandText: phrase, playbackWindows: speech.recentPlayback)
+                commandWindow: window, commandText: phrase, playbackWindows: speech.playbackWindows(now: now))
         else { return }
 
         // The offline engine's own `atOffset` is in `wakeWordCaptureOffset`'s addressing (from
@@ -552,7 +555,10 @@ final class CallModeController {
             drainUnsentTurnText()
         case .skip:
             speech?.skip()
-            await store.handle(CommandEvent(kind: .skip, atOffset: callTakeCollectedSamples, confidence: confidence))
+            await store.handle(
+                CommandEvent(
+                    kind: .skip, atOffset: spokenAtOffset ?? callTakeCollectedSamples + cycleSamplesFed,
+                    confidence: confidence))
         case .end:
             await exit()
         }

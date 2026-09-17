@@ -138,6 +138,11 @@ public final class SpeechOutputSession {
     /// (or an interruption), never from when audio merely arrived from the wire, which a live
     /// socket probe showed can be seconds to minutes earlier. Pruned to the last minute.
     public private(set) var recentPlayback: [(window: ClosedRange<Date>, text: String)] = []
+    /// While true no reply starts playing: generation carries on and its audio waits, so a held
+    /// stretch ends with replies ready to play at once. See `setHeld(_:)`.
+    public private(set) var isHeld = false
+    /// Replies not yet heard — generated and waiting, or still on the wire.
+    public var waitingReplyCount: Int { readyToPlay.count + queue.count }
 
     private let dependencies: SpeechOutputDependencies
     private var transport: VoiceTtsTransport?
@@ -181,6 +186,9 @@ public final class SpeechOutputSession {
     /// generation itself is serialised one context at a time.
     private var readyToPlay: [Int] = []
     private var currentlyPlayingMessageId: Int?
+    /// Every chunk already handed to the player for the reply playing now — what lets a hold
+    /// put that reply back in line to be heard again from its start.
+    private var playingChunks: [[Float]] = []
     private var playbackStart: [Int: Date] = [:]
 
     private static let playbackHorizonSeconds: TimeInterval = 60
@@ -263,7 +271,12 @@ public final class SpeechOutputSession {
         if let interrupted = currentlyPlayingMessageId {
             finalizePlaybackWindow(for: interrupted)
             currentlyPlayingMessageId = nil
+            playingChunks = []
             cancelWireReplyIfStillGenerating(interrupted)
+        } else if isHeld, !readyToPlay.isEmpty {
+            // Held: the reply next in line is the one being skipped, even though it is not audible.
+            let skipped = readyToPlay.removeFirst()
+            buffered.removeValue(forKey: skipped)
         } else if let stillGenerating = queue.head?.messageId {
             // Nothing has started playing yet — the reply being skipped is still purely on the
             // wire. Cancel it there before it ever gets a chance to play.
@@ -271,6 +284,31 @@ public final class SpeechOutputSession {
         }
 
         pumpPlayback()
+        refreshStateWhenNothingIsPlaying()
+    }
+
+    /// Holds or releases playback. Holding while a reply is audible stops it and puts it back at
+    /// the front of the line with every chunk heard so far, so releasing plays it again from the
+    /// start and then whatever queued behind it. Generation is never paused.
+    public func setHeld(_ held: Bool) {
+        guard held != isHeld else { return }
+        isHeld = held
+        dependencies.log(.info, "tts", held ? "replies held" : "replies released")
+        if held {
+            if let playing = currentlyPlayingMessageId {
+                dependencies.stopPlayback()
+                let text = buffered[playing]?.text ?? ""
+                finalizePlaybackWindow(for: playing)
+                let stillGenerating = queue.head?.messageId == playing
+                buffered[playing] = BufferedReply(
+                    chunks: playingChunks, text: text, generationFinished: !stillGenerating)
+                if !stillGenerating { readyToPlay.insert(playing, at: 0) }
+                currentlyPlayingMessageId = nil
+                playingChunks = []
+            }
+        } else {
+            pumpPlayback()
+        }
         refreshStateWhenNothingIsPlaying()
     }
 
@@ -290,6 +328,16 @@ public final class SpeechOutputSession {
         }
     }
 
+    /// `recentPlayback` plus the reply playing right now, open-ended at `now` — the reply still
+    /// being heard is exactly the one most likely to reach the microphone.
+    public func playbackWindows(now: Date) -> [(window: ClosedRange<Date>, text: String)] {
+        var windows = recentPlayback
+        if let playing = currentlyPlayingMessageId, let start = playbackStart[playing], start <= now {
+            windows.append((window: start...now, text: buffered[playing]?.text ?? ""))
+        }
+        return windows
+    }
+
     /// Ends this session's speech output for the call — closes the socket, drops anything still
     /// queued or buffered unspoken. Nothing here restarts on its own after this; a fresh call
     /// needs a fresh `SpeechOutputSession`.
@@ -307,6 +355,7 @@ public final class SpeechOutputSession {
         currentContextId = nil
         keepAliveContextId = nil
         currentlyPlayingMessageId = nil
+        playingChunks = []
         buffered = [:]
         readyToPlay = []
         queue = ReplyQueue()
@@ -323,6 +372,7 @@ public final class SpeechOutputSession {
         dependencies.log(.info, "tts", "reply \(messageId) playback finished")
         finalizePlaybackWindow(for: messageId)
         currentlyPlayingMessageId = nil
+        playingChunks = []
         pumpPlayback()
         refreshStateWhenNothingIsPlaying()
     }
@@ -481,11 +531,12 @@ public final class SpeechOutputSession {
             guard let head = queue.head else { return }
             let messageId = head.messageId
 
-            if currentlyPlayingMessageId == nil, readyToPlay.isEmpty {
+            if currentlyPlayingMessageId == nil, readyToPlay.isEmpty, !isHeld {
                 // Nothing is playing and nothing is waiting to — this reply becomes the one
                 // playing, starting from its very first chunk rather than waiting for its
                 // generation to finish and losing the latency multi-context streaming buys.
                 currentlyPlayingMessageId = messageId
+                playingChunks = []
                 playbackStart[messageId] = dependencies.now()
                 buffered[messageId] = BufferedReply(text: head.sentences.joined(separator: " "))
                 state = .speaking(messageId: messageId)
@@ -493,6 +544,7 @@ public final class SpeechOutputSession {
             }
 
             if messageId == currentlyPlayingMessageId {
+                playingChunks.append(samples)
                 dependencies.playAudio(messageId, samples)
             } else {
                 let text = buffered[messageId]?.text ?? head.sentences.joined(separator: " ")
@@ -540,6 +592,7 @@ public final class SpeechOutputSession {
         if let playing = currentlyPlayingMessageId {
             finalizePlaybackWindow(for: playing)
             currentlyPlayingMessageId = nil
+            playingChunks = []
         }
         buffered = [:]
         readyToPlay = []
@@ -563,7 +616,7 @@ public final class SpeechOutputSession {
     /// whose synthesis produced no audio at all is treated as finished the instant it would have
     /// started, so it can never wedge playback waiting for a signal that will never arrive.
     private func pumpPlayback() {
-        guard currentlyPlayingMessageId == nil, !readyToPlay.isEmpty else { return }
+        guard currentlyPlayingMessageId == nil, !isHeld, !readyToPlay.isEmpty else { return }
         let messageId = readyToPlay.removeFirst()
         let entry = buffered.removeValue(forKey: messageId) ?? BufferedReply(text: "")
 
@@ -573,6 +626,7 @@ public final class SpeechOutputSession {
         }
 
         currentlyPlayingMessageId = messageId
+        playingChunks = entry.chunks
         playbackStart[messageId] = dependencies.now()
         buffered[messageId] = BufferedReply(text: entry.text)
         state = .speaking(messageId: messageId)

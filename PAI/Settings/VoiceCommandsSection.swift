@@ -70,6 +70,7 @@ struct VoiceCommandsSection: View {
         case .send: return "Send"
         case .skip: return "Skip"
         case .end: return "End Call"
+        case .interrupt: return "Interrupt"
         }
     }
 }

@@ -38,7 +38,9 @@ public struct WakeWordListeningConfig: Sendable, Equatable {
         self.offlineCommands = offlineCommands
     }
 
-    public static let fullChart = WakeWordListeningConfig(offlineCommands: Set(CommandKind.allCases))
+    /// Every command with a trained classifier — `interrupt` is transcript-only by design.
+    public static let fullChart = WakeWordListeningConfig(
+        offlineCommands: Set(CommandKind.allCases.filter { $0 != .interrupt }))
     public static let startOnlyFallback = WakeWordListeningConfig(offlineCommands: [.start])
 }
 

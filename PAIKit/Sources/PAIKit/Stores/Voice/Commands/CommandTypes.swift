@@ -8,6 +8,9 @@ import Foundation
 /// command, as a setting rather than a second code path.
 public enum CommandKind: String, Codable, Sendable, Equatable, CaseIterable {
     case start, stop, send, skip, end
+    /// Toggles whether replies may interrupt recording. Recognised only from the recording's own
+    /// transcript — no offline classifier is trained for it.
+    case interrupt
 }
 
 extension CommandKind {

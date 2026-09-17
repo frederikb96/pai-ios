@@ -59,6 +59,16 @@ public enum CallModePhase: Sendable, Equatable {
     case pendingSend
 }
 
+/// Whether spoken replies wait instead of playing: only while recording, and only when
+/// interrupting has been switched off.
+public enum CallInterruptPolicy {
+    public static func holdsReplies(interruptsAllowed: Bool, phase: CallModePhase) -> Bool {
+        guard !interruptsAllowed else { return false }
+        if case .collecting = phase { return true }
+        return false
+    }
+}
+
 /// An open call cycle's live socket output, as `CallModeStore.previewText` reads it.
 public struct CallOpenCycleText: Sendable, Equatable {
     public var segments: [Segment]
@@ -219,7 +229,7 @@ public final class CallModeStore {
                 // turn to send, or one is already on its way.
                 break
             }
-        case .skip:
+        case .skip, .interrupt:
             // Speech-out's own concern (`SpeechOutputSession.skip()`) — nothing about the call's
             // own phase changes for it.
             break

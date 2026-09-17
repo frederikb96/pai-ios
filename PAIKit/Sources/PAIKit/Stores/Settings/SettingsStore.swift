@@ -44,6 +44,7 @@ public final class SettingsStore {
         static let noteToolbarLayout = "noteToolbarLayout"
         static let ttsVoiceId = "ttsVoiceId"
         static let ttsSpeechRate = "ttsSpeechRate"
+        static let callInterruptsAllowed = "callInterruptsAllowed"
     }
 
     static let maxSentMessages = 10
@@ -82,6 +83,9 @@ public final class SettingsStore {
     /// `AVAudioUnitTimePitch.rate` call mode's speech output plays back at — `1.0` is ElevenLabs'
     /// own generation speed, unchanged.
     public private(set) var ttsSpeechRate: Double
+    /// Whether a spoken reply may start playing while a call is recording. Off holds replies
+    /// until recording stops, then plays them in order.
+    public private(set) var callInterruptsAllowed: Bool
 
     public let elevenLabsKey: WriteOnlySecretField
     public let smtp: SmtpSettingsStore
@@ -117,6 +121,7 @@ public final class SettingsStore {
         noteToolbarLayout = NoteToolbarLayout.sanitize(rawIds: storedToolbarIds)
         ttsVoiceId = storage.value(forKey: Keys.ttsVoiceId) ?? ""
         ttsSpeechRate = storage.value(forKey: Keys.ttsSpeechRate) ?? 1.0
+        callInterruptsAllowed = storage.value(forKey: Keys.callInterruptsAllowed) ?? false
     }
 
     // MARK: - Client-side settings, immediate apply
@@ -154,6 +159,11 @@ public final class SettingsStore {
     public func setTtsVoiceId(_ voiceId: String) {
         ttsVoiceId = voiceId
         storage.setValue(voiceId, forKey: Keys.ttsVoiceId)
+    }
+
+    public func setCallInterruptsAllowed(_ allowed: Bool) {
+        callInterruptsAllowed = allowed
+        storage.setValue(allowed, forKey: Keys.callInterruptsAllowed)
     }
 
     public func setTtsSpeechRate(_ rate: Double) {

@@ -66,6 +66,7 @@ public enum Earcon {
         case .send: return 659.25  // E5
         case .skip: return 1_174.66  // D6
         case .end: return 523.25  // C5
+        case .interrupt: return 783.99  // G5
         }
     }
 

@@ -236,6 +236,12 @@ final class CallModeStoreTests: XCTestCase {
         XCTAssertEqual(store.turnRanges, [0..<500], "reading the preview twice must not touch the turn")
     }
 
+    func testRepliesAreHeldOnlyWhileRecordingWithInterruptsOff() {
+        XCTAssertTrue(CallInterruptPolicy.holdsReplies(interruptsAllowed: false, phase: .collecting(startOffset: 0)))
+        XCTAssertFalse(CallInterruptPolicy.holdsReplies(interruptsAllowed: true, phase: .collecting(startOffset: 0)))
+        XCTAssertFalse(CallInterruptPolicy.holdsReplies(interruptsAllowed: false, phase: .listening))
+    }
+
     // MARK: - Send: from recording mode (stop-and-send), and from wake mode after a stop
 
     func testSendFromCollectingActsAsStopAndSendThenReturnsToListening() async {
