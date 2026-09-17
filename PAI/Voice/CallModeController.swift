@@ -501,6 +501,11 @@ final class CallModeController {
             controller.handleFeedback(.interruptionPaused)
             capture.stop()
             speech?.setHeld(true)
+            // Chunks stop by design while something else owns the microphone: leaving the
+            // watchdog armed would have it restart the engine every few seconds, on a session a
+            // phone call currently holds, for as long as the call lasts.
+            captureWatchdogTask?.cancel()
+            captureWatchdogTask = nil
             armInterruptionGiveUpTimer()
             return
         }
@@ -514,6 +519,7 @@ final class CallModeController {
             try? capture.setVoiceProcessingEnabled(true)
             try capture.start(targetSampleRate: callSampleRate)
             releaseRepliesAfterEngineRestart()
+            beginCaptureWatchdog()
             controller.handleFeedback(.interruptionResumed)
         } catch {
             AppVoiceDiagnosticsLog.shared.log(.error, "mode", "call capture did not resume: \(error)")
@@ -553,6 +559,9 @@ final class CallModeController {
             AppVoiceDiagnosticsLog.shared.log(
                 .warning, "mode", "call capture delivered nothing for \(Int(Self.captureStallSeconds))s — restarting")
             lastChunkAt = Date()
+            // A capture that died on its own usually took its audio session with it, so the
+            // session is re-activated here the way the interruption-resume path does.
+            try? controller.configureAudioSessionForCallMode()
             restartCaptureAfterConfigurationChange()
         }
     }
@@ -848,7 +857,16 @@ final class CallModeController {
                     source: source)
             )
             applyReplyHold()
+            let settledSomething = store.lastUnsentTurnText != nil
             drainUnsentTurnText()
+            // A stop that settled nothing must not take the words on screen with it either — the
+            // same guard the send below already carries.
+            if kind == .stop, !settledSomething, store.turnRanges.isEmpty, !previewBeforeSend.isEmpty {
+                AppVoiceDiagnosticsLog.shared.log(
+                    .warning, "mode",
+                    "stop settled nothing; kept \(previewBeforeSend.count) previewed chars in the draft")
+                appendToDraftClearingPreview("\(VoiceRecordingResult.sttPrefix)\(previewBeforeSend)")
+            }
             if store.phase == .pendingSend { armHeldSendTimeout() }
             // A send that found nothing to send must never take the words on screen with it.
             if kind == .send, store.lastSendFoundNothing, !previewBeforeSend.isEmpty {

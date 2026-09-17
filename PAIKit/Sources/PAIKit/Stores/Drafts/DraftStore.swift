@@ -295,8 +295,15 @@ public final class DraftStore {
             // must never be overwritten by the older row it failed to replace.
             if pendingFlush[row.key] != nil { continue }
             // A write still in the air, or any local change since this request left, is newer
-            // than the row — adopting it would put back text the device already replaced.
-            if inFlightFlush[row.key] != nil || localRevision[row.key] != revisionsAtRequest[row.key] { continue }
+            // than the row — adopting it would put back text the device already replaced. A
+            // delete still in the air counts too: while one is racing, the server's answer for
+            // that key is not evidence about anything, and a write waiting behind it sits with
+            // neither a pending nor an in-flight flush recorded.
+            if inFlightFlush[row.key] != nil || inFlightDelete[row.key] != nil
+                || localRevision[row.key] != revisionsAtRequest[row.key]
+            {
+                continue
+            }
             // A key just discarded, whose delete this response may predate.
             if let clearedTime = clearedAt[row.key],
                 clock.now().timeIntervalSince(clearedTime) < Self.clearedGraceSeconds
@@ -312,7 +319,8 @@ public final class DraftStore {
 
         for key in Array(drafts.keys) {
             guard !seen.contains(key), let local = drafts[key], local.remoteUpdatedAt != nil, pendingFlush[key] == nil,
-                inFlightFlush[key] == nil, localRevision[key] == revisionsAtRequest[key]
+                inFlightFlush[key] == nil, inFlightDelete[key] == nil,
+                localRevision[key] == revisionsAtRequest[key]
             else {
                 continue
             }

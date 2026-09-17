@@ -17,6 +17,7 @@ struct WakeWordSampleScreen: View {
     let store: WakeWordSampleStore
 
     @State private var kind: WakeWordSample.Kind = .positive
+    @State private var confirmingClearAll = false
     @State private var label = ""
     @State private var errorMessage: String?
     @State private var exportBundle: ExportBundle?
@@ -102,9 +103,18 @@ struct WakeWordSampleScreen: View {
             Button("Export All (\(store.samples.count))") { export() }
                 .disabled(store.samples.isEmpty)
                 .accessibilityIdentifier("wake-word-sample-export")
-            Button("Clear All", role: .destructive) { store.clearAll() }
+            Button("Clear All", role: .destructive) { confirmingClearAll = true }
                 .disabled(store.samples.isEmpty)
                 .accessibilityIdentifier("wake-word-sample-clear-all")
+                .confirmationDialog(
+                    "Delete all \(store.samples.count) recordings?", isPresented: $confirmingClearAll,
+                    titleVisibility: .visible
+                ) {
+                    Button("Delete", role: .destructive) { store.clearAll() }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("They exist only on this phone. Export them first if they are not handed over yet.")
+                }
         } header: {
             Text("Samples")
         } footer: {

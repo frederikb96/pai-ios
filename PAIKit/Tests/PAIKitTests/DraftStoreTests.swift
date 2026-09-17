@@ -470,6 +470,43 @@ final class DraftStoreTests: XCTestCase {
         XCTAssertEqual(store.draft(for: "s1").text, "new dictation")
     }
 
+    /// A poll landing while a delete is still on the wire, and a write is parked behind it, is
+    /// the one moment a key looks to a sync like a draft nobody is writing: the debounce has
+    /// already fired, so nothing is pending, and the write has not started, so nothing is in
+    /// flight. Adopting the server's pre-delete row there puts the old message back on screen and
+    /// then writes it out again over the new one.
+    func testSyncLeavesAKeyAloneWhileItsDeleteIsStillOnTheWire() async {
+        let fake = FakeDraftsFetching()
+        let deleteGate = Gate()
+        fake.deleteGate = deleteGate
+        let clock = FakeWallClock()
+        let store = DraftStore(api: fake, clock: clock, scheduler: InstantDraftScheduler())
+
+        store.setDraftText(key: "s1", text: "first message")
+        await waitUntil { fake.callLog.contains("putDraft:done:s1") }
+        store.clearDraft(key: "s1")
+        await waitUntil { fake.callLog.contains("deleteDraft:start:s1") }
+        store.setDraftText(key: "s1", text: "new dictation")
+        for _ in 0..<20 { await Task.yield() }
+        // Past the just-cleared grace window: a delete slower than that is exactly the case the
+        // window cannot cover, and it is the one the reported loss happened on.
+        clock.advance(by: DraftStore.clearedGraceSeconds + 0.1)
+
+        // The server still answers with the row the held delete has not removed yet.
+        fake.remoteDrafts = [
+            Draft(
+                key: "s1", text: "first message", sessionType: nil, workingDir: nil, updatedAt: "server-first message")
+        ]
+        await store.syncFromServer()
+
+        XCTAssertEqual(
+            store.draft(for: "s1").text, "new dictation", "a racing delete makes the server's row no evidence")
+
+        await deleteGate.open()
+        await waitUntil { fake.callLog.filter { $0.hasPrefix("putDraft:done") }.count == 2 }
+        XCTAssertEqual(store.draft(for: "s1").text, "new dictation")
+    }
+
     // MARK: - syncFromServer
 
     func testSyncAdoptsARowWithNoLocalClaimOnIt() async {
@@ -567,6 +604,9 @@ final class DraftStoreTests: XCTestCase {
         let store = DraftStore(api: fake, clock: clock, scheduler: InstantDraftScheduler())
 
         store.clearDraft(key: "s1")
+        // The delete has actually landed: while one is still on the wire the server's row for
+        // that key says nothing, however long the grace window has been over.
+        await waitUntil { fake.callLog.contains("deleteDraft:done:s1") }
         clock.advance(by: DraftStore.clearedGraceSeconds + 0.1)
         await store.syncFromServer()
 

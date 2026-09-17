@@ -41,15 +41,22 @@ final class WakeWordSampleCaptureController {
     enum RunEndReason: Equatable {
         case microphoneConfigurationChanged
         case interrupted
+        case takeTooLong
 
         var userMessage: String {
             switch self {
             case .microphoneConfigurationChanged:
                 "The microphone changed (a headset connected or disconnected) — run stopped."
             case .interrupted: "A call or Siri interrupted — run stopped."
+            case .takeTooLong: "Nothing happened for a while — run stopped so the microphone is free again."
             }
         }
     }
+
+    /// A take is one spoken word, so a minute of it means the run was left open — the screen was
+    /// navigated away from, or the phone went into a pocket. Ending it here is what keeps a
+    /// forgotten run from holding the one microphone (and growing one file) indefinitely.
+    private static let takeLimitSeconds: Double = 60
 
     private(set) var isRunning = false
     /// The take currently open's 1-based position in the run — mirrors
@@ -178,6 +185,7 @@ final class WakeWordSampleCaptureController {
         takeFileName = fileName
         takeRecordedAtMs = recordedAtMs
         streaming = StreamingRecordingFile(url: audioStorage.url(fileName: fileName), sampleRate: sampleRate)
+        takeSampleCount = 0
         currentTakeIndex = run.currentTakeIndex
     }
 
@@ -234,7 +242,13 @@ final class WakeWordSampleCaptureController {
 
     private func appendCapturedChunk(_ samples: [Int16]) {
         streaming?.append(pcm16le: samples)
+        takeSampleCount += samples.count
+        if let rate = runSampleRate, rate > 0, Double(takeSampleCount) / Double(rate) > Self.takeLimitSeconds {
+            endRun(reason: .takeTooLong)
+        }
     }
+
+    private var takeSampleCount = 0
 
     private func teardownCapture(_ capture: MicrophoneCapture) {
         capture.onChunk = nil
