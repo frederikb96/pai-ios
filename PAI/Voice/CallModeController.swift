@@ -169,6 +169,24 @@ final class CallModeController {
     /// elsewhere" (`ComposerCallMenu.state`).
     var activeSessionID: String? { boundSessionID }
 
+    /// Whether a spoken reply may start while recording — the call screen's toggle and
+    /// "Kai interrupt" both flip the same persisted setting.
+    var interruptsAllowed: Bool { settingsStore.callInterruptsAllowed }
+
+    func setInterruptsAllowed(_ allowed: Bool) {
+        settingsStore.setCallInterruptsAllowed(allowed)
+        AppVoiceDiagnosticsLog.shared.log(.info, "mode", "interrupts \(allowed ? "allowed" : "held while recording")")
+        applyReplyHold()
+    }
+
+    /// Re-derives whether speech output is held — after every phase change and every toggle.
+    private func applyReplyHold() {
+        guard let store else { return }
+        speech?.setHeld(
+            CallInterruptPolicy.holdsReplies(interruptsAllowed: settingsStore.callInterruptsAllowed, phase: store.phase)
+        )
+    }
+
     // MARK: - Entry
 
     /// `false` means the call never started — the microphone was already claimed by a
@@ -291,6 +309,7 @@ final class CallModeController {
         // transcribe it, no audio file to capture it, and no feedback telling him so.
         await beginCollectingCycle()
         store.finishEntering(atOffset: callTakeCollectedSamples)
+        applyReplyHold()
         previewTask?.cancel()
         previewTask = Task { [weak self] in await self?.streamTurnPreviewIntoDraft() }
         return true
@@ -542,6 +561,7 @@ final class CallModeController {
             await beginCollectingCycle()
             isTransitioningCycle = false
             await store.handle(CommandEvent(kind: .start, atOffset: callTakeCollectedSamples, confidence: confidence))
+            applyReplyHold()
         case .stop, .send:
             guard !isTransitioningCycle else { return }
             var stampOffset = callTakeCollectedSamples
@@ -552,6 +572,7 @@ final class CallModeController {
                 isTransitioningCycle = false
             }
             await store.handle(CommandEvent(kind: kind, atOffset: stampOffset, confidence: confidence))
+            applyReplyHold()
             drainUnsentTurnText()
         case .skip:
             speech?.skip()
@@ -559,6 +580,12 @@ final class CallModeController {
                 CommandEvent(
                     kind: .skip, atOffset: spokenAtOffset ?? callTakeCollectedSamples + cycleSamplesFed,
                     confidence: confidence))
+        case .interrupt:
+            await store.handle(
+                CommandEvent(
+                    kind: .interrupt, atOffset: spokenAtOffset ?? callTakeCollectedSamples + cycleSamplesFed,
+                    confidence: confidence))
+            setInterruptsAllowed(!settingsStore.callInterruptsAllowed)
         case .end:
             await exit()
         }
