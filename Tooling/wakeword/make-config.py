@@ -2,7 +2,8 @@
 """Writes the training config for one wake word.
 
 Every model treats the other entries' phrases as hard negatives. Phrases live in phrases.json; the
-preset decides how much synthetic data is generated.
+preset decides how much synthetic data is generated. Recorded takes, when supplied, are mixed in
+separately by seed-real-clips.py, run against the config this script writes.
 """
 
 import json

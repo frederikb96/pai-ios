@@ -1,7 +1,10 @@
 name: Train wake words
 
 # Trains one keyword-spotting model per wake word on a free Linux runner and publishes the
-# ONNX classifiers as an artifact. Synthetic speech only: no recordings of anyone go in.
+# ONNX classifiers as an artifact. Synthetic speech by default; recorded takes are mixed in when
+# the WAKE_WORD_RECORDINGS_URL repository secret is set (see Tooling/wakeword/seed-real-clips.py).
+# That secret, not a workflow input, is what carries the archive location: this repo is public and
+# a dispatch input's value is visible in the run's own history, which a secret's is not.
 #
 # Manual only. The `test` preset proves the pipeline end to end in minutes and yields a model that
 # is not worth shipping; `full` is the one whose output goes into the app. Phrases and presets live
@@ -26,6 +29,9 @@ jobs:
   train:
     runs-on: ubuntu-latest
     timeout-minutes: 350
+    env:
+      # `if:` can't read the secrets context directly, only env — see the seeding step below.
+      WAKE_WORD_RECORDINGS_URL: ${{ secrets.WAKE_WORD_RECORDINGS_URL }}
     strategy:
       fail-fast: false
       matrix:
@@ -53,6 +59,24 @@ jobs:
 
       - name: Write config
         run: python3 Tooling/wakeword/make-config.py "${{ matrix.command }}" "${{ inputs.preset }}" config.yaml && cat config.yaml
+
+      # Only runs when the secret is set. The archive is fetched straight into the runner's own
+      # temp dir and deleted once seeded — it never lands in a git-tracked path, and the split it
+      # writes into (output/<command>/positive_{train,test}/*.wav) isn't matched by the artifact
+      # globs below, so it never leaves the runner either.
+      - name: Seed recorded takes
+        if: env.WAKE_WORD_RECORDINGS_URL != ''
+        env:
+          RECORDINGS_TOKEN: ${{ secrets.WAKE_WORD_RECORDINGS_TOKEN }}
+        run: |
+          archive="$RUNNER_TEMP/recordings.zip"
+          if [ -n "$RECORDINGS_TOKEN" ]; then
+            curl -fSL -H "Authorization: Bearer $RECORDINGS_TOKEN" -o "$archive" "$WAKE_WORD_RECORDINGS_URL"
+          else
+            curl -fSL -o "$archive" "$WAKE_WORD_RECORDINGS_URL"
+          fi
+          python3 Tooling/wakeword/seed-real-clips.py config.yaml "$archive"
+          rm -f "$archive"
 
       - name: Download models and data
         run: livekit-wakeword setup --config config.yaml ${{ inputs.preset == 'test' && '--skip-acav' || '' }}
