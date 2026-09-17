@@ -169,6 +169,20 @@ final class CallModeController {
     /// elsewhere" (`ComposerCallMenu.state`).
     var activeSessionID: String? { boundSessionID }
 
+    private var lastDetectedCommandAt: [CommandKind: Date] = [:]
+    private static let detectedCommandDedupSeconds: TimeInterval = 4
+
+    private func isApplicable(_ kind: CommandKind) -> Bool {
+        guard let store else { return false }
+        let hasReplyAudio: Bool
+        if let speech, speech.state != .idle || speech.waitingReplyCount > 0 {
+            hasReplyAudio = true
+        } else {
+            hasReplyAudio = false
+        }
+        return CallCommandApplicability.isApplicable(kind, phase: store.phase, hasReplyAudio: hasReplyAudio)
+    }
+
     /// Whether a spoken reply may start while recording — the call screen's toggle and
     /// "Kai interrupt" both flip the same persisted setting.
     var interruptsAllowed: Bool { settingsStore.callInterruptsAllowed }
@@ -351,6 +365,7 @@ final class CallModeController {
         listener.onCommand = { [weak self] event in
             Task { @MainActor in self?.routeDetectedCommand(event, isOffline: true) }
         }
+        listener.isApplicable = { [weak self] kind in self?.isApplicable(kind) ?? false }
         wakeWordListener = listener
     }
 
@@ -456,17 +471,20 @@ final class CallModeController {
 
     // MARK: - Commands: offline (wake-word) and the transcript fallback
 
-    /// `isOffline` only decides the echo/dedup bookkeeping's own labeling — both paths converge on
-    /// `dispatch(_:confidence:)`. A command the offline engine actually loaded a classifier for
-    /// (`wakeWordListener?.loadedCommands`, never the raw `wakeWordSettings.config` — a command
-    /// the config names but whose `.onnx` file never shipped has no classifier scoring it at all)
-    /// is never accepted from the fallback path, since during `collecting` both can see the same
-    /// spoken words and a double-fire would send twice or skip twice. Basing this on the config
-    /// instead would make such a command unreachable by *either* channel: the offline engine
-    /// never fires it, and the fallback stays silent believing the engine has it covered.
+    /// Both channels converge here and on `dispatch(_:confidence:)`; `isOffline` only decides
+    /// whether the offset needs translating. A command that means nothing in the current state is
+    /// dropped before it can sound a confirmation tone.
     private func routeDetectedCommand(_ event: CommandEvent, isOffline: Bool) {
-        guard let speech else { return }
-        if !isOffline, wakeWordListener?.loadedCommands.contains(event.kind) == true { return }
+        guard let speech, isApplicable(event.kind) else { return }
+        // Both channels may hear the same spoken command while recording — the transcript is the
+        // more reliable ear for a phrase, the offline engine the faster one — so whichever lands
+        // first acts and the other is dropped as the same utterance.
+        let now = Date()
+        if let last = lastDetectedCommandAt[event.kind], now.timeIntervalSince(last) < Self.detectedCommandDedupSeconds
+        {
+            return
+        }
+        lastDetectedCommandAt[event.kind] = now
 
         // Wall-clock is approximated at the moment this fires — neither channel has a genuine
         // take-to-wall-clock mapping the way `VoiceRecordingSession`'s own `SessionTimeline` does
@@ -475,7 +493,6 @@ final class CallModeController {
         // behind the words themselves. A small window around "now" is what `EchoWindowRejection`
         // needs and the only honest approximation available without a device to measure the real
         // lag against.
-        let now = Date()
         let window = now.addingTimeInterval(-2)...now
         let phrase = CommandPhraseSet.defaults.allPhrases(for: event.kind).first ?? ""
         guard
@@ -501,10 +518,9 @@ final class CallModeController {
     }
 
     /// A background poll over the currently-open cycle's own `committedSegments` — Freddy's
-    /// documented fallback, recognising from the ElevenLabs transcript whichever commands
-    /// `wakeWordListener?.loadedCommands` doesn't already cover offline (`routeDetectedCommand`'s
-    /// own check), only ever possible while `collecting` (the paid transcript is the only thing
-    /// running then). One `CommandObservation` per newly
+    /// documented fallback, recognising every command from the ElevenLabs transcript too (the
+    /// same utterance heard offline is deduplicated in `routeDetectedCommand`), only ever possible
+    /// while `collecting` (the paid transcript is the only thing running then). One `CommandObservation` per newly
     /// committed segment, matching `CommandDetector`'s own contract: `isFinal: true`, word timing
     /// shifted into the call ledger's own addressing when the engine supplied it and its count
     /// agrees with the segment's own word split, `nil` otherwise — `CommandDetector`'s pause gate
@@ -564,16 +580,25 @@ final class CallModeController {
             applyReplyHold()
         case .stop, .send:
             guard !isTransitioningCycle else { return }
+            let previewBeforeSend = lastWrittenPreviewText ?? ""
             var stampOffset = callTakeCollectedSamples
             if case .collecting = store.phase {
-                if let spokenAtOffset { stampOffset = spokenAtOffset }
                 isTransitioningCycle = true
                 await endCollectingCycle()
                 isTransitioningCycle = false
+                stampOffset = CallCycleAddressing.closingStamp(
+                    spokenAtOffset: spokenAtOffset, collectedAfterCycleEnd: callTakeCollectedSamples)
             }
             await store.handle(CommandEvent(kind: kind, atOffset: stampOffset, confidence: confidence))
             applyReplyHold()
             drainUnsentTurnText()
+            // A send that found nothing to send must never take the words on screen with it.
+            if kind == .send, store.lastSendFoundNothing, !previewBeforeSend.isEmpty {
+                AppVoiceDiagnosticsLog.shared.log(
+                    .warning, "mode", "send found nothing; kept \(previewBeforeSend.count) previewed chars in the draft"
+                )
+                appendToDraftClearingPreview("\(VoiceRecordingResult.sttPrefix)\(previewBeforeSend)")
+            }
         case .skip:
             speech?.skip()
             await store.handle(
@@ -815,17 +840,18 @@ final class CallModeController {
 
         callAudioFile?.finalize()
         callAudioFile = nil
-        // No open gap left (including the trivial case of a take that never captured anything at
-        // all, whose ledger has nothing to derive a gap against either way) — safe to remove
-        // immediately. An open one is left on disk on purpose: the backfill loop
-        // `persistExternalLedger` already scheduled for it keeps running after this call has
-        // ended, healing the ledger and appending the result into the session's draft once it
-        // finishes (`VoiceRecorderController.applyBackfillOutcome`'s own post-hoc path, the same
-        // one a microphone-mode take's late backfill already uses) — and if the app dies before
-        // that finishes, `reconcileTakes()` finds the same files at the next launch and picks up
-        // exactly where this left off, the same recovery a crashed microphone-mode take gets.
-        if let callTakeId, controller.currentExternalLedger?.gaps.isEmpty ?? true {
-            await controller.externalAudioStorage.delete(id: callTakeId)
+        // Every call that captured audio is kept and listed like any other take, transcript and
+        // all — the text a call collected must survive a send that went wrong. An open gap keeps
+        // healing through the backfill loop `persistExternalLedger` already scheduled, and
+        // `reconcileTakes()` picks it up at the next launch if the app dies first. Only a take
+        // that never captured anything is removed.
+        if let callTakeId {
+            if callTakeCollectedSamples > 0 {
+                controller.saveExternalTake(
+                    takeId: callTakeId, sampleRate: callSampleRate, capturedSamples: callTakeCollectedSamples)
+            } else {
+                await controller.externalAudioStorage.delete(id: callTakeId)
+            }
         }
         controller.endExternalTake()
         callTakeId = nil

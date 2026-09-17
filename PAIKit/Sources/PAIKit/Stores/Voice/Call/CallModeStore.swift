@@ -69,6 +69,22 @@ public enum CallInterruptPolicy {
     }
 }
 
+/// Which commands can do anything in the call's current state — what arbitration between
+/// co-firing detections, and every detection channel, filter on before acting.
+public enum CallCommandApplicability {
+    public static func isApplicable(_ kind: CommandKind, phase: CallModePhase, hasReplyAudio: Bool) -> Bool {
+        let collecting: Bool
+        if case .collecting = phase { collecting = true } else { collecting = false }
+        switch kind {
+        case .start: return phase == .listening
+        case .stop, .interrupt: return collecting
+        case .send: return collecting || phase == .listening
+        case .skip: return hasReplyAudio
+        case .end: return true
+        }
+    }
+}
+
 /// An open call cycle's live socket output, as `CallModeStore.previewText` reads it.
 public struct CallOpenCycleText: Sendable, Equatable {
     public var segments: [Segment]
@@ -113,6 +129,9 @@ public final class CallModeStore {
     /// itself, heard from `.collecting`, does not land as the tail end of the very message it
     /// just triggered. Cleared everywhere `turnRanges` is: the two share exactly one lifetime.
     private var firedCommandsInTurn: [CommandEvent] = []
+    /// Whether the most recent send assembled no text at all — a caller still showing live text
+    /// for that turn keeps it rather than letting it vanish with the empty turn.
+    public private(set) var lastSendFoundNothing = false
     public private(set) var sessionState: SessionState?
     public private(set) var blocker: Blocker?
     /// The bound session's own row status (`completed`/`deleted`/`error`, …) — a future send is
@@ -257,6 +276,7 @@ public final class CallModeStore {
     }
 
     private func trySend() async {
+        lastSendFoundNothing = false
         let ledger = dependencies.currentLedger()
         guard CallMessageAssembler.isCovered(turnRanges, in: ledger) else {
             phase = .pendingSend
@@ -271,6 +291,7 @@ public final class CallModeStore {
         lastUnsentTurnText = nil
         guard !text.isEmpty else {
             phase = .listening
+            lastSendFoundNothing = true
             dependencies.log(.info, "mode", "send fired with nothing transcribed — nothing sent")
             return
         }

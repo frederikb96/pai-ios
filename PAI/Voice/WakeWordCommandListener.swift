@@ -26,6 +26,9 @@ import PAIKit
 @MainActor
 final class WakeWordCommandListener {
     var onCommand: ((CommandEvent) -> Void)?
+    /// Which commands mean anything right now — only these compete when several classifiers fire
+    /// for one utterance.
+    var isApplicable: (CommandKind) -> Bool = { _ in true }
 
     /// Every command this listener's classifier actually loaded and is scoring — distinct from
     /// `config.offlineCommands`, which is only what Freddy asked for. A caller deciding whether
@@ -170,7 +173,7 @@ final class WakeWordCommandListener {
                     + "confidence \(String(format: "%.2f", event.confidence))")
         }
         guard var arbiter else { return }
-        let winner = arbiter.observe(newEvents: events, atOffset: atOffset)
+        let winner = arbiter.observe(newEvents: events, atOffset: atOffset, applicable: isApplicable)
         self.arbiter = arbiter
         guard let winner else { return }
         onCommand?(winner)

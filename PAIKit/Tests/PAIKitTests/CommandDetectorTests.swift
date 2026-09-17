@@ -138,4 +138,13 @@ final class CommandDetectorTests: XCTestCase {
             CommandObservation(text: "Jarvis goodbye", isFinal: true, wordTimes: nil, atOffset: 2000))
         XCTAssertEqual(new?.kind, .end)
     }
+
+    /// "Wait, wait. Kai, interrupt. That's so easy." — interrupt is said mid-dictation and the
+    /// talking carries on, so the position gate must not apply to it.
+    func testInterruptIsRecognisedMidSentence() {
+        var detector = CommandDetector(phraseSet: .defaults, sampleRate: 16_000)
+        let observation = CommandObservation(
+            text: "Wait, wait. Kai, interrupt. That's so easy.", isFinal: true, wordTimes: nil, atOffset: 1000)
+        XCTAssertEqual(detector.detect(observation)?.kind, .interrupt)
+    }
 }

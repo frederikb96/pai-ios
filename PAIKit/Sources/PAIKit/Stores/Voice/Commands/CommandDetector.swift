@@ -43,8 +43,11 @@ public struct CommandDetector: Sendable {
         guard let match = CommandGrammar.matches(in: observation.text, phraseSet: phraseSet).last else { return nil }
 
         // Position gate: the match must reach the last word of what has been recognized so far.
-        // A phrase anywhere earlier was spoken *about*, not spoken *as* a command.
-        guard match.range.upperBound == words.count else { return nil }
+        // A phrase anywhere earlier was spoken *about*, not spoken *as* a command. `interrupt` is
+        // exempt: it is said mid-dictation and the talking carries straight on, so it is almost
+        // never the last thing before a commit, and "Kai interrupt" is too rare a phrase to need
+        // the gate.
+        guard match.range.upperBound == words.count || match.kind == .interrupt else { return nil }
 
         // Final-vs-volatile policy: every command but `skip` waits for a final result.
         guard observation.isFinal || match.kind == .skip else { return nil }

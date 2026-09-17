@@ -149,6 +149,15 @@ final class CallCycleAddressingTests: XCTestCase {
 
     // MARK: - Translating the offline engine's own offset into the call ledger's addressing
 
+    /// A manual Send tapped during the first cycle closed the turn at offset 0 — an empty range —
+    /// and three minutes of dictation were reported as nothing transcribed.
+    func testAManualStopOrSendClosesAtTheEndOfWhatWasCollected() {
+        XCTAssertEqual(
+            CallCycleAddressing.closingStamp(spokenAtOffset: nil, collectedAfterCycleEnd: 2_880_000), 2_880_000)
+        XCTAssertEqual(
+            CallCycleAddressing.closingStamp(spokenAtOffset: 160_800, collectedAfterCycleEnd: 2_880_000), 160_800)
+    }
+
     func testTranslateWakeWordOffsetIsHowFarIntoTheCycleThePlusHowFarTheCallHadAlreadyGone() {
         let translated = CallCycleAddressing.translateWakeWordOffset(
             50_000, wakeOffsetAtCycleStart: 20_000, callTakeCollectedSamples: 100_000)

@@ -80,4 +80,35 @@ final class WakeWordCommandArbiterTests: XCTestCase {
         let secondWinner = arbiter.observe(newEvents: [], atOffset: Int(rate * 3) + windowSamples)
         XCTAssertEqual(secondWinner?.kind, .skip)
     }
+
+    /// Device log: "Kai send" while recording scored send 0.58, skip 0.56, start 0.61 and stop 0.51
+    /// together; "start" won and did nothing. Only commands meaningful right now may compete.
+    func testAnInapplicableCommandCannotBeatAnApplicableOne() {
+        var arbiter = WakeWordCommandArbiter(sampleRate: rate)
+        let events = [
+            CommandEvent(kind: .send, atOffset: 4_352_000, confidence: 0.58),
+            CommandEvent(kind: .start, atOffset: 4_356_096, confidence: 0.61),
+        ]
+        XCTAssertNil(arbiter.observe(newEvents: events, atOffset: 4_356_096))
+        let windowSamples = Int(rate * WakeWordCommandArbiter.defaultWindowSeconds)
+        let winner = arbiter.observe(
+            newEvents: [], atOffset: 4_352_000 + windowSamples,
+            applicable: {
+                CallCommandApplicability.isApplicable($0, phase: .collecting(startOffset: 0), hasReplyAudio: false)
+            })
+        XCTAssertEqual(winner?.kind, .send)
+    }
+
+    /// A false "skip" with nothing playing released nothing actionable — it used to sound a tone.
+    func testAWindowWithOnlyInapplicableCandidatesReleasesNothing() {
+        var arbiter = WakeWordCommandArbiter(sampleRate: rate)
+        _ = arbiter.observe(newEvents: [CommandEvent(kind: .skip, atOffset: 1000, confidence: 0.63)], atOffset: 1000)
+        let windowSamples = Int(rate * WakeWordCommandArbiter.defaultWindowSeconds)
+        let winner = arbiter.observe(
+            newEvents: [], atOffset: 1000 + windowSamples,
+            applicable: {
+                CallCommandApplicability.isApplicable($0, phase: .collecting(startOffset: 0), hasReplyAudio: false)
+            })
+        XCTAssertNil(winner)
+    }
 }

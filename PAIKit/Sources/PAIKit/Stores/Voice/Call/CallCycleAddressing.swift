@@ -56,4 +56,12 @@ public enum CallCycleAddressing {
     ) -> Int {
         callTakeCollectedSamples + (atOffset - wakeOffsetAtCycleStart)
     }
+
+    /// Where a "stop"/"send" closes the turn's range: where it was spoken when a channel reported
+    /// that, otherwise the end of everything collected once the cycle has closed. A manual tap has
+    /// no spoken moment, and stamping it anywhere earlier — the cycle's own start above all —
+    /// closes the turn over an empty range and sends nothing.
+    public static func closingStamp(spokenAtOffset: Int?, collectedAfterCycleEnd: Int) -> Int {
+        spokenAtOffset ?? collectedAfterCycleEnd
+    }
 }

@@ -377,6 +377,18 @@ final class VoiceRecorderController {
     /// this same take id still lands correctly (`applyBackfillOutcome`'s own `takeId ==
     /// currentTakeId` check now reads `false`, so it falls through to appending healed text into
     /// the take's draft instead, exactly as a microphone-mode take already does once it has ended).
+    /// Lists a finished call's take in Past Recordings like any other take, transcript included,
+    /// so its audio and text stay reachable after the call — never deleted just because
+    /// everything in it was transcribed.
+    func saveExternalTake(takeId: String, sampleRate: Int, capturedSamples: Int) {
+        guard capturedSamples > 0, sampleRate > 0, let timestampMs = Double(takeId) else { return }
+        let meta = RecordingMeta(
+            timestampMs: timestampMs, durationMs: Double(capturedSamples) / Double(sampleRate) * 1000,
+            sampleRate: Double(sampleRate), rawStored: audioStorage.hasRaw(id: takeId), endedBy: .user)
+        settingsStore.saveRecording(meta)
+        if let ledger = currentExternalLedger { updateRecordingMeta(takeId: takeId, ledger: ledger) }
+    }
+
     func endExternalTake() {
         externalTakeId = nil
         externalLedgerChanged = nil

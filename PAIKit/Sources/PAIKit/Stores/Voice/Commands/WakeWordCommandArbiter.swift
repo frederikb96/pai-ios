@@ -29,7 +29,13 @@ public struct WakeWordCommandArbiter: Sendable {
     /// `newEvents` into whatever window is currently open (opening a fresh one if none is), then
     /// releases the single highest-confidence candidate once `atOffset` has moved `windowSamples`
     /// past the window's own start. `nil` on every round that neither opens nor closes a window.
-    public mutating func observe(newEvents: [CommandEvent], atOffset: Int) -> CommandEvent? {
+    ///
+    /// `applicable` says which commands mean anything right now: a co-firing "start" while
+    /// recording must not beat the "send" that was actually said, so only applicable candidates
+    /// compete, and a window holding none releases nothing.
+    public mutating func observe(
+        newEvents: [CommandEvent], atOffset: Int, applicable: (CommandKind) -> Bool = { _ in true }
+    ) -> CommandEvent? {
         for event in newEvents {
             if windowStartOffset == nil { windowStartOffset = event.atOffset }
             pending.append(event)
@@ -39,6 +45,6 @@ public struct WakeWordCommandArbiter: Sendable {
             pending = []
             windowStartOffset = nil
         }
-        return pending.max { $0.confidence < $1.confidence }
+        return pending.filter { applicable($0.kind) }.max { $0.confidence < $1.confidence }
     }
 }
