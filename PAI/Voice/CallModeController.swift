@@ -698,22 +698,24 @@ final class CallModeController {
     private func streamTurnPreviewIntoDraft() async {
         while !Task.isCancelled, let store, let sessionID = boundSessionID {
             var openRange: SampleRange?
+            var openRangeLiveText = ""
             if case .collecting(let startOffset) = store.phase {
                 openRange = startOffset..<(callTakeCollectedSamples + cycleSamplesFed)
+                openRangeLiveText = cycleSession?.transcribedText ?? ""
             }
             let ledger =
                 controller.currentExternalLedger
                 ?? TranscriptLedger(
                     takeId: callTakeId ?? "", mode: .call, sampleRate: callSampleRate, draftKey: sessionID,
                     preText: "")
-            let preview = store.previewText(openRange: openRange, in: ledger)
+            let preview = store.previewText(openRange: openRange, openRangeLiveText: openRangeLiveText, in: ledger)
             if preview != lastWrittenPreviewText {
                 lastWrittenPreviewText = preview
                 drafts.setDraftText(
                     key: sessionID,
                     text: VoiceRecorderController.composeLiveText(pre: preCallDraftText, partial: preview))
             }
-            try? await Task.sleep(for: .milliseconds(300))
+            try? await Task.sleep(for: .milliseconds(150))
         }
     }
 

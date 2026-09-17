@@ -284,11 +284,26 @@ public final class CallModeStore {
     /// has committed so far. Unlike `trySend`, never waits on a gap and never consumes anything:
     /// a caller showing this as a live preview polls it as often as it likes, gap or no gap,
     /// without disturbing what a later "send" will actually do.
-    public func previewText(openRange: SampleRange?, in ledger: TranscriptLedger) -> String {
-        var ranges = turnRanges
-        if let openRange { ranges.append(openRange) }
-        guard !ranges.isEmpty else { return "" }
-        return CallMessageAssembler.assembledText(for: ranges, in: ledger, strippingCommands: firedCommandsInTurn)
+    ///
+    /// `openRangeLiveText` is the open cycle's own socket text — committed words plus the
+    /// in-flight partial, what microphone mode shows live. The ledger only ever holds committed
+    /// segments, and the service commits on a pause, so reading the open cycle from the ledger
+    /// alone shows nothing while someone is still talking. Empty falls back to the ledger, which
+    /// is what covers a cycle whose socket never produced text but whose gap was backfilled.
+    public func previewText(openRange: SampleRange?, openRangeLiveText: String, in ledger: TranscriptLedger) -> String {
+        let closed =
+            turnRanges.isEmpty
+            ? ""
+            : CallMessageAssembler.assembledText(for: turnRanges, in: ledger, strippingCommands: firedCommandsInTurn)
+        var open = ""
+        if let openRange {
+            open =
+                openRangeLiveText.isEmpty
+                ? CallMessageAssembler.assembledText(
+                    for: [openRange], in: ledger, strippingCommands: firedCommandsInTurn)
+                : openRangeLiveText
+        }
+        return [closed, open].filter { !$0.isEmpty }.joined(separator: " ")
     }
 
     /// Whatever the turn held is assembled best-effort (never waiting on a gap the way `send`

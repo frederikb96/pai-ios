@@ -164,19 +164,18 @@ struct ComposerBar: View {
                 }
             }
         }
-        // Keeps the field scrolled to the tail while a transcript grows into it. Presentation
-        // only — the text itself is written by the recorder straight into the draft store, so it
-        // keeps arriving whether or not this view is on screen. Scrolling is the one part of that
-        // a view can do and a store cannot, so it is also the one part that should end with the
-        // view: `.task(id:)` cancels on disappear, where a free-standing `Task` would leave one
-        // more 150ms loop running for every time the screen was visited during a long take.
-        .task(id: isRecordingHere(voiceController)) {
-            guard isRecordingHere(voiceController) else { return }
-            var lastPartial = ""
-            while !Task.isCancelled, voiceController.state != .idle {
-                let partial = voiceController.transcribedText
-                if partial != lastPartial {
-                    lastPartial = partial
+        // Keeps the field scrolled to the tail while a transcript grows into it — from a
+        // microphone take or a call bound to this session alike, since both write their live text
+        // into the same draft. Presentation only: the text keeps arriving in the draft store
+        // whether or not this view is on screen. `.task(id:)` cancels on disappear, where a
+        // free-standing `Task` would leave one more 150ms loop running per visit.
+        .task(id: isVoiceWritingHere(voiceController)) {
+            guard isVoiceWritingHere(voiceController) else { return }
+            var lastText = drafts.draft(for: sessionID).text
+            while !Task.isCancelled, isVoiceWritingHere(voiceController) {
+                let text = drafts.draft(for: sessionID).text
+                if text != lastText {
+                    lastText = text
                     scrollToTailOnNextUpdate = true
                 }
                 try? await Task.sleep(for: .milliseconds(150))
@@ -261,6 +260,12 @@ struct ComposerBar: View {
     /// bar for a recording that is not its own.
     private func isRecordingHere(_ controller: VoiceRecorderController) -> Bool {
         controller.activeDraftKey == sessionID && controller.state != .idle
+    }
+
+    /// Whether any live voice source — a microphone take or a call — is writing into this
+    /// session's draft right now.
+    private func isVoiceWritingHere(_ controller: VoiceRecorderController) -> Bool {
+        isRecordingHere(controller) || environment.connection?.callMode.activeSessionID == sessionID
     }
 
     // MARK: - Voice
