@@ -73,6 +73,7 @@ public final class TranscriptStore {
         public let presenceState: SessionPresenceState?
         public let activityCounts: ActivityCounts?
         public let secretGrantable: Bool?
+        public let secretPrompt: SecretPrompt?
     }
 
     /// The latest `arc` SSE signal for one session, carried with an incrementing `sequence`

@@ -260,18 +260,19 @@ public final class SessionListStore {
     /// going live or closing without waiting for the next poll — see `Session.secretGrantable`.
     public func applyLiveStatus(
         sessionId: String, state: SessionState?, blocker: Blocker?, working: Bool?,
-        presenceState: SessionPresenceState?, activityCounts: ActivityCounts?, secretGrantable: Bool?
+        presenceState: SessionPresenceState?, activityCounts: ActivityCounts?, secretGrantable: Bool?,
+        secretPrompt: SecretPrompt?
     ) {
         if let index = syncedSessions.firstIndex(where: { $0.id == sessionId }) {
             syncedSessions[index] = syncedSessions[index].withLiveStatus(
                 state: state, blocker: blocker, working: working, presenceState: presenceState,
-                activityCounts: activityCounts, secretGrantable: secretGrantable
+                activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt
             )
         }
         if let index = serverFilteredResults.firstIndex(where: { $0.session.id == sessionId }) {
             let updated = serverFilteredResults[index].session.withLiveStatus(
                 state: state, blocker: blocker, working: working, presenceState: presenceState,
-                activityCounts: activityCounts, secretGrantable: secretGrantable
+                activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt
             )
             serverFilteredResults[index] = SessionSearchResult(
                 session: updated, score: serverFilteredResults[index].score
@@ -481,7 +482,7 @@ public final class SessionListStore {
                             session.withLiveStatus(
                                 state: .closed, blocker: nil, working: session.working,
                                 presenceState: session.presenceState, activityCounts: session.activityCounts,
-                                secretGrantable: session.secretGrantable
+                                secretGrantable: session.secretGrantable, secretPrompt: session.secretPrompt
                             )
                         )
                     }

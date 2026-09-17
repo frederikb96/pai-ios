@@ -692,7 +692,8 @@ final class SessionStoreListStoreTests: XCTestCase {
 
         store.applyLiveStatus(
             sessionId: "s1", state: .ready, blocker: nil, working: true, presenceState: .working,
-            activityCounts: ActivityCounts(agents: 2, tasks: 1), secretGrantable: true
+            activityCounts: ActivityCounts(agents: 2, tasks: 1), secretGrantable: true,
+            secretPrompt: nil
         )
 
         XCTAssertEqual(store.syncedSessions.first?.state, .ready)
@@ -714,7 +715,8 @@ final class SessionStoreListStoreTests: XCTestCase {
 
         store.applyLiveStatus(
             sessionId: "s1", state: .closed, blocker: nil, working: nil, presenceState: .working,
-            activityCounts: nil, secretGrantable: nil
+            activityCounts: nil, secretGrantable: nil,
+            secretPrompt: nil
         )
 
         XCTAssertEqual(store.syncedSessions.first?.presenceState, .working)
@@ -732,7 +734,8 @@ final class SessionStoreListStoreTests: XCTestCase {
 
         store.applyLiveStatus(
             sessionId: "s1", state: nil, blocker: nil, working: nil, presenceState: nil,
-            activityCounts: nil, secretGrantable: true
+            activityCounts: nil, secretGrantable: true,
+            secretPrompt: nil
         )
 
         XCTAssertEqual(store.syncedSessions.first?.secretGrantable, true)
@@ -753,7 +756,8 @@ final class SessionStoreListStoreTests: XCTestCase {
 
         store.applyLiveStatus(
             sessionId: "s1", state: .ready, blocker: nil, working: true, presenceState: nil, activityCounts: nil,
-            secretGrantable: nil
+            secretGrantable: nil,
+            secretPrompt: nil
         )
 
         XCTAssertEqual(store.syncedSessions.first?.taskId, "task-1")
@@ -820,7 +824,8 @@ final class SessionStoreListStoreTests: XCTestCase {
 
         store.applyLiveStatus(
             sessionId: "not-loaded", state: .ready, blocker: nil, working: true, presenceState: nil,
-            activityCounts: nil, secretGrantable: nil
+            activityCounts: nil, secretGrantable: nil,
+            secretPrompt: nil
         )
 
         XCTAssertTrue(store.syncedSessions.isEmpty)

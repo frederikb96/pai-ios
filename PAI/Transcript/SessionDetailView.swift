@@ -213,7 +213,7 @@ struct SessionDetailView: View {
             sessions.applyLiveStatus(
                 sessionId: sessionID, state: newValue.state, blocker: newValue.blocker, working: newValue.working,
                 presenceState: newValue.presenceState, activityCounts: newValue.activityCounts,
-                secretGrantable: newValue.secretGrantable
+                secretGrantable: newValue.secretGrantable, secretPrompt: newValue.secretPrompt
             )
         }
         .task {

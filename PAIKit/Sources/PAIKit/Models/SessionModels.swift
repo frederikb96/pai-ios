@@ -318,6 +318,11 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// re-deriving it from `state`/`discovered`/`kind` separately. `nil` from a backend that
     /// predates the field, read as not grantable rather than as unknown.
     public let secretGrantable: Bool?
+    /// Set while this session is waiting for Freddy to unlock the gated secrets it was refused.
+    /// The session raises it itself; answering it is the ordinary grant call, and declining it is
+    /// its own route — either way the session is told, because it is waiting on that message.
+    /// `nil` means nothing is waiting, and reads the same from a backend that predates the field.
+    public let secretPrompt: SecretPrompt?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -357,6 +362,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         case taskId = "task_id"
         case activityCounts = "activity_counts"
         case secretGrantable = "secret_grantable"
+        case secretPrompt = "secret_prompt"
     }
 
     public init(
@@ -402,7 +408,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         projectName: String?,
         taskId: String? = nil,
         activityCounts: ActivityCounts? = nil,
-        secretGrantable: Bool? = nil
+        secretGrantable: Bool? = nil,
+        secretPrompt: SecretPrompt? = nil
     ) {
         self.id = id
         self.sessionType = sessionType
@@ -447,6 +454,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.taskId = taskId
         self.activityCounts = activityCounts
         self.secretGrantable = secretGrantable
+        self.secretPrompt = secretPrompt
     }
 
     /// A copy with the session-level fields of a live SSE `status` event applied — the same
@@ -460,7 +468,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// property relying on its default would be silently reset to `nil` on every live update.
     public func withLiveStatus(
         state: SessionState?, blocker: Blocker?, working: Bool?, presenceState: SessionPresenceState?,
-        activityCounts: ActivityCounts?, secretGrantable: Bool?
+        activityCounts: ActivityCounts?, secretGrantable: Bool?, secretPrompt: SecretPrompt?
     ) -> Session {
         Session(
             id: id, sessionType: sessionType, model: model, thinking: thinking, status: status, state: state,
@@ -477,7 +485,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
             sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
             projectId: projectId, phaseId: phaseId, projectName: projectName, taskId: taskId,
-            activityCounts: activityCounts, secretGrantable: secretGrantable
+            activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt
         )
     }
 }

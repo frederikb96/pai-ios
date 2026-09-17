@@ -287,7 +287,7 @@ final class PaiModelsTests: XCTestCase {
         var session = SessionFixture.make(secretGrantable: false)
         session = session.withLiveStatus(
             state: .ready, blocker: nil, working: true, presenceState: .working, activityCounts: nil,
-            secretGrantable: true)
+            secretGrantable: true, secretPrompt: nil)
         XCTAssertEqual(session.secretGrantable, true)
     }
 

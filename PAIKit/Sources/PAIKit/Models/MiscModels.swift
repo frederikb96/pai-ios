@@ -84,6 +84,26 @@ public struct ActivityCounts: Codable, Sendable, Equatable {
     }
 }
 
+// MARK: - Gated-secret prompt
+
+/// A session waiting for Freddy to unlock the gated secrets it was refused, raised by the session
+/// itself rather than by anyone opening a menu. `names` is the machine's own record of those
+/// refusals — the same set the grant acts on — and none of it is secret; the passphrase that
+/// answers the prompt goes straight to the grant route and is never stored anywhere.
+public struct SecretPrompt: Codable, Sendable, Equatable {
+    /// When the session raised it.
+    public let at: String
+    public let names: [String]
+    /// What the session said it needs them for, if it said anything.
+    public let reason: String?
+
+    public init(at: String, names: [String], reason: String?) {
+        self.at = at
+        self.names = names
+        self.reason = reason
+    }
+}
+
 // MARK: - Plan usage
 
 public struct UsageWindow: Codable, Sendable, Equatable {
