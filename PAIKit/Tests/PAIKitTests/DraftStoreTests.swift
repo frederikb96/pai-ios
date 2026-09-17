@@ -24,6 +24,50 @@ private struct NeverFlushDraftScheduler: DraftScheduler {
     }
 }
 
+/// Resolves instantly on its first call, then never again — the debounce that starts a flush
+/// resolves right away, but any retry scheduled after a failure stays pending indefinitely,
+/// giving a test a stable window to inspect state mid-retry rather than racing the retry itself.
+private final class FlushOnceDraftScheduler: DraftScheduler, @unchecked Sendable {
+    private let lock = NSLock()
+    private var callCount = 0
+
+    private func recordCallAndCheckIfFirst() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        callCount += 1
+        return callCount == 1
+    }
+
+    func sleep(seconds: TimeInterval) async throws {
+        guard recordCallAndCheckIfFirst() else {
+            try await Task.sleep(nanoseconds: 3_600_000_000_000)
+            return
+        }
+    }
+}
+
+/// Resolves immediately like `InstantDraftScheduler`, but records every duration it was asked to
+/// sleep for — what a retry-backoff test reads to prove the delay actually grows, without the
+/// test itself waiting out real seconds.
+private final class RecordingDraftScheduler: DraftScheduler, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _durations: [TimeInterval] = []
+    var durations: [TimeInterval] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _durations
+    }
+    private func record(_ seconds: TimeInterval) {
+        lock.lock()
+        _durations.append(seconds)
+        lock.unlock()
+    }
+
+    func sleep(seconds: TimeInterval) async throws {
+        record(seconds)
+    }
+}
+
 /// A rendezvous a test can use to make one call wait for an explicit signal, so an ordering
 /// assertion is exact rather than inferred from a delay.
 private actor Gate {
@@ -54,6 +98,21 @@ private final class FakeDraftsFetching: DraftsFetching, @unchecked Sendable {
     var remoteDrafts: [Draft] = []
     var putGate: Gate?
     var getGate: Gate?
+    /// Consecutive `putDraft` calls left to fail before succeeding — what a retry test uses to
+    /// prove a failed flush is retried rather than swallowed.
+    private var _putFailuresRemaining = 0
+    var putFailuresRemaining: Int {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _putFailuresRemaining
+        }
+        set {
+            lock.lock()
+            _putFailuresRemaining = newValue
+            lock.unlock()
+        }
+    }
 
     func getDrafts() async throws -> [Draft] {
         record("getDrafts")
@@ -64,6 +123,8 @@ private final class FakeDraftsFetching: DraftsFetching, @unchecked Sendable {
         return snapshot
     }
 
+    private struct SimulatedFailure: Error {}
+
     func putDraft(
         key: String, text: String, sessionType: String?, workingDir: String?, model: String?, thinking: String?
     ) async throws -> PutDraftResult {
@@ -72,6 +133,11 @@ private final class FakeDraftsFetching: DraftsFetching, @unchecked Sendable {
             await putGate.wait()
         }
         record("putDraft:done:\(key)")
+        if putFailuresRemaining > 0 {
+            putFailuresRemaining -= 1
+            record("putDraft:failed:\(key)")
+            throw SimulatedFailure()
+        }
         if text.isEmpty && sessionType == nil && workingDir == nil && model == nil && thinking == nil {
             return .deleted(key: key)
         }
@@ -231,6 +297,85 @@ final class DraftStoreTests: XCTestCase {
         XCTAssertNotNil(
             store.draft(for: "s1"), "the local entry survives a .deleted result — see the doc comment on flush")
         XCTAssertNil(store.draft(for: "s1").remoteUpdatedAt)
+    }
+
+    // MARK: - Retry after a failed flush
+
+    /// A failed flush must not sit unretried until the next edit — the whole point of a retry
+    /// with backoff is reaching the server again on its own, for a draft nothing else touches for
+    /// a while.
+    func testAFailedFlushRetriesOnItsOwnAndEventuallySucceeds() async {
+        let fake = FakeDraftsFetching()
+        fake.putFailuresRemaining = 2
+        let store = DraftStore(api: fake, scheduler: InstantDraftScheduler())
+
+        store.setDraftText(key: "s1", text: "hello")
+
+        await waitUntil(timeout: 5) { store.draft(for: "s1").remoteUpdatedAt != nil }
+        XCTAssertEqual(store.draft(for: "s1").remoteUpdatedAt, "server-hello")
+        XCTAssertEqual(
+            fake.callLog.filter { $0.hasPrefix("putDraft:start") }.count, 3,
+            "two failures, then the retry that succeeds"
+        )
+    }
+
+    /// The wait between retries doubles with each consecutive failure rather than retrying at a
+    /// fixed interval — proved against the scheduler's own recorded durations, never by waiting
+    /// out real seconds.
+    func testARetrysWaitDoublesWithEachConsecutiveFailure() async {
+        let fake = FakeDraftsFetching()
+        fake.putFailuresRemaining = 3
+        let scheduler = RecordingDraftScheduler()
+        let store = DraftStore(api: fake, scheduler: scheduler)
+
+        store.setDraftText(key: "s1", text: "hello")
+
+        await waitUntil(timeout: 5) { store.draft(for: "s1").remoteUpdatedAt != nil }
+        // The first duration is the ordinary debounce; the next three are the retry backoff.
+        let retryDurations = Array(scheduler.durations.dropFirst())
+        XCTAssertEqual(
+            retryDurations,
+            [DraftStore.retryBaseSeconds, DraftStore.retryBaseSeconds * 2, DraftStore.retryBaseSeconds * 4])
+    }
+
+    /// A key that failed once and is typed into again must not inherit the old attempt count's
+    /// longer wait — a fresh edit is a fresh debounce, not a doubled retry.
+    func testAFreshEditResetsTheRetryBackoff() async {
+        let fake = FakeDraftsFetching()
+        fake.putFailuresRemaining = 1
+        let scheduler = RecordingDraftScheduler()
+        let store = DraftStore(api: fake, scheduler: scheduler)
+
+        store.setDraftText(key: "s1", text: "hello")
+        await waitUntil(timeout: 5) { fake.callLog.contains("putDraft:failed:s1") }
+        store.setDraftText(key: "s1", text: "hello world")
+
+        await waitUntil(timeout: 5) { store.draft(for: "s1").remoteUpdatedAt != nil }
+        XCTAssertEqual(store.draft(for: "s1").text, "hello world")
+        XCTAssertFalse(
+            scheduler.durations.contains(DraftStore.retryBaseSeconds * 2), "the backoff must not have carried over")
+    }
+
+    /// A write that failed and is waiting to retry is exactly as unfinished as one that has not
+    /// been attempted yet — adopting an older server row in the gap would silently discard it.
+    func testSyncNeverOverwritesAKeyWhoseWriteFailedAndIsWaitingToRetry() async {
+        let fake = FakeDraftsFetching()
+        fake.putFailuresRemaining = 1
+        fake.remoteDrafts = [
+            Draft(
+                key: "s1", text: "stale server copy", sessionType: nil, workingDir: nil, model: nil, thinking: nil,
+                updatedAt: "server-old")
+        ]
+        let store = DraftStore(api: fake, scheduler: FlushOnceDraftScheduler())
+
+        store.setDraftText(key: "s1", text: "local edit")
+        await waitUntil(timeout: 5) { fake.callLog.contains("putDraft:failed:s1") }
+
+        await store.syncFromServer()
+
+        XCTAssertEqual(
+            store.draft(for: "s1").text, "local edit",
+            "the failed write must not have been overwritten by the older row it failed to replace")
     }
 
     // MARK: - clearDraft ordering against an in-flight write

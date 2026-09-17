@@ -37,7 +37,8 @@ public final class DraftStore {
     private let clock: WallClock
     private let scheduler: DraftScheduler
 
-    /// Keys with a local edit not yet written to the server.
+    /// Keys with a local edit not yet written to the server — including one waiting out a retry
+    /// backoff after a failed write, which schedules into this same slot (`scheduleRetry`).
     private var pendingFlush: [String: Task<Void, Never>] = [:]
     /// The currently in-flight write per key, so a discard can wait for it before undoing it.
     private var inFlightFlush: [String: Task<Void, Never>] = [:]
@@ -54,6 +55,10 @@ public final class DraftStore {
     /// Bumped on every local change to a key. A poll whose request left before a change carries
     /// that key's older server copy, however its response is ordered against the write.
     private var localRevision: [String: Int] = [:]
+    /// Consecutive failed flush attempts per key — what `scheduleRetry` doubles the wait on, and
+    /// what a fresh edit (`scheduleFlush`) resets, so a retry backoff never survives past the
+    /// edit it was retrying.
+    private var retryAttempt: [String: Int] = [:]
 
     public init(
         api: some DraftsFetching, clock: WallClock = SystemWallClock(), scheduler: DraftScheduler = RealDraftScheduler()
@@ -148,6 +153,7 @@ public final class DraftStore {
 
     private func scheduleFlush(_ key: String) {
         localRevision[key, default: 0] += 1
+        retryAttempt[key] = nil
         pendingFlush[key]?.cancel()
         pendingFlush[key] = Task { [weak self, scheduler] in
             try? await scheduler.sleep(seconds: Self.flushDebounceSeconds)
@@ -156,6 +162,15 @@ public final class DraftStore {
             await self.flush(key: key)
         }
     }
+
+    /// How long a failed flush waits before retrying, doubling per consecutive failure up to a
+    /// cap — frequent enough that one dropped request heals within a few seconds, capped low
+    /// enough that a genuinely offline device is not hammering the server for the rest of a call.
+    /// A previous version left a failed write unretried until the next edit, silently — a draft
+    /// nothing else touches for a while (dictated once, then read, never typed into again) never
+    /// got the fix it needed.
+    public static let retryBaseSeconds: TimeInterval = 2
+    public static let retryMaxSeconds: TimeInterval = 30
 
     /// Writes the current value of a draft to the server. Public because the composer must call
     /// this directly (not through the debounce) when it is about to disappear, so leaving a
@@ -182,8 +197,14 @@ public final class DraftStore {
                 guard var current = self.drafts[key] else { return }
                 current.remoteUpdatedAt = updatedAt
                 self.drafts[key] = current
+                self.retryAttempt[key] = nil
             } catch {
-                // Keep the local copy; the next edit retries.
+                // Keep the local copy and retry — scheduled into `pendingFlush`, the same slot a
+                // fresh edit's own debounce uses, so `syncFromServer` treats a write still
+                // waiting to retry exactly like one still waiting to happen for the first time:
+                // strictly newer than anything the server can report, never overwritten by an
+                // older row landing in between.
+                self.scheduleRetry(key)
             }
         }
 
@@ -193,6 +214,19 @@ public final class DraftStore {
         // doc comment.
         if flushSequence[key] == mySequence {
             inFlightFlush[key] = nil
+        }
+    }
+
+    private func scheduleRetry(_ key: String) {
+        let attempt = (retryAttempt[key] ?? 0) + 1
+        retryAttempt[key] = attempt
+        let delay = min(Self.retryBaseSeconds * pow(2, Double(attempt - 1)), Self.retryMaxSeconds)
+        pendingFlush[key]?.cancel()
+        pendingFlush[key] = Task { [weak self, scheduler] in
+            try? await scheduler.sleep(seconds: delay)
+            guard !Task.isCancelled, let self else { return }
+            self.pendingFlush[key] = nil
+            await self.flush(key: key)
         }
     }
 
@@ -214,7 +248,10 @@ public final class DraftStore {
         var seen = Set<String>()
         for row in remote {
             seen.insert(row.key)
-            // A key with an unwritten local edit is newer than anything the server can report.
+            // A key with an unwritten local edit is newer than anything the server can report —
+            // including one waiting to retry after a failed write, which lives in this same slot
+            // (`scheduleRetry`) for exactly this reason: a write the server never actually saved
+            // must never be overwritten by the older row it failed to replace.
             if pendingFlush[row.key] != nil { continue }
             // A write still in the air, or any local change since this request left, is newer
             // than the row — adopting it would put back text the device already replaced.
