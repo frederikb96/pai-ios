@@ -1,9 +1,5 @@
 {
   "thresholds": {
-    "kai_start": 0.5,
-    "kai_stop": 0.5,
-    "kai_send": 0.5,
-    "kai_end": 0.5,
-    "kai_skip": 0.5
+    "computer": 0.5
   }
 }
