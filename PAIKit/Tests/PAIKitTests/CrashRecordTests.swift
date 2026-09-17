@@ -28,4 +28,18 @@ final class CrashRecordTests: XCTestCase {
         XCTAssertNil(decoded.reason)
         XCTAssertEqual(decoded.name, "SomeException")
     }
+
+    /// A file written by a build before `appVersion` existed is still on devices; it must decode.
+    func testDecodesARecordWrittenWithoutAppVersion() throws {
+        let json = #"{"name":"X","callStack":[],"capturedAt":0}"#
+        let decoded = try JSONDecoder().decode(CrashRecord.self, from: Data(json.utf8))
+        XCTAssertNil(decoded.appVersion)
+    }
+
+    func testIsPresentedOnlyUntilSeen() {
+        let record = CrashRecord(name: "X", reason: nil, callStack: [], capturedAt: Date(timeIntervalSince1970: 100))
+        XCTAssertTrue(record.isUnseen(lastSeenCapturedAt: nil))
+        XCTAssertFalse(record.isUnseen(lastSeenCapturedAt: Date(timeIntervalSince1970: 100)))
+        XCTAssertTrue(record.isUnseen(lastSeenCapturedAt: Date(timeIntervalSince1970: 50)))
+    }
 }

@@ -8,16 +8,27 @@ public struct CrashRecord: Codable, Sendable, Equatable, Identifiable {
     public let reason: String?
     public let callStack: [String]
     public let capturedAt: Date
+    /// The build that crashed. Optional so a record written before this field existed still
+    /// decodes — without it, a crash from an older build reads exactly like a fresh one.
+    public let appVersion: String?
 
     /// A capture is unique enough by when it happened — `.sheet(item:)` needs an id, and nothing
     /// here is worth a synthetic one.
     public var id: Date { capturedAt }
 
-    public init(name: String, reason: String?, callStack: [String], capturedAt: Date) {
+    public init(name: String, reason: String?, callStack: [String], capturedAt: Date, appVersion: String? = nil) {
         self.name = name
         self.reason = reason
         self.callStack = callStack
         self.capturedAt = capturedAt
+        self.appVersion = appVersion
+    }
+
+    /// Whether launch should put this record in front of the reader. A record is presented once;
+    /// after that it stays on disk, reachable from Settings, but never interrupts a launch again.
+    public func isUnseen(lastSeenCapturedAt: Date?) -> Bool {
+        guard let lastSeenCapturedAt else { return true }
+        return capturedAt > lastSeenCapturedAt
     }
 }
 
@@ -66,7 +77,8 @@ public struct CrashRecord: Codable, Sendable, Equatable, Identifiable {
                 name: exception.name.rawValue,
                 reason: exception.reason,
                 callStack: exception.callStackSymbols,
-                capturedAt: Date()
+                capturedAt: Date(),
+                appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
             )
             guard let url = fileURL, let data = try? JSONEncoder().encode(record) else { return }
             try? data.write(to: url, options: .atomic)
@@ -79,6 +91,19 @@ public struct CrashRecord: Codable, Sendable, Equatable, Identifiable {
         public static func readLast() -> CrashRecord? {
             guard let url = fileURL, let data = try? Data(contentsOf: url) else { return nil }
             return try? JSONDecoder().decode(CrashRecord.self, from: data)
+        }
+
+        private static let lastSeenKey = "crashReporter.lastSeenCapturedAt"
+
+        /// The captured crash, only if launch has not already presented it once.
+        public static func readUnseen() -> CrashRecord? {
+            let lastSeen = UserDefaults.standard.object(forKey: lastSeenKey) as? Date
+            guard let record = readLast(), record.isUnseen(lastSeenCapturedAt: lastSeen) else { return nil }
+            return record
+        }
+
+        public static func markSeen(_ record: CrashRecord) {
+            UserDefaults.standard.set(record.capturedAt, forKey: lastSeenKey)
         }
 
         public static func clearLast() {

@@ -49,7 +49,7 @@ struct RootView: View {
                 async let notificationPoll: Void = environment.pollNotificationSummary()
                 _ = await (machinePoll, notificationPoll)
             }
-            .onAppear { pendingCrash = CrashReporter.readLast() }
+            .onAppear { pendingCrash = CrashReporter.readUnseen() }
             // Two triggers, because a link and a usable app arrive in either order: tapped while
             // the app is open, the link is last; tapped from cold, the gate opening is last.
             .onChange(of: deepLinks.pending) { _, _ in consumeDeepLink() }
@@ -73,13 +73,13 @@ struct RootView: View {
                 guard let link = DeepLink.from(url: url) else { return }
                 deepLinks.receive(link)
             }
-            // No `onDismiss` clear here on purpose: this is the only capture of the reason string
-            // and full symbol list Apple's own crash report leaves out for this exception class,
-            // and deleting it the moment the sheet closes destroys that evidence before anyone can
-            // pull it off the device. It survives until explicitly acknowledged through the debug
-            // bridge's `POST /crash/clear` — see `PAIApp.swift`'s `DebugRoutes`.
+            // Presented once per capture, then only marked seen — never deleted on dismiss: this is
+            // the only capture of the reason string Apple's own crash report leaves out, so the
+            // file stays reachable from Settings until deleted there or through the debug bridge's
+            // `POST /crash/clear`.
             .sheet(item: $pendingCrash) { crash in
                 CrashReportSheet(record: crash)
+                    .onAppear { CrashReporter.markSeen(crash) }
             }
     }
 

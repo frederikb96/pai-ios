@@ -13,6 +13,9 @@ struct CrashReportSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    Text(capturedLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     Text(record.name)
                         .font(.headline)
                     if let reason = record.reason {
@@ -37,5 +40,10 @@ struct CrashReportSheet: View {
             }
             .accessibilityIdentifier("crash-report-sheet")
         }
+    }
+
+    private var capturedLabel: String {
+        let when = record.capturedAt.formatted(date: .abbreviated, time: .shortened)
+        return "Version \(record.appVersion ?? "unknown") · \(when)"
     }
 }
