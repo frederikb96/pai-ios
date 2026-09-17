@@ -84,7 +84,11 @@ public enum CallCommandApplicability {
         let collecting: Bool
         if case .collecting = phase { collecting = true } else { collecting = false }
         switch kind {
-        case .start: return phase == .listening || phase == .pendingSend
+        // `.sending` included: a "start" heard while a send is still in flight is not dropped as
+        // inapplicable — it queues behind the send in the serialized command queue instead (the
+        // phase has moved on to `.listening` by the time it actually runs), rather than being
+        // lost because it landed a moment too early.
+        case .start: return phase == .listening || phase == .pendingSend || phase == .sending
         case .stop, .interruptOn, .interruptOff: return collecting
         case .send: return collecting || phase == .listening || phase == .pendingSend
         case .skip: return hasReplyAudio

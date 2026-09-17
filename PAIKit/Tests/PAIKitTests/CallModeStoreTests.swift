@@ -488,7 +488,10 @@ final class CallModeStoreTests: XCTestCase {
     // MARK: - Only an accepted command earns its confirmation tone
 
     func testOnlyAcceptedCommandsFireACommandRecognizedFeedbackEvent() async {
-        actor Recorder {
+        // `feedback` is called synchronously, inline, from `accept()` — recording directly here
+        // (no `Task`/actor hop) is what keeps this deterministic rather than racing the order
+        // several independently-scheduled unstructured tasks happen to run in.
+        final class Recorder: @unchecked Sendable {
             private(set) var kinds: [CommandKind] = []
             func record(_ kind: CommandKind) { kinds.append(kind) }
         }
@@ -496,9 +499,7 @@ final class CallModeStoreTests: XCTestCase {
         let store = makeStore(
             ledgerBox: LedgerBox(emptyLedger()), sender: SendRecorder(),
             feedback: { event in
-                if case .commandRecognized(let kind) = event {
-                    Task { await recorder.record(kind) }
-                }
+                if case .commandRecognized(let kind) = event { recorder.record(kind) }
             })
         store.startEntering()
         store.finishEntering(atOffset: 0)
@@ -507,10 +508,8 @@ final class CallModeStoreTests: XCTestCase {
         for kind in sequence {
             await store.handle(CommandEvent(kind: kind, atOffset: 0, confidence: 1))
         }
-        for _ in 0..<100 { await Task.yield() }
 
-        let recorded = await recorder.kinds
-        XCTAssertEqual(recorded, [.stop, .start, .interruptOn, .skip, .send, .end])
+        XCTAssertEqual(recorder.kinds, [.stop, .start, .interruptOn, .skip, .send, .end])
     }
 
     // MARK: - Ending mid-recording and releasing a held turn

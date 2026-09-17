@@ -82,7 +82,7 @@ final class VoiceFeedbackNotifier {
         case .recordingStartFailed(let reason): "call recording could not connect: \(reason)"
         case .sendFailed: "call turn was not sent"
         case .commandRecognized(let kind): "command recognized: \(kind.rawValue)"
-        case .commandModelMissing(let kind): "no offline model bundled for command: \(kind.rawValue)"
+        case .commandModelMissing: "no offline model bundled for the \"computer\" wake word"
         case .callEndedUnexpectedly(let hadUnsentText): "call ended unexpectedly (unsent text: \(hadUnsentText))"
         }
     }
@@ -155,8 +155,8 @@ final class VoiceFeedbackNotifier {
             return "Recording is not live (\(reason)) — the audio is kept and transcribed later."
         case .sendFailed:
             return "Your message was not sent — the text is back in the draft."
-        case .commandModelMissing(let kind):
-            return "The \"\(kind.rawValue)\" voice command has no offline model yet — it won't fire while offline."
+        case .commandModelMissing:
+            return "The \"computer\" wake word has no offline model bundled yet — a call won't start listening for it."
         case .callEndedUnexpectedly(let hadUnsentText):
             return hadUnsentText
                 ? "The call ended — your unsent text is in the draft." : "The call ended."

@@ -336,11 +336,7 @@ final class VoiceRecorderController {
     /// two-way conversation instead of a dictation. Never touches capture state; call mode's own
     /// entry sequence starts the engine separately once this returns.
     func configureAudioSessionForCallMode() throws {
-        try audioSession.setCategory(
-            .playAndRecord, mode: .voiceChat,
-            options: [.allowBluetooth, .overrideMutedMicrophoneInterruption, .defaultToSpeaker])
-        try audioSession.setActive(true)
-        applyPreferredMicrophone()
+        try activateExclusiveThenMixable(mode: .voiceChat)
     }
 
     /// Ends call mode's hold on the audio session. A microphone-mode take configures and activates
@@ -1016,18 +1012,32 @@ final class VoiceRecorderController {
     /// which ends a take rather than producing silence in it. For a recorder that is expected to
     /// run unattended in the user's pocket, silence is the far better failure.
     ///
-    /// No mixing option, in either mode: activating the session pauses other apps' audio instead
-    /// of playing it on underneath the headset's call profile, and every deactivation notifies
-    /// them so they can resume.
+    /// Activated exclusive first, then re-set mixable — see `activateExclusiveThenMixable`'s own
+    /// doc comment for why, in both modes.
     ///
     /// `.defaultToSpeaker` is what keeps an earcon audible with no headset connected:
     /// `.playAndRecord` alone routes output to the receiver, which nobody hears with the phone in
     /// a pocket — exactly the case a connection-health cue exists to reach.
     private func configureAudioSession() throws {
-        try audioSession.setCategory(
-            .playAndRecord, mode: .measurement,
-            options: [.allowBluetooth, .overrideMutedMicrophoneInterruption, .defaultToSpeaker])
+        try activateExclusiveThenMixable(mode: .measurement)
+    }
+
+    /// Activating the session exclusive (no `.mixWithOthers`) first is what pauses whatever else
+    /// was already playing — Freddy's own expectation when a take or a call starts, the same
+    /// effect this used to reach with `.duckOthers` before it was dropped. Re-setting the category
+    /// with `.mixWithOthers` immediately after, without ever deactivating in between, is what
+    /// keeps anything that starts playing LATER (Spotify resumed from an AirPods gesture, a video,
+    /// a voice note) from interrupting this session in turn: once mixable, the system no longer
+    /// treats a second, non-mixable session's own activation as a conflict with ours. Without this
+    /// second step, ANY other app's non-mixable audio starting mid-take or mid-call sends this
+    /// session an interruption it never asked for.
+    private func activateExclusiveThenMixable(mode: AVAudioSession.Mode) throws {
+        let options: AVAudioSession.CategoryOptions = [
+            .allowBluetooth, .overrideMutedMicrophoneInterruption, .defaultToSpeaker,
+        ]
+        try audioSession.setCategory(.playAndRecord, mode: mode, options: options)
         try audioSession.setActive(true)
+        try audioSession.setCategory(.playAndRecord, mode: mode, options: options.union(.mixWithOthers))
         applyPreferredMicrophone()
     }
 

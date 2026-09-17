@@ -110,6 +110,39 @@ final class CallModeController {
     private var callLedgerTask: Task<Void, Never>?
     private var fallbackCommandTask: Task<Void, Never>?
     private var fallbackLastScannedSegmentCount = 0
+    /// When the currently-open cycle's own transcript session was last observed reconnecting,
+    /// updated on every captured chunk (`handleCapturedChunk` already runs continuously while a
+    /// cycle is open) rather than on a separate timer. `nil` whenever the session is live, idle,
+    /// or no cycle is open at all — `isCycleTranscriptStuck` is what actually reads this.
+    private var reconnectingSince: Date?
+    /// How long `.reconnecting` is tolerated before an offline "computer" is treated as a stop
+    /// rather than a stray, ignorable detection — long enough that an ordinary blip resolves on
+    /// its own first.
+    private static let reconnectingGraceSeconds: TimeInterval = 5
+
+    /// Whether the open cycle's own transcript is unreachable enough that a spoken "stop"/"send"
+    /// into it stands no real chance of being heard — a fresh connect that never landed at all
+    /// (`.idle`), a fatal protocol stop (`.transcriptionStopped`), or a reconnect that has been
+    /// running long enough it is unlikely to resolve on its own. `false` whenever no cycle is
+    /// open, matching every other command-applicability check here.
+    private var isCycleTranscriptStuck: Bool {
+        guard let session = cycleSession else { return false }
+        switch session.state {
+        case .idle, .transcriptionStopped: return true
+        case .reconnecting:
+            guard let reconnectingSince else { return false }
+            return Date().timeIntervalSince(reconnectingSince) >= Self.reconnectingGraceSeconds
+        default: return false
+        }
+    }
+
+    private func updateCycleLiveness() {
+        guard let session = cycleSession, session.state == .reconnecting else {
+            reconnectingSince = nil
+            return
+        }
+        if reconnectingSince == nil { reconnectingSince = Date() }
+    }
 
     // MARK: - The turn's live preview, written into the bound session's own draft
 
@@ -452,11 +485,18 @@ final class CallModeController {
         guard store != nil else { return }
         let capture = controller.microphoneCapture
         if began {
+            // Cue first, stop second: `EarconPlayer.play` schedules through this same capture
+            // engine (`MicrophoneCapture.playEarcon`), so playing it after the engine has already
+            // stopped restarts the engine just to sound one tone, on a session about to be pulled
+            // out from under it by the interruption itself.
+            controller.handleFeedback(.interruptionPaused)
             capture.stop()
             speech?.setHeld(true)
-            controller.handleFeedback(.interruptionPaused)
+            armInterruptionGiveUpTimer()
             return
         }
+        interruptionGiveUpTask?.cancel()
+        interruptionGiveUpTask = nil
         do {
             try controller.configureAudioSessionForCallMode()
             try capture.start(targetSampleRate: callSampleRate)
@@ -465,6 +505,24 @@ final class CallModeController {
         } catch {
             AppVoiceDiagnosticsLog.shared.log(.error, "mode", "call capture did not resume: \(error)")
             controller.handleFeedback(.captureGaveUp)
+        }
+    }
+
+    /// A phone call, Siri, or anything else that takes the microphone is usually seconds, not
+    /// minutes — if the system never hands it back within this window, the call has effectively
+    /// gone deaf with nothing on screen saying so, since `.interruptionPaused` only ever plays a
+    /// quiet cue. `.captureGaveUp` is the same notification an unrecoverable restart failure
+    /// already posts — the two look identical from Freddy's side (the call is not listening and
+    /// something needs his attention), so there is no reason for a second wording.
+    private static let interruptionGiveUpTimeout: Duration = .seconds(20)
+    private var interruptionGiveUpTask: Task<Void, Never>?
+
+    private func armInterruptionGiveUpTimer() {
+        interruptionGiveUpTask?.cancel()
+        interruptionGiveUpTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.interruptionGiveUpTimeout)
+            guard !Task.isCancelled else { return }
+            self?.controller.handleFeedback(.captureGaveUp)
         }
     }
 
@@ -480,6 +538,7 @@ final class CallModeController {
         guard store != nil else { return }
         wakeWordListener?.ingest(pcm16le: samples, atOffset: wakeWordCaptureOffset)
         wakeWordCaptureOffset += samples.count
+        updateCycleLiveness()
 
         // Gated on `cycleSession` existing, never on `store.phase == .collecting`: a cycle is
         // open (and its socket connecting) for a stretch before the store's own phase catches up
@@ -561,9 +620,31 @@ final class CallModeController {
 
     /// Both channels converge here and on `dispatch(_:confidence:)`; `isOffline` only decides
     /// whether the offset needs translating. A command that means nothing in the current state is
-    /// dropped before it can sound a confirmation tone.
+    /// dropped before it can sound a confirmation tone — except a spoken (never offline) phrase
+    /// that had real words to strip, which is cut from the turn silently rather than surviving
+    /// into the sent message just because nothing happened in response to it.
     private func routeDetectedCommand(_ event: CommandEvent, isOffline: Bool) {
-        guard let speech, isApplicable(event.kind) else { return }
+        guard let speech else { return }
+
+        // An offline "computer" heard while the open cycle's own transcript cannot be reached at
+        // all acts as a stop instead of being dropped as inapplicable (`.start` only ever applies
+        // in wake mode) — the turn is kept, its audio becomes a gap the backfill loop already
+        // heals, and Freddy can say "computer" again once back in wake mode to retry, rather than
+        // talking into a cycle that was never going to hear him.
+        var event = event
+        if isOffline, event.kind == .start, let store, case .collecting = store.phase, isCycleTranscriptStuck {
+            event = CommandEvent(kind: .stop, atOffset: event.atOffset, confidence: event.confidence, source: .offline)
+        }
+
+        guard isApplicable(event.kind) else {
+            if !isOffline, let phraseRange = event.phraseRange {
+                store?.stripSilently(
+                    CommandEvent(
+                        kind: event.kind, atOffset: event.atOffset, confidence: event.confidence,
+                        phraseRange: phraseRange, source: .transcript))
+            }
+            return
+        }
         // Both channels may hear the same spoken command while recording — the transcript is the
         // more reliable ear for a phrase, the offline engine the faster one — so whichever lands
         // first acts and the other is dropped as the same utterance.
@@ -583,7 +664,10 @@ final class CallModeController {
         // needs and the only honest approximation available without a device to measure the real
         // lag against.
         let window = now.addingTimeInterval(-2)...now
-        let phrase = CommandPhraseSet.defaults.allPhrases(for: event.kind).first ?? ""
+        // The offline channel only ever hears the bare wake word acoustically — comparing its own
+        // echo window against a full transcript phrase ("computer start the message") would never
+        // match the agent's own spoken reply back, since the reply is never going to say that.
+        let phrase = isOffline ? "computer" : (CommandPhraseSet.defaults.allPhrases(for: event.kind).first ?? "")
         guard
             !EchoWindowRejection.isEcho(
                 commandWindow: window, commandText: phrase, playbackWindows: speech.playbackWindows(now: now))
@@ -668,10 +752,6 @@ final class CallModeController {
         await serialized { [weak self] in await self?.dispatch(kind, confidence: 1, source: .manual) }
     }
 
-    /// Which channel a command reached `dispatch` from — logged with every command so a device
-    /// log answers "did that fire from the wake word, the transcript, or a tap" without guessing.
-    private enum CommandSource: String { case offline, transcript, manual }
-
     /// The one place every accepted command — offline, fallback, or a manual tap — actually acts.
     /// `spokenAtOffset` is `nil` for a manual tap, which has no spoken moment to stamp: those, and
     /// `.start`/`.skip`/`.end` (never diagnosed as needing this), keep stamping at the call
@@ -694,7 +774,8 @@ final class CallModeController {
             isTransitioningCycle = true
             await beginCollectingCycle()
             isTransitioningCycle = false
-            await store.handle(CommandEvent(kind: .start, atOffset: callTakeCollectedSamples, confidence: confidence))
+            await store.handle(
+                CommandEvent(kind: .start, atOffset: callTakeCollectedSamples, confidence: confidence, source: source))
             applyReplyHold()
             drainUnsentTurnText()
         case .stop, .send:
@@ -709,7 +790,9 @@ final class CallModeController {
                     spokenAtOffset: spokenAtOffset, collectedAfterCycleEnd: callTakeCollectedSamples)
             }
             await store.handle(
-                CommandEvent(kind: kind, atOffset: stampOffset, confidence: confidence, phraseRange: spokenPhraseRange)
+                CommandEvent(
+                    kind: kind, atOffset: stampOffset, confidence: confidence, phraseRange: spokenPhraseRange,
+                    source: source)
             )
             applyReplyHold()
             drainUnsentTurnText()
@@ -726,12 +809,12 @@ final class CallModeController {
             await store.handle(
                 CommandEvent(
                     kind: .skip, atOffset: spokenAtOffset ?? callTakeCollectedSamples + cycleSamplesFed,
-                    confidence: confidence, phraseRange: spokenPhraseRange))
+                    confidence: confidence, phraseRange: spokenPhraseRange, source: source))
         case .interruptOn, .interruptOff:
             await store.handle(
                 CommandEvent(
                     kind: kind, atOffset: spokenAtOffset ?? callTakeCollectedSamples + cycleSamplesFed,
-                    confidence: confidence, phraseRange: spokenPhraseRange))
+                    confidence: confidence, phraseRange: spokenPhraseRange, source: source))
             setInterruptsAllowed(kind == .interruptOn)
         case .end:
             let manual = source == .manual
@@ -759,6 +842,7 @@ final class CallModeController {
     private func beginCollectingCycle() async {
         cycleSamplesFed = 0
         wakeOffsetAtCycleStart = wakeWordCaptureOffset
+        reconnectingSince = nil
         let session = VoiceRecordingSession(
             dependencies: VoiceRecordingDependencies(
                 mintToken: { [apiClient] purpose in try await apiClient.mintVoiceToken(purpose: purpose) },
@@ -955,7 +1039,9 @@ final class CallModeController {
         if case .collecting = store.phase {
             await endCollectingCycle()
         }
-        await store.handle(CommandEvent(kind: .end, atOffset: callTakeCollectedSamples, confidence: 1))
+        await store.handle(
+            CommandEvent(
+                kind: .end, atOffset: callTakeCollectedSamples, confidence: 1, source: manual ? .manual : .transcript))
 
         // Stopped before reading `lastAbandonedTurnText` below — the preview loop's own next tick
         // would otherwise race this append and either clobber it or duplicate it.
@@ -966,12 +1052,16 @@ final class CallModeController {
             appendToDraftClearingPreview(text)
         }
 
-        await teardown()
-        controller.releaseFromCallMode()
-        self.store = nil
+        // Before `teardown()`, never after: the cue plays through the capture engine
+        // (`MicrophoneCapture.playEarcon`), which restarts it if it isn't running — exactly what
+        // `teardown()` just stopped, on an `AVAudioSession` it is about to deactivate too.
         if !manual {
             controller.handleFeedback(.callEndedUnexpectedly(hadUnsentText: hadUnsentText))
         }
+
+        await teardown()
+        controller.releaseFromCallMode()
+        self.store = nil
     }
 
     /// The shared parts of ending a call, whether it ran a single second or an hour, and whether
@@ -987,6 +1077,8 @@ final class CallModeController {
         callLedgerTask = nil
         heldSendTimeoutTask?.cancel()
         heldSendTimeoutTask = nil
+        interruptionGiveUpTask?.cancel()
+        interruptionGiveUpTask = nil
         if let session = cycleSession {
             await session.stop(reason: .user)
         }
