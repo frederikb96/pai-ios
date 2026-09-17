@@ -36,3 +36,10 @@ AuthKey_*.p8
 
 # Its own git repo, per the PAI convention
 .claude/
+
+# Wake word trainer scratch space — make-config.py's config.yaml defaults data_dir/output_dir
+# to ./data and ./output, relative to wherever livekit-wakeword is invoked from
+/data/
+/output/
+/config.yaml
+__pycache__/
