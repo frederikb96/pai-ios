@@ -107,11 +107,11 @@ final class CallMessageAssemblerTests: XCTestCase {
 
     func testStrippingRemovesTheCommandsOwnWordsFromASegmentThatCarriesWordTiming() {
         let words = [
-            Word(range: 0..<400, text: "hello"), Word(range: 400..<700, text: "kai"),
+            Word(range: 0..<400, text: "hello"), Word(range: 400..<700, text: "computer"),
             Word(range: 700..<1000, text: "stop"),
         ]
         let ledger = ledger(segments: [
-            Segment(range: 0..<1000, text: "hello kai stop", words: words, source: .live)
+            Segment(range: 0..<1000, text: "hello computer stop", words: words, source: .live)
         ])
         let command = CommandEvent(kind: .stop, atOffset: 850, confidence: 1)
 
@@ -124,13 +124,13 @@ final class CallMessageAssemblerTests: XCTestCase {
         // A batch backfill result older than word-level timing, say — an occasional stray command
         // word left in is a far smaller cost than silently losing genuinely dictated text.
         let ledger = ledger(segments: [
-            Segment(range: 0..<1000, text: "hello kai stop", words: nil, source: .batch)
+            Segment(range: 0..<1000, text: "hello computer stop", words: nil, source: .batch)
         ])
         let command = CommandEvent(kind: .stop, atOffset: 850, confidence: 1)
 
         XCTAssertEqual(
             CallMessageAssembler.assembledText(for: [0..<1000], in: ledger, strippingCommands: [command]),
-            "hello kai stop")
+            "hello computer stop")
     }
 
     func testStrippingOnlyTouchesWordsMatchingTheFiredCommandsOwnVocabulary() {

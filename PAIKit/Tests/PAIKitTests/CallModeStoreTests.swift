@@ -208,8 +208,8 @@ final class CallModeStoreTests: XCTestCase {
             "first cycle still talking")
     }
 
-    /// "Kai skip" spoken mid-recording belongs to the reply, not to the message being dictated,
-    /// so the live preview drops it once committed, exactly as a send would.
+    /// "computer skip" spoken mid-recording belongs to the reply, not to the message being
+    /// dictated, so the live preview drops it once committed, exactly as a send would.
     func testPreviewTextStripsAFiredCommandFromTheOpenCycleSocketText() async {
         let ledgerBox = LedgerBox(emptyLedger())
         let store = makeStore(ledgerBox: ledgerBox, sender: SendRecorder())
@@ -218,11 +218,11 @@ final class CallModeStoreTests: XCTestCase {
         await store.handle(CommandEvent(kind: .start, atOffset: 0, confidence: 1))
         await store.handle(CommandEvent(kind: .skip, atOffset: 32000, confidence: 1))
         let words = [
-            Word(range: 0..<8000, text: "hello"), Word(range: 30000..<31000, text: "Kai"),
+            Word(range: 0..<8000, text: "hello"), Word(range: 30000..<31000, text: "computer"),
             Word(range: 31000..<32000, text: "skip"), Word(range: 48000..<50000, text: "again"),
         ]
         let openCycle = CallOpenCycleText(
-            segments: [Segment(range: 0..<50000, text: "hello Kai skip again", words: words, source: .live)],
+            segments: [Segment(range: 0..<50000, text: "hello computer skip again", words: words, source: .live)],
             partial: "")
 
         XCTAssertEqual(
@@ -503,14 +503,14 @@ final class CallModeStoreTests: XCTestCase {
         store.startEntering()
         store.finishEntering(atOffset: 0)
 
-        let sequence: [CommandKind] = [.start, .stop, .stop, .start, .interrupt, .skip, .send, .end]
+        let sequence: [CommandKind] = [.start, .stop, .stop, .start, .interruptOn, .skip, .send, .end]
         for kind in sequence {
             await store.handle(CommandEvent(kind: kind, atOffset: 0, confidence: 1))
         }
         for _ in 0..<100 { await Task.yield() }
 
         let recorded = await recorder.kinds
-        XCTAssertEqual(recorded, [.stop, .start, .interrupt, .skip, .send, .end])
+        XCTAssertEqual(recorded, [.stop, .start, .interruptOn, .skip, .send, .end])
     }
 
     // MARK: - Ending mid-recording and releasing a held turn
@@ -730,13 +730,13 @@ final class CallModeStoreTests: XCTestCase {
 
     func testSendCommandWordItselfIsStrippedFromTheTextItTriggeredSending() async {
         let words = [
-            Word(range: 0..<400, text: "hello"), Word(range: 400..<700, text: "kai"),
+            Word(range: 0..<400, text: "hello"), Word(range: 400..<700, text: "computer"),
             Word(range: 700..<1000, text: "send"),
         ]
         let ledgerBox = LedgerBox(
             TranscriptLedger(
                 takeId: "take-1", mode: .call, sampleRate: 16000, draftKey: "session-1", preText: "",
-                segments: [Segment(range: 0..<1000, text: "hello kai send", words: words, source: .live)]
+                segments: [Segment(range: 0..<1000, text: "hello computer send", words: words, source: .live)]
             ))
         let sender = SendRecorder()
         let store = makeStore(ledgerBox: ledgerBox, sender: sender)

@@ -1,42 +1,26 @@
 import Foundation
 
-/// The five commands Freddy's chart defines. No mute: muting the outgoing audio is the app's own
-/// affordance (the Action Button, a later block), never a spoken command. Each is either
-/// recognised end to end by its own trained wake-word classifier (the offline engine) or, for
-/// whichever commands aren't loaded offline, cut out of the ElevenLabs transcript by the same
-/// text-matching gates that always applied — `WakeWordListeningConfig` decides which, per
-/// command, as a setting rather than a second code path.
+/// Every command call mode recognises. `.start` is reached only through the offline wake-word
+/// engine — the paid transcript is never running in wake mode, so there is nothing for a
+/// transcript-based grammar to match it against. Every other command is recognised from the
+/// dictated text while recording, as a full spoken phrase (`CommandGrammar`/`CommandDetector`).
+/// No mute: muting the outgoing audio is the app's own affordance (the Action Button), never a
+/// spoken command.
 public enum CommandKind: String, Codable, Sendable, Equatable, CaseIterable {
     case start, stop, send, skip, end
-    /// Toggles whether replies may interrupt recording. Recognised only from the recording's own
-    /// transcript — no offline classifier is trained for it.
-    case interrupt
+    /// Sets whether replies may interrupt recording, explicitly rather than toggling — recognised
+    /// only from the recording's own transcript.
+    case interruptOn, interruptOff
 }
 
-extension CommandKind {
-    /// The trained classifier's name, and the bundled `.onnx` file's name minus its extension —
-    /// `WakeWordModel.loadModel(url:name:)` defaults to exactly this, so a classifier's own
-    /// output dictionary (keyed by this same string) maps straight back to a `CommandKind` with
-    /// nothing else to configure.
-    public var modelName: String { "kai_\(rawValue)" }
-
-    /// The inverse of `modelName` — `nil` for any name that isn't one of the five commands (a
-    /// stray bundled file, or a model a future build trained that this one predates), so a
-    /// caller degrades to "unrecognised model, ignore" rather than crashing on an unknown key.
-    public init?(modelName: String) {
-        guard modelName.hasPrefix("kai_") else { return nil }
-        self.init(rawValue: String(modelName.dropFirst("kai_".count)))
-    }
-}
-
-/// One result from whichever engine is listening for a command not loaded into the offline
-/// wake-word engine — the ElevenLabs live transcript, while recording. `CommandDetector` is the
-/// only consumer.
+/// One result from the ElevenLabs live transcript, while recording — what `CommandDetector`
+/// matches a configured phrase against.
 public struct CommandObservation: Sendable, Equatable {
     public let text: String
     public let isFinal: Bool
     /// Take-offset ranges for each recognised word, when the engine can supply them — the
-    /// position and pause gates need to know where in the take a phrase actually sat.
+    /// position gate, and precise stripping of the matched phrase's own words, both need to know
+    /// where in the take a phrase actually sat.
     public let wordTimes: [SampleRange]?
     /// Where the observed text ends in the take.
     public let atOffset: Int
@@ -49,15 +33,39 @@ public struct CommandObservation: Sendable, Equatable {
     }
 }
 
-/// A command `CommandDetector` accepted — past the grammar, the position gate and the pause gate.
+/// A command `CommandDetector` accepted — past the grammar and the position gate — or a manual
+/// tap or offline wake-word detection standing in for one.
 public struct CommandEvent: Sendable, Equatable {
     public let kind: CommandKind
     public let atOffset: Int
     public let confidence: Double
+    /// Exactly the take-offset span the matched phrase's own words occupied, when word timing was
+    /// available to compute it — `nil` for a manual tap, an offline detection (no transcript
+    /// words exist for those), or a transcript match whose timing didn't line up.
+    /// `CommandWindowStripper` uses this to remove precisely the phrase's own words rather than
+    /// approximating from a time window.
+    public let phraseRange: SampleRange?
 
-    public init(kind: CommandKind, atOffset: Int, confidence: Double) {
+    public init(kind: CommandKind, atOffset: Int, confidence: Double, phraseRange: SampleRange? = nil) {
         self.kind = kind
         self.atOffset = atOffset
         self.confidence = confidence
+        self.phraseRange = phraseRange
     }
+}
+
+/// Why a phrase `CommandDetector` found was not accepted — logged so a silent no-op on a real
+/// device ("computer send the message" said, nothing happened) is diagnosable from the words
+/// alone rather than guessed at.
+public enum CommandRejectReason: String, Sendable, Equatable {
+    case position = "not at the end of the utterance"
+    case notFinal = "still volatile"
+}
+
+/// `CommandDetector.detect(_:)`'s result: nothing matched, a match was found but a gate rejected
+/// it, or a command was accepted.
+public enum CommandDetectionOutcome: Sendable, Equatable {
+    case none
+    case rejected(kind: CommandKind, reason: CommandRejectReason)
+    case accepted(CommandEvent)
 }

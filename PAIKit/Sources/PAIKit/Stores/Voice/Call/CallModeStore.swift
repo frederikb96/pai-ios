@@ -85,7 +85,7 @@ public enum CallCommandApplicability {
         if case .collecting = phase { collecting = true } else { collecting = false }
         switch kind {
         case .start: return phase == .listening || phase == .pendingSend
-        case .stop, .interrupt: return collecting
+        case .stop, .interruptOn, .interruptOff: return collecting
         case .send: return collecting || phase == .listening || phase == .pendingSend
         case .skip: return hasReplyAudio
         case .end: return true
@@ -275,7 +275,7 @@ public final class CallModeStore {
                 // one is already on its way.
                 break
             }
-        case .skip, .interrupt:
+        case .skip, .interruptOn, .interruptOff:
             // Speech-out's own concern (`SpeechOutputSession.skip()`) — nothing about the call's
             // own phase changes for it. Its words still come out of the dictated text.
             accept(command)

@@ -1,21 +1,22 @@
 import Foundation
 
-/// Cuts a recognized command's spoken words out of the assembled transcript, so "Kai stop" never
-/// lands in the message that gets sent. The offline engine owns command recognition end to end —
-/// ElevenLabs' words are only the text this strips them out of, by time window plus a text match,
-/// never by re-running the grammar against ElevenLabs' own transcript (its socket is exactly what
-/// may be down at the moment a command matters most).
+/// Cuts a recognized command's spoken words out of the assembled transcript, so "computer send
+/// the message" never lands in the message that gets sent.
 public enum CommandWindowStripper {
-    /// How far, in either direction, a word may sit from a recognized command's `atOffset` and
-    /// still be considered part of that spoken command rather than separately-dictated text
-    /// nearby it.
-    public static let windowSeconds: TimeInterval = 1
+    /// The fallback window, in either direction from a command's `atOffset`, used only when no
+    /// `phraseRange` is available — a transcript match whose word timing didn't line up, or an
+    /// older segment with no per-word timestamps at all. Sized for the longest phrase ("computer
+    /// send the message", four words) at a slow, deliberate speaking pace; the ordinary case never
+    /// reaches this at all; see `strip(words:commands:phraseSet:sampleRate:)`.
+    public static let windowSeconds: TimeInterval = 2
 
-    /// `words` in take-offset order, `commands` the events fired for this take (any order).
-    /// Every word inside a command's time window *and* matching that command's own vocabulary is
-    /// dropped; everything else passes through unchanged, joined by a single space. The text
-    /// match is what keeps a coincidental "stop" spoken elsewhere in the same second from being
-    /// silently deleted along with a real command.
+    /// `words` in take-offset order, `commands` the events fired for this take (any order). A
+    /// command with a `phraseRange` drops exactly the words that fall inside it — the matched
+    /// phrase's own span, computed once by `CommandDetector` from the same word timing the
+    /// transcript itself carries, so a generic word the phrase happens to share with ordinary
+    /// dictation elsewhere ("the", "message") is never touched. A command with no `phraseRange`
+    /// falls back to the old text-match-plus-time-window heuristic. Everything else passes through
+    /// unchanged, joined by a single space.
     public static func strip(words: [Word], commands: [CommandEvent], phraseSet: CommandPhraseSet, sampleRate: Double)
         -> String
     {
@@ -30,7 +31,7 @@ public enum CommandWindowStripper {
     }
 
     /// Every normalized word that appears in any configured phrase or variant, per command —
-    /// built once per call rather than once per word.
+    /// built once per call rather than once per word. Only ever consulted for the fallback path.
     private static func commandVocabulary(phraseSet: CommandPhraseSet) -> [CommandKind: Set<String>] {
         Dictionary(
             uniqueKeysWithValues: CommandKind.allCases.map { kind in
@@ -44,10 +45,12 @@ public enum CommandWindowStripper {
     private static func isCommandWord(
         _ word: Word, commands: [CommandEvent], vocabulary: [CommandKind: Set<String>], windowSamples: Int
     ) -> Bool {
-        let normalized = CommandGrammar.normalize(word.text)
-        guard !normalized.isEmpty else { return false }
-        return commands.contains { command in
-            guard vocabulary[command.kind]?.contains(normalized) == true else { return false }
+        commands.contains { command in
+            if let phraseRange = command.phraseRange {
+                return phraseRange.overlaps(word.range)
+            }
+            let normalized = CommandGrammar.normalize(word.text)
+            guard !normalized.isEmpty, vocabulary[command.kind]?.contains(normalized) == true else { return false }
             let window = (command.atOffset - windowSamples)...(command.atOffset + windowSamples)
             return window.overlaps(word.range)
         }

@@ -174,15 +174,15 @@ final class CallCycleAddressingTests: XCTestCase {
     /// The actual bug on a device: `dispatch(.send)` used to stamp the command with the cycle's
     /// end — after `endCollectingCycle()` has folded in the offline detector's own latency and
     /// the wait for the final commit — which put the stamp seconds past where the words were
-    /// spoken, well outside `CommandWindowStripper`'s one-second window. Translating from the
+    /// spoken, well outside `CommandWindowStripper`'s fallback window. Translating from the
     /// engine's own offset instead lands within reach of it.
-    func testTheCycleEndStampMissesKaiSendButTheTranslatedOfflineOffsetReachesIt() {
+    func testTheCycleEndStampMissesComputerSendButTheTranslatedOfflineOffsetReachesIt() {
         let rate = 16_000.0
         let spoken: [Word] = [
             Word(range: 128_000..<134_400, text: "going"),  // 8.0s-8.4s
             Word(range: 134_400..<137_600, text: "to"),  // 8.4s-8.6s
             Word(range: 137_600..<144_000, text: "say"),  // 8.6s-9.0s
-            Word(range: 160_000..<164_800, text: "Kai"),  // 10.0s-10.3s
+            Word(range: 160_000..<164_800, text: "computer"),  // 10.0s-10.3s
             Word(range: 166_400..<172_800, text: "send"),  // 10.4s-10.8s
         ]
         let ledger = TranscriptLedger(
@@ -199,14 +199,15 @@ final class CallCycleAddressingTests: XCTestCase {
         let cycleEndStamp = CommandEvent(kind: .send, atOffset: 212_800, confidence: 1)
         let cycleEndText = CallMessageAssembler.assembledText(
             for: [0..<212_800], in: ledger, strippingCommands: [cycleEndStamp])
-        XCTAssertEqual(cycleEndText, "going to say Kai send", "documents the bug: the stamp never reaches the words")
+        XCTAssertEqual(
+            cycleEndText, "going to say computer send", "documents the bug: the stamp never reaches the words")
 
         // The offline engine's own offset, translated: the detector fired at wake-word-listener
         // offset 260,800 (wherever call entry put it), the cycle itself started at 100,000 in
         // that same addressing, and the call's own ledger position when the cycle opened was 0.
         let translated = CallCycleAddressing.translateWakeWordOffset(
             260_800, wakeOffsetAtCycleStart: 100_000, callTakeCollectedSamples: 0)
-        XCTAssertEqual(translated, 160_800, "just past 'Kai' starting at 10.0s — the engine's own detection lag")
+        XCTAssertEqual(translated, 160_800, "just past 'computer' starting at 10.0s — the engine's own detection lag")
         let translatedStamp = CommandEvent(kind: .send, atOffset: translated, confidence: 1)
         let translatedText = CallMessageAssembler.assembledText(
             for: [0..<212_800], in: ledger, strippingCommands: [translatedStamp])

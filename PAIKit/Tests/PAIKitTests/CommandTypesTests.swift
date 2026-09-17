@@ -13,22 +13,4 @@ final class CommandTypesTests: XCTestCase {
             XCTAssertEqual(try JSONDecoder().decode(CommandKind.self, from: data), kind)
         }
     }
-
-    /// `WakeWordCommandGate` looks a classifier's output name straight back up into a
-    /// `CommandKind` — this round trip is what makes that lookup exact rather than approximate.
-    func testModelNameRoundTripsForEveryCase() {
-        for kind in CommandKind.allCases {
-            XCTAssertEqual(CommandKind(modelName: kind.modelName), kind)
-        }
-    }
-
-    func testModelNameIsTheKaiPrefixPlusTheRawCaseName() {
-        XCTAssertEqual(CommandKind.start.modelName, "kai_start")
-        XCTAssertEqual(CommandKind.end.modelName, "kai_end")
-    }
-
-    func testAnUnrecognisedModelNameDecodesToNilRatherThanCrashing() {
-        XCTAssertNil(CommandKind(modelName: "kai_mute"), "removed as a command; must not resurrect")
-        XCTAssertNil(CommandKind(modelName: "not_even_the_right_prefix"))
-    }
 }

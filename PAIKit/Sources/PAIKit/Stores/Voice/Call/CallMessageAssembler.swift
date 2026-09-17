@@ -35,10 +35,11 @@ public enum CallMessageAssembler {
     /// The same assembly as above, with every word `commands` recognized cut out of the segments
     /// that carry word timing (`CommandWindowStripper`). Without this, "send" itself — heard from
     /// `.collecting`, where it doubles as stop-and-send — lands as the tail end of the very
-    /// message it triggered sending: Freddy's own "Kai send" spoken into the message he meant to
-    /// close. A segment with no `words` (a batch backfill result older than word-level timing,
-    /// say) passes through unstripped rather than being dropped outright — an occasional stray
-    /// command word left in is a far smaller cost than losing genuinely dictated text.
+    /// message it triggered sending: Freddy's own "computer send the message" spoken into the
+    /// message he meant to close. A segment with no `words` (a batch backfill result older than
+    /// word-level timing, say) passes through unstripped rather than being dropped outright — an
+    /// occasional stray command word left in is a far smaller cost than losing genuinely dictated
+    /// text.
     public static func assembledText(
         for ranges: [SampleRange], in ledger: TranscriptLedger, strippingCommands commands: [CommandEvent],
         phraseSet: CommandPhraseSet = .defaults

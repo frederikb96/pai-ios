@@ -31,8 +31,9 @@ public enum FeedbackEvent: Sendable, Equatable {
     /// A call's turn was not sent — refused or failed. Its text is back in the draft.
     case sendFailed
     case commandRecognized(CommandKind)
-    /// A command configured to run offline has no `.onnx` classifier in the app bundle — that
-    /// command is silently unreachable by voice until this is fixed, never a crash.
+    /// The "computer" wake-word classifier has no `.onnx` file in the app bundle — a call is
+    /// silently unreachable by voice until this is fixed, never a crash. Always carries `.start`,
+    /// the only command the offline engine ever means.
     case commandModelMissing(CommandKind)
 }
 

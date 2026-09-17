@@ -1,39 +1,37 @@
 import Foundation
 
-/// Every phrase `CommandGrammar` matches text against — the fallback recognition path for a
-/// command not loaded into the offline wake-word engine, and stripping a recognised command's
-/// own words back out of a sent transcript regardless of which path recognised it. Fixed, never
-/// edited by Freddy: a trained classifier hears an acoustic phrase, not typed text, so `.defaults`
-/// is what every caller actually uses; a custom `CommandPhraseSet` exists only for tests.
+/// Every phrase `CommandGrammar` matches text against — the transcript-recognition path for
+/// every command but `.start`, and stripping a recognised command's own words back out of a sent
+/// transcript. Fixed, never edited by Freddy: a full spoken phrase, not a single word, is what
+/// makes "computer" safe to use at all — "computer send the message" is specific enough that
+/// ordinary dictation about computers essentially never produces it by accident, unlike a bare
+/// wake word would.
 public struct CommandPhraseSet: Sendable, Equatable {
     /// Present for every `CommandKind`, so a lookup here is never optional at the call site.
+    /// `.start` carries a phrase too even though it is only ever detected offline: it is what a
+    /// stray "computer start the message" said while already recording is matched against, so the
+    /// existing applicability gate (only meaningful in wake mode) is what silently ignores it,
+    /// rather than a second special case.
     public var phrases: [CommandKind: String]
 
     public init(phrases: [CommandKind: String]) {
         self.phrases = phrases
     }
 
-    /// A rare first word plus a pause before it is what a listener picks up reliably in both
-    /// German and English — "Kai" is a German name and an English syllable either way, which is
-    /// why it is the shared first word rather than "computer" (collides with ordinary dictation)
-    /// or a fully separate phrase per language.
     public static let defaults = CommandPhraseSet(phrases: [
-        .start: "Kai start",
-        .stop: "Kai stop",
-        .send: "Kai send",
-        .skip: "Kai skip",
-        .end: "Kai end",
-        .interrupt: "Kai interrupt",
+        .start: "computer start the message",
+        .stop: "computer stop the message",
+        .send: "computer send the message",
+        .skip: "computer skip the message",
+        .end: "computer end the call",
+        .interruptOn: "computer interrupt on",
+        .interruptOff: "computer interrupt off",
     ])
 
-    /// Recognized alongside whatever `phrases` holds, never shown in place of it. German
-    /// inflections of the same defaults: "starte" and "stopp" are the imperative/past forms of
-    /// start/stop, common enough in ordinary German speech to need their own variant. "send",
-    /// "skip" and "end" are loanwords already close enough to their German pronunciation not to
-    /// need one.
+    /// Recognized alongside whatever `phrases` holds, never shown in place of it. "End the
+    /// message" is as natural a way to say it as "end the call", and both mean the same thing.
     static let builtInVariants: [CommandKind: [String]] = [
-        .start: ["Kai starte"],
-        .stop: ["Kai stopp"],
+        .end: ["computer end the message"]
     ]
 
     /// Every string recognized for `kind` — the configured phrase first, then its variants.
@@ -46,15 +44,17 @@ public struct CommandPhraseSet: Sendable, Equatable {
 }
 
 /// Matches configured command phrases inside whatever text the offline engine produced.
-/// Normalization and matching only — the position gate ("nothing spoken after it"), the pause
-/// gate, and the final-vs-volatile policy are `CommandDetector`'s, one layer up, since they need
-/// more of `CommandObservation` than a plain string.
+/// Normalization and matching only — the position gate ("nothing spoken after it") is
+/// `CommandDetector`'s, one layer up, since it needs more of `CommandObservation` than a plain
+/// string.
 public enum CommandGrammar {
-    /// Case- and diacritic-insensitive, punctuation dropped, internal whitespace collapsed — so
-    /// "Kai, stop!", "KAI STOP" and an autocorrected "Kaï stop" all match the same phrase.
+    /// Case- and diacritic-insensitive, punctuation dropped (Western and CJK alike — the filter
+    /// is a whitelist of alphanumerics, not a blocklist of specific marks), internal whitespace
+    /// collapsed — so "Computer, send the message.", "COMPUTER SEND THE MESSAGE" and a
+    /// transcript that renders its own full stop as "。" all match the same phrase.
     /// Preserves word boundaries 1:1 with the input (only ever removes or collapses whitespace,
-    /// never merges two words into one) — `CommandDetector`'s pause gate depends on that to line
-    /// a match's word range up against `CommandObservation.wordTimes`.
+    /// never merges two words into one) — `CommandDetector`'s stripping depends on that to line a
+    /// match's word range up against `CommandObservation.wordTimes`.
     public static func normalize(_ text: String) -> String {
         let folded = text.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
         let cleaned = String(
@@ -72,9 +72,9 @@ public enum CommandGrammar {
         public let range: Range<Int>
     }
 
-    /// Every phrase from `phraseSet` found in `text`, matched whitespace-word-bounded so "Kai"
-    /// inside "Kaiser" never matches, in the order they occur. Overlapping matches of different
-    /// commands are both reported; `CommandDetector` decides which one wins.
+    /// Every phrase from `phraseSet` found in `text`, matched whitespace-word-bounded so
+    /// "computer" inside "computerized" never matches, in the order they occur. Overlapping
+    /// matches of different commands are both reported; `CommandDetector` decides which one wins.
     public static func matches(in text: String, phraseSet: CommandPhraseSet) -> [Match] {
         let words = normalize(text).split(separator: " ")
         guard !words.isEmpty else { return [] }
