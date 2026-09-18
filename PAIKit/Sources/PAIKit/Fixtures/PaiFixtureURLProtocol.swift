@@ -157,6 +157,7 @@
             exact("GET", "/api/agents") { PaiFixtures.agents },
             exact("GET", "/api/sessions") { sessionsFixtureBody() },
             exact("GET", "/api/sessions/search") { PaiFixtures.sessionSearchResults },
+            sessionScoped("GET", suffix: "/secret-requests") { PaiFixtures.secretRequests },
             exact("GET", "/api/drafts") { PaiFixtures.drafts },
             exact("GET", "/api/usage") { PaiFixtures.usage },
             exact("GET", "/api/settings/secrets") { PaiFixtures.secretStatuses },

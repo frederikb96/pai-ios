@@ -7,6 +7,11 @@ import SwiftUI
 /// `NavigationStack` with Cancel/confirm in the toolbar, since this is also the one composer
 /// surface where the field being filled in matters more than anything behind it.
 ///
+/// One sheet, two ways to reach it (`ComposerBar` owns both): the plus menu opens it manually at
+/// any time, and it pops up by itself when the session is carrying a `SecretPrompt` it raised for
+/// itself — the toolbar's leading action becomes `Decline`, which tells the waiting session no,
+/// rather than a plain `Cancel`, which tells nobody anything.
+///
 /// 🚨 The passphrase lives only in `passphrase` below — never Keychain, `UserDefaults`, a draft,
 /// or a log line — and is cleared the moment a grant succeeds and again on dismiss, so nothing
 /// outlives the sheet that collected it.
@@ -16,6 +21,11 @@ struct SecretGrantSheet: View {
     /// before the session list has loaded a row for `sessionID`, which the menu entry that opens
     /// this sheet is gated against (`secretGrantable`), so that gap is not expected to reach here.
     let session: Session?
+    /// The prompt driving this sheet, if any — `ComposerBar`'s own `currentSecretPrompt`, threaded
+    /// through rather than re-read here, since only the caller has the live-status/session
+    /// precedence that decides it. `reason` is this sheet's only source for that text: the
+    /// `/secret-requests` fetch below answers with names alone.
+    let prompt: SecretPrompt?
 
     @Environment(\.dismiss) private var dismiss
     @Environment(AppEnvironment.self) private var environment
@@ -53,6 +63,15 @@ struct SecretGrantSheet: View {
         case fetchFailed(String)
     }
 
+    /// Whether the live conversation is actually waiting on a grant right now — an empty request
+    /// list is a legitimate answer meaning nothing is outstanding, same as `.notGrantable` and
+    /// `.fetchFailed`. Drives `Decline`/`Grant`'s presence in the toolbar together, so the two stay
+    /// in lockstep without restating the same case match twice.
+    private var isPromptPending: Bool {
+        if case let .names(names) = requestedAccess { return !names.isEmpty }
+        return false
+    }
+
     var body: some View {
         NavigationStack {
             Group {
@@ -67,12 +86,21 @@ struct SecretGrantSheet: View {
             .toolbar {
                 if grantedUntil == nil {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { dismiss() }
+                        // `Decline` only while something is actually outstanding — the same
+                        // predicate that gates `Grant` below — since telling a session "no" when
+                        // it never asked would be answering a question nobody posed.
+                        if isPromptPending {
+                            Button("Decline", role: .destructive) { Task { await decline() } }
+                                .disabled(isSubmitting)
+                                .accessibilityIdentifier("secret-grant-decline")
+                        } else {
+                            Button("Cancel") { dismiss() }
+                        }
                     }
                     // Only ever the `.requested` grant — an empty request list offers no toolbar
                     // action at all, so Return (which mirrors this button) cannot fall through to
                     // granting everything. `.grantAllSection` is the only way there.
-                    if case let .names(names) = requestedAccess, !names.isEmpty {
+                    if isPromptPending {
                         ToolbarItem(placement: .confirmationAction) {
                             Button("Grant") { Task { await submit(scope: .requested) } }
                                 .disabled(passphrase.isEmpty || isSubmitting)
@@ -130,9 +158,7 @@ struct SecretGrantSheet: View {
             case let .names(names):
                 passphraseSection(names: names)
                 durationSection
-                if names.isEmpty {
-                    grantAllSection
-                }
+                grantAllSection
             case .notGrantable:
                 Section {
                     Text("This session isn't running right now — nothing to grant access to.")
@@ -278,6 +304,24 @@ struct SecretGrantSheet: View {
         }
     }
 
+    /// Tells the waiting session no. Dismisses on success (`.declined` and `.alreadyAnswered`
+    /// alike — the latter means some other client already answered it, which is just as much a
+    /// reason to close this sheet), and leaves it open with a message on a genuine failure so
+    /// nothing here is silently lost.
+    private func decline() async {
+        guard let client = environment.connection?.apiClient else { return }
+        isSubmitting = true
+        errorMessage = nil
+        defer { isSubmitting = false }
+        do {
+            _ = try await client.declineSecretPrompt(sessionId: sessionID)
+            passphrase = ""
+            dismiss()
+        } catch {
+            errorMessage = (error as? PaiError)?.userMessage ?? "Could not decline."
+        }
+    }
+
     /// This sheet's own answer to "which conversation am I about to unlock" — title, session
     /// type and machine, so it is never ambiguous which of possibly several open sessions a Grant
     /// tap affects. `sessionID` alone if the row has not loaded — see `session`'s doc comment for
@@ -292,8 +336,13 @@ struct SecretGrantSheet: View {
             return "\(target)'s Claude conversation hasn't asked for a gated secret. "
                 + "\"Grant all\" unlocks every gated secret for it, for the duration below."
         }
-        return "Unlocks \(names.joined(separator: ", ")) for \(target)'s Claude conversation, "
+        var text =
+            "Unlocks \(names.joined(separator: ", ")) for \(target)'s Claude conversation, "
             + "for the duration below."
+        if let reason = prompt?.reason, !reason.isEmpty {
+            text += " It asked because: \(reason)."
+        }
+        return text
     }
 
     /// Mirrors `SecretField.formatted(_:)` — the backend's six-fractional-digit ISO timestamp

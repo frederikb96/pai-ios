@@ -294,10 +294,10 @@ jobs:
           screenshot fullscreen-image -PaiFixtureRoute session -PaiFixtureOpenImage
           xcrun simctl terminate "$udid" "$bundle" || true
 
-          # The banner a session raises for itself when it needs a gated secret, over the
-          # transcript it belongs to — a passphrase field and two buttons in the overlay stack
-          # above the composer, which is the phone width where it either wraps sensibly or does
-          # not. Nothing in fixture mode has a live conversation to raise a real one.
+          # The grant sheet a session pops up by itself when it needs a gated secret — the same
+          # sheet the composer's plus menu opens manually, auto-presented on opening a session
+          # that is carrying one. Nothing in fixture mode has a live conversation to raise a real
+          # prompt, so `-PaiFixtureSecretPrompt` hands the session list one instead.
           screenshot secret-prompt -PaiFixtureRoute session -PaiFixtureSecretPrompt
           xcrun simctl terminate "$udid" "$bundle" || true
 

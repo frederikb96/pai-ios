@@ -550,6 +550,14 @@ extension PaiFixtures {
             """#
     )
 
+    /// `GET /api/session/{id}/secret-requests` — what the grant sheet fetches to fill in its own
+    /// form, whether the plus menu opened it manually or the session's own `secret_prompt` popped
+    /// it open unprompted. Kept in step with `sessionsWithSecretPrompt`'s own `names` by hand,
+    /// since the two answer different endpoints and the corpus has no single shape both read from.
+    public static let secretRequests: String = #"""
+        {"names": ["GH_TOKEN_ADMIN", "KUBECONFIG_HOMELAB"]}
+        """#
+
     // MARK: - Search
 
     /// `GET /api/sessions/search` — one fuzzy hit (`score: null`, per the interface's own doc

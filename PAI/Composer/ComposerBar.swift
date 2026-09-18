@@ -2,6 +2,16 @@ import PAIKit
 import PhotosUI
 import SwiftUI
 
+/// Identifies which grant sheet `ComposerBar` has on screen — a session's own `SecretPrompt.at`
+/// when one is driving it, or `nil` for the plus menu's ordinary manual open with nothing
+/// outstanding. `.sheet(item:)`'s item rather than a plain `Bool`, so a *different* prompt (a
+/// changed `at`) arriving while the sheet is already open gets a fresh identity and the sheet's
+/// own `.task` re-fetches, instead of silently continuing to show whatever it first loaded.
+private struct SecretGrantTarget: Identifiable {
+    let promptAt: String?
+    var id: String { promptAt ?? "manual" }
+}
+
 /// The message composer, mounted under a session's transcript. Exported for the transcript screen
 /// to place directly under its scroll view; it needs only a session id and reads everything
 /// else from the environment.
@@ -32,7 +42,14 @@ struct ComposerBar: View {
     @State private var showingPhotoPicker = false
     @State private var showingFilePicker = false
     @State private var showingTemporaryNote = false
-    @State private var showingSecretGrant = false
+    @State private var secretGrantTarget: SecretGrantTarget?
+    /// The `SecretPrompt.at` this screen has already shown and closed — set on every dismissal of
+    /// `secretGrantTarget`'s sheet, whatever ended it (Decline, Grant, Cancel, or a swipe down), so
+    /// the same still-outstanding prompt does not pop back up on the next unrelated re-render, and
+    /// only a genuinely new prompt (a different `at`) does. Lives no longer than this view: leaving
+    /// the session and coming back is a fresh `ComposerBar` with this reset to `nil`, which is what
+    /// makes re-entering the session present an unanswered prompt again.
+    @State private var dismissedSecretPromptAt: String?
     @State private var showingRecordingsSheet = false
     @State private var showingCallMode = false
 
@@ -81,6 +98,20 @@ struct ComposerBar: View {
             guard let draftStore else { return }
             Task { await draftStore.flush(key: sessionID) }
         }
+        .onAppear { presentSecretPromptIfNeeded() }
+        .onChange(of: currentSecretPrompt) { _, _ in presentSecretPromptIfNeeded() }
+        .sheet(item: $secretGrantTarget, onDismiss: { dismissedSecretPromptAt = currentSecretPrompt?.at }) { _ in
+            SecretGrantSheet(sessionID: sessionID, session: currentSession, prompt: currentSecretPrompt)
+        }
+    }
+
+    /// Pops the same sheet the plus menu opens, unprompted, whenever this session is carrying a
+    /// gated-secret prompt this screen hasn't already been dismissed for — `SecretPrompt.at`
+    /// identifies which one, so a prompt already closed does not reopen on the next unrelated
+    /// re-render (a poll, a keystroke), and a genuinely new prompt (a different `at`) does.
+    private func presentSecretPromptIfNeeded() {
+        guard let currentSecretPrompt, currentSecretPrompt.at != dismissedSecretPromptAt else { return }
+        secretGrantTarget = SecretGrantTarget(promptAt: currentSecretPrompt.at)
     }
 
     // MARK: - Drivable composer
@@ -143,7 +174,7 @@ struct ComposerBar: View {
                     onAddPhoto: { showingPhotoPicker = true },
                     onAddFile: { showingFilePicker = true },
                     onTemporaryNote: { showingTemporaryNote = true },
-                    onSecretGrant: { showingSecretGrant = true },
+                    onSecretGrant: { secretGrantTarget = SecretGrantTarget(promptAt: currentSecretPrompt?.at) },
                     onCancel: { Task { await cancelSession() } },
                     onStartOrReturnToCall: { startOrReturnToCall(voiceController: voiceController) },
                     onEndCall: { Task { await environment.connection?.callMode.exit(reason: "End Call tapped") } }
@@ -195,9 +226,6 @@ struct ComposerBar: View {
         }
         .sheet(isPresented: $showingTemporaryNote) {
             TemporaryNoteSheet { attachment in stageAttachments([attachment]) }
-        }
-        .sheet(isPresented: $showingSecretGrant) {
-            SecretGrantSheet(sessionID: sessionID, session: currentSession)
         }
         .sheet(isPresented: $showingRecordingsSheet) {
             RecordingsSheet(
@@ -458,6 +486,12 @@ struct ComposerBar: View {
     /// a session going live or closing without waiting for `sessions`' own row to catch up.
     private var currentSecretGrantable: Bool? {
         transcript.liveStatus[sessionID]?.secretGrantable ?? currentSession?.secretGrantable
+    }
+
+    /// Same precedence as `currentSecretGrantable` — the live SSE figure wins once it has reported
+    /// anything for this session.
+    private var currentSecretPrompt: SecretPrompt? {
+        transcript.liveStatus[sessionID]?.secretPrompt ?? currentSession?.secretPrompt
     }
 
     private var isMachineOffline: Bool {
