@@ -5,7 +5,7 @@ import XCTest
 final class TranscriptViewRowLayoutTests: XCTestCase {
 
     private let environment = MeasurementEnvironment(sizeCategoryToken: "")
-    private let metrics = MessageLayoutMetrics(blockSpacing: 4, activityLineHeight: 17, proseLineHeight: 21)
+    private let metrics = MessageLayoutMetrics(blockSpacing: 4, activityLineHeight: 17, proseLineHeight: 21, trailerLineHeight: 15)
     private let width: Double = 400
 
     /// `StubBlockMeasurer` reports `ceil(charCount / width)` lines — so a string whose length is
@@ -162,11 +162,12 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             metrics: metrics)
 
         // 2 × 200 characters of headroom, measured at the grid width, then the trailer the trim
-        // itself earns.
+        // itself earns — one line of the caption font, which is a Dynamic Type height and not a
+        // constant, so the expectation names the one this test's own metrics carry.
         let content = measuredContentHeight(
             [.codeBlock(language: nil, code: String(cardSensitiveText.prefix(400)))], atWidth: 400 - 90,
             measurer: measurer, cache: cache)
-        XCTAssertEqual(actual, 6 + 17 + content + 17)
+        XCTAssertEqual(actual, 6 + 17 + content + 15)
     }
 
     /// A body that fits inside its cap is not truncated, so it reserves no trailer — the case a

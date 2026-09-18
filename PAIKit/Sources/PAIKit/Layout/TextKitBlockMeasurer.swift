@@ -208,6 +208,15 @@
             return Double(font.lineHeight.rounded(.up))
         }
 
+        /// One line of the caption font a row's trailer draws in — resolved here rather than
+        /// written down beside the view, for the reason ``codeLineHeight(for:)`` exists.
+        public static func trailerLineHeight(for environment: MeasurementEnvironment) -> Double {
+            let category = UIContentSizeCategory(rawValue: environment.sizeCategoryToken)
+            let pointSize = PaiTypography.caption.pointSize(for: category)
+            let font = resolveFont(style: PaiTypography.caption, pointSize: pointSize)
+            return Double(font.lineHeight.rounded(.up))
+        }
+
         private static func tableRowHeight(for environment: MeasurementEnvironment) -> Double {
             let category = UIContentSizeCategory(rawValue: environment.sizeCategoryToken)
             let pointSize = PaiTypography.markdownBody.pointSize(for: category)

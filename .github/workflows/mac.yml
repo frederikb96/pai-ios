@@ -258,34 +258,6 @@ jobs:
               -o "artifacts/measure-$m.json" || true
           done
 
-          # The same question one level out: does a whole ROW's laid-out height agree with what
-          # it draws? The transcript places rows from analytic heights and never asks a cell its
-          # size, so a register's chrome, a visual clamp or a trailer being off by a few points is
-          # invisible everywhere else and shows up only as the reader being dragged around.
-          python3 - <<'PY'
-          import json, pathlib, sys
-          reports = []
-          for path in sorted(pathlib.Path('artifacts').glob('rowagree-*.json')):
-              if not path.stat().st_size:
-                  continue
-              try:
-                  rows = json.loads(path.read_text())
-              except json.JSONDecodeError:
-                  continue
-              if rows:
-                  reports.append((path.name, rows))
-          if not reports:
-              print('::error::row agreement: no screen answered with a single transcript row, so nothing was checked')
-              sys.exit(1)
-          name, rows = max(reports, key=lambda r: len(r[1]))
-          worst = max(rows, key=lambda r: abs(r['delta']))
-          print(f"row agreement: {len(rows)} rows from {name}, worst delta {worst['delta']:.2f}pt on message {worst['messageId']}")
-          # A point of slack for fractional font metrics; anything past that is a real disagreement.
-          if abs(worst['delta']) > 1.0:
-              print(f"::error::row {worst['messageId']} measures {worst['measured']:.2f} and draws {worst['rendered']:.2f}")
-              sys.exit(1)
-          PY
-
           # Measured on this device rather than reasoned about: how much a debounced repaint
           # costs with the note-editor gutter and hanging indent on, against the same note with
           # them off. A large note — dozens of list items long enough to wrap, the shape that
@@ -510,6 +482,34 @@ jobs:
           " || { echo "::error::clamped-landing: a landing clamped onto the bottom re-armed following — see clamped-landing-settled.json"; fail=1; }
           fi
           xcrun simctl terminate "$udid" "$bundle" || true
+
+          # The same question one level out: does a whole ROW's laid-out height agree with what
+          # it draws? The transcript places rows from analytic heights and never asks a cell its
+          # size, so a register's chrome, a visual clamp or a trailer being off by a few points is
+          # invisible everywhere else and shows up only as the reader being dragged around.
+          python3 - <<'PY'
+          import json, pathlib, sys
+          reports = []
+          for path in sorted(pathlib.Path('artifacts').glob('rowagree-*.json')):
+              if not path.stat().st_size:
+                  continue
+              try:
+                  rows = json.loads(path.read_text())
+              except json.JSONDecodeError:
+                  continue
+              if rows:
+                  reports.append((path.name, rows))
+          if not reports:
+              print('::error::row agreement: no screen answered with a single transcript row, so nothing was checked')
+              sys.exit(1)
+          name, rows = max(reports, key=lambda r: len(r[1]))
+          worst = max(rows, key=lambda r: abs(r['delta']))
+          print(f"row agreement: {len(rows)} rows from {name}, worst delta {worst['delta']:.2f}pt on message {worst['messageId']}")
+          # A point of slack for fractional font metrics; anything past that is a real disagreement.
+          if abs(worst['delta']) > 1.0:
+              print(f"::error::row {worst['messageId']} measures {worst['measured']:.2f} and draws {worst['rendered']:.2f}")
+              sys.exit(1)
+          PY
 
           [ "$fail" -eq 0 ] || { echo 'one or more screens failed — see the warnings above'; exit 1; }
 

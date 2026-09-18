@@ -33,12 +33,22 @@ final class SearchTranscriptIndexTests: XCTestCase {
         XCTAssertFalse(truncated)
     }
 
-    /// The index always forces every card open (see the type's own doc comment) — a real render
-    /// with the reader's expand preferences would show none of this text, but the index has to
-    /// find it anyway, or a hit inside a collapsed tool result could never be searched to.
-    func testHitsFindsTextBehindWhatWouldBeACollapsedCard() {
-        let calls = [ToolCall(id: "1", name: "Bash", input: ["command": .string("grep needle file.txt")])]
-        let msg = message(id: 1, type: .assistant, toolCalls: calls)
+    /// The index forces every card open (see the type's own doc comment), so text the reader
+    /// cannot currently see is still findable.
+    ///
+    /// The needle sits on line 25 of a 30-line result, well past the 8-line budget a result is
+    /// shown at — a body short enough to be shown whole cannot tell a forced-open index from one
+    /// built against what is on screen, and a fixture like that leaves this test passing even if
+    /// the index stopped opening anything at all.
+    func testHitsFindsTextPastWhatThePreviewShows() {
+        let lines = (1...30).map { $0 == 25 ? "the needle is here" : "line \($0)" }
+        let result = ToolResult(
+            toolUseId: "1", toolName: "Bash", content: lines.joined(separator: "\n"), isError: false)
+        let msg = message(id: 1, type: .toolResult, toolResult: result)
+
+        // The preview genuinely stops short of it, or this proves nothing.
+        let shown = TranscriptRowPlan.cards(for: msg, isRevealed: { _ in false })
+        XCTAssertFalse(shown[0].blocks.contains { $0.plainText.contains("needle") })
 
         let (hits, _) = TranscriptSearchIndex.hits(in: [msg], query: "needle")
 

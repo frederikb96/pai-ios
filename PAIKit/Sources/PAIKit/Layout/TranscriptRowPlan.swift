@@ -363,13 +363,19 @@ public enum TranscriptRowPlan {
         let tone = systemTone(subtype: subtype, hookSummary: hookSummary)
 
         switch subtype {
-        // An event whose whole meaning is that it happened. One line, never openable: there is
-        // nothing behind it to open.
+        // An event whose whole meaning is that it happened, and whose body is one line in
+        // practice — so it is not truncated, draws no trailer and takes no tap. Reveal is still
+        // honoured rather than hardcoded open: hardcoding it made the row permanently "truncated"
+        // and permanently captioned `show less`, an affordance saying the opposite of what the
+        // row was doing, and the rare multi-line one (a misrouted agent message) unreadable.
         case "duration", "interrupt", "compact":
+            let revealed = isRevealed(index)
             return TranscriptCardPlan(
                 kind: kind, register: .activity, tone: tone,
-                preview: TranscriptCardPlan.Preview(hiddenLines: 0, totalLines: lineCount(body), visualLines: 1),
-                isRevealed: true,
+                preview: revealed
+                    ? .full(totalLines: lineCount(body))
+                    : TranscriptCardPlan.Preview(hiddenLines: 0, totalLines: lineCount(body), visualLines: 1),
+                isRevealed: revealed,
                 blocks: body.isEmpty ? [] : [codeBlock(body)])
 
         // A compaction summary is a report: markdown, height-capped, opened by a tap.
