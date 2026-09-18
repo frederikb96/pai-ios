@@ -168,21 +168,15 @@ final class TranscriptMessageRoutingTests: XCTestCase {
         XCTAssertEqual(MessageRouting.extractFilePaths("just an ordinary reply"), [])
     }
 
-    // MARK: - Expand keys
+    // MARK: - Tool families
 
-    func testToolExpandKeyFamiliesFollowTheSameOrderAsIconSelection() {
-        XCTAssertEqual(MessageRouting.toolExpandKey(name: "Bash", isResult: false), "bash_call")
-        XCTAssertEqual(MessageRouting.toolExpandKey(name: "MultiEdit", isResult: true), "edit_result")
-        XCTAssertEqual(MessageRouting.toolExpandKey(name: "Task", isResult: false), "agent_call")
-        XCTAssertEqual(MessageRouting.toolExpandKey(name: "mcp__engram__search", isResult: false), "mcp_call")
-        XCTAssertEqual(MessageRouting.toolExpandKey(name: "SomeFutureTool", isResult: true), "other_result")
-    }
-
-    /// The one place JS truthiness could silently diverge from a plain `nil` check: an empty
-    /// string subtype is falsy in the original and must fall to `system_other`, not `"system_"`.
-    func testSystemExpandKeyTreatsAnEmptyStringSubtypeAsAbsent() {
-        XCTAssertEqual(MessageRouting.systemExpandKey(subtype: ""), "system_other")
-        XCTAssertEqual(MessageRouting.systemExpandKey(subtype: nil), "system_other")
-        XCTAssertEqual(MessageRouting.systemExpandKey(subtype: "hook"), "system_hook")
+    /// The icon taxonomy is order-sensitive: "MultiEdit" contains "edit" and "Task" is the agent
+    /// family, so a reordering that looks harmless changes which glyph a row draws.
+    func testToolFamiliesFollowTheOrderIconSelectionDependsOn() {
+        XCTAssertEqual(MessageRouting.toolFamily("Bash"), "bash")
+        XCTAssertEqual(MessageRouting.toolFamily("MultiEdit"), "edit")
+        XCTAssertEqual(MessageRouting.toolFamily("Task"), "agent")
+        XCTAssertEqual(MessageRouting.toolFamily("mcp__engram__search"), "mcp")
+        XCTAssertEqual(MessageRouting.toolFamily("SomeFutureTool"), "other")
     }
 }

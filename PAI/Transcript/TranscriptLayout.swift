@@ -22,7 +22,10 @@ final class TranscriptLayout: UICollectionViewLayout {
     /// `prepare()` — the caller drives that via `invalidateLayout()`, usually inside
     /// `performBatchUpdates`.
     var rows: [Row] = []
-    var interItemSpacing: CGFloat = 12
+    /// Zero: spacing is a property of each row's own register now, not of the pair. A constant
+    /// gap between every two rows is what broke a run of activity rows into separate cards, and
+    /// it is also what stops their rails joining into one line.
+    var interItemSpacing: CGFloat = 0
     var topInset: CGFloat = 12
     var bottomInset: CGFloat = 12
     var horizontalInset: CGFloat = 16

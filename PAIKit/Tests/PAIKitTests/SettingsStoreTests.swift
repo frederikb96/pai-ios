@@ -43,17 +43,10 @@ final class SettingsStoreTests: XCTestCase {
             XCTAssertEqual(store.silenceDurationMs, 3000)
             XCTAssertEqual(store.sentMessages, [])
             XCTAssertEqual(store.recordings, [])
-            XCTAssertEqual(store.expandPreferences, [:])
             XCTAssertEqual(store.showsNoteLineNumbers, false)
             XCTAssertEqual(store.noteToolbarLayout, NoteToolbarLayout.defaultLayout)
             XCTAssertEqual(store.ttsVoiceId, "")
             XCTAssertEqual(store.ttsSpeechRate, 1.0)
-
-            // The toggles the web's own regression test singles out as the ones that used to
-            // default to true (`settings.test.ts`) — every one of them must read false here too.
-            for key in ["read_call", "edit_call", "bash_call", "skill_call", "system_agent_message"] {
-                XCTAssertFalse(store.isExpandEnabled(key), key)
-            }
         }
     }
 
@@ -117,18 +110,6 @@ final class SettingsStoreTests: XCTestCase {
 
             let store = try Self.makeStore(storage: storage)
             XCTAssertEqual(store.noteToolbarLayout, [.bold, .quote])
-        }
-    }
-
-    func testExpandPreferenceRoundTripsAndLeavesOtherKeysAtTheirDefault() async throws {
-        try await MainActor.run {
-            let storage = SettingsInMemoryKeyValueStore()
-            let first = try Self.makeStore(storage: storage)
-            first.setExpandPreference("bash_call", enabled: true)
-
-            let second = try Self.makeStore(storage: storage)
-            XCTAssertTrue(second.isExpandEnabled("bash_call"))
-            XCTAssertFalse(second.isExpandEnabled("edit_call"))
         }
     }
 

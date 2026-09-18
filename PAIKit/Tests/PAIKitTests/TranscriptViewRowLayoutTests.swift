@@ -5,7 +5,7 @@ import XCTest
 final class TranscriptViewRowLayoutTests: XCTestCase {
 
     private let environment = MeasurementEnvironment(sizeCategoryToken: "")
-    private let metrics = MessageLayoutMetrics(blockSpacing: 4)
+    private let metrics = MessageLayoutMetrics(blockSpacing: 4, activityLineHeight: 17, proseLineHeight: 21)
     private let width: Double = 400
 
     /// `StubBlockMeasurer` reports `ceil(charCount / width)` lines — so a string whose length is
@@ -24,12 +24,17 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
     }
 
     /// Sized against 324 = 400 − 48 (the gutter) − 2×14, the content width every bubble asserts
-    /// on: a command's own arguments, a relayed prompt, an assistant's reply. Not Freddy's own
-    /// prompt, which this file has no test for since `UserBubbleView` shares the identical
-    /// formula.
+    /// on: a command's own arguments, a relayed prompt. Not Freddy's own prompt, which this file
+    /// has no test for since `UserBubbleView` shares the identical formula.
     private lazy var bubbleSensitiveText = text(linesAtWidth: 400 - 48 - 28)
-    /// Sized against 380 = 400 − 2×10, the content width a collapsible card asserts on.
-    private lazy var cardSensitiveText = text(linesAtWidth: 400 - 20)
+    /// Sized against 340 = 400 − 8 (leading inset) − 6 (the gap before the time column) − 38
+    /// (the time column) − 8 (trailing inset): the width Claude's own reply wraps at, which is
+    /// the whole row minus the time gutter and nothing else.
+    private lazy var proseSensitiveText = text(linesAtWidth: 400 - 60)
+    /// Sized against 310 = 340 − 2 (the rail) − 22 (the marker column) − 6 (the gap after it):
+    /// an activity row's body sits inside the grid, so it is narrower than prose by exactly the
+    /// two columns to its left.
+    private lazy var cardSensitiveText = text(linesAtWidth: 400 - 90)
 
     private func message(
         type: MessageType,
@@ -49,8 +54,8 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             notificationMarker: notificationMarker, createdAt: nil)
     }
 
-    private func expandAll(_: String) -> Bool { true }
-    private func expandNone(_: String) -> Bool { false }
+    private func revealAll(_: Int) -> Bool { true }
+    private func revealNone(_: Int) -> Bool { false }
 
     /// The independent yardstick every expected value below is built from — the same composer
     /// `TranscriptRowLayout` itself calls, invoked directly rather than through the code under
@@ -74,65 +79,172 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         let cache = BlockHeightCache()
         XCTAssertNil(
             TranscriptRowLayout.height(
-                for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer,
+                for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer,
                 cache: cache,
                 metrics: metrics))
     }
 
-    /// The reply is a bubble like Freddy's own, mirrored: the same 324 = 400 − 48 − 2×14 content
-    /// width and the same vertical padding (literals here, never `TranscriptRowMetrics`'s own
-    /// constants, so a mutation of one moves what the code measures at without moving this
-    /// expectation) — plus the row's own trailing timestamp chrome.
-    func testAnAssistantReplyIsPaddedLikeABubbleAndStillGetsTheRowTimestamp() {
-        let msg = message(type: .assistant, content: bubbleSensitiveText)
+    // MARK: - Prose
+
+    /// Claude's reply is not a bubble and not inside the activity grid: it wraps at the whole row
+    /// minus the time gutter, and carries only its own vertical padding. The literals here are
+    /// never `TranscriptRowMetrics`'s own constants, so a mutation of one moves what the code
+    /// measures at without moving this expectation.
+    func testAnAssistantReplyIsProseAtFullWidthWithItsOwnPadding() {
+        let msg = message(type: .assistant, content: proseSensitiveText)
         let measurer = StubBlockMeasurer()
         let cache = BlockHeightCache()
 
         let actual = TranscriptRowLayout.height(
-            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
+            for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache,
             metrics: metrics)
 
         let content = measuredContentHeight(
-            MarkdownParser.parse(bubbleSensitiveText), atWidth: 400 - 48 - 28, measurer: measurer, cache: cache)
-        // 10: the bubble's own vertical padding, half above and half below. 8: the inter-card
-        // spacing `TranscriptRowContent`'s `VStack` puts before every child, the timestamp line
-        // included. 16: the timestamp line.
-        let expected = content + 10 + 8 + 16
-        XCTAssertEqual(actual, expected)
+            MarkdownParser.parse(proseSensitiveText), atWidth: 400 - 60, measurer: measurer, cache: cache)
+        // 10 above and 10 below. No timestamp line: the time shares the row's own trailing column.
+        XCTAssertEqual(actual, content + 20)
     }
 
-    /// A collapsed card hands the composer zero blocks, so its content height is zero — but the
-    /// header chrome must still be reserved, and the content padding must NOT be, since there is
-    /// no content edge to pad around. Both halves of that branch are worth their own assertion.
-    func testACollapsedToolCallReservesOnlyTheHeaderHeight() {
+    /// The timestamp costs no height at all now — it rides the trailing column. A row with one and
+    /// a row without must therefore measure identically, which is the whole point of moving it.
+    func testATimestampCostsNoHeight() {
+        let withStamp = message(type: .assistant, content: proseSensitiveText)
+        let withoutStamp = message(type: .assistant, content: proseSensitiveText, timestamp: nil)
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        func height(_ msg: Message) -> Double? {
+            TranscriptRowLayout.height(
+                for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer,
+                cache: cache, metrics: metrics)
+        }
+
+        XCTAssertEqual(height(withStamp), height(withoutStamp))
+    }
+
+    // MARK: - Activity rows
+
+    /// An activity row is its padding, one label line, its body and — only when something was cut
+    /// — a trailer. Revealed, nothing is cut, so this is the width-sensitive case: the body is
+    /// measured at the grid's own narrower width, not at the row's.
+    func testARevealedToolCallIsPaddingLabelAndBodyAtTheGridWidth() {
+        let calls = [ToolCall(id: "1", name: "Bash", input: ["command": .string(cardSensitiveText)])]
+        let msg = message(type: .assistant, toolCalls: calls, timestamp: nil)
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        let actual = TranscriptRowLayout.height(
+            for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache,
+            metrics: metrics)
+
+        let text = MessageDisplay.displayText(of: MessageDisplay.spec(for: calls[0]))
+        let content = measuredContentHeight(
+            [.codeBlock(language: nil, code: text)], atWidth: 400 - 90, measurer: measurer, cache: cache)
+        // 3 above and 3 below, plus the one label line the row always reserves.
+        XCTAssertEqual(actual, 6 + 17 + content)
+    }
+
+    /// The same call unrevealed is bounded and pays for a trailer. A body far longer than the
+    /// clamp could ever draw is trimmed before it is measured, so what reaches the composer here
+    /// is the headroom rather than the whole command — and the row is truncated because of that
+    /// trim whether or not the height cap also bit, which is the point: how many characters a
+    /// line fits is a property of the font, and text must never be dropped with nothing saying so.
+    func testAnUnrevealedToolCallIsBoundedAndPaysForItsTrailer() {
+        let calls = [ToolCall(id: "1", name: "Bash", input: ["command": .string(cardSensitiveText)])]
+        let msg = message(type: .assistant, toolCalls: calls, timestamp: nil)
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        let actual = TranscriptRowLayout.height(
+            for: msg, width: width, environment: environment, isRevealed: revealNone, measurer: measurer, cache: cache,
+            metrics: metrics)
+
+        // 2 × 200 characters of headroom, measured at the grid width, then the trailer the trim
+        // itself earns.
+        let content = measuredContentHeight(
+            [.codeBlock(language: nil, code: String(cardSensitiveText.prefix(400)))], atWidth: 400 - 90,
+            measurer: measurer, cache: cache)
+        XCTAssertEqual(actual, 6 + 17 + content + 17)
+    }
+
+    /// A body that fits inside its cap is not truncated, so it reserves no trailer — the case a
+    /// formula that always added one would get wrong, and the one that is most of the transcript.
+    func testAShortBodyIsNotTruncatedAndReservesNoTrailer() {
         let calls = [ToolCall(id: "1", name: "Bash", input: ["command": .string("ls")])]
         let msg = message(type: .assistant, toolCalls: calls, timestamp: nil)
         let measurer = StubBlockMeasurer()
         let cache = BlockHeightCache()
 
         let actual = TranscriptRowLayout.height(
-            for: msg, width: width, environment: environment, isExpanded: expandNone, measurer: measurer, cache: cache,
+            for: msg, width: width, environment: environment, isRevealed: revealNone, measurer: measurer, cache: cache,
             metrics: metrics)
 
-        XCTAssertEqual(actual, 32)
+        let content = measuredContentHeight(
+            [.codeBlock(language: nil, code: "ls")], atWidth: 400 - 90, measurer: measurer, cache: cache)
+        XCTAssertEqual(actual, 6 + 17 + content)
     }
 
-    /// The companion to the collapsed case above: an *expanded* card whose body happens to be
-    /// empty (a system row with nothing to report) still has `CardChrome` padding its content —
-    /// the padding wraps whatever `content()` it was handed whenever `isExpanded` is true, even
-    /// when that content draws nothing. `card.blocks.isEmpty` is true in both the collapsed and
-    /// this expanded-but-empty case, so a formula that branched on it instead of on whether the
-    /// card is actually expanded would return 32 here too, not 44.
-    func testAnExpandedSystemCardWithAnEmptyBodyStillReservesTheContentPadding() {
+    /// A row whose body is empty still reserves its label line — a system notice with nothing to
+    /// report is one line of row, never zero.
+    func testASystemRowWithAnEmptyBodyIsStillOneLabelLine() {
         let msg = message(type: .system, timestamp: nil)
         let measurer = StubBlockMeasurer()
         let cache = BlockHeightCache()
 
         let actual = TranscriptRowLayout.height(
-            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
+            for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache,
             metrics: metrics)
 
-        XCTAssertEqual(actual, 32 + 12)
+        XCTAssertEqual(actual, 6 + 17)
+    }
+
+    /// Proves `.notifyReply` measures in the activity register rather than in a plausible-looking
+    /// but wrong one (a bubble's gutter-and-double-padding formula, say) — a mistake that would
+    /// still compile, since every arm is exhaustive either way, and would only show up as a
+    /// systematically wrong scroll position on a real device.
+    func testANotifyReplyMeasuresAsAnActivityRow() {
+        let yaml =
+            "status: ok\nmarker: pai-notify:x\ntitle: \(cardSensitiveText)\nbody: a short body\n"
+        let result = ToolResult(toolUseId: "1", toolName: "Bash", content: yaml, isError: false)
+        let msg = message(
+            type: .toolResult, toolResult: result, timestamp: nil, notificationMarker: "pai-notify:x")
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        let actual = TranscriptRowLayout.height(
+            for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache,
+            metrics: metrics)
+
+        let content = measuredContentHeight(
+            [
+                .paragraph(InlineText(runs: [InlineRun(text: cardSensitiveText)])),
+                .paragraph(InlineText(runs: [InlineRun(text: "a short body")])),
+            ], atWidth: 400 - 90, measurer: measurer, cache: cache)
+        // Never bounded, so never a trailer, however long the body is.
+        XCTAssertEqual(actual, 6 + 17 + content)
+    }
+
+    /// Two cards in one turn sit flush against each other: the gap is each row's own padding now,
+    /// not a constant between the pair, which is what lets a run of activity rows share one rail.
+    /// Both cards use their own boundary-sensitive text so a width mistake on either one's own
+    /// inset shows up here too, not only in the single-card tests above.
+    func testTwoCardsInOneTurnAreFlushWithNoSpacingBetweenThem() {
+        let msg = message(type: .assistant, content: proseSensitiveText, thinking: cardSensitiveText, timestamp: nil)
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        let actual = TranscriptRowLayout.height(
+            for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache,
+            metrics: metrics)
+
+        let thinkingContent = measuredContentHeight(
+            [.preformattedText(cardSensitiveText)], atWidth: 400 - 90, measurer: measurer, cache: cache)
+        let thinkingHeight = 6 + 17 + thinkingContent
+        let proseHeight =
+            measuredContentHeight(
+                MarkdownParser.parse(proseSensitiveText), atWidth: 400 - 60, measurer: measurer, cache: cache) + 20
+
+        XCTAssertEqual(actual, thinkingHeight + proseHeight)
     }
 
     // MARK: - User bubble attachments
@@ -148,11 +260,12 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         let cache = BlockHeightCache()
 
         let actual = TranscriptRowLayout.height(
-            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
+            for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache,
             metrics: metrics)
 
-        // Two 22pt chips, one 6pt gap between them — no text bubble, so no bubble padding either.
-        XCTAssertEqual(actual, 2 * 22 + 6)
+        // 12: the row's own padding. Two 22pt chips, one 6pt gap between them — no text bubble,
+        // so no bubble padding either.
+        XCTAssertEqual(actual, 12 + 2 * 22 + 6)
     }
 
     /// With both text and attachments present, the gap applies between the text bubble and the
@@ -166,144 +279,53 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         let cache = BlockHeightCache()
 
         let actual = TranscriptRowLayout.height(
-            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
+            for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache,
             metrics: metrics)
 
         let content = measuredContentHeight(
             [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 48 - 28,
             measurer: measurer, cache: cache)
-        // 10: the text bubble's own vertical padding. 44: two 22pt chips. 12: two 6pt gaps (bubble
-        // → first chip, first chip → second).
-        let expected = content + 10 + 44 + 12
-        XCTAssertEqual(actual, expected)
+        // 12: the row's padding. 10: the text bubble's own vertical padding. 44: two 22pt chips.
+        // 12: two 6pt gaps (bubble → first chip, first chip → second).
+        XCTAssertEqual(actual, 12 + content + 10 + 44 + 12)
     }
 
     // MARK: - Assistant file markers
 
     /// Mirrors the user-bubble attachment tests just above: a `pai-file:` marker becomes its own
-    /// fixed-height chip below the bubble, gapped the same way — but unlike a user attachment,
-    /// the marker LINE stays in the rendered text too, since the message is never rewritten for
-    /// this (`MessageRouting.extractFilePaths`), so the measured content includes it.
-    func testAssistantFileMarkersAddChipHeightsAndGapsBelowTheUnmodifiedBubble() {
-        let messageContent = "\(bubbleSensitiveText)\n\npai-file: /tmp/one.png\npai-file: /tmp/two.png"
+    /// fixed-height chip below the reply, gapped the same way — but unlike a user attachment, the
+    /// marker LINE stays in the rendered text too, since the message is never rewritten for this
+    /// (`MessageRouting.extractFilePaths`), so the measured content includes it.
+    func testAssistantFileMarkersAddChipHeightsAndGapsBelowTheUnmodifiedProse() {
+        let messageContent = "\(proseSensitiveText)\n\npai-file: /tmp/one.png\npai-file: /tmp/two.png"
         let msg = message(type: .assistant, content: messageContent, timestamp: nil)
         let measurer = StubBlockMeasurer()
         let cache = BlockHeightCache()
 
         let actual = TranscriptRowLayout.height(
-            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
+            for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache,
             metrics: metrics)
 
         let content = measuredContentHeight(
-            MarkdownParser.parse(messageContent), atWidth: 400 - 48 - 28, measurer: measurer, cache: cache)
-        // 10: the bubble's own vertical padding. 44: two 22pt chips. 12: two 6pt gaps (bubble →
-        // first chip, first chip → second).
-        let expected = content + 10 + 44 + 12
-        XCTAssertEqual(actual, expected)
+            MarkdownParser.parse(messageContent), atWidth: 400 - 60, measurer: measurer, cache: cache)
+        // 20: the prose row's own padding. 44: two 22pt chips. 12: two 6pt gaps.
+        XCTAssertEqual(actual, 20 + content + 44 + 12)
     }
 
-    /// 20 is `CardChrome`'s own horizontal padding (`.padding(.horizontal, 10)`) doubled.
-    func testAnExpandedToolCallAddsHeaderContentAndContentPadding() {
-        let calls = [ToolCall(id: "1", name: "Bash", input: ["command": .string(cardSensitiveText)])]
-        let msg = message(type: .assistant, toolCalls: calls, timestamp: nil)
-        let measurer = StubBlockMeasurer()
-        let cache = BlockHeightCache()
+    // MARK: - Bubbles a person is behind
 
-        let actual = TranscriptRowLayout.height(
-            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
-            metrics: metrics)
-
-        let text = MessageDisplay.displayText(of: MessageDisplay.spec(for: calls[0]))
-        let content = measuredContentHeight(
-            [.codeBlock(language: nil, code: text)], atWidth: 400 - 20, measurer: measurer, cache: cache)
-        let expected = 32 + content + 12
-        XCTAssertEqual(actual, expected)
-    }
-
-    /// Proves `.notifyReply` was added to the SAME switch arm as `.toolCall`/`.toolResult`/etc,
-    /// not a plausible-looking but wrong one (a bubble's gutter-and-double-padding formula, say) —
-    /// a mistake that would still compile, since every arm in `TranscriptRowLayout` is exhaustive
-    /// either way, and would only show up as a systematically wrong scroll position on a real
-    /// device. Independently reconstructs the expected height from the header/content-padding
-    /// formula this card shares with `.toolCall`, never from `TranscriptRowMetrics`'s own
-    /// constants, for the same reason `testAnExpandedToolCallAddsHeaderContentAndContentPadding`
-    /// does.
-    func testANotifyReplyCardMeasuresLikeItsSharedHeaderChromeGroup() {
-        let yaml =
-            "status: ok\nmarker: pai-notify:x\ntitle: \(cardSensitiveText)\nbody: a short body\n"
-        let result = ToolResult(toolUseId: "1", toolName: "Bash", content: yaml, isError: false)
-        let msg = message(
-            type: .toolResult, toolResult: result, timestamp: nil, notificationMarker: "pai-notify:x")
-        let measurer = StubBlockMeasurer()
-        let cache = BlockHeightCache()
-
-        let actual = TranscriptRowLayout.height(
-            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
-            metrics: metrics)
-
-        let content = measuredContentHeight(
-            [
-                .paragraph(InlineText(runs: [InlineRun(text: cardSensitiveText)])),
-                .paragraph(InlineText(runs: [InlineRun(text: "a short body")])),
-            ], atWidth: 400 - 20, measurer: measurer, cache: cache)
-        let expected = 32 + content + 12
-        XCTAssertEqual(actual, expected)
-    }
-
-    /// Two cards in one assistant turn must be separated by the inter-card spacing exactly once —
-    /// not once per card, not omitted entirely. The classic off-by-one a hand-written loop
-    /// invites. Both cards use their own boundary-sensitive text so a width mistake on either
-    /// one's own inset would show up here too, not only in the single-card tests above.
-    func testTwoCardsInOneTurnAreSeparatedByInterCardSpacingExactlyOnce() {
-        // Each card is given text sized to its own content width — 380 for the collapsible
-        // thinking card, 324 for the reply bubble — so measuring either at the other's width
-        // lands in a different `ceil` bucket and fails here rather than passing by coincidence.
-        let replyText = text(linesAtWidth: 400 - 48 - 28, count: 99)
-        let msg = message(type: .assistant, content: replyText, thinking: cardSensitiveText, timestamp: nil)
-        let measurer = StubBlockMeasurer()
-        let cache = BlockHeightCache()
-
-        let actual = TranscriptRowLayout.height(
-            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
-            metrics: metrics)
-
-        let thinkingContent = measuredContentHeight(
-            [.codeBlock(language: nil, code: cardSensitiveText)], atWidth: 400 - 20, measurer: measurer, cache: cache)
-        let thinkingHeight = 32 + thinkingContent + 12
-        let bubbleHeight =
-            measuredContentHeight(
-                MarkdownParser.parse(replyText), atWidth: 400 - 48 - 28, measurer: measurer, cache: cache) + 10
-        let expected = thinkingHeight + 8 + bubbleHeight
-
-        XCTAssertEqual(actual, expected)
-    }
-
-    func testNoTimestampLineIsAddedWhenTheMessageHasNone() {
-        let msg = message(type: .assistant, content: bubbleSensitiveText, timestamp: nil)
-        let measurer = StubBlockMeasurer()
-        let cache = BlockHeightCache()
-
-        let actual = TranscriptRowLayout.height(
-            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
-            metrics: metrics)
-
-        let content = measuredContentHeight(
-            MarkdownParser.parse(bubbleSensitiveText), atWidth: 400 - 48 - 28, measurer: measurer, cache: cache)
-        XCTAssertEqual(actual, content + 10)
-    }
-
-    /// An argument-free command degrades to a compact line with no header chrome or padding at
-    /// all — the "action with nothing to show" case the web renders as bare text.
-    func testACommandWithNoArgumentsIsExactlyTheHeaderHeight() {
+    /// An argument-free command degrades to a compact line naming it and nothing else.
+    func testACommandWithNoArgumentsIsOneLabelLineInABubble() {
         let msg = message(type: .user, subtype: "command", content: "/context\n\n", timestamp: nil)
         let measurer = StubBlockMeasurer()
         let cache = BlockHeightCache()
 
         let actual = TranscriptRowLayout.height(
-            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
+            for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache,
             metrics: metrics)
 
-        XCTAssertEqual(actual, 32)
+        // 12: the row's padding. 16: the name line. 10: the bubble's own vertical padding.
+        XCTAssertEqual(actual, 12 + 16 + 10)
     }
 
     /// A command with arguments renders unconditionally in Freddy's own bubble, with its own name
@@ -315,16 +337,16 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         let cache = BlockHeightCache()
 
         let actual = TranscriptRowLayout.height(
-            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
+            for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache,
             metrics: metrics)
 
         let content = measuredContentHeight(
             [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 48 - 28,
             measurer: measurer,
             cache: cache)
-        // 16 + 4: the command-name line's own pinned height, plus the gap above the arguments.
-        let expected = content + 16 + 4 + 10
-        XCTAssertEqual(actual, expected)
+        // 12: the row's padding. 16 + 4: the command-name line's own pinned height, plus the gap
+        // above the arguments. 10: the bubble's own vertical padding.
+        XCTAssertEqual(actual, 12 + content + 16 + 4 + 10)
     }
 
     /// A relayed prompt draws its "sender · group" line above the body text unconditionally, even
@@ -336,15 +358,14 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         let cache = BlockHeightCache()
 
         let actual = TranscriptRowLayout.height(
-            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
+            for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache,
             metrics: metrics)
 
         let content = measuredContentHeight(
             [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 48 - 28,
             measurer: measurer,
             cache: cache)
-        let expected = content + 16 + 4 + 10 + 8 + 16
-        XCTAssertEqual(actual, expected)
+        XCTAssertEqual(actual, 12 + content + 16 + 4 + 10)
     }
 
     /// The resend affordance draws its "Resent" label line above the body text unconditionally,
@@ -356,15 +377,14 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         let cache = BlockHeightCache()
 
         let actual = TranscriptRowLayout.height(
-            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
+            for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache,
             metrics: metrics)
 
         let content = measuredContentHeight(
             [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 48 - 28,
             measurer: measurer,
             cache: cache)
-        let expected = content + 16 + 4 + 10 + 8 + 16
-        XCTAssertEqual(actual, expected)
+        XCTAssertEqual(actual, 12 + content + 16 + 4 + 10)
     }
 
     /// An attachment-only resend (no text at all) draws no bubble and no "Resent" label — mirrors
@@ -378,11 +398,11 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         let cache = BlockHeightCache()
 
         let actual = TranscriptRowLayout.height(
-            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
+            for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache,
             metrics: metrics)
 
         // Two 22pt chips, one 6pt gap between them — no bubble, no label, no bubble padding.
-        XCTAssertEqual(actual, 2 * 22 + 6)
+        XCTAssertEqual(actual, 12 + 2 * 22 + 6)
     }
 
     /// Attachments on a resend gap after the labelled bubble the same way an ordinary user
@@ -397,7 +417,7 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         let cache = BlockHeightCache()
 
         let actual = TranscriptRowLayout.height(
-            for: msg, width: width, environment: environment, isExpanded: expandAll, measurer: measurer, cache: cache,
+            for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache,
             metrics: metrics)
 
         let content = measuredContentHeight(
@@ -406,7 +426,6 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             cache: cache)
         // content + label chrome (16 + 4) + bubble padding (10), then two 22pt chips and two 6pt
         // gaps (bubble → first chip, first chip → second).
-        let expected = (content + 16 + 4 + 10) + 44 + 12
-        XCTAssertEqual(actual, expected)
+        XCTAssertEqual(actual, 12 + (content + 16 + 4 + 10) + 44 + 12)
     }
 }

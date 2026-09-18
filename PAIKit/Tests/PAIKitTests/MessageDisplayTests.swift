@@ -16,23 +16,23 @@ final class MessageDisplayTests: XCTestCase {
 
     // MARK: - The JSON fallback
 
-    /// Foundation escapes forward slashes and `JSON.stringify` does not. Tool inputs are mostly
-    /// file paths, so losing this turns every path in every unrecognised tool card into
-    /// `\/Users\/…` — wrong on screen, and unsearchable, while still being valid JSON.
-    func testJsonFallbackDoesNotEscapeSlashes() {
+    /// A string value is written as-is rather than JSON-encoded. Tool inputs are mostly file
+    /// paths, so encoding one turns every path in every unrecognised tool card into `\/Users\/…`
+    /// — wrong on screen, and unsearchable, while still being valid JSON.
+    func testKeyValueFallbackDoesNotEscapeSlashes() {
         let spec = MessageDisplay.spec(for: call("SomeUnknownTool", ["path": .string("/Users/frederik/x.swift")]))
 
-        guard case .json(let text) = spec else {
-            return XCTFail("expected the JSON fallback, got \(spec)")
+        guard case .keyValue(let lines) = spec else {
+            return XCTFail("expected the key/value fallback, got \(spec)")
         }
-        XCTAssertTrue(text.contains("/Users/frederik/x.swift"), "slashes were escaped: \(text)")
+        XCTAssertEqual(lines, ["path: /Users/frederik/x.swift"])
     }
 
     /// The per-tool branches are guarded on the field being present *and* a string. A tool whose
-    /// input does not match its usual shape has to fall through to JSON rather than render a
+    /// input does not match its usual shape has to fall through to the key/value shape rather than render a
     /// card with an empty body — the failure otherwise looks like a tool that did nothing.
-    func testKnownToolWithUnexpectedInputFallsBackToJson() {
-        guard case .json = MessageDisplay.spec(for: call("Bash", ["command": .number(3)])) else {
+    func testKnownToolWithUnexpectedInputFallsBackToKeyValue() {
+        guard case .keyValue = MessageDisplay.spec(for: call("Bash", ["command": .number(3)])) else {
             return XCTFail("a Bash call with a non-string command should not render as a command")
         }
         guard case .bash = MessageDisplay.spec(for: call("Bash", ["command": .string("ls")])) else {
@@ -121,16 +121,16 @@ final class MessageDisplayTests: XCTestCase {
         XCTAssertEqual(Ansi.strip("no escapes here"), "no escapes here")
     }
 
-    /// Only bash output is treated as ANSI-bearing, and only when it actually contains an escape.
-    func testAnsiIsStrippedForBashOutputOnly() {
+    /// ANSI is stripped from every tool, not only from Bash: colour in the transcript means
+    /// state, so output that paints itself competes with the one signal worth finding while
+    /// scrolling — and a preview slices this string, which cannot be done safely on text carrying
+    /// escapes, since a cut landing mid-sequence leaks the escape onto the screen.
+    func testAnsiIsStrippedWhicheverToolProducedIt() {
         let coloured = ToolResult(toolUseId: "t1", toolName: "Bash", content: "\u{1b}[32mok", isError: false)
 
         XCTAssertEqual(MessageDisplay.toolResultDisplayText(coloured, toolName: "Bash"), "ok")
-        XCTAssertEqual(
-            MessageDisplay.toolResultDisplayText(coloured, toolName: "Read"),
-            "\u{1b}[32mok",
-            "a non-bash result was ANSI-stripped"
-        )
+        XCTAssertEqual(MessageDisplay.toolResultDisplayText(coloured, toolName: "Read"), "ok")
+        XCTAssertEqual(MessageDisplay.toolResultDisplayText(coloured, toolName: nil), "ok")
     }
 
     // MARK: - JavaScript semantics that do not carry over
@@ -169,11 +169,13 @@ final class MessageDisplayTests: XCTestCase {
         XCTAssertEqual(MessageDisplay.formatToolName("mcp__nosuffix"), "mcp__nosuffix")
     }
 
-    /// A result whose call never arrived is labelled as a result; one that has its call is not.
-    func testOrphanedResultIsLabelledAsSuch() {
+    /// The label is the tool's own name whichever side it was read from — a result no longer says
+    /// "Result", because its glyph and its place under the call are what say so, and repeating the
+    /// word cost a whole line on every result in the transcript.
+    func testToolCardLabelIsTheToolName() {
         let result = ToolResult(toolUseId: "t1", toolName: "Bash", content: "x", isError: false)
 
-        XCTAssertEqual(MessageDisplay.toolCardLabel(call: nil, result: result), "Bash Result")
+        XCTAssertEqual(MessageDisplay.toolCardLabel(call: nil, result: result), "Bash")
         XCTAssertEqual(MessageDisplay.toolCardLabel(call: call("Bash", [:]), result: result), "Bash")
     }
 

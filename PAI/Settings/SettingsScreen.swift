@@ -51,16 +51,6 @@ struct SettingsScreen: View {
 
             NotificationsSection()
 
-            Section {
-                NavigationLink("Message Display") {
-                    ExpandPreferencesScreen(settings: settings)
-                }
-                .accessibilityIdentifier("open-expand-preferences")
-            } header: {
-                Text("Messages")
-            } footer: {
-                Text("Which parts of a message start expanded — thinking, tool calls, hooks.")
-            }
 
             DiagnosticsSection(settings: settings)
 

@@ -197,6 +197,17 @@
             return Double(font.lineHeight.rounded(.up))
         }
 
+        /// One line of rendered prose, for the same reason ``codeLineHeight(for:)`` exists: a
+        /// visual clamp's height is `lines × lineHeight`, and the view reaches the same height by
+        /// applying `.lineLimit(lines)` to text in this font. The two agree only because both read
+        /// this number rather than each carrying its own copy.
+        public static func proseLineHeight(for environment: MeasurementEnvironment) -> Double {
+            let category = UIContentSizeCategory(rawValue: environment.sizeCategoryToken)
+            let pointSize = PaiTypography.markdownBody.pointSize(for: category)
+            let font = resolveFont(style: PaiTypography.markdownBody, pointSize: pointSize)
+            return Double(font.lineHeight.rounded(.up))
+        }
+
         private static func tableRowHeight(for environment: MeasurementEnvironment) -> Double {
             let category = UIContentSizeCategory(rawValue: environment.sizeCategoryToken)
             let pointSize = PaiTypography.markdownBody.pointSize(for: category)

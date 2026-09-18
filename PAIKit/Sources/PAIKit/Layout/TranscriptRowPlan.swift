@@ -4,12 +4,73 @@ import Foundation
 ///
 /// A row is usually one card (a user bubble, a system line) but an assistant turn can be several —
 /// an optional thinking block, one card per tool call, then its markdown reply — all produced by a
-/// single ``Message``. ``TranscriptRowPlan/cards(for:isExpanded:)`` is the one place that decision
+/// single ``Message``. ``TranscriptRowPlan/cards(for:isRevealed:)`` is the one place that decision
 /// is made; both the row's measured height and the view that draws it consume the same plan, so
 /// the two can never disagree about how many cards a message has or what order they come in — the
 /// exact drift a hand-rolled `Card(call:, result:)` model would invite (tool calls and their
 /// results are never paired in the data; see ``Kind/toolCall(_:)``/``Kind/toolResult(_:)``).
 public struct TranscriptCardPlan: Equatable, Sendable {
+
+    /// Which of the three shapes this card draws as.
+    ///
+    /// The register, not the kind, is what decides the geometry: an activity row is a dense
+    /// rail-and-marker grid, prose is Claude's own words at full width with no container at all,
+    /// and `me` is a right-aligned bubble. Every kind maps to exactly one of them.
+    public enum Register: Equatable, Sendable {
+        /// Machinery: a tool call, its result, a thought, a system notice, an agent's report.
+        case activity
+        /// Claude's own reply. Not a bubble — a bubble around the longest text on screen is a
+        /// container that only narrows it.
+        case prose
+        /// Something a person said: Freddy's own message, a relayed prompt, a command he invoked.
+        case me
+    }
+
+    /// Colour is reserved for state, so there are only three tones and `normal` carries none.
+    public enum Tone: Equatable, Sendable {
+        case normal
+        case warn
+        case error
+    }
+
+    /// How much of this card's body is on screen.
+    ///
+    /// Two bounds, applied together: a source-line slice that decides how much text the card holds
+    /// at all, and a visual line limit that decides how tall that text is allowed to draw. The
+    /// first bounds what is laid out; the second is what stops one wrapped paragraph filling a
+    /// phone. Either can be inactive — a body with no line structure worth slicing has no
+    /// `hiddenLines`, and a body that is never clipped has no `visualLines`.
+    public struct Preview: Equatable, Sendable {
+        /// Source lines cut from the end of the body. `0` when the whole body is present.
+        public let hiddenLines: Int
+        /// Source lines in the *full* body — what `− show less (N lines)` names.
+        public let totalLines: Int
+        /// The visual line limit the drawing view applies, or `nil` when nothing is clipped.
+        public let visualLines: Int?
+        /// Whether text was removed before layout because the body was far longer than the clamp
+        /// could ever draw. Carried explicitly rather than inferred from the measured height: how
+        /// many characters a line fits is a property of the font, so a trim that happened to come
+        /// out shorter than the cap would otherwise read as a body nothing was cut from — text
+        /// gone, and no affordance to get it back.
+        public let wasTrimmed: Bool
+
+        public init(hiddenLines: Int, totalLines: Int, visualLines: Int?, wasTrimmed: Bool = false) {
+            self.hiddenLines = hiddenLines
+            self.totalLines = totalLines
+            self.visualLines = visualLines
+            self.wasTrimmed = wasTrimmed
+        }
+
+        /// A body shown whole, with no clipping.
+        public static func full(totalLines: Int) -> Preview {
+            Preview(hiddenLines: 0, totalLines: totalLines, visualLines: nil)
+        }
+
+        /// Whether either bound can still cut something. A card that is not bounded never draws a
+        /// trailer and is never tappable, however long it is.
+        public var isBounded: Bool { hiddenLines > 0 || wasTrimmed || visualLines != nil }
+    }
+
     public enum Kind: Equatable, Sendable {
         case thinking(text: String)
         /// A tool invocation, rendered inside the assistant turn that issued it.
@@ -20,7 +81,7 @@ public struct TranscriptCardPlan: Equatable, Sendable {
         /// A `notify` tool call's own reply — the bubble a notification jump (push, notification
         /// centre, kind stepping) now lands on, rendered as the notification it describes rather
         /// than the generic tool result's raw YAML. Always shown, unlike `.toolResult`: there is
-        /// nothing to collapse into a one-line summary that would not just repeat the title.
+        /// nothing to clip that would not just repeat the title.
         case notifyReply(title: String, body: String)
         case userBubble(text: String, attachmentPaths: [String])
         /// A genuine prompt relayed from another session (`subtype: "pai_message"`), drawn like
@@ -45,29 +106,31 @@ public struct TranscriptCardPlan: Equatable, Sendable {
     }
 
     public let kind: Kind
-    /// The key ``ExpandPreferences`` (and any per-row manual toggle) looks this card up under.
-    /// `nil` for a card that is never collapsible — a user bubble, or a command's own arguments,
-    /// which render unconditionally because a reader must never have to click to see their own
-    /// words.
-    public let expandKey: String?
-    /// Whether this card is currently shown expanded — `true` unconditionally for a card with no
-    /// `expandKey`, since those render unconditionally. Kept separate from `blocks.isEmpty`: a
-    /// collapsible card that is expanded but whose body happens to be empty still has this `true`,
-    /// which is what tells ``TranscriptRowLayout`` to reserve `CardChrome`'s content padding even
-    /// though there are zero blocks to measure inside it.
-    public let isExpanded: Bool
-    /// What this card measures and renders, already resolved for the current expanded state: an
-    /// empty array for a collapsed card, exactly what ``MessageContentLayoutComposer`` expects.
-    /// Plain-text bodies (a tool call's spec text, a thinking block, system content) are wrapped
-    /// as a single ``MarkdownBlock/codeBlock(language:code:)`` rather than measured by some
-    /// separate path, so every card — markdown or not — goes through the one measured layout this
-    /// package already proves.
+    public let register: Register
+    public let tone: Tone
+    /// How this card's body is bounded *right now* — already resolved for the reveal state, so a
+    /// revealed card carries ``Preview/full(totalLines:)`` rather than the bounds it would have had.
+    public let preview: Preview
+    /// Whether the reader has opened this card. Only meaningful for a card whose unrevealed
+    /// `preview` was bounded; everything else is always whole.
+    public let isRevealed: Bool
+    /// What this card measures and renders, already resolved for the current reveal state — the
+    /// sliced body when bounded, the whole body when revealed. Plain-text bodies (a tool call's
+    /// spec text, a thinking block, system content) are wrapped as a single
+    /// ``MarkdownBlock/codeBlock(language:code:)`` or ``MarkdownBlock/preformattedText(_:)``
+    /// rather than measured by some separate path, so every card — markdown or not — goes through
+    /// the one measured layout this package already proves.
     public let blocks: [MarkdownBlock]
 
-    public init(kind: Kind, expandKey: String?, isExpanded: Bool, blocks: [MarkdownBlock]) {
+    public init(
+        kind: Kind, register: Register, tone: Tone = .normal, preview: Preview, isRevealed: Bool,
+        blocks: [MarkdownBlock]
+    ) {
         self.kind = kind
-        self.expandKey = expandKey
-        self.isExpanded = isExpanded
+        self.register = register
+        self.tone = tone
+        self.preview = preview
+        self.isRevealed = isRevealed
         self.blocks = blocks
     }
 }
@@ -79,13 +142,17 @@ public enum TranscriptRowPlan {
     /// those messages out of the row list entirely, rather than giving a collection view a row
     /// with nothing in it.
     ///
-    public static func cards(for message: Message, isExpanded: (String) -> Bool) -> [TranscriptCardPlan] {
+    /// `isRevealed` is asked by **card index within this message**, not by a shared preference
+    /// key. An assistant turn's thought, its tool calls and its reply are separately openable for
+    /// the same reason they are separate rows on the web: opening one to read a result should not
+    /// unfold the thought above it. The caller binds the message id.
+    public static func cards(for message: Message, isRevealed: (Int) -> Bool) -> [TranscriptCardPlan] {
         switch MessageRouting.route(for: message) {
         case .system:
             return [
                 systemCard(
                     subtype: message.subtype, content: message.content, hookSummary: message.hookSummary,
-                    isExpanded: isExpanded)
+                    index: 0, isRevealed: isRevealed)
             ]
 
         case .toolResult:
@@ -95,55 +162,68 @@ public enum TranscriptRowPlan {
             {
                 return [notifyReplyCard(title: reply.title, body: reply.body)]
             }
-            return [toolResultCard(result, isExpanded: isExpanded)]
+            return [toolResultCard(result, index: 0, isRevealed: isRevealed)]
 
         case .hidden, .none:
             return []
 
         case .legacyCommandOutput(let content):
-            let key = MessageRouting.systemExpandKey(subtype: "command_output")
-            let expanded = isExpanded(key)
             return [
-                TranscriptCardPlan(
-                    kind: .legacyCommandOutput(content: content),
-                    expandKey: key,
-                    isExpanded: expanded,
-                    blocks: expanded ? [codeBlock(content)] : []
-                )
+                boundedActivityCard(
+                    kind: .legacyCommandOutput(content: content), text: content,
+                    budget: MessageDisplay.Preview.result, index: 0, isRevealed: isRevealed)
             ]
 
         case .user(let text, let attachmentPaths):
             return [
                 TranscriptCardPlan(
                     kind: .userBubble(text: text, attachmentPaths: attachmentPaths),
-                    expandKey: nil,
-                    isExpanded: true,
+                    register: .me,
+                    preview: .full(totalLines: lineCount(text)),
+                    isRevealed: true,
                     blocks: text.isEmpty ? [] : [paragraph(text)]
                 )
             ]
 
         case .agentMessage:
             let (label, body) = MessageDisplay.splitLabeledContent(message.content ?? "")
-            let key = MessageRouting.systemExpandKey(subtype: "agent_message")
-            let expanded = isExpanded(key)
+            let revealed = isRevealed(0)
             return [
                 TranscriptCardPlan(
                     kind: .agentMessage(sender: label, body: body),
-                    expandKey: key,
-                    isExpanded: expanded,
-                    blocks: expanded ? MarkdownParser.parse(body) : []
+                    register: .activity,
+                    preview: revealed
+                        ? .full(totalLines: lineCount(body))
+                        : TranscriptCardPlan.Preview(
+                            hiddenLines: 0, totalLines: lineCount(body),
+                            visualLines: MessageDisplay.Preview.report.visual,
+                            wasTrimmed: clampHeadroom(
+                                body, visualLines: MessageDisplay.Preview.report.visual).count < body.count),
+                    isRevealed: revealed,
+                    // A report is markdown and renders as markdown whether or not it is clipped:
+                    // the clip is a height cap on the rendered stack, not a different body. Only
+                    // the head of it reaches the parser while clipped, since parsing is the
+                    // expensive half and a report runs to tens of thousands of characters.
+                    blocks: MarkdownParser.parse(
+                        revealed ? body : clampHeadroom(body, visualLines: MessageDisplay.Preview.report.visual))
                 )
             ]
 
         case .command:
-            let (name, args) = MessageDisplay.splitLabeledContent(message.content ?? "")
+            let (name, args) = MessageDisplay.commandParts(message.content ?? "")
             let trimmedArgs = args.trimmingCharacters(in: .whitespacesAndNewlines)
             let hasArgs = !trimmedArgs.isEmpty
+            let revealed = isRevealed(0)
             return [
                 TranscriptCardPlan(
                     kind: .command(name: name, args: hasArgs ? args : nil),
-                    expandKey: nil,
-                    isExpanded: true,
+                    register: .me,
+                    preview: !hasArgs || revealed
+                        ? .full(totalLines: lineCount(args))
+                        : TranscriptCardPlan.Preview(
+                            hiddenLines: 0, totalLines: lineCount(args),
+                            visualLines: MessageDisplay.Preview.command.visual),
+                    isRevealed: revealed,
                     blocks: hasArgs ? [paragraph(args)] : []
                 )
             ]
@@ -155,8 +235,9 @@ public enum TranscriptRowPlan {
             return [
                 TranscriptCardPlan(
                     kind: .relayedBubble(text: text, sender: sender, group: group),
-                    expandKey: nil,
-                    isExpanded: true,
+                    register: .me,
+                    preview: .full(totalLines: lineCount(text)),
+                    isRevealed: true,
                     blocks: text.isEmpty ? [] : [paragraph(text)]
                 )
             ]
@@ -165,90 +246,259 @@ public enum TranscriptRowPlan {
             return [
                 TranscriptCardPlan(
                     kind: .resentUserBubble(text: text, attachmentPaths: attachmentPaths),
-                    expandKey: nil,
-                    isExpanded: true,
+                    register: .me,
+                    preview: .full(totalLines: lineCount(text)),
+                    isRevealed: true,
                     blocks: text.isEmpty ? [] : [paragraph(text)]
                 )
             ]
 
         case .systemFallback(let subtype, let content):
             return [
-                systemCard(subtype: subtype, content: content, hookSummary: message.hookSummary, isExpanded: isExpanded)
+                systemCard(
+                    subtype: subtype, content: content, hookSummary: message.hookSummary, index: 0,
+                    isRevealed: isRevealed)
             ]
 
         case .assistant:
-            return assistantCards(for: message, isExpanded: isExpanded)
+            return assistantCards(for: message, isRevealed: isRevealed)
         }
     }
 
     // MARK: - Assistant turns
 
-    private static func assistantCards(for message: Message, isExpanded: (String) -> Bool) -> [TranscriptCardPlan] {
+    private static func assistantCards(for message: Message, isRevealed: (Int) -> Bool) -> [TranscriptCardPlan] {
         var cards: [TranscriptCardPlan] = []
 
         if let thinking = message.thinking, !thinking.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let key = MessageRouting.thinkingExpandKey
-            let expanded = isExpanded(key)
+            let index = cards.count
+            let revealed = isRevealed(index)
             cards.append(
                 TranscriptCardPlan(
-                    kind: .thinking(text: thinking), expandKey: key, isExpanded: expanded,
-                    blocks: expanded ? [.preformattedText(thinking)] : []))
+                    kind: .thinking(text: thinking),
+                    register: .activity,
+                    preview: revealed
+                        ? .full(totalLines: lineCount(thinking))
+                        : TranscriptCardPlan.Preview(
+                            hiddenLines: 0, totalLines: lineCount(thinking),
+                            visualLines: MessageDisplay.Preview.thinking.visual,
+                            wasTrimmed: clampHeadroom(
+                                thinking, visualLines: MessageDisplay.Preview.thinking.visual).count
+                                < thinking.count),
+                    isRevealed: revealed,
+                    // Wraps rather than scrolling sideways: a thought is prose that happens to be
+                    // one enormous source line, so a horizontal scroller would hide all of it.
+                    blocks: [
+                        .preformattedText(
+                            revealed
+                                ? thinking
+                                : clampHeadroom(thinking, visualLines: MessageDisplay.Preview.thinking.visual))
+                    ]
+                ))
         }
 
         for call in message.toolCalls ?? [] {
-            let key = MessageRouting.toolExpandKey(name: call.name, isResult: false)
-            let text = MessageDisplay.displayText(of: MessageDisplay.spec(for: call))
-            let expanded = isExpanded(key)
-            cards.append(
-                TranscriptCardPlan(
-                    kind: .toolCall(call), expandKey: key, isExpanded: expanded,
-                    blocks: expanded ? [codeBlock(text)] : []))
+            let index = cards.count
+            cards.append(toolCallCard(call, index: index, isRevealed: isRevealed))
         }
 
         if let content = message.content, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             cards.append(
                 TranscriptCardPlan(
                     kind: .assistantBubble(text: content, filePaths: MessageRouting.extractFilePaths(content)),
-                    expandKey: nil, isExpanded: true,
+                    register: .prose,
+                    preview: .full(totalLines: lineCount(content)),
+                    isRevealed: true,
                     blocks: MarkdownParser.parse(content)))
         }
 
         return cards
     }
 
+    /// A tool call's body, bounded by whichever budget its own shape earns — a diff gets more room
+    /// than a file path, and a spawn's prompt is clipped to a glance because its identity is the
+    /// part worth reading.
+    private static func toolCallCard(_ call: ToolCall, index: Int, isRevealed: (Int) -> Bool) -> TranscriptCardPlan {
+        let spec = MessageDisplay.spec(for: call)
+        let text = MessageDisplay.displayText(of: spec)
+        let revealed = isRevealed(index)
+
+        switch spec {
+        case .bash:
+            return clampedActivityCard(
+                kind: .toolCall(call), text: text, visual: MessageDisplay.Preview.command.visual,
+                revealed: revealed)
+        case .inline:
+            // Usually one line, but a file path or a query is routinely longer than a phone is
+            // wide. Two lines rather than an ellipsis: a path cut at the width tells the reader
+            // which directory and not which file, which is the half that matters.
+            return clampedActivityCard(
+                kind: .toolCall(call), text: text, visual: MessageDisplay.Preview.command.visual,
+                revealed: revealed)
+        case .edit:
+            return slicedActivityCard(
+                kind: .toolCall(call), text: text, budget: MessageDisplay.Preview.diff, revealed: revealed)
+        case .write:
+            return slicedActivityCard(
+                kind: .toolCall(call), text: text, budget: MessageDisplay.Preview.write, revealed: revealed)
+        case .agent:
+            return clampedActivityCard(
+                kind: .toolCall(call), text: text, visual: MessageDisplay.Preview.agentPrompt.visual,
+                revealed: revealed)
+        case .keyValue:
+            return slicedActivityCard(
+                kind: .toolCall(call), text: text, budget: MessageDisplay.Preview.keyValue, revealed: revealed)
+        }
+    }
+
     // MARK: - System / tool-result cards
 
     private static func systemCard(
-        subtype: String?, content: String?, hookSummary: HookSummary?, isExpanded: (String) -> Bool
+        subtype: String?, content: String?, hookSummary: HookSummary?, index: Int, isRevealed: (Int) -> Bool
     ) -> TranscriptCardPlan {
-        let key = MessageRouting.systemExpandKey(subtype: subtype)
         // The `content` field is null on a hook row — the card draws from `hookSummary` instead,
         // never falling back to an empty body it would otherwise show.
         let body = (subtype == "hook") ? hookSummary.map(hookSummaryText) ?? "" : (content ?? "")
-        let expanded = isExpanded(key)
-        return TranscriptCardPlan(
-            kind: .system(subtype: subtype, content: content, hookSummary: hookSummary),
-            expandKey: key,
-            isExpanded: expanded,
-            blocks: expanded && !body.isEmpty ? [codeBlock(body)] : []
-        )
+        let kind = TranscriptCardPlan.Kind.system(subtype: subtype, content: content, hookSummary: hookSummary)
+        let tone = systemTone(subtype: subtype, hookSummary: hookSummary)
+
+        switch subtype {
+        // An event whose whole meaning is that it happened. One line, never openable: there is
+        // nothing behind it to open.
+        case "duration", "interrupt", "compact":
+            return TranscriptCardPlan(
+                kind: kind, register: .activity, tone: tone,
+                preview: TranscriptCardPlan.Preview(hiddenLines: 0, totalLines: lineCount(body), visualLines: 1),
+                isRevealed: true,
+                blocks: body.isEmpty ? [] : [codeBlock(body)])
+
+        // A compaction summary is a report: markdown, height-capped, opened by a tap.
+        case "compact_summary":
+            let revealed = isRevealed(index)
+            return TranscriptCardPlan(
+                kind: kind, register: .activity, tone: tone,
+                preview: revealed
+                    ? .full(totalLines: lineCount(body))
+                    : TranscriptCardPlan.Preview(
+                        hiddenLines: 0, totalLines: lineCount(body),
+                        visualLines: MessageDisplay.Preview.report.visual,
+                        wasTrimmed: clampHeadroom(
+                            body, visualLines: MessageDisplay.Preview.report.visual).count < body.count),
+                isRevealed: revealed,
+                blocks: MarkdownParser.parse(
+                    revealed ? body : clampHeadroom(body, visualLines: MessageDisplay.Preview.report.visual)))
+
+        // A hook that went wrong is the one system row worth reading in full, so it earns the
+        // error budget; a quiet one is noise and gets two lines.
+        case "hook":
+            return tone == .normal
+                ? clampedActivityCard(
+                    kind: kind, text: body, visual: MessageDisplay.Preview.noise.visual,
+                    revealed: isRevealed(index), tone: tone)
+                : slicedActivityCard(
+                    kind: kind, text: body, budget: MessageDisplay.Preview.resultError,
+                    revealed: isRevealed(index), tone: tone)
+
+        default:
+            return clampedActivityCard(
+                kind: kind, text: body, visual: MessageDisplay.Preview.noise.visual, revealed: isRevealed(index),
+                tone: tone)
+        }
     }
 
-    private static func toolResultCard(_ result: ToolResult, isExpanded: (String) -> Bool) -> TranscriptCardPlan {
-        let key = MessageRouting.toolExpandKey(name: result.toolName, isResult: true)
+    /// Amber for a hook that reported errors or stopped the turn, and for an interrupt — both are
+    /// states a reader scrolling back is looking for. Nothing else in the system register carries
+    /// colour at all.
+    private static func systemTone(subtype: String?, hookSummary: HookSummary?) -> TranscriptCardPlan.Tone {
+        switch subtype {
+        case "hook":
+            guard let hookSummary else { return .normal }
+            return hookSummary.hasErrors || hookSummary.preventedContinuation ? .warn : .normal
+        case "interrupt":
+            return .warn
+        default:
+            return .normal
+        }
+    }
+
+    private static func toolResultCard(
+        _ result: ToolResult, index: Int, isRevealed: (Int) -> Bool
+    ) -> TranscriptCardPlan {
         let text = MessageDisplay.toolResultDisplayText(result, toolName: result.toolName)
-        let expanded = isExpanded(key)
-        return TranscriptCardPlan(
-            kind: .toolResult(result), expandKey: key, isExpanded: expanded,
-            blocks: expanded && !text.isEmpty ? [codeBlock(text)] : []
-        )
+        let failed = result.isError
+        return slicedActivityCard(
+            kind: .toolResult(result), text: text,
+            budget: failed ? MessageDisplay.Preview.resultError : MessageDisplay.Preview.result,
+            revealed: isRevealed(index), tone: failed ? .error : .normal)
     }
 
     private static func notifyReplyCard(title: String, body: String) -> TranscriptCardPlan {
         var blocks: [MarkdownBlock] = [paragraph(title)]
         if !body.isEmpty { blocks.append(paragraph(body)) }
         return TranscriptCardPlan(
-            kind: .notifyReply(title: title, body: body), expandKey: nil, isExpanded: true, blocks: blocks)
+            kind: .notifyReply(title: title, body: body), register: .activity,
+            preview: .full(totalLines: lineCount(title) + lineCount(body)), isRevealed: true, blocks: blocks)
+    }
+
+    // MARK: - Card builders
+
+    /// A body cut to a source-line budget *and* capped visually — the two bounds together, which
+    /// is what keeps one long line from filling a phone after the line slice already passed.
+    private static func slicedActivityCard(
+        kind: TranscriptCardPlan.Kind, text: String, budget: MessageDisplay.PreviewBudget, revealed: Bool,
+        tone: TranscriptCardPlan.Tone = .normal
+    ) -> TranscriptCardPlan {
+        let slice = MessageDisplay.previewLines(text, budget)
+        let shown = revealed ? text : slice.shown
+        return TranscriptCardPlan(
+            kind: kind, register: .activity, tone: tone,
+            preview: revealed
+                ? .full(totalLines: slice.total)
+                : TranscriptCardPlan.Preview(
+                    hiddenLines: slice.hidden, totalLines: slice.total, visualLines: budget.visual),
+            isRevealed: revealed,
+            blocks: shown.isEmpty ? [] : [codeBlock(shown)])
+    }
+
+    /// A body with no line structure worth slicing — bounded by its visual limit alone.
+    private static func clampedActivityCard(
+        kind: TranscriptCardPlan.Kind, text: String, visual: Int, revealed: Bool,
+        tone: TranscriptCardPlan.Tone = .normal
+    ) -> TranscriptCardPlan {
+        let shown = revealed ? text : clampHeadroom(text, visualLines: visual)
+        return TranscriptCardPlan(
+            kind: kind, register: .activity, tone: tone,
+            preview: revealed
+                ? .full(totalLines: lineCount(text))
+                : TranscriptCardPlan.Preview(
+                    hiddenLines: 0, totalLines: lineCount(text), visualLines: visual,
+                    wasTrimmed: shown.count < text.count),
+            isRevealed: revealed,
+            blocks: shown.isEmpty ? [] : [codeBlock(shown)])
+    }
+
+    /// Far more text than `visualLines` can ever hold, and not one character more.
+    ///
+    /// A visual clamp cuts by height, which means the whole body would otherwise be laid out in
+    /// full just to be clipped — and the bodies clamped this way are the unbounded ones: a thought
+    /// is a single source line that routinely runs past a thousand characters, and a subagent's
+    /// report can run to tens of thousands. Measuring all of it, per row, to show two lines is
+    /// work nobody sees.
+    ///
+    /// 200 characters per line is roughly four times what the narrowest real line fits, so a body
+    /// this keeps is still comfortably longer than the clamp can draw — the cut is never what
+    /// decides whether the clamp bit, only how much the measurer had to read to find out.
+    private static func clampHeadroom(_ text: String, visualLines: Int) -> String {
+        let limit = visualLines * 200
+        guard text.count > limit else { return text }
+        return String(text.prefix(limit))
+    }
+
+    private static func boundedActivityCard(
+        kind: TranscriptCardPlan.Kind, text: String, budget: MessageDisplay.PreviewBudget, index: Int,
+        isRevealed: (Int) -> Bool
+    ) -> TranscriptCardPlan {
+        slicedActivityCard(kind: kind, text: text, budget: budget, revealed: isRevealed(index))
     }
 
     private static func hookSummaryText(_ summary: HookSummary) -> String {
@@ -264,15 +514,21 @@ public enum TranscriptRowPlan {
 
     // MARK: - Block wrapping
 
-    /// A tool body and system content both render as a `<pre>` in the web — one monospaced
-    /// block, not styled markdown — so wrapping as `.codeBlock` reuses the exact measurement and
-    /// rendering path a real markdown code fence already goes through. The Thinking card is the
-    /// one exception: see `.preformattedText` for why it wraps instead of scrolling sideways.
+    /// A tool body and system content both render as one monospaced block, not styled markdown, so
+    /// wrapping as `.codeBlock` reuses the exact measurement and rendering path a real markdown
+    /// code fence already goes through. The Thinking card is the one exception: see
+    /// `.preformattedText` for why it wraps instead of scrolling sideways.
     private static func codeBlock(_ text: String) -> MarkdownBlock {
         .codeBlock(language: nil, code: text)
     }
 
     private static func paragraph(_ text: String) -> MarkdownBlock {
         .paragraph(InlineText(runs: [InlineRun(text: text)]))
+    }
+
+    /// Source lines in a body, counted the way ``MessageDisplay/previewLines(_:_:)`` counts them,
+    /// so `− show less (N lines)` names the same number the slice was taken from.
+    private static func lineCount(_ text: String) -> Int {
+        text.isEmpty ? 0 : text.split(separator: "\n", omittingEmptySubsequences: false).count
     }
 }

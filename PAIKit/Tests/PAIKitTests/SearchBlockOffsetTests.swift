@@ -12,7 +12,7 @@ import XCTest
 final class SearchBlockOffsetTests: XCTestCase {
 
     private let environment = MeasurementEnvironment(sizeCategoryToken: "")
-    private let metrics = MessageLayoutMetrics(blockSpacing: 4)
+    private let metrics = MessageLayoutMetrics(blockSpacing: 4, activityLineHeight: 17, proseLineHeight: 21)
     private let width: Double = 400
 
     private func text(linesAtWidth width: Double, count: Int = 100) -> String {
@@ -32,42 +32,42 @@ final class SearchBlockOffsetTests: XCTestCase {
             originMeta: nil, createdAt: nil)
     }
 
-    private func expandAll(_: String) -> Bool { true }
+    private func revealAll(_: Int) -> Bool { true }
 
-    /// The single-block case: an assistant bubble's block offset is always its card's own chrome —
-    /// half its vertical padding, the part that sits above the content.
+    /// The single-block case: Claude's reply is prose, so its block offset is exactly the prose
+    /// row's own top padding.
     func testBlockOffsetInsideASingleBlockCardIsExactlyItsChrome() {
         let msg = message(type: .assistant, content: "Reply.")
         let measurer = StubBlockMeasurer()
         let cache = BlockHeightCache()
 
         let offset = TranscriptRowLayout.blockOffset(
-            cardIndex: 0, blockIndex: 0, for: msg, width: width, environment: environment, isExpanded: expandAll,
+            cardIndex: 0, blockIndex: 0, for: msg, width: width, environment: environment, isRevealed: revealAll,
             measurer: measurer, cache: cache, metrics: metrics)
 
-        XCTAssertEqual(offset, 5)  // half of the bubble's 10pt vertical padding
+        XCTAssertEqual(offset, 10)  // the prose row's own top padding
     }
 
-    /// A collapsible card's block sits below its header, half the content padding further down —
-    /// the counterpart to `testAnExpandedToolCallAddsHeaderContentAndContentPadding` in
-    /// `TranscriptViewRowLayoutTests`.
-    func testBlockOffsetInsideACollapsibleCardIsBelowItsHeader() {
+    /// An activity row's body sits below its label line, not merely below its padding — a hit
+    /// inside the body is one whole line further down, and forgetting that lands every one of
+    /// them high by exactly a line.
+    func testBlockOffsetInsideAnActivityRowIsBelowItsLabelLine() {
         let calls = [ToolCall(id: "1", name: "Bash", input: ["command": .string("ls")])]
         let msg = message(type: .assistant, toolCalls: calls)
         let measurer = StubBlockMeasurer()
         let cache = BlockHeightCache()
 
         let offset = TranscriptRowLayout.blockOffset(
-            cardIndex: 0, blockIndex: 0, for: msg, width: width, environment: environment, isExpanded: expandAll,
+            cardIndex: 0, blockIndex: 0, for: msg, width: width, environment: environment, isRevealed: revealAll,
             measurer: measurer, cache: cache, metrics: metrics)
 
-        XCTAssertEqual(offset, 38)  // 32 header + 12 / 2 content padding
+        XCTAssertEqual(offset, 20)  // 3 top padding + 17 label line
     }
 
-    /// The second card in a turn must be pushed down by the first card's own full height plus one
-    /// inter-card spacing — proving the preceding-cards loop, not just one card's own chrome.
+    /// The second card in a turn must be pushed down by the first card's own full height —
+    /// proving the preceding-cards loop, not just one card's own chrome.
     func testBlockOffsetInASecondCardAccountsForTheFirstCardsWholeHeight() {
-        let cardSensitiveText = text(linesAtWidth: 400 - 20)
+        let cardSensitiveText = text(linesAtWidth: 400 - 90)
         let msg = message(type: .assistant, content: "Reply.", thinking: cardSensitiveText)
         let measurer = StubBlockMeasurer()
         let cache = BlockHeightCache()
@@ -75,17 +75,16 @@ final class SearchBlockOffsetTests: XCTestCase {
         // Card 0 is the thinking block, card 1 is the assistant bubble reply — see
         // `TranscriptRowPlan`'s ordering (thinking, then tool calls, then the reply).
         let offset = TranscriptRowLayout.blockOffset(
-            cardIndex: 1, blockIndex: 0, for: msg, width: width, environment: environment, isExpanded: expandAll,
+            cardIndex: 1, blockIndex: 0, for: msg, width: width, environment: environment, isRevealed: revealAll,
             measurer: measurer, cache: cache, metrics: metrics)
 
         let thinkingContent = MessageContentLayoutComposer.layout(
-            of: [.codeBlock(language: nil, code: cardSensitiveText)], width: 400 - 20, environment: environment,
+            of: [.preformattedText(cardSensitiveText)], width: 400 - 90, environment: environment,
             metrics: metrics, measurer: measurer, cache: cache
         ).totalHeight
-        let thinkingHeight = 32 + thinkingContent + 12
-        // + inter-card spacing, + the half of the reply bubble's vertical padding above its text
-        let expected = thinkingHeight + 8 + 5
-        XCTAssertEqual(offset, expected)
+        let thinkingHeight = 3 + 17 + thinkingContent + 3
+        // Cards are flush now, so only the prose row's own top padding follows.
+        XCTAssertEqual(offset, thinkingHeight + 10)
     }
 
     /// An agent message's body is real, possibly multi-block markdown — the one card kind where a
@@ -97,13 +96,13 @@ final class SearchBlockOffsetTests: XCTestCase {
         let cache = BlockHeightCache()
 
         let offsetOfFirst = TranscriptRowLayout.blockOffset(
-            cardIndex: 0, blockIndex: 0, for: msg, width: width, environment: environment, isExpanded: expandAll,
+            cardIndex: 0, blockIndex: 0, for: msg, width: width, environment: environment, isRevealed: revealAll,
             measurer: measurer, cache: cache, metrics: metrics)
         let offsetOfSecond = TranscriptRowLayout.blockOffset(
-            cardIndex: 0, blockIndex: 1, for: msg, width: width, environment: environment, isExpanded: expandAll,
+            cardIndex: 0, blockIndex: 1, for: msg, width: width, environment: environment, isRevealed: revealAll,
             measurer: measurer, cache: cache, metrics: metrics)
 
-        XCTAssertEqual(offsetOfFirst, 38)  // 32 header + 12 / 2, same chrome as any other collapsible card
+        XCTAssertEqual(offsetOfFirst, 20)  // 3 top padding + 17 label line, like any activity row
         XCTAssertGreaterThan(offsetOfSecond ?? 0, offsetOfFirst ?? 0)
     }
 
@@ -113,14 +112,14 @@ final class SearchBlockOffsetTests: XCTestCase {
         let cache = BlockHeightCache()
 
         let offset = TranscriptRowLayout.blockOffset(
-            cardIndex: 3, blockIndex: 0, for: msg, width: width, environment: environment, isExpanded: expandAll,
+            cardIndex: 3, blockIndex: 0, for: msg, width: width, environment: environment, isRevealed: revealAll,
             measurer: measurer, cache: cache, metrics: metrics)
 
         XCTAssertNil(offset)
     }
 
-    /// A block index past what a card currently has — the card has not actually been expanded yet
-    /// under the `isExpanded` this call was given — degrades to the top of the card's own content
+    /// A block index past what a card currently has — the card has not actually been revealed yet
+    /// under the `isRevealed` this call was given — degrades to the top of the card's own content
     /// rather than failing, since a caller is expected to expand first and this is the fallback
     /// for when it has not happened yet.
     func testBlockOffsetDegradesToTheCardsOwnContentTopWhenTheBlockIsNotThereYet() {
@@ -131,9 +130,9 @@ final class SearchBlockOffsetTests: XCTestCase {
 
         let offset = TranscriptRowLayout.blockOffset(
             cardIndex: 0, blockIndex: 0, for: msg, width: width, environment: environment,
-            isExpanded: { _ in false }, measurer: measurer, cache: cache, metrics: metrics)
+            isRevealed: { _ in false }, measurer: measurer, cache: cache, metrics: metrics)
 
-        XCTAssertEqual(offset, 38)
+        XCTAssertEqual(offset, 20)
     }
 
     /// A hit on a later line inside a code block must land strictly further down than one on an
@@ -148,7 +147,7 @@ final class SearchBlockOffsetTests: XCTestCase {
         let cache = BlockHeightCache()
         let blockTop =
             TranscriptRowLayout.blockOffset(
-                cardIndex: 0, blockIndex: 0, for: msg, width: width, environment: environment, isExpanded: expandAll,
+                cardIndex: 0, blockIndex: 0, for: msg, width: width, environment: environment, isRevealed: revealAll,
                 measurer: measurer, cache: cache, metrics: metrics) ?? 0
 
         let lineHeight = 18.0

@@ -8,18 +8,90 @@ import Foundation
 /// counts a match the screen cannot show sends the reader somewhere with nothing highlighted.
 public enum MessageDisplay {
 
+    // MARK: - Previews
+
+    /// How much of a body shows before the reader asks for more.
+    ///
+    /// Two bounds, not one, and the second is what makes a phone behave. A budget counted in
+    /// *source* lines bounds what is laid out but not the height: one source line of prose is
+    /// several visual lines at phone width. `visual` is the second bound, applied as a line limit.
+    ///
+    /// Both are countable before layout — a source slice exactly, a line limit by measuring with
+    /// that limit — which is what lets a row's height stay synchronous and exact.
+    ///
+    /// `slack` exists because a trailer costs a line to draw and a tap to resolve: a body two
+    /// lines past its budget is cheaper shown whole than truncated.
+    ///
+    /// Mirrors `PREVIEW` in `pai-cloud/web/src/utils/messageDisplay.ts`; the two must stay equal
+    /// or the same transcript reads as two different densities on the two clients.
+    public struct PreviewBudget: Hashable, Sendable {
+        /// Source lines shown before truncating; `nil` for a body with no meaningful line
+        /// structure to slice by, which is bounded by `visual` alone.
+        public let budget: Int?
+        /// Extra source lines tolerated rather than truncated. Meaningless without `budget`.
+        public let slack: Int
+        /// The visual line limit.
+        public let visual: Int
+
+        public init(budget: Int? = nil, slack: Int = 0, visual: Int) {
+            self.budget = budget
+            self.slack = slack
+            self.visual = visual
+        }
+    }
+
+    public enum Preview {
+        public static let result = PreviewBudget(budget: 8, slack: 3, visual: 10)
+        /// An error is what the reader came for, so it gets roughly double.
+        public static let resultError = PreviewBudget(budget: 16, slack: 3, visual: 20)
+        public static let diff = PreviewBudget(budget: 12, slack: 4, visual: 14)
+        public static let write = PreviewBudget(budget: 5, slack: 2, visual: 7)
+        public static let keyValue = PreviewBudget(budget: 4, slack: 2, visual: 6)
+        /// Visual-only: these have no meaningful line structure to slice by.
+        public static let command = PreviewBudget(visual: 2)
+        public static let thinking = PreviewBudget(visual: 2)
+        public static let agentPrompt = PreviewBudget(visual: 2)
+        public static let report = PreviewBudget(visual: 6)
+        public static let noise = PreviewBudget(visual: 2)
+    }
+
+    public struct LineSlice: Equatable, Sendable {
+        /// The text that reaches the screen.
+        public let shown: String
+        /// Source lines cut from the end; 0 when the whole body is shown.
+        public let hidden: Int
+        public let total: Int
+    }
+
+    /// Slice a body to its source-line budget.
+    ///
+    /// Used by the rendering *and* by the check deciding whether a search hit lies past the
+    /// preview and therefore needs its row revealed, so the two can never disagree about where a
+    /// preview ends. A budget of `nil` shows everything.
+    public static func previewLines(_ text: String, _ budget: PreviewBudget) -> LineSlice {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        let total = lines.count
+        guard let limit = budget.budget, total > limit + budget.slack else {
+            return LineSlice(shown: text, hidden: 0, total: total)
+        }
+        return LineSlice(shown: lines.prefix(limit).joined(separator: "\n"), hidden: total - limit, total: total)
+    }
+
     // MARK: - Tool calls
 
     /// The shape a tool call's input is rendered in.
     ///
-    /// Each case carries the exact strings that reach the screen, prefixes (`$ `, `- `, `+ `)
-    /// included — those are visible text, and a reader can search for them.
+    /// Each case carries the exact strings that reach the screen, prefixes (`- `, `+ `) included —
+    /// those are visible text, and a reader can search for them.
     public enum ToolCallSpec: Hashable, Sendable {
         case bash(command: String)
         case inline(text: String)
         case edit(filePath: String, oldString: String?, newString: String?)
         case write(filePath: String, content: String?)
-        case json(text: String)
+        /// A spawn — the one call whose *identity* is worth more than its arguments.
+        case agent(headline: String, description: String?, prompt: String?)
+        /// An unmapped call rendered as `key: value` lines.
+        case keyValue(lines: [String])
     }
 
     public static func spec(for call: ToolCall) -> ToolCallSpec {
@@ -54,6 +126,19 @@ public enum MessageDisplay {
                 return .write(filePath: path, content: input.string("content"))
             }
 
+        // A spawn is the one call whose *identity* is worth more than its arguments: which agent,
+        // of what kind, on which model. The prompt is enormous and the description is the one-line
+        // version of it, so both are offered and the renderer's budget decides.
+        case "agent", "task":
+            let headline = [input.string("name"), input.string("subagent_type"), input.string("model")]
+                .compactMap { $0 }
+                .joined(separator: " · ")
+            return .agent(
+                headline: headline.isEmpty ? "agent" : headline,
+                description: input.string("description"),
+                prompt: input.string("prompt")
+            )
+
         case "grep":
             var parts: [String] = []
             if let pattern = input.string("pattern") { parts.append("/\(pattern)/") }
@@ -72,23 +157,59 @@ public enum MessageDisplay {
                 return .inline(text: "\"\(query)\"")
             }
 
+        case "webfetch":
+            if let url = input.string("url") {
+                return .inline(text: url)
+            }
+
         case "skill":
             if let skill = input.string("skill") {
-                return .inline(text: "/\(skill)")
+                let args = input.string("args")
+                return .inline(text: args.map { "/\(skill) \($0)" } ?? "/\(skill)")
             }
+
+        case "taskstop":
+            return .inline(text: input.string("task_id") ?? input.string("shell_id") ?? "")
+
+        case "croncreate":
+            let parts = [input.string("cron"), input.string("prompt").map { "\"\($0)\"" }].compactMap { $0 }
+            return .inline(text: parts.joined(separator: " · "))
+
+        case "crondelete":
+            return .inline(text: input.string("id") ?? "")
+
+        // A call whose whole meaning is that it happened — an empty body reads as one line rather
+        // than as an empty box.
+        case "listagents", "cronlist":
+            return .inline(text: "")
 
         default:
             break
         }
 
-        return .json(text: prettyJSON(input))
+        return .keyValue(lines: keyValueLines(input))
+    }
+
+    /// An arbitrary input rendered as `key: value` lines rather than a pretty JSON dump — the
+    /// fallback covers every MCP tool and everything Claude Code adds next, so it is the shape most
+    /// often on screen for an unmapped call. A nested value stays JSON, compactly, because
+    /// inventing a layout for it would be guessing at a shape nobody here knows.
+    ///
+    /// Sorted by key because a Swift dictionary has no insertion order to preserve — the one place
+    /// this cannot match the web's output exactly.
+    private static func keyValueLines(_ input: [String: PaiJSONValue]) -> [String] {
+        input.keys.sorted().map { key in
+            guard let value = input[key] else { return "\(key): " }
+            if case .string(let text) = value { return "\(key): \(text)" }
+            return "\(key): \(compactJSON(value))"
+        }
     }
 
     /// Every string a ``ToolCallSpec`` puts on screen, in render order.
     public static func displayText(of spec: ToolCallSpec) -> String {
         switch spec {
         case .bash(let command):
-            return "$ \(command)"
+            return command
         case .inline(let text):
             return text
         case .edit(let filePath, let oldString, let newString):
@@ -104,27 +225,39 @@ public enum MessageDisplay {
             return ([filePath] + rendered).joined(separator: "\n")
         case .write(let filePath, let content):
             return [filePath, content].compactMap { $0 }.joined(separator: "\n")
-        case .json(let text):
-            return text
+        case .agent(let headline, let description, let prompt):
+            return [headline, description, prompt].compactMap { $0 }.filter { !$0.isEmpty }
+                .joined(separator: "\n")
+        case .keyValue(let lines):
+            return lines.joined(separator: "\n")
         }
     }
 
-    /// The header line of a tool card.
+    /// The bold word a row leads with.
+    ///
+    /// A *successful* result has none: its glyph and its place under the call are the label, the
+    /// way the terminal's own output marker works. Naming the tool again was both redundant and a
+    /// whole extra line per result — and a result is nearly always directly beneath its call
+    /// (measured over a real session: 30 of 37 adjacent, 7 two rows apart with a thought between).
+    ///
+    /// A *failed* one says so, because that is the row a reader scrolling back is looking for and
+    /// the one place naming the tool earns its space.
     public static func toolCardLabel(call: ToolCall?, result: ToolResult?) -> String {
-        let name = call?.name ?? result?.toolName ?? "Unknown"
-        let isOrphanedResult = result != nil && call == nil
-        return formatToolName(name) + (isOrphanedResult ? " Result" : "")
+        formatToolName(call?.name ?? result?.toolName ?? "Unknown")
     }
 
     /// A tool result's body as rendered.
     ///
-    /// ANSI-coloured bash output is drawn as styled text, so its escape sequences are never
-    /// characters on screen — and therefore never characters search can match.
+    /// ANSI is stripped rather than drawn as colour, from every tool and not only from Bash. Two
+    /// reasons, and the second is the one that bites: colour in the transcript means *state* — a
+    /// failed row is the only red thing on screen — so output that paints itself would compete
+    /// with the one signal worth finding while scrolling. And a preview slices this string, which
+    /// cannot be done safely on text carrying escapes: a cut landing mid-sequence leaks the
+    /// escape onto the screen as literal characters.
     public static func toolResultDisplayText(_ result: ToolResult, toolName: String? = nil) -> String {
         guard !result.content.isEmpty else { return "" }
-        let name = toolName?.lowercased()
-        let displayed = name == "read" ? stripLineNumbers(result.content) : result.content
-        return name == "bash" && Ansi.hasEscapes(displayed) ? Ansi.strip(displayed) : displayed
+        let displayed = toolName?.lowercased() == "read" ? stripLineNumbers(result.content) : result.content
+        return Ansi.hasEscapes(displayed) ? Ansi.strip(displayed) : displayed
     }
 
     public struct NotifyReply: Equatable, Sendable {
@@ -349,14 +482,16 @@ public enum MessageDisplay {
         case "skill": return "Skill"
         case "context": return "Context"
         case "command": return "Command"
-        case "command_output": return "Command Output"
+        case "command_output": return "Output"
         case "image": return "Image"
         case "compact": return "Compacted"
-        case "compact_summary": return "Compact Summary"
-        case "hook": return "Hook"
+        case "compact_summary": return "Compaction summary"
+        case "hook": return "Hooks"
         case "duration": return "Duration"
         case "interrupt": return "Interrupted"
-        case "notification": return "Notification"
+        case "notification": return "Task notification"
+        case "scheduled": return "Scheduled"
+        case "pai_message": return "Relayed message"
         default:
             // An empty string is falsy in the original and must fall through to "System" here
             // too, or an empty-content row gets a blank label instead of one.
@@ -373,6 +508,36 @@ public enum MessageDisplay {
     public static func splitLabeledContent(_ content: String) -> (label: String, body: String) {
         guard let separator = content.range(of: "\n\n") else { return (content, "") }
         return (String(content[content.startIndex..<separator.lowerBound]), String(content[separator.upperBound...]))
+    }
+
+    /// What a `subtype=command` row shows, whichever shape it was ingested in.
+    ///
+    /// Rows parsed since the fix carry the clean `"{name}\n\n{args}"` shape; older ones still
+    /// carry Claude Code's raw `<command-name>`/`<command-args>` wrapper, permanently, because
+    /// nothing re-parses an already-ingested message. The old transcript hid that difference by
+    /// collapsing the body behind a chevron — this design shows every body by default, so the
+    /// wrapper has to be understood rather than merely not-clicked.
+    ///
+    /// One function so the rendering and the search index cannot disagree about which text a
+    /// legacy row puts on screen.
+    public static func commandParts(_ content: String) -> (name: String, args: String) {
+        guard isUnparsedCommandXml(content) else {
+            let split = splitLabeledContent(content)
+            return (split.label, split.body)
+        }
+        // A wrapper this does not recognise still must not put its tags on screen; an empty name
+        // renders as the bare label, which is what the row degrades to.
+        return (
+            taggedValue("command-name", in: content) ?? "",
+            taggedValue("command-args", in: content) ?? ""
+        )
+    }
+
+    private static func taggedValue(_ tag: String, in content: String) -> String? {
+        guard let open = content.range(of: "<\(tag)>"),
+            let close = content.range(of: "</\(tag)>", range: open.upperBound..<content.endIndex)
+        else { return nil }
+        return String(content[open.upperBound..<close.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// A `subtype=command` row whose content is still the raw `<command-name>` wrapper rather
@@ -437,16 +602,14 @@ public enum MessageDisplay {
         return String(Int(value))
     }
 
-    /// Pretty-prints a tool input the way the tool card shows it.
+    /// One non-string tool-input value, on one line beside its key.
     ///
     /// `withoutEscapingSlashes` is not cosmetic: tool inputs are mostly file paths, and Foundation
-    /// escapes `/` by default, so every path would read as `\/Users\/…`. Keys are sorted because a
-    /// Swift dictionary has no insertion order to preserve — the one place this cannot match the
-    /// web's output exactly.
-    private static func prettyJSON(_ input: [String: PaiJSONValue]) -> String {
+    /// escapes `/` by default, so every path would read as `\/Users\/…`.
+    private static func compactJSON(_ value: PaiJSONValue) -> String {
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        guard let data = try? encoder.encode(input), let text = String(data: data, encoding: .utf8) else {
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(value), let text = String(data: data, encoding: .utf8) else {
             return ""
         }
         return text

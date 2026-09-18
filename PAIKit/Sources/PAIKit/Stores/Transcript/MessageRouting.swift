@@ -161,10 +161,10 @@ public enum MessageRouting {
         return seen
     }
 
-    // MARK: - Expand-preference keys
+    // MARK: - Tool families
 
-    /// The nine tool families a card's expand key and its icon both switch on — kept as one
-    /// function so the two can never independently drift onto different taxonomies.
+    /// The nine tool families a card's icon switches on — one function so two surfaces can never
+    /// independently drift onto different taxonomies.
     public static func toolFamily(_ name: String) -> String {
         let lower = name.lowercased()
         if lower == "bash" { return "bash" }
@@ -178,27 +178,4 @@ public enum MessageRouting {
         if lower.hasPrefix("mcp__") { return "mcp" }
         return "other"
     }
-
-    /// Delegates for the same reason `systemExpandKey` does: Settings builds its toggles from
-    /// that vocabulary, and a key this side can mint that that side cannot show is a card nothing
-    /// can ever open. The two agreed today by coincidence, across three separate copies of the
-    /// same tool taxonomy.
-    public static func toolExpandKey(name: String, isResult: Bool) -> String {
-        ExpandPreferences.toolExpandKey(toolName: name, isResult: isResult)
-    }
-
-    /// The key a system card reads its expanded state from.
-    ///
-    /// Delegates rather than deriving its own, and that is the whole point: Settings builds its
-    /// toggles from `ExpandPreferences`, so a key minted here that that vocabulary does not
-    /// contain is a card permanently collapsed with no toggle anywhere able to open it. Two
-    /// derivations agreeing today is not the same as being unable to disagree.
-    ///
-    /// An empty-string subtype resolves to the same fallback as an unknown one, which matches the
-    /// original's JavaScript truthiness — `subtype || 'system_other'` treats `""` as absent.
-    public static func systemExpandKey(subtype: String?) -> String {
-        ExpandPreferences.systemExpandKey(subtype: subtype)
-    }
-
-    public static let thinkingExpandKey = "thinking"
 }

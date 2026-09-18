@@ -45,12 +45,23 @@ private func bubbleFill(light: Color, dark: Color, colorScheme: ColorScheme) -> 
     colorScheme == .dark ? dark : light
 }
 
-/// One message's whole row: every card `TranscriptRowPlan` produced for it, in order, then a
-/// trailing timestamp — the exact same decomposition `TranscriptRowLayout` measured, so a row
-/// never renders taller or shorter than the height its cell was given.
+/// One message's whole row: every card `TranscriptRowPlan` produced for it, in order — the exact
+/// same decomposition `TranscriptRowLayout` measured, so a row never renders taller or shorter
+/// than the height its cell was given.
+///
+/// The cards arrive already measured rather than being re-planned here. Whether a bounded body
+/// actually overflowed is a measured fact that decides two things at once — whether the row
+/// reserved a trailer line, and whether this draws one — and a view deciding that for itself is
+/// the same conclusion computed twice, which is exactly how a drawn row comes to disagree with
+/// its own height.
+///
+/// The timestamp is not a line of its own. It rides the first card's trailing column, because a
+/// line per row costs more vertical space over a session than every tool result put together.
 struct TranscriptRowContent: View {
     @Environment(\.colorScheme) private var colorScheme
     let message: Message
+    let cards: [MeasuredCard]
+    let metrics: MessageLayoutMetrics
     /// Threaded explicitly rather than read from `AppEnvironment` — a cell's `UIHostingConfiguration`
     /// content is its own SwiftUI tree, rooted at the collection view, not a descendant of the
     /// screen's own environment, so a value nothing here builds must be handed in like any other
@@ -58,8 +69,9 @@ struct TranscriptRowContent: View {
     /// network call (`TranscriptCollectionViewController`'s own stored properties).
     let sessionID: String
     let apiClient: PaiApiClient
-    let isExpanded: (String) -> Bool
-    let onToggleExpand: (String) -> Void
+    /// Called with the index of the card the reader tapped — reveal is per segment, so opening a
+    /// tool result does not also unfold the thought above it.
+    let onToggleReveal: (Int) -> Void
     /// Every search hit that belongs to this message — already filtered by the caller, which
     /// knows the message id and this view does not need to. Empty outside a search.
     var highlights: [TranscriptSearchHit] = []
@@ -71,27 +83,22 @@ struct TranscriptRowContent: View {
     /// hit wants its row visibly marked too, not only the highlighted span inside it.
     var isRinged = false
 
-    private var cards: [TranscriptCardPlan] {
-        TranscriptRowPlan.cards(for: message, isExpanded: isExpanded)
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: TranscriptRowMetrics.interCardSpacing) {
+        // No spacing between cards: the gap is a property of each register's own padding, not of
+        // the pair, which is what lets a run of activity rows share one unbroken rail.
+        VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(cards.enumerated()), id: \.offset) { cardIndex, card in
                 TranscriptCardKindView(
                     card: card,
-                    isExpanded: card.expandKey.map(isExpanded) ?? true,
-                    onToggle: card.expandKey.map { key in { onToggleExpand(key) } },
+                    metrics: metrics,
+                    // Only the first card carries it, so one message shows one time.
+                    timestamp: cardIndex == 0 ? formattedTimestamp : nil,
+                    onToggle: card.plan.preview.isBounded || card.plan.isRevealed
+                        ? { onToggleReveal(cardIndex) } : nil,
                     sessionID: sessionID,
                     apiClient: apiClient,
                     highlightsByBlockIndex: highlightsByBlockIndex(forCardIndex: cardIndex)
                 )
-            }
-            if message.timestamp != nil {
-                Text(formattedTimestamp)
-                    .font(PaiTypography.caption.font)
-                    .foregroundStyle(PaiPalette.Semantic.textFaint)
-                    .frame(height: TranscriptRowMetrics.timestampHeight, alignment: .leading)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -125,8 +132,8 @@ struct TranscriptRowContent: View {
         return result
     }
 
-    private var formattedTimestamp: String {
-        guard let raw = message.timestamp, let date = IsoTimestamp.date(from: raw) else { return "" }
+    private var formattedTimestamp: String? {
+        guard let raw = message.timestamp, let date = IsoTimestamp.date(from: raw) else { return nil }
         return Self.timeFormatter.string(from: date)
     }
 
@@ -138,95 +145,117 @@ struct TranscriptRowContent: View {
     }()
 }
 
-/// Routes one card to its specific presentation. Every collapsible kind shares ``CardChrome``;
-/// every bubble-shaped kind (a plain message, a relayed one, a command with its arguments) draws
-/// itself with no chevron at all, matching the web.
+/// Routes one card to its specific presentation.
+///
+/// The register decides the shape, not the kind: everything that is machinery draws as an
+/// ``ActivityRowView``, Claude's own reply draws as prose with no container around it at all, and
+/// anything a person said keeps its bubble.
 struct TranscriptCardKindView: View {
-    let card: TranscriptCardPlan
-    let isExpanded: Bool
+    let card: MeasuredCard
+    let metrics: MessageLayoutMetrics
+    let timestamp: String?
     let onToggle: (() -> Void)?
     let sessionID: String
     let apiClient: PaiApiClient
     var highlightsByBlockIndex: [Int: [TranscriptHighlightSpan]] = [:]
 
     var body: some View {
-        switch card.kind {
+        switch card.plan.kind {
         case .thinking:
-            CardChrome(icon: "brain", label: "Thinking", isExpanded: isExpanded, onToggle: onToggle) {
-                ToolBodyText(blocks: card.blocks, highlightsByBlockIndex: highlightsByBlockIndex)
+            activity(icon: "brain", label: "Thinking") {
+                ToolBodyText(blocks: card.plan.blocks, highlightsByBlockIndex: highlightsByBlockIndex)
             }
 
         case .toolCall(let call):
-            CardChrome(
+            activity(
                 icon: TranscriptCardKindView.toolIcon(call.name),
-                label: MessageDisplay.toolCardLabel(call: call, result: nil),
-                isExpanded: isExpanded, onToggle: onToggle
+                label: MessageDisplay.toolCardLabel(call: call, result: nil)
             ) {
                 ToolBodyText(
-                    blocks: card.blocks, colorHint: TranscriptCardKindView.colorHint(forToolName: call.name),
+                    blocks: card.plan.blocks,
+                    colorHint: TranscriptCardKindView.colorHint(forToolName: call.name),
                     highlightsByBlockIndex: highlightsByBlockIndex)
             }
 
         case .toolResult(let result):
-            CardChrome(
+            // A result that worked carries no label: its glyph and its place under the call are
+            // the label, the way a terminal's own output marker works. A failed one says so,
+            // because that is the row a reader scrolling back is looking for.
+            activity(
                 icon: TranscriptCardKindView.toolIcon(result.toolName),
-                label: MessageDisplay.toolCardLabel(call: nil, result: result), isExpanded: isExpanded,
-                statusColor: result.isError ? PaiPalette.red500 : PaiPalette.green500, onToggle: onToggle
+                label: result.isError
+                    ? "\(MessageDisplay.toolCardLabel(call: nil, result: result)) failed" : nil
             ) {
-                // A result is plain, unlike its call — only a bash *command* line or an edit's
+                // A result is plain, unlike its call — only a bash command line or an edit's
                 // diff prefixes are recoloured; a result's own output has neither.
-                ToolBodyText(blocks: card.blocks, highlightsByBlockIndex: highlightsByBlockIndex)
+                ToolBodyText(blocks: card.plan.blocks, highlightsByBlockIndex: highlightsByBlockIndex)
             }
 
         case .notifyReply:
-            // `expandKey` is nil for this card (`TranscriptRowPlan/notifyReplyCard`), so
-            // `onToggle` is already nil here too — there is nothing to collapse into a one-line
-            // summary that would not just repeat the title.
-            CardChrome(icon: "bell", label: "Notification sent", isExpanded: isExpanded, onToggle: onToggle) {
-                MarkdownContentView(blocks: card.blocks, highlights: highlightsByBlockIndex)
+            activity(icon: "bell", label: "Notification sent") {
+                MarkdownContentView(blocks: card.plan.blocks, highlights: highlightsByBlockIndex)
             }
 
         case .userBubble(let text, let attachmentPaths):
-            UserBubbleView(
-                text: text, attachmentPaths: attachmentPaths, sessionID: sessionID, apiClient: apiClient,
-                highlights: highlightsByBlockIndex[0] ?? [])
+            me {
+                UserBubbleView(
+                    text: text, attachmentPaths: attachmentPaths, sessionID: sessionID, apiClient: apiClient,
+                    highlights: highlightsByBlockIndex[0] ?? [])
+            }
 
         case .relayedBubble(let text, let sender, let group):
-            RelayedBubbleView(text: text, sender: sender, group: group, highlights: highlightsByBlockIndex[0] ?? [])
+            me {
+                RelayedBubbleView(
+                    text: text, sender: sender, group: group, highlights: highlightsByBlockIndex[0] ?? [])
+            }
 
         case .resentUserBubble(let text, let attachmentPaths):
-            ResentBubbleView(
-                text: text, attachmentPaths: attachmentPaths, sessionID: sessionID, apiClient: apiClient,
-                highlights: highlightsByBlockIndex[0] ?? [])
+            me {
+                ResentBubbleView(
+                    text: text, attachmentPaths: attachmentPaths, sessionID: sessionID, apiClient: apiClient,
+                    highlights: highlightsByBlockIndex[0] ?? [])
+            }
 
         case .assistantBubble(_, let filePaths):
-            AssistantBubbleView(
-                blocks: card.blocks, filePaths: filePaths, sessionID: sessionID, apiClient: apiClient,
-                highlights: highlightsByBlockIndex)
+            ProseRowView(timestamp: timestamp) {
+                AssistantBubbleView(
+                    blocks: card.plan.blocks, filePaths: filePaths, sessionID: sessionID, apiClient: apiClient,
+                    highlights: highlightsByBlockIndex)
+            }
 
         case .agentMessage(let sender, _):
-            CardChrome(icon: "bubble.left.and.bubble.right", label: sender, isExpanded: isExpanded, onToggle: onToggle)
-            {
-                MarkdownContentView(blocks: card.blocks, highlights: highlightsByBlockIndex)
+            activity(icon: "bubble.left.and.bubble.right", label: sender) {
+                MarkdownContentView(blocks: card.plan.blocks, highlights: highlightsByBlockIndex)
             }
 
         case .command(let name, let args):
-            CommandCardView(name: name, args: args, highlights: highlightsByBlockIndex[0] ?? [])
+            me {
+                CommandCardView(name: name, args: args, highlights: highlightsByBlockIndex[0] ?? [])
+            }
 
         case .system(let subtype, let content, _):
-            CardChrome(
+            activity(
                 icon: TranscriptCardKindView.systemIcon(subtype),
-                label: MessageDisplay.systemLabel(subtype: subtype, content: content), isExpanded: isExpanded,
-                onToggle: onToggle
+                label: MessageDisplay.systemLabel(subtype: subtype, content: content)
             ) {
-                ToolBodyText(blocks: card.blocks, highlightsByBlockIndex: highlightsByBlockIndex)
+                ToolBodyText(blocks: card.plan.blocks, highlightsByBlockIndex: highlightsByBlockIndex)
             }
 
         case .legacyCommandOutput:
-            CardChrome(icon: "terminal", label: "Command Output", isExpanded: isExpanded, onToggle: onToggle) {
-                ToolBodyText(blocks: card.blocks, highlightsByBlockIndex: highlightsByBlockIndex)
+            activity(icon: "terminal", label: "Output") {
+                ToolBodyText(blocks: card.plan.blocks, highlightsByBlockIndex: highlightsByBlockIndex)
             }
         }
+    }
+
+    private func activity(icon: String, label: String?, @ViewBuilder content: () -> some View) -> some View {
+        ActivityRowView(
+            icon: icon, label: label, card: card, metrics: metrics, timestamp: timestamp, onToggle: onToggle,
+            content: content)
+    }
+
+    private func me(@ViewBuilder content: () -> some View) -> some View {
+        MeRowView(timestamp: timestamp, content: content)
     }
 
     /// Mirrors the web's `toolIcon` — bash/read/edit/grep/glob/agent/web/skill/mcp, default
@@ -273,73 +302,177 @@ struct TranscriptCardKindView: View {
     }
 }
 
-/// A shared icon scale for a card's own chrome glyphs — the chevron and the tool/system icon read
-/// at the same size, matching the web's uniform 16px (`w-4 h-4`) rather than the mix of an
-/// unmodified system default and a smaller caption size.
-private let cardChromeIconFont = Font.system(size: 13, weight: .medium)
+/// A shared icon scale for an activity row's marker glyph — one size for every kind, so a run of
+/// rows reads as one column rather than as a ragged edge.
+private let activityIconFont = Font.system(size: 12, weight: .medium)
 
-/// The collapsible-card chrome shared by tool calls/results, thinking, system lines, agent
-/// messages and legacy command output — chevron, icon, label, an optional status dot, and the
-/// content only while expanded.
+/// One row of machinery: a rail, a marker, a label line, a bounded body, and the time.
 ///
-/// Outlined rather than filled — a border on the page ground, matching the web's own
-/// `border border-surface-200 dark:border-surface-700` (no background class at all). Six
-/// different kinds of card filling the same solid slab is what made the transcript unreadable as
-/// "which of these is the answer"; an outline on a near-black page reads as air between rows
-/// instead of another wall, and it is what the reply in ``AssistantBubbleView`` is deliberately
-/// contrasted against. The border is an `.overlay`, not a second background, so it changes
-/// nothing about the box's own size.
+/// There is no chevron and no box. Six kinds of card filling the same outlined slab is what made
+/// the transcript unreadable as "which of these is the answer"; a rail down the left reads as one
+/// stream of activity, and the eye skips the whole stream to find the prose between runs of it.
 ///
-/// Every constant here is ``TranscriptRowMetrics``, not a local number: this view's own height
-/// and the height ``TranscriptRowLayout`` computed for the row it sits in must never drift apart,
-/// and the surest way to guarantee that is to have exactly one definition of each of them.
-struct CardChrome<Content: View>: View {
+/// Every constant here is ``TranscriptRowMetrics``, not a local number: this view's own height and
+/// the height ``TranscriptRowLayout`` computed for it must never drift apart, and the surest way
+/// to guarantee that is to have exactly one definition of each. The body is clipped to the
+/// content height the layout already measured rather than to a limit computed again here, for the
+/// same reason.
+struct ActivityRowView<Content: View>: View {
     let icon: String
-    let label: String
-    let isExpanded: Bool
-    var statusColor: Color?
+    /// Absent where the row's own position is the label — a successful tool result under its call.
+    let label: String?
+    let card: MeasuredCard
+    let metrics: MessageLayoutMetrics
+    let timestamp: String?
     let onToggle: (() -> Void)?
     @ViewBuilder let content: () -> Content
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                onToggle?()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(cardChromeIconFont)
-                        .foregroundStyle(PaiPalette.Semantic.textFaint)
-                    Image(systemName: icon)
-                        .font(cardChromeIconFont)
-                        .foregroundStyle(PaiPalette.Semantic.textMuted)
-                    Text(label)
-                        .font(PaiTypography.captionEmphasized.font)
-                        .foregroundStyle(PaiPalette.Semantic.textMuted)
-                        .lineLimit(1)
-                    Spacer()
-                    if let statusColor {
-                        Circle().fill(statusColor).frame(width: 8, height: 8)
-                    }
-                }
-                .frame(height: TranscriptRowMetrics.cardHeaderHeight)
-                // The header is a label, an icon and a `Spacer()`, and a plain button is hit-
-                // tested against what it actually draws — so the gap the spacer opens up, which
-                // is most of the header's width on a phone, was not part of the target. A card
-                // reads as one box, so the whole box has to answer a tap on it.
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(onToggle == nil)
+    private var railColor: Color {
+        switch card.plan.tone {
+        case .error: return PaiPalette.red500
+        case .warn: return PaiPalette.amber500
+        case .normal: return PaiPalette.Semantic.borderStrong
+        }
+    }
 
-            if isExpanded {
+    private var labelColor: Color {
+        switch card.plan.tone {
+        case .error: return PaiPalette.red500
+        case .warn: return PaiPalette.amber500
+        case .normal: return PaiPalette.Semantic.textMuted
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 0) {
+            Rectangle()
+                .fill(railColor)
+                .frame(width: TranscriptRowMetrics.railWidth)
+            Image(systemName: icon)
+                .font(activityIconFont)
+                .foregroundStyle(card.plan.tone == .normal ? PaiPalette.Semantic.textFaint : labelColor)
+                .frame(width: TranscriptRowMetrics.markerColumnWidth, height: metrics.activityLineHeight)
+            VStack(alignment: .leading, spacing: 0) {
+                // Pinned to exactly one line, in both directions: a label that wrapped would make
+                // the row taller than it was measured to be, and one that collapsed would make it
+                // shorter. The row reserves this line whether or not there is a word in it.
+                Text(label ?? " ")
+                    .font(PaiTypography.captionEmphasized.font)
+                    .foregroundStyle(labelColor)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(height: metrics.activityLineHeight, alignment: .leading)
                 content()
-                    .padding(.top, TranscriptRowMetrics.cardContentVerticalPadding / 2)
-                    .padding(.bottom, TranscriptRowMetrics.cardContentVerticalPadding / 2)
+                    .frame(height: card.contentHeight, alignment: .top)
+                    .clipped()
+                if card.isTruncated {
+                    TrailerView(preview: card.plan.preview, isRevealed: card.plan.isRevealed)
+                }
+            }
+            .padding(.leading, TranscriptRowMetrics.gridGap)
+            Spacer(minLength: TranscriptRowMetrics.gridGap)
+            TimeColumn(timestamp: timestamp)
+        }
+        .padding(.vertical, TranscriptRowMetrics.activityRowPadding)
+        .padding(.leading, TranscriptRowMetrics.activityHorizontalInset)
+        .padding(.trailing, TranscriptRowMetrics.activityTrailingInset)
+        .background(card.plan.tone == .error ? PaiPalette.red500.opacity(0.06) : Color.clear)
+        // The whole row answers a tap, not a chevron: on a phone there is no room for a target
+        // beside the text, and a row is one thing to the reader whatever it is made of.
+        .contentShape(Rectangle())
+        .onTapGesture { onToggle?() }
+        .allowsHitTesting(onToggle != nil)
+        .transcriptRowCopy(text: card.plan.blocks.map(\.plainText).joined(separator: "\n"))
+    }
+}
+
+/// Claude's own reply: no container at all, and the full width of the row.
+///
+/// A bubble around the longest text on screen is a box that only narrows what there is to read,
+/// and it makes the reply look like one more card in a stack of machinery rather than the answer.
+struct ProseRowView<Content: View>: View {
+    let timestamp: String?
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        HStack(alignment: .top, spacing: TranscriptRowMetrics.gridGap) {
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+            TimeColumn(timestamp: timestamp)
+        }
+        .padding(.vertical, TranscriptRowMetrics.proseRowPadding)
+        .padding(.leading, TranscriptRowMetrics.activityHorizontalInset)
+        .padding(.trailing, TranscriptRowMetrics.activityTrailingInset)
+    }
+}
+
+/// Something a person said — right-aligned, keeping its bubble, with the time in the same column
+/// every other row uses so the transcript has one time gutter rather than three.
+struct MeRowView<Content: View>: View {
+    let timestamp: String?
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        HStack(alignment: .top, spacing: TranscriptRowMetrics.gridGap) {
+            content()
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            TimeColumn(timestamp: timestamp)
+        }
+        .padding(.vertical, TranscriptRowMetrics.meRowPadding)
+        .padding(.leading, TranscriptRowMetrics.activityHorizontalInset)
+        .padding(.trailing, TranscriptRowMetrics.activityTrailingInset)
+    }
+}
+
+/// The trailing time column every register shares. Fixed width, and drawn even when empty, so the
+/// bodies of adjacent rows line up instead of shifting by whether a row happened to carry a time.
+private struct TimeColumn: View {
+    let timestamp: String?
+
+    var body: some View {
+        Text(timestamp ?? "")
+            .font(PaiTypography.caption.font)
+            .foregroundStyle(PaiPalette.Semantic.textFaint)
+            .monospacedDigit()
+            .lineLimit(1)
+            .frame(width: TranscriptRowMetrics.timeColumnWidth, alignment: .trailing)
+    }
+}
+
+/// The one line under a bounded body saying what is behind it, and the only affordance a reveal
+/// has. Its height is fixed because the row reserved exactly that much for it.
+private struct TrailerView: View {
+    let preview: TranscriptCardPlan.Preview
+    let isRevealed: Bool
+
+    private var caption: String {
+        if isRevealed { return "− show less (\(preview.totalLines) lines)" }
+        if preview.hiddenLines > 0 { return "… +\(preview.hiddenLines) lines" }
+        return "… more"
+    }
+
+    var body: some View {
+        Text(caption)
+            .font(PaiTypography.caption.font)
+            .foregroundStyle(PaiPalette.Semantic.accent)
+            .lineLimit(1)
+            .frame(height: TranscriptRowMetrics.trailerHeight, alignment: .leading)
+    }
+}
+
+extension View {
+    /// A long press copies the row's own text verbatim — the command or the output, which is what
+    /// somebody pasting it into a terminal needs, and distinct from copying a whole message as
+    /// Markdown. The native gesture rather than an icon: a button beside the text would cost the
+    /// width this design exists to reclaim.
+    func transcriptRowCopy(text: String) -> some View {
+        contextMenu {
+            Button {
+                UIPasteboard.general.string = text
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
             }
         }
-        .padding(.horizontal, TranscriptRowMetrics.cardHorizontalPadding)
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(PaiPalette.Semantic.borderStrong, lineWidth: 1))
     }
 }
 
@@ -734,10 +867,8 @@ struct CommandCardView: View {
         } else {
             // Still Freddy's own message, just with nothing to show for its arguments — the
             // trailing, primary-coloured identity every other bubble of his gets, not the
-            // left-aligned muted chrome a system row draws. Height stays `cardHeaderHeight`
-            // unchanged (`TranscriptRowLayout.height(of:)`'s own `.command` case): the padding
-            // added here is well under that budget for a single caption-sized line, so the row
-            // this card measures for is the row it draws.
+            // left-aligned muted chrome a system row draws. Pinned to the same label line the
+            // layout budgets for this case, so the row this card measures for is the row it draws.
             HStack(spacing: 6) {
                 Image(systemName: "chevron.left.forwardslash.chevron.right")
                 Text(name)
@@ -750,7 +881,9 @@ struct CommandCardView: View {
                 bubbleFill(light: PaiPalette.primary500, dark: PaiPalette.primary600, colorScheme: colorScheme),
                 in: .ownBubbleTail
             )
-            .frame(height: TranscriptRowMetrics.cardHeaderHeight, alignment: .trailing)
+            .frame(
+                height: TranscriptRowMetrics.bubbleLabelLineHeight + TranscriptRowMetrics.bubbleVerticalPadding,
+                alignment: .trailing)
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.leading, TranscriptRowMetrics.bubbleGutter)
         }

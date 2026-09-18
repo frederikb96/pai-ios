@@ -4,7 +4,7 @@ import Foundation
 ///
 /// A boundary id (`min(id)` of the session, or a `system`/`compact` row) can route
 /// `.hidden`/`.none` (`MessageRouting.route`'s own gap: a legacy caveat wrapper, or a type this
-/// client does not recognise), which drops it from `TranscriptRowPlan.cards(for:isExpanded:)` and
+/// client does not recognise), which drops it from `TranscriptRowPlan.cards(for:isRevealed:)` and
 /// therefore from the row list entirely — a target id that is genuinely loaded but still has no
 /// row to scroll to. The web never hits this: every message keeps a wrapper element in the DOM
 /// regardless of what it renders (`TranscriptRow.tsx`'s own "it never leaves the DOM"), so an id
