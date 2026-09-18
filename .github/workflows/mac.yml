@@ -204,6 +204,13 @@ jobs:
             # broken screen and costs an investigation to dismiss.
             sleep 6
             xcrun simctl io "$udid" screenshot "artifacts/screen-$name.png"
+            # Asked of every screen rather than of one guessed to be a transcript: the endpoint
+            # answers with an empty list anywhere else, and the evaluation below takes whichever
+            # report actually has rows in it. Guessing which screenshot leaves a transcript on top
+            # is how this check came to run against no rows at all and report a warning nobody
+            # would have read as "it proved nothing".
+            curl -sS --max-time 10 "http://127.0.0.1:8765/transcript/row-agreement" \
+              -o "artifacts/rowagree-$name.json" || true
             # A screen caught before its first frame is a black PNG that still compresses to tens
             # of kilobytes, so the size floor below cannot see it — and it is indistinguishable
             # from a screen that genuinely renders nothing, which would otherwise cost another
@@ -255,17 +262,24 @@ jobs:
           # it draws? The transcript places rows from analytic heights and never asks a cell its
           # size, so a register's chrome, a visual clamp or a trailer being off by a few points is
           # invisible everywhere else and shows up only as the reader being dragged around.
-          curl -sS --max-time 10 "http://127.0.0.1:8765/transcript/row-agreement" \
-            -o artifacts/row-agreement.json || true
           python3 - <<'PY'
           import json, pathlib, sys
-          path = pathlib.Path('artifacts/row-agreement.json')
-          rows = json.loads(path.read_text()) if path.exists() and path.stat().st_size else []
-          if not rows:
-              print('::warning::row agreement: no transcript rows were measured')
-              sys.exit(0)
+          reports = []
+          for path in sorted(pathlib.Path('artifacts').glob('rowagree-*.json')):
+              if not path.stat().st_size:
+                  continue
+              try:
+                  rows = json.loads(path.read_text())
+              except json.JSONDecodeError:
+                  continue
+              if rows:
+                  reports.append((path.name, rows))
+          if not reports:
+              print('::error::row agreement: no screen answered with a single transcript row, so nothing was checked')
+              sys.exit(1)
+          name, rows = max(reports, key=lambda r: len(r[1]))
           worst = max(rows, key=lambda r: abs(r['delta']))
-          print(f"row agreement: {len(rows)} rows, worst delta {worst['delta']:.2f}pt on message {worst['messageId']}")
+          print(f"row agreement: {len(rows)} rows from {name}, worst delta {worst['delta']:.2f}pt on message {worst['messageId']}")
           # A point of slack for fractional font metrics; anything past that is a real disagreement.
           if abs(worst['delta']) > 1.0:
               print(f"::error::row {worst['messageId']} measures {worst['measured']:.2f} and draws {worst['rendered']:.2f}")

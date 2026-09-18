@@ -23,10 +23,12 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         String(repeating: "x", count: Int(width) * count)
     }
 
-    /// Sized against 324 = 400 − 48 (the gutter) − 2×14, the content width every bubble asserts
-    /// on: a command's own arguments, a relayed prompt. Not Freddy's own prompt, which this file
-    /// has no test for since `UserBubbleView` shares the identical formula.
-    private lazy var bubbleSensitiveText = text(linesAtWidth: 400 - 48 - 28)
+    /// Sized against 264 = 400 − 60 − 48 − 2×14: a bubble sits inside a row that has already
+    /// spent the leading inset, the gap and the time column (60 together), and only then pays its
+    /// own gutter and horizontal padding. The content width every bubble asserts on — a command's
+    /// own arguments, a relayed prompt. Not Freddy's own prompt, which this file has no test for
+    /// since `UserBubbleView` shares the identical formula.
+    private lazy var bubbleSensitiveText = text(linesAtWidth: 400 - 136)
     /// Sized against 340 = 400 − 8 (leading inset) − 6 (the gap before the time column) − 38
     /// (the time column) − 8 (trailing inset): the width Claude's own reply wraps at, which is
     /// the whole row minus the time gutter and nothing else.
@@ -283,7 +285,7 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             metrics: metrics)
 
         let content = measuredContentHeight(
-            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 48 - 28,
+            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 136,
             measurer: measurer, cache: cache)
         // 12: the row's padding. 10: the text bubble's own vertical padding. 44: two 22pt chips.
         // 12: two 6pt gaps (bubble → first chip, first chip → second).
@@ -341,7 +343,7 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             metrics: metrics)
 
         let content = measuredContentHeight(
-            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 48 - 28,
+            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 136,
             measurer: measurer,
             cache: cache)
         // 12: the row's padding. 16 + 4: the command-name line's own pinned height, plus the gap
@@ -362,7 +364,7 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             metrics: metrics)
 
         let content = measuredContentHeight(
-            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 48 - 28,
+            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 136,
             measurer: measurer,
             cache: cache)
         XCTAssertEqual(actual, 12 + content + 16 + 4 + 10)
@@ -381,7 +383,7 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             metrics: metrics)
 
         let content = measuredContentHeight(
-            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 48 - 28,
+            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 136,
             measurer: measurer,
             cache: cache)
         XCTAssertEqual(actual, 12 + content + 16 + 4 + 10)
@@ -421,7 +423,7 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             metrics: metrics)
 
         let content = measuredContentHeight(
-            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 48 - 28,
+            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 136,
             measurer: measurer,
             cache: cache)
         // content + label chrome (16 + 4) + bubble padding (10), then two 22pt chips and two 6pt

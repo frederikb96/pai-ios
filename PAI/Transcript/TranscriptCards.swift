@@ -218,7 +218,7 @@ struct TranscriptCardKindView: View {
 
         case .assistantBubble(_, let filePaths):
             ProseRowView(timestamp: timestamp) {
-                AssistantBubbleView(
+                AssistantProseView(
                     blocks: card.plan.blocks, filePaths: filePaths, sessionID: sessionID, apiClient: apiClient,
                     highlights: highlightsByBlockIndex)
             }
@@ -371,8 +371,11 @@ struct ActivityRowView<Content: View>: View {
                     TrailerView(preview: card.plan.preview, isRevealed: card.plan.isRevealed)
                 }
             }
-            .padding(.leading, TranscriptRowMetrics.gridGap)
-            Spacer(minLength: TranscriptRowMetrics.gridGap)
+            // Claims the whole body column rather than leaving a flexible spacer to compete for
+            // it: a spacer would squeeze long text narrower than the width it was measured at,
+            // and narrower text is taller text.
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, TranscriptRowMetrics.gridGap)
             TimeColumn(timestamp: timestamp)
         }
         .padding(.vertical, TranscriptRowMetrics.activityRowPadding)
@@ -701,7 +704,7 @@ struct UserBubbleView: View {
                         in: .ownBubbleTail)
             }
             // Freddy's own file, already known to him — no confirmation before it is fetched,
-            // unlike a `pai-file:` marker (see `AssistantBubbleView`).
+            // unlike a `pai-file:` marker (see `AssistantProseView`).
             ForEach(attachmentPaths, id: \.self) { path in
                 SessionAttachmentChipView(
                     sessionID: sessionID, apiClient: apiClient, path: path, requiresConfirmation: false)
@@ -808,7 +811,7 @@ struct ResentBubbleView: View {
 ///
 /// `TranscriptRowLayout`'s own `assistantBubble` case mirrors the padding and the gutter exactly;
 /// a number that moves here and not there is a row drawn taller than the cell it was given.
-struct AssistantBubbleView: View {
+struct AssistantProseView: View {
     let blocks: [MarkdownBlock]
     /// Every `pai-file:` marker path in this reply — the message itself is never rewritten to
     /// remove the marker line, so `blocks` already renders it as ordinary text; these chips are
@@ -819,15 +822,16 @@ struct AssistantBubbleView: View {
     var highlights: [Int: [TranscriptHighlightSpan]] = [:]
 
     var body: some View {
-        // `TranscriptRowLayout`'s `.assistantBubble` case mirrors this exact shape: the bubble
-        // first, one fixed-height chip per marker after it, same spacing constant as
-        // `UserBubbleView` uses for its own attachments — a number that moves in one and not the
-        // other is a row drawn taller than the cell it was given.
+        // No bubble, no gutter and no padding of its own: `ProseRowView` owns this row's whole
+        // geometry, and `TranscriptRowLayout` measured the text at exactly the width that row
+        // leaves. Anything added here narrows what the text wraps at without narrowing what was
+        // measured, which is a row drawn taller than the cell it was given.
+        //
+        // The shape mirrors `UserBubbleView`: content first, one fixed-height chip per marker
+        // after it, the same spacing constant — a number that moves in one and not the other is
+        // the same disagreement from the other side.
         VStack(alignment: .leading, spacing: TranscriptRowMetrics.attachmentChipSpacing) {
             MarkdownContentView(blocks: blocks, highlights: highlights)
-                .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding)
-                .padding(.vertical, TranscriptRowMetrics.bubbleVerticalPadding / 2)
-                .background(PaiPalette.Semantic.raisedSurface, in: .replyBubbleTail)
             // An agent-offered file, never the reader's own — a non-image confirms before
             // anything is fetched (see `SessionAttachmentChipView`).
             ForEach(filePaths, id: \.self) { path in
@@ -836,7 +840,6 @@ struct AssistantBubbleView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.trailing, TranscriptRowMetrics.bubbleGutter)
     }
 }
 

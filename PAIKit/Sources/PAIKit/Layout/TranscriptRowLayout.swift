@@ -309,8 +309,15 @@ public enum TranscriptRowLayout {
                 cellWidth - TranscriptRowMetrics.activityHorizontalInset - TranscriptRowMetrics.gridGap
                     - TranscriptRowMetrics.timeColumnWidth - TranscriptRowMetrics.activityTrailingInset)
         case .me:
+            // The row's own chrome first — a bubble sits inside `MeRowView`, which already spent
+            // the inset, the gap and the time column — and only then the bubble's own gutter and
+            // padding. Measuring at the bubble's share of the WHOLE cell wraps the text wider than
+            // it draws, which is a row measured shorter than it is.
             return max(
-                0, cellWidth - TranscriptRowMetrics.bubbleGutter - 2 * TranscriptRowMetrics.bubbleHorizontalPadding)
+                0,
+                cellWidth - TranscriptRowMetrics.activityHorizontalInset - TranscriptRowMetrics.gridGap
+                    - TranscriptRowMetrics.timeColumnWidth - TranscriptRowMetrics.activityTrailingInset
+                    - TranscriptRowMetrics.bubbleGutter - 2 * TranscriptRowMetrics.bubbleHorizontalPadding)
         }
     }
 
