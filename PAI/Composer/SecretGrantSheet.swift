@@ -188,6 +188,9 @@ struct SecretGrantSheet: View {
     private func passphraseSection(names: [String]) -> some View {
         Section {
             SecureField("Passphrase", text: $passphrase)
+                // Marks the field as a password so the keyboard offers the Passwords key and a
+                // credential provider can fill it — the passphrase is long and generated, not typed.
+                .textContentType(.password)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .focused($passphraseFocused)
