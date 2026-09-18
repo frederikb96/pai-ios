@@ -12,7 +12,8 @@ import XCTest
 final class SearchBlockOffsetTests: XCTestCase {
 
     private let environment = MeasurementEnvironment(sizeCategoryToken: "")
-    private let metrics = MessageLayoutMetrics(blockSpacing: 4, activityLineHeight: 17, proseLineHeight: 21, trailerLineHeight: 15)
+    private let metrics = MessageLayoutMetrics(
+        blockSpacing: 4, activityLineHeight: 17, proseLineHeight: 21, trailerLineHeight: 15)
     private let width: Double = 400
 
     private func text(linesAtWidth width: Double, count: Int = 100) -> String {

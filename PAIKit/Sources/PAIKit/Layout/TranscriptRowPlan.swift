@@ -198,7 +198,8 @@ public enum TranscriptRowPlan {
                             hiddenLines: 0, totalLines: lineCount(body),
                             visualLines: MessageDisplay.Preview.report.visual,
                             wasTrimmed: clampHeadroom(
-                                body, visualLines: MessageDisplay.Preview.report.visual).count < body.count),
+                                body, visualLines: MessageDisplay.Preview.report.visual
+                            ).count < body.count),
                     isRevealed: revealed,
                     // A report is markdown and renders as markdown whether or not it is clipped:
                     // the clip is a height cap on the rendered stack, not a different body. Only
@@ -283,7 +284,8 @@ public enum TranscriptRowPlan {
                             hiddenLines: 0, totalLines: lineCount(thinking),
                             visualLines: MessageDisplay.Preview.thinking.visual,
                             wasTrimmed: clampHeadroom(
-                                thinking, visualLines: MessageDisplay.Preview.thinking.visual).count
+                                thinking, visualLines: MessageDisplay.Preview.thinking.visual
+                            ).count
                                 < thinking.count),
                     isRevealed: revealed,
                     // Wraps rather than scrolling sideways: a thought is prose that happens to be
@@ -390,7 +392,8 @@ public enum TranscriptRowPlan {
                         hiddenLines: 0, totalLines: lineCount(body),
                         visualLines: MessageDisplay.Preview.report.visual,
                         wasTrimmed: clampHeadroom(
-                            body, visualLines: MessageDisplay.Preview.report.visual).count < body.count),
+                            body, visualLines: MessageDisplay.Preview.report.visual
+                        ).count < body.count),
                 isRevealed: revealed,
                 blocks: MarkdownParser.parse(
                     revealed ? body : clampHeadroom(body, visualLines: MessageDisplay.Preview.report.visual)))

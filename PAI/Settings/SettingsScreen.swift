@@ -51,7 +51,6 @@ struct SettingsScreen: View {
 
             NotificationsSection()
 
-
             DiagnosticsSection(settings: settings)
 
             if !hidesSignOut {

@@ -895,7 +895,8 @@ struct CommandCardView: View {
             )
             .frame(
                 height: TranscriptRowMetrics.bubbleLabelLineHeight + TranscriptRowMetrics.bubbleVerticalPadding,
-                alignment: .trailing)
+                alignment: .trailing
+            )
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.leading, TranscriptRowMetrics.bubbleGutter)
         }

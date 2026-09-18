@@ -1671,7 +1671,8 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                 )
                 let hosting = UIHostingController(rootView: content.frame(width: width))
                 let rendered = hosting.sizeThatFits(
-                    in: CGSize(width: width, height: .greatestFiniteMagnitude)).height
+                    in: CGSize(width: width, height: .greatestFiniteMagnitude)
+                ).height
 
                 return RowAgreement(
                     messageId: row.id, measured: measured, rendered: Double(rendered),
