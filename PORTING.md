@@ -315,3 +315,47 @@ produced no `last_error` for anyone. That is fixed pod-side (`outgoing_messages.
 reason now arrives on this event and the phone is the only client dropping it. The case that
 prompted it: a fast session that could not launch, showing as an ordinary idle session for minutes
 with nothing anywhere saying why.
+
+## A search hit inside an expanded Thinking card does not scroll to the hit
+
+Needs a device or a Mac run to fix and to verify, which is why it is here.
+
+Thinking cards wrap now instead of scrolling sideways, so their block is
+`.preformattedText` rather than `.codeBlock`. `TranscriptCollectionView`'s
+`codeBlockText` only computes a within-block line offset for a `.codeBlock`, on the
+reasoning that every other wrapping block is short enough that the card's own top is
+close enough to the hit. A Thinking card breaks that assumption: it wraps, and it
+routinely runs thousands of characters, so "next hit" scrolls to the top of the card
+and the highlighted text can be several screens further down.
+
+The fix is a wrapped-line offset for `.preformattedText` — asking TextKit for the line
+fragment containing the remapped range at the laid-out width. The measurer already
+builds the identical attributed string, so the geometry is available; it is the
+vertical result that cannot be checked from Linux.
+
+## The Thinking card's measured height and its drawn height are not compared anywhere
+
+`TextKitBlockMeasurer.swift` is excluded from the package target on Linux, so the
+`.preformattedText` measurer case is compiled only by a macOS build — neither
+`swift test` nor the free CI checks ever see it. The renderer and the measurer both
+call `LongTokenSoftBreaker.apply`, which is the right design, but nothing compares
+what they produce.
+
+The risk is specific: the measurer is TextKit 1 (`NSLayoutManager.usedRect`), the
+renderer is SwiftUI `Text(AttributedString)` on CoreText, and a string dense with
+U+200B break opportunities is exactly where two line breakers are most likely to
+differ by a fragment. The block is `.fixedSize(horizontal: false, vertical: true)`
+inside a precomputed-height cell, so a one-line disagreement clips the last line
+rather than shortening it.
+
+One fixture answers it: a Thinking card containing a 200-character bare URL, expanded,
+screenshotted on the `Mac` workflow, with the last line visible.
+
+## Route removal during a sheet dismissal is unverified
+
+`removeRoute` deletes `.createSession` from the middle of a live `NavigationStack`
+path while `CreateSessionView`'s sheet is animating out. The destination is pinned
+with `.id`, and `.createSession` provably cannot appear twice, so the reasoning holds
+— but whether SwiftUI tolerates the mid-animation mutation needs one run through the
+Siri/home-screen-shortcut path: create a session, send, and watch for a black flash or
+an interrupted dismissal.
