@@ -1625,6 +1625,58 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                 currentMessageId: searchState.currentMessageId, highlightedMessageId: highlightedMessageId,
                 deepLinkLandedMessageId: lastDeepLinkLandingId, isFollowingLiveEdge: edgeFollow.isPinned)
         }
+
+        /// One row's laid-out height against the height the view actually draws to.
+        ///
+        /// The transcript places every row from an analytic height and never asks a cell its
+        /// size, so a disagreement is invisible to every other check here and shows up only as
+        /// the reader being dragged around — the failure the `scrolling` skill's central rule
+        /// exists to rule out. `/markdown/measure` proves this for a markdown block; this proves
+        /// it for a whole row, which is where the register's own chrome, the visual clamp and the
+        /// trailer live.
+        struct RowAgreement: Encodable {
+            let messageId: Int
+            let measured: Double
+            let rendered: Double
+            /// Zero is the only value that means the row is neither too short (content clips)
+            /// nor wastefully tall.
+            let delta: Double
+        }
+
+        /// Every loaded row, measured both ways. Reads the controller's own width, environment,
+        /// cache and reveal state rather than values invented for this route — a report built
+        /// from anything else could read healthy while the screen is wrong.
+        func rowAgreementReport(limit: Int = 60) -> [RowAgreement] {
+            let width = measurementWidth()
+            guard width > 0 else { return [] }
+            let environment = currentEnvironment()
+            let metrics = Self.layoutMetrics(for: environment)
+
+            return rows.prefix(limit).compactMap { row in
+                guard
+                    let measured = TranscriptRowLayout.height(
+                        for: row.message, width: width, environment: environment,
+                        isRevealed: revealResolver(forMessageId: row.id), measurer: measurer, cache: cache,
+                        metrics: metrics)
+                else { return nil }
+
+                let content = TranscriptRowContent(
+                    message: row.message,
+                    cards: measuredCards(for: row.message),
+                    metrics: metrics,
+                    sessionID: sessionID,
+                    apiClient: apiClient,
+                    onToggleReveal: { _ in }
+                )
+                let hosting = UIHostingController(rootView: content.frame(width: width))
+                let rendered = hosting.sizeThatFits(
+                    in: CGSize(width: width, height: .greatestFiniteMagnitude)).height
+
+                return RowAgreement(
+                    messageId: row.id, measured: measured, rendered: Double(rendered),
+                    delta: measured - Double(rendered))
+            }
+        }
     #endif
 
     // MARK: - UIScrollViewDelegate (via UICollectionViewDelegate)

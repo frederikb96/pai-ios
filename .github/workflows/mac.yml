@@ -251,6 +251,27 @@ jobs:
               -o "artifacts/measure-$m.json" || true
           done
 
+          # The same question one level out: does a whole ROW's laid-out height agree with what
+          # it draws? The transcript places rows from analytic heights and never asks a cell its
+          # size, so a register's chrome, a visual clamp or a trailer being off by a few points is
+          # invisible everywhere else and shows up only as the reader being dragged around.
+          curl -sS --max-time 10 "http://127.0.0.1:8765/transcript/row-agreement" \
+            -o artifacts/row-agreement.json || true
+          python3 - <<'PY'
+          import json, pathlib, sys
+          path = pathlib.Path('artifacts/row-agreement.json')
+          rows = json.loads(path.read_text()) if path.exists() and path.stat().st_size else []
+          if not rows:
+              print('::warning::row agreement: no transcript rows were measured')
+              sys.exit(0)
+          worst = max(rows, key=lambda r: abs(r['delta']))
+          print(f"row agreement: {len(rows)} rows, worst delta {worst['delta']:.2f}pt on message {worst['messageId']}")
+          # A point of slack for fractional font metrics; anything past that is a real disagreement.
+          if abs(worst['delta']) > 1.0:
+              print(f"::error::row {worst['messageId']} measures {worst['measured']:.2f} and draws {worst['rendered']:.2f}")
+              sys.exit(1)
+          PY
+
           # Measured on this device rather than reasoned about: how much a debounced repaint
           # costs with the note-editor gutter and hanging indent on, against the same note with
           # them off. A large note — dozens of list items long enough to wrap, the shape that

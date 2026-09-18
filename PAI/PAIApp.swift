@@ -122,6 +122,21 @@ struct PAIApp: App {
                 }
             }
 
+            // Does a whole ROW's laid-out height agree with what it draws? `/markdown/measure`
+            // answers that for one markdown block; this answers it for the row around it, where
+            // the register's chrome, the visual clamp and the trailer live. Empty when no
+            // transcript screen is on top, which reads as nothing to report rather than an error.
+            router.register("GET", "/transcript/row-agreement") { _ in
+                DispatchQueue.main.sync {
+                    MainActor.assumeIsolated {
+                        guard let controller = TranscriptCollectionViewController.current else {
+                            return .encoding([TranscriptCollectionViewController.RowAgreement]())
+                        }
+                        return .encoding(controller.rowAgreementReport())
+                    }
+                }
+            }
+
             // Where a jump actually landed — the CI counterpart to a screenshot for the
             // search-virtualization landing path, since a screenshot shows the RESULT of a
             // landing but not the row id it computed. `nil` for everything when no transcript
@@ -243,7 +258,10 @@ struct PAIApp: App {
             let blocks = MarkdownParser.parse(source)
             let environment = MeasurementEnvironment(
                 sizeCategoryToken: UITraitCollection.current.preferredContentSizeCategory.rawValue)
-            let metrics = MessageLayoutMetrics(blockSpacing: TranscriptContentMetrics.blockSpacing)
+            let metrics = MessageLayoutMetrics(
+                blockSpacing: TranscriptContentMetrics.blockSpacing,
+                activityLineHeight: TextKitBlockMeasurer.codeLineHeight(for: environment),
+                proseLineHeight: TextKitBlockMeasurer.proseLineHeight(for: environment))
 
             let measuredHeight = MessageContentLayoutComposer.layout(
                 of: blocks, width: width, environment: environment, metrics: metrics,
