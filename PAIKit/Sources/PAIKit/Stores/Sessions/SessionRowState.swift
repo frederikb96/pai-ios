@@ -28,12 +28,14 @@ extension SessionDotState {
 public enum SessionListDomain {
     /// A straight mapping from `display_state` — the one field both clients paint a session's dot
     /// from (see `Session.displayState`'s doc comment). Nothing here re-derives anything from
-    /// `state`, `discovered` or `kind`: that folding already happened once, on the backend. A
-    /// backend that predates the field falls back to the legacy `status` badge rather than
-    /// inventing a colour, matching the web's own `sessionDotColor`.
+    /// `state`, `discovered` or `kind`: that folding already happened once, on the backend.
+    ///
+    /// A payload without the field reads as `closed`, which is what `Session.displayState`
+    /// declares and what the web does. Falling back to the legacy `status` badge instead painted
+    /// a closed session GREEN whenever its `status` was `completed` — a dot contradicting its own
+    /// "Not driven by PAI" label, which is worse than a grey one.
     public static func dotState(for session: Session) -> SessionDotState {
-        if let displayState = session.displayState { return dotState(for: displayState) }
-        return dotState(for: session.status)
+        dotState(for: session.displayState ?? .closed)
     }
 
     public static func dotState(for state: DisplayState) -> SessionDotState {
@@ -47,17 +49,6 @@ public enum SessionListDomain {
         // A value this build predates falls back to the same bucket a closed session renders,
         // matching the web's own `default:` branch in `displayDotColor`.
         case .unrecognized: return .closed
-        }
-    }
-
-    private static func dotState(for status: SessionStatus) -> SessionDotState {
-        switch status {
-        case .pending: return .legacyPending
-        case .active: return .legacyActive
-        case .completed: return .legacyCompleted
-        case .error: return .legacyError
-        case .interrupted: return .legacyInterrupted
-        case .deleted, .unrecognized: return .closed
         }
     }
 

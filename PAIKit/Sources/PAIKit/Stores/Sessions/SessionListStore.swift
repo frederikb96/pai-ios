@@ -480,8 +480,13 @@ public final class SessionListStore {
                     if let session = self.session(withId: id) {
                         self.replaceSession(
                             session.withLiveStatus(
+                                // `displayState` moves with `state` or the row keeps its spinner
+                                // until the next poll — up to `pollIntervalNanos` of a session
+                                // the reader just closed still showing "Working…". Optimistic
+                                // but not a guess: the backend's own derivation returns `closed`
+                                // for a closed session, unconditionally.
                                 state: .closed, blocker: nil, turnState: session.turnState,
-                                displayState: session.displayState, activityCounts: session.activityCounts,
+                                displayState: .closed, activityCounts: session.activityCounts,
                                 secretGrantable: session.secretGrantable, secretPrompt: session.secretPrompt
                             )
                         )

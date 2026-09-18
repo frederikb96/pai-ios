@@ -92,4 +92,21 @@ final class LongTokenSoftBreakerTests: XCTestCase {
         let substring = (transformed as NSString).substring(with: remapped)
         XCTAssertEqual(substring, targetSubstring)
     }
+
+    /// An insertion landing exactly on a hit's first character.
+    ///
+    /// The `<=` in `remap`'s `before` filter is what decides this, and the whole suite stayed
+    /// green with it weakened to `<` — every other case puts insertions strictly inside or
+    /// strictly before a range, so none of them can tell the two apart. It is not a hypothetical
+    /// input either: a 24-character boundary falling on the start of a match inside an unbroken
+    /// run is a hit in the middle of exactly the long URL this transform exists for.
+    func testAHitStartingExactlyOnAnInsertionBoundaryStillLandsOnItsOwnText() async {
+        let original = String(repeating: "x", count: 24) + "NEEDLE"
+        let result = LongTokenSoftBreaker.apply(to: original)
+        let needle = NSRange(location: 24, length: 6)
+        let moved = LongTokenSoftBreaker.remap(needle, insertionOffsets: result.insertionOffsets)
+
+        let transformed = result.text as NSString
+        XCTAssertEqual(transformed.substring(with: moved), "NEEDLE")
+    }
 }

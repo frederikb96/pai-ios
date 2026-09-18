@@ -7,7 +7,8 @@ final class ArcSubagentLookupTests: XCTestCase {
 
     private func session(id: String, claudeSessionId: String?, subagentName: String? = nil) -> Session {
         Session(
-            id: id, sessionType: "home", status: .active, state: nil, blocker: nil, title: nil,
+            id: id, sessionType: "home", status: .active, state: nil, blocker: nil,
+            displayState: nil, title: nil,
             titleLocked: nil, initialMessage: nil, sessionTokens: 0, claudeSessionId: claudeSessionId,
             idleTimeoutMinutes: nil, effectiveIdleTimeoutMinutes: nil, cseId: nil, createdAt: nil, updatedAt: nil,
             lastActivityAt: nil, workingDir: nil, agent: nil, kind: nil, parentSessionId: nil,

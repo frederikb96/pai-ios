@@ -426,7 +426,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         state: SessionState?,
         blocker: Blocker?,
         turnState: TurnState? = nil,
-        displayState: DisplayState? = nil,
+        displayState: DisplayState?,
         title: String?,
         titleLocked: Bool?,
         initialMessage: String?,

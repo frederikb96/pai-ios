@@ -75,12 +75,22 @@ final class SessionStoreRowStateTests: XCTestCase {
         XCTAssertEqual(SessionListDomain.dotState(for: closed), .closed)
     }
 
-    func testDotStateFallsBackToTheLegacyStatusBadgeWhenDisplayStateIsAbsent() {
+    /// An absent `displayState` reads as closed, never as the legacy `status` badge.
+    ///
+    /// The badge fallback painted a closed session GREEN whenever its status happened to be
+    /// `completed` — a dot contradicting its own "Not driven by PAI" label, and visible in the
+    /// shipped fixtures. `Session.displayState`'s own doc comment and the web both say closed.
+    func testDotStateReadsAnAbsentDisplayStateAsClosed() {
         let withDisplayState = SessionFixture.make(status: .error, displayState: .done)
         XCTAssertEqual(SessionListDomain.dotState(for: withDisplayState), .done)
 
-        let withoutDisplayState = SessionFixture.make(status: .error, displayState: nil)
-        XCTAssertEqual(SessionListDomain.dotState(for: withoutDisplayState), .legacyError)
+        for status in [SessionStatus.completed, .error, .active, .pending, .interrupted] {
+            let withoutDisplayState = SessionFixture.make(status: status, displayState: nil)
+            XCTAssertEqual(
+                SessionListDomain.dotState(for: withoutDisplayState), .closed,
+                "status \(status) must not colour a session whose display state is unknown"
+            )
+        }
     }
 
     /// A value this build predates falls back to the same bucket a closed session renders,
