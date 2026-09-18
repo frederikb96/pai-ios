@@ -45,6 +45,11 @@ public enum SpeechText {
         case .paragraph(let text), .heading(_, let text):
             return sentence(stripEmoji(text.plainText))
 
+        case .preformattedText(let text):
+            // Unlike `.codeBlock`, this is Claude's own reasoning, not code — reading the words
+            // aloud is the honest answer, the same treatment a paragraph gets.
+            return sentence(stripEmoji(text))
+
         case .codeBlock(let language, let code):
             let lineCount = code.split(separator: "\n", omittingEmptySubsequences: false).count
             let languagePart = language.map { ", \($0)" } ?? ""

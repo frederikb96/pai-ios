@@ -154,6 +154,15 @@ struct NotePreviewBlockView: View {
             styledText(text, style: headingStyle(level), baseColor: PaiPalette.Notes.heading)
                 .textSelection(.enabled)
 
+        case .preformattedText(let text):
+            // Never produced by `MarkdownParser` — only the transcript's own Thinking card
+            // constructs this — so a note never actually renders it. Plain wrapped text is the
+            // safe fallback if that ever changes.
+            Text(text)
+                .font(PaiTypography.markdownCodeBlock.font)
+                .foregroundStyle(PaiPalette.Notes.text)
+                .textSelection(.enabled)
+
         case .codeBlock(_, let code):
             // Scrolls sideways rather than wrapping — the same rule the transcript and the editor
             // both hold to, so a long line stays readable code instead of reflowing into

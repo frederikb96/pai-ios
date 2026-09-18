@@ -808,6 +808,26 @@ struct MarkdownContentView: View {
                 .foregroundStyle(PaiPalette.Semantic.textPrimary)
             }
 
+        case .preformattedText(let text):
+            // The transcript's own Thinking card — Claude's raw reasoning, not code, so it wraps
+            // like ordinary prose instead of scrolling sideways the way `.codeBlock` above does:
+            // matches the web's `whitespace-pre-wrap break-all` `<pre>`. `LongTokenSoftBreaker`
+            // stands in for CSS `break-all` (`Text` has no supported way to break mid-word on its
+            // own — see that type's own doc comment), and every highlight range has to be
+            // remapped onto the same soft-broken string or a hit would paint a few characters
+            // off. `TextKitBlockMeasurer`'s own `.preformattedText` case measures the identical
+            // soft-broken string, which is what keeps this in step with the row height the
+            // transcript already precomputed for it.
+            let (softBroken, insertions) = LongTokenSoftBreaker.apply(to: text)
+            let remappedHighlights = highlights.map { span in
+                (range: LongTokenSoftBreaker.remap(span.range, insertionOffsets: insertions), isCurrent: span.isCurrent)
+            }
+            TranscriptTextHighlighting.plainText(
+                softBroken, font: PaiTypography.markdownCodeBlock.font, highlights: remappedHighlights
+            )
+            .foregroundStyle(PaiPalette.Semantic.textPrimary)
+            .fixedSize(horizontal: false, vertical: true)
+
         case .blockQuote(let nested):
             HStack(spacing: TranscriptRowMetrics.blockQuoteSpacing) {
                 Rectangle().fill(PaiPalette.Semantic.borderStrong).frame(

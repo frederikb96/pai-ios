@@ -19,6 +19,12 @@ public enum MarkdownBlock: Hashable, Sendable {
     case list(MarkdownList)
     case table(MarkdownTable)
     case thematicBreak
+    /// Raw, monospaced text that wraps like ordinary prose rather than scrolling sideways like
+    /// `.codeBlock` — the transcript's own Thinking card, which is Claude's raw reasoning, not
+    /// code, and reads unusably as a horizontally-scrolling strip once it runs more than a
+    /// screen wide. Never produced by `MarkdownParser` — only `TranscriptRowPlan`'s own thinking
+    /// card constructs it, so nothing else in this package or in Notes ever needs to.
+    case preformattedText(String)
     /// Raw HTML, kept verbatim as literal text.
     ///
     /// The web client renders nothing here — it does not enable `rehype-raw`, so an HTML node
@@ -46,6 +52,8 @@ extension MarkdownBlock {
             return text.plainText
         case .codeBlock(_, let code):
             return code
+        case .preformattedText(let text):
+            return text
         case .htmlBlock(let raw):
             return raw
         case .thematicBreak:

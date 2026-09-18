@@ -192,7 +192,7 @@ public enum TranscriptRowPlan {
             cards.append(
                 TranscriptCardPlan(
                     kind: .thinking(text: thinking), expandKey: key, isExpanded: expanded,
-                    blocks: expanded ? [codeBlock(thinking)] : []))
+                    blocks: expanded ? [.preformattedText(thinking)] : []))
         }
 
         for call in message.toolCalls ?? [] {
@@ -264,9 +264,10 @@ public enum TranscriptRowPlan {
 
     // MARK: - Block wrapping
 
-    /// A tool body, a thinking block and system content all render as a `<pre>` in the web — one
-    /// monospaced block, not styled markdown — so wrapping as `.codeBlock` reuses the exact
-    /// measurement and rendering path a real markdown code fence already goes through.
+    /// A tool body and system content both render as a `<pre>` in the web — one monospaced
+    /// block, not styled markdown — so wrapping as `.codeBlock` reuses the exact measurement and
+    /// rendering path a real markdown code fence already goes through. The Thinking card is the
+    /// one exception: see `.preformattedText` for why it wraps instead of scrolling sideways.
     private static func codeBlock(_ text: String) -> MarkdownBlock {
         .codeBlock(language: nil, code: text)
     }

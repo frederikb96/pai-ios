@@ -208,6 +208,7 @@ struct PAIApp: App {
             case .paragraph: "paragraph"
             case .heading: "heading"
             case .codeBlock: "codeBlock"
+            case .preformattedText: "preformattedText"
             case .blockQuote: "blockQuote"
             case .list: "list"
             case .table: "table"

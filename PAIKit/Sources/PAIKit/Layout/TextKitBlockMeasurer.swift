@@ -104,6 +104,17 @@
             case .codeBlock(_, let code):
                 return NSAttributedString(
                     string: code, attributes: attributes(for: PaiTypography.markdownCodeBlock, category: category))
+            case .preformattedText(let text):
+                // Wraps, unlike `.codeBlock` above — reached only through this `default:`-style
+                // fallthrough from `height(of:width:environment:)`, which is what gives it real
+                // per-width TextKit measurement rather than the fixed line-count `.codeBlock`
+                // gets. Measured against the SAME soft-broken string `MarkdownContentView`
+                // renders, or the two would disagree about where a long unbroken token breaks and
+                // this height would stop matching what actually draws.
+                let softBroken = LongTokenSoftBreaker.apply(to: text).text
+                return NSAttributedString(
+                    string: softBroken,
+                    attributes: attributes(for: PaiTypography.markdownCodeBlock, category: category))
             case .htmlBlock(let raw):
                 return NSAttributedString(
                     string: raw, attributes: attributes(for: PaiTypography.markdownCodeBlock, category: category))

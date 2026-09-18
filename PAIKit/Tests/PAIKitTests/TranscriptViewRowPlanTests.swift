@@ -242,6 +242,32 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         XCTAssertEqual(attachmentPaths, [".claude/attachments/s1/a.png"])
     }
 
+    /// The Thinking card's own block is `.preformattedText`, never `.codeBlock` — the exact
+    /// distinction that stops it scrolling sideways instead of wrapping. A tool call's own body
+    /// is unaffected and still gets `.codeBlock`.
+    func testThinkingCardBlockIsPreformattedTextNotCodeBlock() {
+        let calls = [ToolCall(id: "1", name: "Bash", input: ["command": .string("ls")])]
+        let msg = message(type: .assistant, thinking: "Let me check.", toolCalls: calls)
+
+        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+
+        guard case .preformattedText(let text) = cards[0].blocks.first else {
+            return XCTFail("expected the thinking card's block to be .preformattedText, got \(cards[0].blocks)")
+        }
+        XCTAssertEqual(text, "Let me check.")
+        guard case .codeBlock = cards[1].blocks.first else {
+            return XCTFail("expected the tool call's own block to stay .codeBlock")
+        }
+    }
+
+    /// A collapsed thinking card carries no blocks at all — same rule every other collapsible
+    /// card follows, and the one this whole representation choice has to keep working.
+    func testCollapsedThinkingCardCarriesNoBlocks() {
+        let msg = message(type: .assistant, thinking: "Let me check.")
+        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandNone)
+        XCTAssertEqual(cards[0].blocks, [])
+    }
+
     // MARK: - Hook rows read from hookSummary, never from content
 
     /// `content` is `null` on a hook row — the card draws from `hookSummary` instead. A card that
