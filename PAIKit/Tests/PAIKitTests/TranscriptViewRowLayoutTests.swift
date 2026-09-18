@@ -5,7 +5,8 @@ import XCTest
 final class TranscriptViewRowLayoutTests: XCTestCase {
 
     private let environment = MeasurementEnvironment(sizeCategoryToken: "")
-    private let metrics = MessageLayoutMetrics(blockSpacing: 4, activityLineHeight: 17, proseLineHeight: 21, trailerLineHeight: 15)
+    private let metrics = MessageLayoutMetrics(
+        blockSpacing: 4, activityLineHeight: 17, proseLineHeight: 21, trailerLineHeight: 15)
     private let width: Double = 400
 
     /// `StubBlockMeasurer` reports `ceil(charCount / width)` lines — so a string whose length is

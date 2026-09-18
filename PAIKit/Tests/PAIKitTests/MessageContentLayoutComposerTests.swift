@@ -9,7 +9,8 @@ import XCTest
 final class MessageContentLayoutComposerTests: XCTestCase {
 
     private let environment = MeasurementEnvironment(sizeCategoryToken: "L")
-    private let metrics = MessageLayoutMetrics(blockSpacing: 8, activityLineHeight: 17, proseLineHeight: 21, trailerLineHeight: 15)
+    private let metrics = MessageLayoutMetrics(
+        blockSpacing: 8, activityLineHeight: 17, proseLineHeight: 21, trailerLineHeight: 15)
 
     private func paragraph(_ text: String) -> MarkdownBlock {
         .paragraph(InlineText(runs: [InlineRun(text: text)]))
