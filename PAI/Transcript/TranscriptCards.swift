@@ -248,13 +248,15 @@ struct TranscriptCardKindView: View {
         }
     }
 
-    private func activity(icon: String, label: String?, @ViewBuilder content: () -> some View) -> some View {
+    private func activity(
+        icon: String, label: String?, @ViewBuilder content: @escaping () -> some View
+    ) -> some View {
         ActivityRowView(
             icon: icon, label: label, card: card, metrics: metrics, timestamp: timestamp, onToggle: onToggle,
             content: content)
     }
 
-    private func me(@ViewBuilder content: () -> some View) -> some View {
+    private func me(@ViewBuilder content: @escaping () -> some View) -> some View {
         MeRowView(timestamp: timestamp, content: content)
     }
 
@@ -454,7 +456,7 @@ private struct TrailerView: View {
     var body: some View {
         Text(caption)
             .font(PaiTypography.caption.font)
-            .foregroundStyle(PaiPalette.Semantic.accent)
+            .foregroundStyle(PaiPalette.Semantic.accentText)
             .lineLimit(1)
             .frame(height: TranscriptRowMetrics.trailerHeight, alignment: .leading)
     }
