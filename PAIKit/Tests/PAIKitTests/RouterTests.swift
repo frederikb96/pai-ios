@@ -220,4 +220,58 @@ extension RouterTests {
 
         XCTAssertEqual(router.path, [.session(id: "a")])
     }
+
+    // MARK: - removeRoute
+
+    /// The shape `CreateSessionRouteScreen`/`AppsRouteScreen` need: a route that pushed its own
+    /// destination before dismissing leaves that destination alone — only the route named is
+    /// removed, never what got pushed on top of it. This is what distinguishes `removeRoute`
+    /// from `dismissSession`'s remove-to-end.
+    @MainActor
+    func testRemoveRouteLeavesWhatWasPushedOnTopOfItAlone() async {
+        let router = Router(gate: .ready)
+        router.push(.createSession)
+        router.push(.session(id: "new"))
+
+        router.removeRoute(.createSession)
+
+        XCTAssertEqual(router.path, [.session(id: "new")])
+    }
+
+    /// The Cancel case: nothing was ever pushed on top, so removing the route is the whole of it.
+    @MainActor
+    func testRemoveRouteWithNothingPushedOnTopLeavesAnEmptyPath() async {
+        let router = Router(gate: .ready)
+        router.push(.createSession)
+
+        router.removeRoute(.createSession)
+
+        XCTAssertEqual(router.path, [])
+    }
+
+    /// Same "already left" guard `dismissSession` needs — a route not on the path at all is a
+    /// no-op, never a pop of whatever happens to be on top.
+    @MainActor
+    func testRemoveRouteNotOnThePathChangesNothing() async {
+        let router = Router(gate: .ready)
+        router.push(.settings)
+
+        router.removeRoute(.createSession)
+
+        XCTAssertEqual(router.path, [.settings])
+    }
+
+    /// Removes only the first match, matching `dismissSession`/`dismissNote`'s own choice for a
+    /// route that could appear twice.
+    @MainActor
+    func testRemoveRouteRemovesOnlyTheFirstMatch() async {
+        let router = Router(gate: .ready)
+        router.push(.apps)
+        router.push(.settings)
+        router.push(.apps)
+
+        router.removeRoute(.apps)
+
+        XCTAssertEqual(router.path, [.settings, .apps])
+    }
 }

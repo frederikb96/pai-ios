@@ -426,9 +426,12 @@ struct RootView: View {
 /// inside this one with different, misleading chrome. See `Route.createSession`'s doc comment.
 ///
 /// A home-screen shortcut reaches this same route (`DeepLink.createSession`), where — unlike the
-/// fixture workflow — nothing else pops it back off: popping itself the moment its own sheet is
-/// dismissed is what stops Cancel from leaving Freddy on a blank, transparent screen with a stray
-/// system Back button.
+/// fixture workflow — nothing else removes it: `CreateSessionView.send()` pushes `.session(id:)`
+/// before dismissing (that function's own comment says why), so by the time this fires
+/// `.createSession` may no longer be the top of the path — `Router.removeRoute` takes it out
+/// wherever it sits rather than assuming it is still on top, so both Cancel (still on top) and a
+/// successful send (now buried under the session just pushed) leave the reader on that session
+/// rather than on a blank, transparent screen with a stray system Back button.
 private struct CreateSessionRouteScreen: View {
     @Environment(AppEnvironment.self) private var environment
     @State private var isPresented = true
@@ -440,22 +443,17 @@ private struct CreateSessionRouteScreen: View {
             }
             .onChange(of: isPresented) { _, presented in
                 guard !presented else { return }
-                // A successful send inside the sheet pushes `.session(id:)` before dismissing
-                // (`CreateSessionView.send`'s own comment says why), so by the time this fires
-                // `.createSession` may no longer be the top of the path — popping unconditionally
-                // then would remove the session just pushed instead of this route, stranding the
-                // reader on a blank, transparent screen with nothing behind it to reveal. Popping
-                // only while this route is still on top leaves an already-newer push alone.
-                guard environment.router.path.last == .createSession else { return }
-                environment.router.pop()
+                environment.router.removeRoute(.createSession)
             }
     }
 }
 
 /// What `.apps` pushes to — reproduces the sheet the session list's "Apps" toolbar button
-/// actually presents, since `AppsHomeSheet` has no screen of its own to navigate to. Shaped
-/// exactly like `CreateSessionRouteScreen` above, for the same reason: real usage never pushes
-/// this route, only the fixture screenshot workflow does.
+/// actually presents, since `AppsHomeSheet` has no screen of its own to navigate to. Real usage
+/// never pushes this route, only the fixture screenshot workflow does — but `AppsHomeSheet.openArc()`/
+/// `openNotes()`/`openScheduler()` push their own destination before dismissing, the same order
+/// `CreateSessionRouteScreen` above has to account for, so this uses the same `removeRoute` fix
+/// rather than the unconditional `pop()` that would otherwise remove whatever was just pushed.
 private struct AppsRouteScreen: View {
     @Environment(AppEnvironment.self) private var environment
     @State private var isPresented = true
@@ -467,7 +465,7 @@ private struct AppsRouteScreen: View {
             }
             .onChange(of: isPresented) { _, presented in
                 guard !presented else { return }
-                environment.router.pop()
+                environment.router.removeRoute(.apps)
             }
     }
 }

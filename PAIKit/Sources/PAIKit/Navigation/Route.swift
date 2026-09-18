@@ -21,11 +21,13 @@ public enum Route: Hashable, Sendable {
     case session(id: String, messageID: Int? = nil)
     case terminal(sessionID: String)
     case settings
-    /// Reached only from the fixture screenshot workflow — real usage never pushes this, it
-    /// presents `CreateSessionView` as a sheet from the session list. `RootView` answers this
-    /// route by reproducing that exact presentation (a sheet over a blank screen) rather than
-    /// pushing the view directly, so what gets photographed is what Freddy actually sees, not a
-    /// second `NavigationStack` nested inside the first with its own, different chrome.
+    /// The session list's own "+" button presents `CreateSessionView` as a plain sheet with no
+    /// route at all — this route exists for the OTHER two ways in: the fixture screenshot
+    /// workflow, and a real home-screen shortcut/Siri intent (`DeepLink.createSession`,
+    /// `SessionIntents.swift`), which is why `RootView` still has to reproduce the real
+    /// presentation (a sheet over a blank screen) rather than pushing the view directly — what
+    /// gets shown is what Freddy actually sees, not a second `NavigationStack` nested inside the
+    /// first with its own, different chrome.
     case createSession
     /// One conversation's own subagents — reached from its actions menu, never from a subagent
     /// itself (a subagent's own children are flattened into its top-level parent, so it has
@@ -347,6 +349,16 @@ public final class Router {
     public func dismissSession(id: String) {
         guard let index = path.firstIndex(of: .session(id: id)) else { return }
         path.removeSubrange(index...)
+    }
+
+    /// Removes exactly one route from the path, wherever it sits — never the routes below or
+    /// above it. Distinct from `dismissSession`'s remove-to-end: a route that pushed something of
+    /// its own before being dismissed (`CreateSessionRouteScreen`, `AppsRouteScreen`) must lose
+    /// only itself, not what it just pushed. Removes the first match, matching
+    /// `dismissSession`/`dismissNote`'s own choice for a route that could appear twice.
+    public func removeRoute(_ route: Route) {
+        guard let index = path.firstIndex(of: route) else { return }
+        path.remove(at: index)
     }
 
     /// Leave a note's editor, from the editor itself — after deleting the note it was showing.
