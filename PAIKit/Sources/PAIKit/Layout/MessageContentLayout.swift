@@ -37,9 +37,21 @@ public struct MessageContentLayout: Hashable, Sendable {
 /// it once decided.
 public struct MessageLayoutMetrics: Sendable {
     public let blockSpacing: Double
+    /// One line of an activity row's monospaced body, as the font itself reports it.
+    ///
+    /// A visual clamp's height is `lines × lineHeight`, and the drawing view reaches the same
+    /// height by applying `.lineLimit(lines)` to text in that same font. The two agree only
+    /// because this number comes from the font rather than being written down in both places —
+    /// resolve it from the measurer's own font (`TextKitBlockMeasurer.codeLineHeight(for:)`),
+    /// never as a literal.
+    public let activityLineHeight: Double
+    /// One line of rendered prose, resolved the same way and for the same reason.
+    public let proseLineHeight: Double
 
-    public init(blockSpacing: Double) {
+    public init(blockSpacing: Double, activityLineHeight: Double, proseLineHeight: Double) {
         self.blockSpacing = blockSpacing
+        self.activityLineHeight = activityLineHeight
+        self.proseLineHeight = proseLineHeight
     }
 }
 

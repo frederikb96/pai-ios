@@ -10,7 +10,7 @@ final class TranscriptPendingBubbleTests: XCTestCase {
 
     func testPendingBubbleRendersAsAUserBubbleCarryingItsText() {
         let card = TranscriptRowPlan.cards(
-            for: .pendingBubble(sessionId: "s", index: 0, text: "queued message"), isExpanded: { _ in true }
+            for: .pendingBubble(sessionId: "s", index: 0, text: "queued message"), isRevealed: { _ in true }
         ).first
 
         guard case .userBubble(let text, let attachmentPaths) = card?.kind else {

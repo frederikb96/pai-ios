@@ -48,25 +48,17 @@ final class SearchTranscriptIndexTests: XCTestCase {
         XCTAssertEqual(hits[0].blockIndex, 0)
     }
 
-    /// A hit's `expandKey` must be exactly what opens its card — otherwise a caller who force-opens
-    /// by that key would open the wrong thing, or nothing at all.
-    func testHitsExpandKeyMatchesWhatWouldActuallyOpenTheCard() {
+    /// A hit's `cardIndex` is what reveals its card, so it has to name the card the term is
+    /// actually in — a turn with a thought before its tool call puts the call at index 1, and a
+    /// caller revealing index 0 would open the thought and leave the hit hidden.
+    func testHitsCardIndexNamesTheCardTheTermIsIn() {
         let calls = [ToolCall(id: "1", name: "Bash", input: ["command": .string("echo needle")])]
-        let msg = message(id: 1, type: .assistant, toolCalls: calls)
+        let msg = message(id: 1, type: .assistant, thinking: "considering the options", toolCalls: calls)
 
         let (hits, _) = TranscriptSearchIndex.hits(in: [msg], query: "needle")
 
         XCTAssertEqual(hits.count, 1)
-        XCTAssertEqual(hits[0].expandKey, MessageRouting.toolExpandKey(name: "Bash", isResult: false))
-    }
-
-    /// A message text-searchable by ``TranscriptRowPlan/cards(for:isExpanded:)`` without any
-    /// expand key at all (a plain bubble) must still produce a hit, with `expandKey == nil`.
-    func testHitsOnAnUncollapsibleBubbleCarryNoExpandKey() {
-        let msg = message(id: 1, type: .user, content: "find the needle here")
-        let (hits, _) = TranscriptSearchIndex.hits(in: [msg], query: "needle")
-        XCTAssertEqual(hits.count, 1)
-        XCTAssertNil(hits[0].expandKey)
+        XCTAssertEqual(hits[0].cardIndex, 1)
     }
 
     /// One assistant turn holding the term twice — twenty screens tall in the worst case — must

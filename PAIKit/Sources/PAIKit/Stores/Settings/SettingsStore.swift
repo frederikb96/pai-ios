@@ -38,7 +38,6 @@ public final class SettingsStore {
         static let silenceDurationMs = "silenceDurationMs"
         static let sentMessages = "sentMessages"
         static let recordings = "recordings"
-        static let expandPreferences = "expandPreferences"
         static let theme = "theme"
         static let showsNoteLineNumbers = "showsNoteLineNumbers"
         static let noteToolbarLayout = "noteToolbarLayout"
@@ -57,10 +56,6 @@ public final class SettingsStore {
     public private(set) var silenceDurationMs: Double
     public private(set) var sentMessages: [SentMessage]
     public private(set) var recordings: [RecordingMeta]
-    /// Keyed by `ExpandPreferences.toolExpandKey`/`.systemExpandKey`. An absent key reads as
-    /// `false` — see `isExpandEnabled`.
-    public private(set) var expandPreferences: [String: Bool]
-
     /// Client-side only, like the web's. Nothing about the appearance reaches the server.
     public private(set) var theme: AppTheme
     /// The note editor's line-number gutter — off by default, since most notes are short enough
@@ -114,7 +109,6 @@ public final class SettingsStore {
         silenceDurationMs = storage.value(forKey: Keys.silenceDurationMs) ?? 3000
         sentMessages = storage.value(forKey: Keys.sentMessages) ?? []
         recordings = storage.value(forKey: Keys.recordings) ?? []
-        expandPreferences = storage.value(forKey: Keys.expandPreferences) ?? [:]
         theme = storage.value(forKey: Keys.theme) ?? .system
         showsNoteLineNumbers = storage.value(forKey: Keys.showsNoteLineNumbers) ?? false
         let storedToolbarIds: [String] = storage.value(forKey: Keys.noteToolbarLayout) ?? []
@@ -182,17 +176,6 @@ public final class SettingsStore {
         let sanitized = NoteToolbarLayout.sanitize(rawIds: layout.map(\.rawValue))
         noteToolbarLayout = sanitized
         storage.setValue(sanitized.map(\.rawValue), forKey: Keys.noteToolbarLayout)
-    }
-
-    // MARK: - Expand preferences
-
-    public func isExpandEnabled(_ key: String) -> Bool {
-        expandPreferences[key] ?? false
-    }
-
-    public func setExpandPreference(_ key: String, enabled: Bool) {
-        expandPreferences[key] = enabled
-        storage.setValue(expandPreferences, forKey: Keys.expandPreferences)
     }
 
     // MARK: - Diagnostic lists

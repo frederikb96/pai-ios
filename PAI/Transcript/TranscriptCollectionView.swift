@@ -97,10 +97,16 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
 
     private var rows: [TranscriptRow] = []
-    /// `"\(messageId)#\(expandKey)"` → override. Applies to every card in that message sharing
-    /// the key, not to one specific tool-call instance — a simplification from the web's true
-    /// per-card `useState`.
-    private var expandOverrides: [String: Bool] = [:]
+    /// One card the reader has opened, identified the same way a search hit identifies itself.
+    struct RevealKey: Hashable {
+        let messageId: Int
+        let cardIndex: Int
+    }
+
+    /// Which cards the reader has opened. Session-scoped and deliberately not persisted: the
+    /// bounded preview is the design, and a row left open is a reader's momentary choice, not a
+    /// setting.
+    private var revealed: Set<RevealKey> = []
 
     private var edgeFollow = EdgeFollowLatch()
     /// What lets `edgeFollow` tell the reader returning to the end from one of this controller's
@@ -777,15 +783,15 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         guard width > 0 else { return }
         let environment = MeasurementEnvironment(
             sizeCategoryToken: traitCollection.preferredContentSizeCategory.rawValue)
-        let metrics = MessageLayoutMetrics(blockSpacing: TranscriptContentMetrics.blockSpacing)
+        let metrics = Self.layoutMetrics(for: environment)
 
         var newRows: [TranscriptRow] = []
         newRows.reserveCapacity(displayMessages.count)
         for message in displayMessages {
-            let isExpanded = expandResolver(forMessageId: message.id)
             guard
                 let height = TranscriptRowLayout.height(
-                    for: message, width: width, environment: environment, isExpanded: isExpanded, measurer: measurer,
+                    for: message, width: width, environment: environment,
+                    isRevealed: revealResolver(forMessageId: message.id), measurer: measurer,
                     cache: cache, metrics: metrics)
             else { continue }
             newRows.append(TranscriptRow(id: message.id, message: message, height: height))
@@ -807,19 +813,54 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         apply(newRows, intent: intent, onSettled: onSettled)
     }
 
-    private func expandResolver(forMessageId messageId: Int) -> (String) -> Bool {
-        { [weak self] key in
-            guard let self else { return false }
-            if let override = self.expandOverrides["\(messageId)#\(key)"] { return override }
-            return self.settings.isExpandEnabled(key)
+    /// Every card starts bounded. There is no preference behind this and no per-kind default —
+    /// one automatic presentation, and a reveal that lasts only as long as the reader keeps the
+    /// session open.
+    private func revealResolver(forMessageId messageId: Int) -> (Int) -> Bool {
+        { [weak self] cardIndex in
+            self?.revealed.contains(RevealKey(messageId: messageId, cardIndex: cardIndex)) ?? false
         }
     }
 
-    private func toggleExpand(messageId: Int, key: String) {
-        let overrideKey = "\(messageId)#\(key)"
-        let current = expandOverrides[overrideKey] ?? settings.isExpandEnabled(key)
-        expandOverrides[overrideKey] = !current
+    private func toggleReveal(messageId: Int, cardIndex: Int) {
+        let key = RevealKey(messageId: messageId, cardIndex: cardIndex)
+        if revealed.contains(key) {
+            revealed.remove(key)
+        } else {
+            revealed.insert(key)
+        }
+        // Opening or closing a row is a height change, possibly above the reader — the same
+        // anchoring path every other height change goes through.
         recomputeRows(applying: .compensateFromTopVisibleRow)
+    }
+
+    private func currentEnvironment() -> MeasurementEnvironment {
+        MeasurementEnvironment(sizeCategoryToken: traitCollection.preferredContentSizeCategory.rawValue)
+    }
+
+    /// The same measured cards the row's own height was summed from.
+    ///
+    /// Recomputed rather than stored alongside the row: every block height behind it is already
+    /// in `cache`, so this is an array walk, and computing it here means the cell can never draw
+    /// from a plan the height was not taken from.
+    private func measuredCards(for message: Message) -> [MeasuredCard] {
+        let width = measurementWidth()
+        guard width > 0 else { return [] }
+        let environment = currentEnvironment()
+        return TranscriptRowLayout.measure(
+            for: message, width: width, environment: environment,
+            isRevealed: revealResolver(forMessageId: message.id), measurer: measurer, cache: cache,
+            metrics: Self.layoutMetrics(for: environment))
+    }
+
+    /// The line heights a visual clamp is capped by, read off the same fonts the views draw with.
+    /// Resolved here rather than written down as constants: a clamp measured from one number and
+    /// drawn from another is exactly the disagreement precomputed heights exist to rule out.
+    private static func layoutMetrics(for environment: MeasurementEnvironment) -> MessageLayoutMetrics {
+        MessageLayoutMetrics(
+            blockSpacing: TranscriptContentMetrics.blockSpacing,
+            activityLineHeight: TextKitBlockMeasurer.codeLineHeight(for: environment),
+            proseLineHeight: TextKitBlockMeasurer.proseLineHeight(for: environment))
     }
 
     // MARK: - Search: find / locate / reveal / mark
@@ -1089,27 +1130,30 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// comment) — every row on screen is fresh a moment after `reloadData()`, so animating across
     /// it is the flicker the `scrolling` skill's second law forbids, not a smooth scroll.
     private func revealHit(_ hit: TranscriptSearchHit, animated: Bool = true) async {
-        if let key = hit.expandKey, !expandResolver(forMessageId: hit.messageId)(key) {
-            expandOverrides["\(hit.messageId)#\(key)"] = true
+        // A hit past the preview is not in the DOM until its own card is open, so reveal it
+        // first and let the row settle at its new height before anything is positioned.
+        let revealKey = RevealKey(messageId: hit.messageId, cardIndex: hit.cardIndex)
+        if !revealed.contains(revealKey) {
+            revealed.insert(revealKey)
             await settleRows()
         }
         let width = measurementWidth()
         guard width > 0, let index = rows.firstIndex(where: { $0.id == hit.messageId }) else { return }
         let environment = MeasurementEnvironment(
             sizeCategoryToken: traitCollection.preferredContentSizeCategory.rawValue)
-        let metrics = MessageLayoutMetrics(blockSpacing: TranscriptContentMetrics.blockSpacing)
+        let metrics = Self.layoutMetrics(for: environment)
         var blockOffset =
             TranscriptRowLayout.blockOffset(
                 cardIndex: hit.cardIndex, blockIndex: hit.blockIndex, for: rows[index].message, width: width,
-                environment: environment, isExpanded: expandResolver(forMessageId: hit.messageId), measurer: measurer,
-                cache: cache, metrics: metrics) ?? 0
+                environment: environment, isRevealed: revealResolver(forMessageId: hit.messageId),
+                measurer: measurer, cache: cache, metrics: metrics) ?? 0
         // A row can run to thousands of points and a code block inside it can run to hundreds of
         // lines on its own — landing on the block's own top still leaves a hit on line 300 far
         // below the viewport. Added only for a hit whose block actually is a code block; every
         // other block kind wraps, so its own text-layout height already puts the hit on screen.
         if let code = codeBlockText(
             forMessage: rows[index].message, cardIndex: hit.cardIndex, blockIndex: hit.blockIndex,
-            isExpanded: expandResolver(forMessageId: hit.messageId))
+            isRevealed: revealResolver(forMessageId: hit.messageId))
         {
             let position = CodeBlockHitGeometry.position(of: hit.range, in: code)
             let lineHeight = TextKitBlockMeasurer.codeLineHeight(for: environment)
@@ -1124,9 +1168,9 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// block at all — the same card list `TranscriptRowLayout.blockOffset` just walked, read again
     /// here rather than threaded through it, since only a code-block hit ever needs this.
     private func codeBlockText(
-        forMessage message: Message, cardIndex: Int, blockIndex: Int, isExpanded: (String) -> Bool
+        forMessage message: Message, cardIndex: Int, blockIndex: Int, isRevealed: (Int) -> Bool
     ) -> String? {
-        let cards = TranscriptRowPlan.cards(for: message, isExpanded: isExpanded)
+        let cards = TranscriptRowPlan.cards(for: message, isRevealed: isRevealed)
         guard cards.indices.contains(cardIndex), cards[cardIndex].blocks.indices.contains(blockIndex),
             case .codeBlock(_, let code) = cards[cardIndex].blocks[blockIndex]
         else { return nil }
@@ -1650,10 +1694,13 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                 let highlights = self.searchHighlights(forMessageId: messageId)
                 TranscriptRowContent(
                     message: row.message,
+                    cards: self.measuredCards(for: row.message),
+                    metrics: Self.layoutMetrics(for: self.currentEnvironment()),
                     sessionID: self.sessionID,
                     apiClient: self.apiClient,
-                    isExpanded: self.expandResolver(forMessageId: messageId),
-                    onToggleExpand: { [weak self] key in self?.toggleExpand(messageId: messageId, key: key) },
+                    onToggleReveal: { [weak self] index in
+                        self?.toggleReveal(messageId: messageId, cardIndex: index)
+                    },
                     highlights: highlights,
                     currentHit: self.currentSearchHit(forMessageId: messageId, among: highlights),
                     // The web rings a deep-link target and the current search hit identically —

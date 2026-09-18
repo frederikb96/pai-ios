@@ -23,8 +23,8 @@ final class TranscriptViewRowPlanTests: XCTestCase {
             notificationMarker: notificationMarker, createdAt: nil)
     }
 
-    private func expandAll(_: String) -> Bool { true }
-    private func expandNone(_: String) -> Bool { false }
+    private func revealAll(_: Int) -> Bool { true }
+    private func revealNone(_: Int) -> Bool { false }
 
     // MARK: - Assistant turns: order and completeness
 
@@ -39,7 +39,7 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         ]
         let msg = message(type: .assistant, content: "Done.", thinking: "Let me check.", toolCalls: calls)
 
-        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+        let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealAll)
 
         XCTAssertEqual(cards.count, 4)
         guard case .thinking = cards[0].kind else { return XCTFail("expected thinking first, got \(cards[0].kind)") }
@@ -60,7 +60,7 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         let content = "Here's the screenshot.\n\npai-file: /tmp/shot.png"
         let msg = message(type: .assistant, content: content)
 
-        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+        let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealAll)
 
         XCTAssertEqual(cards.count, 1)
         guard case .assistantBubble(let text, let filePaths) = cards[0].kind else {
@@ -78,7 +78,7 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         let result = ToolResult(toolUseId: "1", toolName: "Bash", content: "ok", isError: false)
         let msg = message(type: .toolResult, toolResult: result)
 
-        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+        let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealAll)
 
         XCTAssertEqual(cards.count, 1)
         guard case .toolResult(let carried) = cards[0].kind else { return XCTFail("expected a toolResult card") }
@@ -87,7 +87,7 @@ final class TranscriptViewRowPlanTests: XCTestCase {
 
     func testAToolResultMessageWithNoPayloadProducesNoCard() {
         let msg = message(type: .toolResult, toolResult: nil)
-        XCTAssertTrue(TranscriptRowPlan.cards(for: msg, isExpanded: expandAll).isEmpty)
+        XCTAssertTrue(TranscriptRowPlan.cards(for: msg, isRevealed: revealAll).isEmpty)
     }
 
     // MARK: - A notify tool_result, the card a notification jump lands on
@@ -106,7 +106,7 @@ final class TranscriptViewRowPlanTests: XCTestCase {
             type: .toolResult, toolResult: result,
             notificationMarker: "pai-notify:11111111-1111-1111-1111-111111111111")
 
-        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+        let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealAll)
 
         XCTAssertEqual(cards.count, 1)
         guard case .notifyReply(let title, let body) = cards[0].kind else {
@@ -114,9 +114,9 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         }
         XCTAssertEqual(title, "Deploy finished")
         XCTAssertEqual(body, "The release is live.")
-        // Always shown, unlike an ordinary toolResult card — never collapsed behind a preference.
-        XCTAssertNil(cards[0].expandKey)
-        XCTAssertTrue(cards[0].isExpanded)
+        // Always shown whole, unlike an ordinary toolResult card: there is nothing to clip that
+        // would not just repeat the title.
+        XCTAssertFalse(cards[0].preview.isBounded)
     }
 
     func testAMarkedResultFallsBackToTheOrdinaryToolResultCardWhenTheReplyTextCannotBeParsed() {
@@ -128,7 +128,7 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         let result = ToolResult(toolUseId: "1", toolName: "Bash", content: unparseable, isError: false)
         let msg = message(type: .toolResult, toolResult: result, notificationMarker: "pai-notify:x")
 
-        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+        let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealAll)
 
         XCTAssertEqual(cards.count, 1)
         guard case .toolResult(let carried) = cards[0].kind else {
@@ -141,27 +141,42 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         let result = ToolResult(toolUseId: "1", toolName: "Read", content: notifyReplyContent, isError: false)
         let msg = message(type: .toolResult, toolResult: result, notificationMarker: nil)
 
-        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+        let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealAll)
 
         guard case .toolResult = cards[0].kind else {
             return XCTFail("a result with no marker must never become a notifyReply card")
         }
     }
 
-    // MARK: - Collapsed vs expanded
+    // MARK: - Bounded vs revealed
 
-    /// The whole point of tracking an expand key: a collapsed card must hand the composer zero
-    /// blocks, not a truncated version of its content — `MessageContentLayoutComposer` measures
-    /// exactly what it is given.
-    func testACollapsedToolCallCarriesNoBlocksAnExpandedOneDoes() {
+    /// A bounded card still carries its body — the bound is a clip, not an omission, which is
+    /// what lets the row say whether anything was actually cut. What it must NOT carry is the
+    /// whole of an unbounded one: a body far longer than the clamp can ever draw is cut to a
+    /// headroom first, so a thought of ten thousand characters is not laid out to show two lines.
+    func testABoundedBodyKeepsWhatItShowsAndNoMoreThanItCouldEverDraw() {
+        let huge = String(repeating: "x", count: 10_000)
+        let calls = [ToolCall(id: "1", name: "Bash", input: ["command": .string(huge)])]
+        let msg = message(type: .assistant, toolCalls: calls)
+
+        let bounded = TranscriptRowPlan.cards(for: msg, isRevealed: revealNone)
+        let revealed = TranscriptRowPlan.cards(for: msg, isRevealed: revealAll)
+
+        XCTAssertEqual(bounded[0].blocks.count, 1)
+        XCTAssertEqual(revealed[0].blocks.count, 1)
+        XCTAssertLessThan(bounded[0].blocks[0].plainText.count, 1_000)
+        XCTAssertEqual(revealed[0].blocks[0].plainText.count, 10_000)
+    }
+
+    /// A body short enough to fit is never cut, however the bound is expressed — the case that is
+    /// most of the transcript, and the one a headroom applied unconditionally would damage.
+    func testAShortBodyIsCarriedWholeEvenWhileBounded() {
         let calls = [ToolCall(id: "1", name: "Bash", input: ["command": .string("ls -la")])]
         let msg = message(type: .assistant, toolCalls: calls)
 
-        let collapsed = TranscriptRowPlan.cards(for: msg, isExpanded: expandNone)
-        let expanded = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+        let bounded = TranscriptRowPlan.cards(for: msg, isRevealed: revealNone)
 
-        XCTAssertEqual(collapsed[0].blocks.count, 0)
-        XCTAssertEqual(expanded[0].blocks.count, 1)
+        XCTAssertEqual(bounded[0].blocks[0].plainText, "ls -la")
     }
 
     // MARK: - Legacy and fallback shapes
@@ -170,12 +185,12 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         let msg = message(
             type: .user,
             content: "<local-command-caveat>Caveat: ignore these.</local-command-caveat>")
-        XCTAssertTrue(TranscriptRowPlan.cards(for: msg, isExpanded: expandAll).isEmpty)
+        XCTAssertTrue(TranscriptRowPlan.cards(for: msg, isRevealed: revealAll).isEmpty)
     }
 
     func testAnUnparsedCommandXmlRowFallsBackToSystemRatherThanShowingTheWrapperTags() {
         let msg = message(type: .user, subtype: "command", content: "<command-name>/compact</command-name>")
-        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+        let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealAll)
         XCTAssertEqual(cards.count, 1)
         guard case .system = cards[0].kind else {
             return XCTFail("expected a system fallback card, got \(cards[0].kind)")
@@ -191,7 +206,7 @@ final class TranscriptViewRowPlanTests: XCTestCase {
             type: .user, subtype: "pai_message", content: "Repository setup finished.",
             origin: "agent", originMeta: ["from": "aria", "group": "pai-ios-build"])
 
-        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+        let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealAll)
 
         XCTAssertEqual(cards.count, 1)
         guard case .relayedBubble(let text, let sender, let group) = cards[0].kind else {
@@ -207,7 +222,7 @@ final class TranscriptViewRowPlanTests: XCTestCase {
     func testARelayedMessageWithNoAgentOriginCarriesNoGroup() {
         let msg = message(
             type: .user, subtype: "pai_message", content: "hi", originMeta: ["from": "aria", "group": "x"])
-        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+        let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealAll)
         guard case .relayedBubble(_, _, let group) = cards[0].kind else { return XCTFail("expected relayedBubble") }
         XCTAssertNil(group)
     }
@@ -217,7 +232,7 @@ final class TranscriptViewRowPlanTests: XCTestCase {
     func testAResentMessageProducesAResentUserBubbleNotAGenericSystemCard() {
         let msg = message(type: .user, subtype: "resent", content: "let's try that again")
 
-        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+        let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealAll)
 
         XCTAssertEqual(cards.count, 1)
         guard case .resentUserBubble(let text, let attachmentPaths) = cards[0].kind else {
@@ -233,7 +248,7 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         let msg = message(
             type: .user, subtype: "resent", content: "here\n\n.claude/attachments/s1/a.png")
 
-        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+        let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealAll)
 
         guard case .resentUserBubble(let text, let attachmentPaths) = cards[0].kind else {
             return XCTFail("expected a resentUserBubble card")
@@ -249,7 +264,7 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         let calls = [ToolCall(id: "1", name: "Bash", input: ["command": .string("ls")])]
         let msg = message(type: .assistant, thinking: "Let me check.", toolCalls: calls)
 
-        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+        let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealAll)
 
         guard case .preformattedText(let text) = cards[0].blocks.first else {
             return XCTFail("expected the thinking card's block to be .preformattedText, got \(cards[0].blocks)")
@@ -260,12 +275,20 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         }
     }
 
-    /// A collapsed thinking card carries no blocks at all — same rule every other collapsible
-    /// card follows, and the one this whole representation choice has to keep working.
-    func testCollapsedThinkingCardCarriesNoBlocks() {
+    /// A thought wraps rather than scrolling sideways — it is prose that happens to be one
+    /// enormous source line, so the block kind is the wrapping one whether or not it is bounded.
+    func testAThinkingCardWrapsItsTextWhicheverStateItIsIn() {
         let msg = message(type: .assistant, thinking: "Let me check.")
-        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandNone)
-        XCTAssertEqual(cards[0].blocks, [])
+
+        for cards in [
+            TranscriptRowPlan.cards(for: msg, isRevealed: revealNone),
+            TranscriptRowPlan.cards(for: msg, isRevealed: revealAll),
+        ] {
+            guard case .preformattedText(let text) = cards[0].blocks.first else {
+                return XCTFail("expected a wrapping block, got \(String(describing: cards[0].blocks.first))")
+            }
+            XCTAssertEqual(text, "Let me check.")
+        }
     }
 
     // MARK: - Hook rows read from hookSummary, never from content
@@ -277,7 +300,7 @@ final class TranscriptViewRowPlanTests: XCTestCase {
             hookNames: ["PostToolUse:Bash"], hasErrors: true, errors: ["boom"], preventedContinuation: true)
         let msg = message(type: .system, subtype: "hook", content: nil, hookSummary: summary)
 
-        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+        let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealAll)
 
         XCTAssertEqual(cards.count, 1)
         let block = cards[0].blocks.first
@@ -291,7 +314,7 @@ final class TranscriptViewRowPlanTests: XCTestCase {
 
     func testACommandWithNoArgumentsCarriesNoBlocksAndNilArgs() {
         let msg = message(type: .user, subtype: "command", content: "/context\n\n")
-        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandAll)
+        let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealAll)
         guard case .command(let name, let args) = cards[0].kind else { return XCTFail("expected a command card") }
         XCTAssertEqual(name, "/context")
         XCTAssertNil(args)
@@ -302,7 +325,7 @@ final class TranscriptViewRowPlanTests: XCTestCase {
     /// the one bubble-shaped card that ignores the expand-preference closure entirely.
     func testACommandWithArgumentsShowsThemEvenWhenNothingIsExpanded() {
         let msg = message(type: .user, subtype: "command", content: "/loop\n\n5m /babysit-prs")
-        let cards = TranscriptRowPlan.cards(for: msg, isExpanded: expandNone)
+        let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealNone)
         guard case .command(_, let args) = cards[0].kind else { return XCTFail("expected a command card") }
         XCTAssertEqual(args, "5m /babysit-prs")
         XCTAssertFalse(cards[0].blocks.isEmpty)
