@@ -329,12 +329,13 @@ public enum TranscriptRowPlan {
                 kind: .toolCall(call), text: text, visual: MessageDisplay.Preview.command.visual,
                 revealed: revealed)
         case .inline:
-            // Usually one line, but a file path or a query is routinely longer than a phone is
-            // wide. Two lines rather than an ellipsis: a path cut at the width tells the reader
-            // which directory and not which file, which is the half that matters.
-            return clampedActivityCard(
-                kind: .toolCall(call), text: text, visual: MessageDisplay.Preview.command.visual,
-                revealed: revealed)
+            // Never bounded: these are the arguments themselves — a path, a pattern, a query — and
+            // they are short by construction. A path is also the one thing here where the end
+            // carries more than the start, so cutting it tells the reader which directory and not
+            // which file. It wraps to a second line where it needs to and nothing is hidden.
+            return TranscriptCardPlan(
+                kind: .toolCall(call), register: .activity, preview: .full(totalLines: lineCount(text)),
+                isRevealed: true, blocks: text.isEmpty ? [] : [codeBlock(text)])
         case .edit:
             return slicedActivityCard(
                 kind: .toolCall(call), text: text, budget: MessageDisplay.Preview.diff, revealed: revealed)

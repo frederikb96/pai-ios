@@ -261,7 +261,8 @@ struct PAIApp: App {
             let metrics = MessageLayoutMetrics(
                 blockSpacing: TranscriptContentMetrics.blockSpacing,
                 activityLineHeight: TextKitBlockMeasurer.codeLineHeight(for: environment),
-                proseLineHeight: TextKitBlockMeasurer.proseLineHeight(for: environment))
+                proseLineHeight: TextKitBlockMeasurer.proseLineHeight(for: environment),
+                trailerLineHeight: TextKitBlockMeasurer.trailerLineHeight(for: environment))
 
             let measuredHeight = MessageContentLayoutComposer.layout(
                 of: blocks, width: width, environment: environment, metrics: metrics,
