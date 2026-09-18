@@ -70,17 +70,18 @@ extension SessionState: Codable {
     }
 }
 
-/// Working/idle/closed derived purely from a conversation's own hook signals — never from
-/// `state`. See `Session.presenceState`'s doc comment for what this answers that `state` cannot.
+/// What a conversation claimed about the turn it just finished — the Stop hook's own claim on
+/// the machine running the session. See `Session.turnState`'s doc comment; almost nothing should
+/// read this directly, `Session.displayState` is what a client renders.
 /// See `SessionStatus`'s doc comment for why `.unrecognized` exists rather than throwing.
-public enum SessionPresenceState: Sendable, Hashable {
-    case working, idle, closed
+public enum TurnState: Sendable, Hashable {
+    case working, done, blocked
     case unrecognized(String)
 }
 
-extension SessionPresenceState: Codable {
-    private static let knownValues: [String: SessionPresenceState] = [
-        "working": .working, "idle": .idle, "closed": .closed,
+extension TurnState: Codable {
+    private static let knownValues: [String: TurnState] = [
+        "working": .working, "done": .done, "blocked": .blocked,
     ]
 
     public init(from decoder: Decoder) throws {
@@ -92,7 +93,41 @@ extension SessionPresenceState: Codable {
         var container = encoder.singleValueContainer()
         switch self {
         case .working: try container.encode("working")
-        case .idle: try container.encode("idle")
+        case .done: try container.encode("done")
+        case .blocked: try container.encode("blocked")
+        case let .unrecognized(raw): try container.encode(raw)
+        }
+    }
+}
+
+/// The one answer both clients paint a session's dot and spinner from — computed once on the
+/// backend (`api._derive_display_state`) from `state`/`turnState`/`blocker`/`discovered`/`kind`
+/// folded together, so neither client re-derives any of that itself. See `Session.displayState`.
+/// See `SessionStatus`'s doc comment for why `.unrecognized` exists rather than throwing.
+public enum DisplayState: Sendable, Hashable {
+    case starting, working, done, blocked, error, closed
+    case unrecognized(String)
+}
+
+extension DisplayState: Codable {
+    private static let knownValues: [String: DisplayState] = [
+        "starting": .starting, "working": .working, "done": .done,
+        "blocked": .blocked, "error": .error, "closed": .closed,
+    ]
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = Self.knownValues[raw] ?? .unrecognized(raw)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .starting: try container.encode("starting")
+        case .working: try container.encode("working")
+        case .done: try container.encode("done")
+        case .blocked: try container.encode("blocked")
+        case .error: try container.encode("error")
         case .closed: try container.encode("closed")
         case let .unrecognized(raw): try container.encode(raw)
         }
@@ -214,19 +249,35 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// values and what each means for the composer.
     public let state: SessionState?
     public let blocker: Blocker?
-    /// Whether Claude is actively mid-turn, read off the agent's own `worker_status` on an
-    /// otherwise-`ready` session. `nil` for every other state and for the agent's own
-    /// unspecified value — never read a `nil` here as "idle".
-    public let working: Bool?
-    /// Working/idle/closed derived purely from presence signals — `/idle`, `/active` and a
-    /// `SessionEnd` hook's `/closed` — never from `state`. Genuinely new information only for a
-    /// session `state` cannot answer at all: one PAI holds no live process for (`discovered` is
-    /// true, and `state` sits permanently `.closed`). For any session `state` already covers,
-    /// this tracks the same signals `working` above already does and adds nothing — read
-    /// `state`/`working` there instead; see `SessionListDomain.dotState(for:)`. `nil` when
-    /// neither signal has ever landed for this session (no hook registered, an old session, a
-    /// subagent). Absent on a backend that predates it.
-    public let presenceState: SessionPresenceState?
+    /// What this conversation claimed about the turn it just finished — its own claim, made by
+    /// the Stop hook on the machine running it. `nil` when no turn has ever been reported: an
+    /// old session, or one in a sandbox where the hook does not run (a `fast` session launches
+    /// under `--safe-mode` and loads no hook configuration at all).
+    ///
+    /// Almost nothing should read this. It exists on the wire for debugging and for anything
+    /// that genuinely needs the raw claim; what a session *looks* like is `displayState`, which
+    /// folds this together with everything that outranks it.
+    public let turnState: TurnState?
+    /// What this session's dot shows — computed once on the backend and rendered directly. Do
+    /// not re-derive it from `state`, `turnState`, `blocker` or `activityCounts`: this used to
+    /// be worked out separately in the web UI and again, by hand, in this client, which is
+    /// exactly the shape that drifts apart with nothing comparing the two.
+    ///
+    /// - `.starting` — launching (blue)
+    /// - `.working` — mid-turn, or parked on something that will wake it (spinner)
+    /// - `.done` — finished; look whenever there is time (green)
+    /// - `.blocked` — waiting on Freddy: a permission or trust prompt, a gated-secret request,
+    ///   or a turn that ended saying so (orange)
+    /// - `.error` — cannot proceed until something outside it is fixed: a lapsed Claude login,
+    ///   an unregistered pane (red)
+    /// - `.closed` — no live process, or nothing PAI drives (grey)
+    ///
+    /// A discovered session (one Freddy started in a terminal) gets a real value here too —
+    /// folded server-side from its own hook signals — rather than being forced grey the way
+    /// `state` alone would read it; see `SessionListDomain.dotState(for:)`. Absent on a backend
+    /// that predates it; a client seeing that falls back to treating the session as `closed`
+    /// rather than inventing a colour.
+    public let displayState: DisplayState?
     public let title: String?
     /// True once the name was chosen by hand. For a conversation with a `phaseId`, setting
     /// `title` locks that PHASE against the auto-summariser — the same lock every other
@@ -328,8 +379,9 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         case id
         case sessionType = "session_type"
         case model, thinking
-        case status, state, blocker, working, title
-        case presenceState = "presence_state"
+        case status, state, blocker, title
+        case turnState = "turn_state"
+        case displayState = "display_state"
         case titleLocked = "title_locked"
         case initialMessage = "initial_message"
         case sessionTokens = "session_tokens"
@@ -373,8 +425,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         status: SessionStatus,
         state: SessionState?,
         blocker: Blocker?,
-        working: Bool?,
-        presenceState: SessionPresenceState? = nil,
+        turnState: TurnState? = nil,
+        displayState: DisplayState? = nil,
         title: String?,
         titleLocked: Bool?,
         initialMessage: String?,
@@ -418,8 +470,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.status = status
         self.state = state
         self.blocker = blocker
-        self.working = working
-        self.presenceState = presenceState
+        self.turnState = turnState
+        self.displayState = displayState
         self.title = title
         self.titleLocked = titleLocked
         self.initialMessage = initialMessage
@@ -467,13 +519,13 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// default: this calls the memberwise initializer with `self`'s own other fields, so a
     /// property relying on its default would be silently reset to `nil` on every live update.
     public func withLiveStatus(
-        state: SessionState?, blocker: Blocker?, working: Bool?, presenceState: SessionPresenceState?,
+        state: SessionState?, blocker: Blocker?, turnState: TurnState?, displayState: DisplayState?,
         activityCounts: ActivityCounts?, secretGrantable: Bool?, secretPrompt: SecretPrompt?
     ) -> Session {
         Session(
             id: id, sessionType: sessionType, model: model, thinking: thinking, status: status, state: state,
             blocker: blocker,
-            working: working, presenceState: presenceState,
+            turnState: turnState, displayState: displayState,
             title: title, titleLocked: titleLocked, initialMessage: initialMessage,
             sessionTokens: sessionTokens, claudeSessionId: claudeSessionId, idleTimeoutMinutes: idleTimeoutMinutes,
             effectiveIdleTimeoutMinutes: effectiveIdleTimeoutMinutes, cseId: cseId, transcriptPath: transcriptPath,

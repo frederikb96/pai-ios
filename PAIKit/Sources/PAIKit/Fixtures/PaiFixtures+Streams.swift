@@ -25,7 +25,7 @@
 
         public static let sseStream: String =
             event("init", #"{"entries": \#(transcript), "cursor": 9060, "has_more": false, "session_tokens": 48210}"#)
-            + event("status", #"{"status": "ready", "working": true, "pending_sends": []}"#)
+            + event("status", #"{"status": "ready", "display_state": "working", "pending_sends": []}"#)
             + event("ping", "{}")
 
         /// The terminal stream, as a complete `text/event-stream` body.

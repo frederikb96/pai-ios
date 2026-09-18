@@ -82,8 +82,7 @@ extension PaiFixtures {
 
     // MARK: - Sessions
 
-    /// `starting` on `vm` — launched, not yet registered with Remote Control. No `state` other
-    /// than that; `working` is `null` because a session this young hasn't reported it.
+    /// `starting` on `vm` — launched, not yet registered with Remote Control.
     public static let sessionStarting: String = #"""
         {
           "id": "4376dc8c-e136-437f-88e5-16274acd25d8",
@@ -91,7 +90,7 @@ extension PaiFixtures {
           "status": "pending",
           "state": "starting",
           "blocker": null,
-          "working": null,
+          "display_state": "starting",
           "title": null,
           "initial_message": "Set up the new ingest job for the overview sweep.",
           "session_tokens": 0,
@@ -113,9 +112,10 @@ extension PaiFixtures {
         }
         """#
 
-    /// `ready` on `vm`, `working: true` — the transcript in `PaiFixtures+Transcript.swift`
-    /// belongs to this session. Every field the interface declares is present at least once
-    /// here, since it is the one row a screenshot is most likely to open.
+    /// `ready` on `vm`, `display_state: "working"` (the spinner) — the transcript in
+    /// `PaiFixtures+Transcript.swift` belongs to this session. Every field the interface
+    /// declares is present at least once here, since it is the one row a screenshot is most
+    /// likely to open.
     public static let sessionReady: String = #"""
         {
           "id": "305df4d3-1554-4fc3-be04-39a354a9e619",
@@ -123,7 +123,8 @@ extension PaiFixtures {
           "status": "active",
           "state": "ready",
           "blocker": null,
-          "working": true,
+          "turn_state": "working",
+          "display_state": "working",
           "title": "PAI iOS fixtures",
           "title_locked": true,
           "initial_message": "Build the canned fixture corpus for the screenshot run.",
@@ -168,7 +169,7 @@ extension PaiFixtures {
               { "key": "3", "label": "Open a fresh PR instead" }
             ]
           },
-          "working": false,
+          "display_state": "blocked",
           "title": "Renovate cleanup",
           "title_locked": false,
           "initial_message": "Clear the backlog of Renovate PRs on kubernetes-hetzner-talos.",
@@ -208,7 +209,7 @@ extension PaiFixtures {
               { "key": "2", "label": "No, exit" }
             ]
           },
-          "working": false,
+          "display_state": "blocked",
           "title": null,
           "initial_message": "Look at what's in ~/Downloads/client-export and summarise it.",
           "session_tokens": 640,
@@ -238,7 +239,7 @@ extension PaiFixtures {
             "question": "Trusting /home/frederik/Programming/scratch — handled automatically.",
             "options": []
           },
-          "working": false,
+          "display_state": "blocked",
           "title": "Scratch cleanup",
           "initial_message": "Clear out anything in scratch older than a month.",
           "session_tokens": 1180,
@@ -256,7 +257,9 @@ extension PaiFixtures {
 
     /// `blocked` on `vm` — `login_required`. Carries no options by design: pressing a key
     /// mid-sign-in would race the account-level Claude auth flow, so the UI only says what the
-    /// session is waiting for.
+    /// session is waiting for. `display_state` is `"error"`, not `"blocked"` — a lapsed Claude
+    /// login is something Freddy has to go fix outside this session, matching
+    /// `_derive_display_state`'s own precedence.
     public static let sessionBlockedLogin: String = #"""
         {
           "id": "e5940eb1-6e86-4aeb-b2bd-96843f709c58",
@@ -268,7 +271,7 @@ extension PaiFixtures {
             "question": "Waiting for Claude sign-in to finish on the VM.",
             "options": []
           },
-          "working": null,
+          "display_state": "error",
           "title": null,
           "initial_message": "Rebase the pai-cloud PR onto current main.",
           "session_tokens": 0,
@@ -301,7 +304,7 @@ extension PaiFixtures {
               { "key": "3", "label": "No" }
             ]
           },
-          "working": false,
+          "display_state": "blocked",
           "title": "Dependency refresh",
           "initial_message": "Clear out node_modules and reinstall from a clean lockfile.",
           "session_tokens": 3210,
@@ -330,7 +333,7 @@ extension PaiFixtures {
             "question": "I need a bit more direction before I continue — see the terminal.",
             "options": []
           },
-          "working": null,
+          "display_state": "error",
           "title": "Migration script",
           "initial_message": "Write a one-off script to repair the overview_tiers backlog.",
           "session_tokens": 22890,
@@ -359,7 +362,7 @@ extension PaiFixtures {
             "question": "This session never registered with Remote Control — restart it to recover.",
             "options": []
           },
-          "working": null,
+          "display_state": "error",
           "title": null,
           "initial_message": "Quick check: is the CNPG service name pai-cloud-db-rw or pai-cloud-rw?",
           "session_tokens": 0,
@@ -376,8 +379,8 @@ extension PaiFixtures {
         }
         """#
 
-    /// `closed` on `vm` — no live process. `working` is entirely absent here, not `null`,
-    /// modelling a payload from a backend old enough to predate the field.
+    /// `closed` on `vm` — no live process. `display_state` (and `turn_state`) are entirely
+    /// absent here, not `null`, modelling a payload from a backend old enough to predate them.
     public static let sessionClosed: String = #"""
         {
           "id": "d3922ef1-a6dd-44f2-a238-29e874358ebf",
@@ -407,8 +410,8 @@ extension PaiFixtures {
         }
         """#
 
-    /// `ready` on `laptop` — idle (`working: false`), proving the second machine is a first-class
-    /// citizen rather than a VM-only afterthought.
+    /// `ready` on `laptop` — idle (`display_state: "done"`), proving the second machine is a
+    /// first-class citizen rather than a VM-only afterthought.
     public static let sessionLaptopReady: String = #"""
         {
           "id": "ce5b1c4d-5d42-491e-bfa5-1209bdef55ba",
@@ -416,7 +419,7 @@ extension PaiFixtures {
           "status": "active",
           "state": "ready",
           "blocker": null,
-          "working": false,
+          "display_state": "done",
           "title": "Dotfiles cleanup",
           "initial_message": "Tidy up the zsh aliases that duplicate what scripts/ already provides.",
           "session_tokens": 9120,
@@ -441,7 +444,7 @@ extension PaiFixtures {
           "status": "pending",
           "state": "starting",
           "blocker": null,
-          "working": null,
+          "display_state": "starting",
           "title": null,
           "initial_message": "Check whether the laptop's SentinelOne agent is up to date.",
           "session_tokens": 0,
@@ -461,7 +464,9 @@ extension PaiFixtures {
     /// exercised here so a session-detail or group-chat surface has one to render.
     /// `subagent_name` is `null` (a plain Task subagent, not an in-process teammate with a
     /// chosen name); `claude_session_id` is `null` too, since a subagent has no conversation
-    /// of its own to resume.
+    /// of its own to resume. `display_state` is `"closed"` regardless of `turn_state` — a
+    /// subagent has no process of its own to show a dot for, matching `_derive_display_state`'s
+    /// own `kind in ("subagent", "supervisor")` short-circuit.
     public static let sessionSubagent: String = #"""
         {
           "id": "eb516249-128b-48cd-894c-7afdacc5643c",
@@ -469,7 +474,8 @@ extension PaiFixtures {
           "status": "active",
           "state": "ready",
           "blocker": null,
-          "working": true,
+          "turn_state": "working",
+          "display_state": "closed",
           "title": null,
           "initial_message": "Read web/src and report the API surface for iOS.",
           "session_tokens": 18042,

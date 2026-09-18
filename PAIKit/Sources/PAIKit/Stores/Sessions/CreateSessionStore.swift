@@ -251,7 +251,7 @@ public final class CreateSessionStore {
                 status: .pending,
                 state: .starting,
                 blocker: nil,
-                working: nil,
+                displayState: .starting,
                 title: nil,
                 titleLocked: nil,
                 initialMessage: message,

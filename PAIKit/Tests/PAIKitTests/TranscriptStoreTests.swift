@@ -242,7 +242,7 @@ final class TranscriptStoreTests: XCTestCase {
         store.applySseStatus(
             sessionId: "s1",
             event: SseStatusEvent(
-                status: .active, state: nil, blocker: nil, working: nil,
+                status: .active, state: nil, blocker: nil,
                 queued: nil, queuedTexts: nil, pendingSends: nil, lastError: nil
             )
         )
@@ -251,7 +251,7 @@ final class TranscriptStoreTests: XCTestCase {
         store.applySseStatus(
             sessionId: "s1",
             event: SseStatusEvent(
-                status: .completed, state: nil, blocker: nil, working: nil,
+                status: .completed, state: nil, blocker: nil,
                 queued: nil, queuedTexts: nil, pendingSends: nil, lastError: nil
             )
         )
@@ -259,12 +259,12 @@ final class TranscriptStoreTests: XCTestCase {
     }
 
     /// `secret_grantable` decodes off the wire and routes into `liveStatus` the same way
-    /// `working`/`presence_state`/`activity_counts` already do — the composer's grant entry reads
-    /// through this rather than waiting for the session row's own next poll.
+    /// `turn_state`/`display_state`/`activity_counts` already do — the composer's grant entry
+    /// reads through this rather than waiting for the session row's own next poll.
     func testApplySseStatusRecordsSecretGrantableIntoLiveStatus() async throws {
         let json = Data(
             """
-            {"status":"active","state":null,"blocker":null,"working":null,"secret_grantable":true}
+            {"status":"active","state":null,"blocker":null,"secret_grantable":true}
             """.utf8)
         let event = try JSONDecoder().decode(SseStatusEvent.self, from: json)
         XCTAssertEqual(event.secretGrantable, true)
@@ -284,7 +284,7 @@ final class TranscriptStoreTests: XCTestCase {
         store.applySseStatus(
             sessionId: "s1",
             event: SseStatusEvent(
-                status: .active, state: nil, blocker: nil, working: nil,
+                status: .active, state: nil, blocker: nil,
                 queued: nil, queuedTexts: nil, pendingSends: nil, lastError: nil
             )
         )

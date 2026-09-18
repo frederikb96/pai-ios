@@ -69,8 +69,8 @@ public final class TranscriptStore {
     public struct LiveSessionStatus: Sendable, Equatable {
         public let state: SessionState?
         public let blocker: Blocker?
-        public let working: Bool?
-        public let presenceState: SessionPresenceState?
+        public let turnState: TurnState?
+        public let displayState: DisplayState?
         public let activityCounts: ActivityCounts?
         public let secretGrantable: Bool?
         public let secretPrompt: SecretPrompt?

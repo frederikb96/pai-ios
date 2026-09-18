@@ -163,7 +163,8 @@ final class PaiFixturesTests: XCTestCase {
         let keys = Set(jsonDict(PaiFixtures.sessionMinimalDiscovered).keys)
         XCTAssertFalse(keys.contains("state"))
         XCTAssertFalse(keys.contains("blocker"))
-        XCTAssertFalse(keys.contains("working"))
+        XCTAssertFalse(keys.contains("turn_state"))
+        XCTAssertFalse(keys.contains("display_state"))
     }
 
     /// `docs/ARCHITECTURE.md`: `discovered && remote_control` both true is the combination that

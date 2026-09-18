@@ -221,7 +221,7 @@ final class PaiModelsTests: XCTestCase {
         let json = Data(
             """
             {"id":"s1","session_type":"claude","status":"active","state":"ready","blocker":null,
-             "working":true,"presence_state":"idle","title":"t","title_locked":true,
+             "turn_state":"working","display_state":"done","title":"t","title_locked":true,
              "initial_message":null,
              "session_tokens":0,"claude_session_id":null,
              "idle_timeout_minutes":30,"effective_idle_timeout_minutes":30,"cse_id":null,
@@ -236,8 +236,8 @@ final class PaiModelsTests: XCTestCase {
             """.utf8)
         let session = try JSONDecoder().decode(Session.self, from: json)
 
-        XCTAssertEqual(session.working, true)
-        XCTAssertEqual(session.presenceState, .idle)
+        XCTAssertEqual(session.turnState, .working)
+        XCTAssertEqual(session.displayState, .done)
         XCTAssertEqual(session.idleTimeoutMinutes, 30)
         XCTAssertEqual(session.effectiveIdleTimeoutMinutes, 30)
         XCTAssertEqual(session.agent, "laptop")
@@ -262,12 +262,12 @@ final class PaiModelsTests: XCTestCase {
     }
 
     /// A backend that predates `secret_grantable` omits the key entirely — must decode to `nil`
-    /// rather than throw and blank the row, matching `presence_state`'s own guard above.
+    /// rather than throw and blank the row, matching `display_state`'s own guard above.
     func testSessionSecretGrantableIsNilWhenTheKeyIsAbsent() throws {
         let json = Data(
             """
             {"id":"s1","session_type":"claude","status":"active","state":null,"blocker":null,
-             "working":null,"title":null,"title_locked":null,"initial_message":null,
+             "title":null,"title_locked":null,"initial_message":null,
              "session_tokens":0,"claude_session_id":null,
              "idle_timeout_minutes":null,"effective_idle_timeout_minutes":null,"cse_id":null,
              "created_at":null,"updated_at":null,"last_activity_at":null,"working_dir":null,
@@ -286,7 +286,7 @@ final class PaiModelsTests: XCTestCase {
     func testWithLiveStatusCarriesSecretGrantableThrough() throws {
         var session = SessionFixture.make(secretGrantable: false)
         session = session.withLiveStatus(
-            state: .ready, blocker: nil, working: true, presenceState: .working, activityCounts: nil,
+            state: .ready, blocker: nil, turnState: .working, displayState: .working, activityCounts: nil,
             secretGrantable: true, secretPrompt: nil)
         XCTAssertEqual(session.secretGrantable, true)
     }
@@ -302,20 +302,29 @@ final class PaiModelsTests: XCTestCase {
 
     /// Same guard as `SessionStatus`/`SessionKind`: a value this build predates must not throw
     /// and blank the whole session list.
-    func testSessionPresenceStateRoundTripsAnUnrecognizedValueRatherThanDroppingIt() throws {
-        let presence = try JSONDecoder().decode(SessionPresenceState.self, from: Data(#""stalled""#.utf8))
-        XCTAssertEqual(presence, .unrecognized("stalled"))
-        let reencoded = try JSONEncoder().encode(presence)
+    func testDisplayStateRoundTripsAnUnrecognizedValueRatherThanDroppingIt() throws {
+        let state = try JSONDecoder().decode(DisplayState.self, from: Data(#""stalled""#.utf8))
+        XCTAssertEqual(state, .unrecognized("stalled"))
+        let reencoded = try JSONEncoder().encode(state)
         XCTAssertEqual(String(data: reencoded, encoding: .utf8), #""stalled""#)
     }
 
-    /// A backend that predates `presence_state` omits the key entirely — must decode to `nil`
-    /// rather than throw and blank the row.
-    func testSessionPresenceStateIsNilWhenTheKeyIsAbsent() throws {
+    /// Same guard, for `turn_state` — the conversation's own raw claim, almost never read
+    /// directly but decoded and carried the same way every other enum here is.
+    func testTurnStateRoundTripsAnUnrecognizedValueRatherThanDroppingIt() throws {
+        let state = try JSONDecoder().decode(TurnState.self, from: Data(#""stalled""#.utf8))
+        XCTAssertEqual(state, .unrecognized("stalled"))
+        let reencoded = try JSONEncoder().encode(state)
+        XCTAssertEqual(String(data: reencoded, encoding: .utf8), #""stalled""#)
+    }
+
+    /// A backend that predates `turn_state`/`display_state` omits both keys entirely — must
+    /// decode to `nil` rather than throw and blank the row.
+    func testTurnStateAndDisplayStateAreNilWhenTheKeysAreAbsent() throws {
         let json = Data(
             """
             {"id":"s1","session_type":"claude","status":"active","state":null,"blocker":null,
-             "working":null,"title":null,"title_locked":null,"initial_message":null,
+             "title":null,"title_locked":null,"initial_message":null,
              "session_tokens":0,"claude_session_id":null,
              "idle_timeout_minutes":null,"effective_idle_timeout_minutes":null,"cse_id":null,
              "created_at":null,"updated_at":null,"last_activity_at":null,"working_dir":null,
@@ -324,7 +333,8 @@ final class PaiModelsTests: XCTestCase {
              "discovered":null,"project_id":null,"phase_id":null,"project_name":null}
             """.utf8)
         let session = try JSONDecoder().decode(Session.self, from: json)
-        XCTAssertNil(session.presenceState)
+        XCTAssertNil(session.turnState)
+        XCTAssertNil(session.displayState)
     }
 
     // MARK: - Machine
@@ -355,7 +365,7 @@ final class PaiModelsTests: XCTestCase {
         let json = Data(
             """
             {"id":"s1","session_type":"claude","status":"active","state":null,"blocker":null,
-             "working":null,"title":"Found me","title_locked":null,"initial_message":null,
+             "title":"Found me","title_locked":null,"initial_message":null,
              "session_tokens":0,"claude_session_id":null,
              "idle_timeout_minutes":null,"effective_idle_timeout_minutes":null,"cse_id":null,
              "created_at":null,"updated_at":null,"last_activity_at":null,"working_dir":null,
@@ -379,7 +389,7 @@ final class PaiModelsTests: XCTestCase {
         let json = Data(
             """
             {"id":"s1","session_type":"claude","status":"active","state":null,"blocker":null,
-             "working":null,"title":null,"title_locked":null,"initial_message":null,
+             "title":null,"title_locked":null,"initial_message":null,
              "session_tokens":0,"claude_session_id":null,
              "idle_timeout_minutes":null,"effective_idle_timeout_minutes":null,"cse_id":null,
              "created_at":null,"updated_at":null,"last_activity_at":null,"working_dir":null,
@@ -399,7 +409,7 @@ final class PaiModelsTests: XCTestCase {
             """
             {"status":"resumed",
              "session":{"id":"s1","session_type":"claude","status":"active","state":"ready",
-              "blocker":null,"working":null,"title":null,"title_locked":null,
+              "blocker":null,"title":null,"title_locked":null,
               "initial_message":null,"session_tokens":0,
               "claude_session_id":null,"idle_timeout_minutes":null,
               "effective_idle_timeout_minutes":null,"cse_id":null,"created_at":null,

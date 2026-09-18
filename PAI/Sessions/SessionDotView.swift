@@ -15,15 +15,16 @@ struct SessionDotView: View {
             .modifier(PulseWhile(active: state.pulses))
     }
 
-    /// Grey is normal, not an error — it means the session is not driven by the backend, true of
-    /// a subagent and of anything Freddy runs in his own terminal.
+    /// `.working` never actually reaches here in practice — `SessionStateIndicator` swaps in a
+    /// spinner for it instead — but carries a colour anyway, matching the web's own
+    /// `displayDotColor`, for a caller that wants one regardless.
     private var color: Color {
         switch state {
-        case .starting: PaiPalette.blue400
-        case .ready: PaiPalette.green500
+        case .starting, .working: PaiPalette.blue400
+        case .done: PaiPalette.green500
         case .blocked: PaiPalette.amber500
-        case .attention: PaiPalette.red500
-        case .closed, .grey: PaiPalette.surface400
+        case .error: PaiPalette.red500
+        case .closed: PaiPalette.surface400
         case .legacyPending: PaiPalette.yellow500
         case .legacyActive: PaiPalette.blue500
         case .legacyCompleted: PaiPalette.green500

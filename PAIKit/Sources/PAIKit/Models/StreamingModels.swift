@@ -56,10 +56,10 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
     public let status: SessionStatus
     public let state: SessionState?
     public let blocker: Blocker?
-    /// See `Session.working`.
-    public let working: Bool?
-    /// See `Session.presenceState`.
-    public let presenceState: SessionPresenceState?
+    /// See `Session.turnState`.
+    public let turnState: TurnState?
+    /// See `Session.displayState`.
+    public let displayState: DisplayState?
     /// See `Session.activityCounts`.
     public let activityCounts: ActivityCounts?
     /// See `Session.secretGrantable`.
@@ -81,8 +81,9 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
     public let lastError: String?
 
     enum CodingKeys: String, CodingKey {
-        case status, state, blocker, working, queued
-        case presenceState = "presence_state"
+        case status, state, blocker, queued
+        case turnState = "turn_state"
+        case displayState = "display_state"
         case activityCounts = "activity_counts"
         case secretGrantable = "secret_grantable"
         case secretPrompt = "secret_prompt"
@@ -95,8 +96,8 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
         status: SessionStatus,
         state: SessionState?,
         blocker: Blocker?,
-        working: Bool?,
-        presenceState: SessionPresenceState? = nil,
+        turnState: TurnState? = nil,
+        displayState: DisplayState? = nil,
         activityCounts: ActivityCounts? = nil,
         secretGrantable: Bool? = nil,
         secretPrompt: SecretPrompt? = nil,
@@ -108,8 +109,8 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
         self.status = status
         self.state = state
         self.blocker = blocker
-        self.working = working
-        self.presenceState = presenceState
+        self.turnState = turnState
+        self.displayState = displayState
         self.activityCounts = activityCounts
         self.secretGrantable = secretGrantable
         self.secretPrompt = secretPrompt

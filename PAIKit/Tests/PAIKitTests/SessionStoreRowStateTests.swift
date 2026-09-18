@@ -1,53 +1,48 @@
 import XCTest
 @testable import PAIKit
 
-/// `SessionListDomain`'s precedence rules — grey wins over `state`, `state` wins over legacy
-/// `status` — are exactly the kind of thing a refactor could silently reorder. The
-/// `isDrivable`/unrecognized-state interaction is the sharpest one: a state value this build does
-/// not recognize must still read as drivable, matching how the web (no closed union at runtime)
-/// treats an unrecognized string as merely "not the literal `'closed'`".
+/// `SessionListDomain.dotState(for:)` is now a straight mapping from `displayState`, entirely
+/// separate from `isDrivable`/`isGrey` (`state`/`kind`-driven, and unchanged by this file's own
+/// history) — the two used to be entangled (grey overrode the dot), which is exactly what this
+/// suite now asserts is no longer true: a non-drivable session still gets a real, coloured dot
+/// whenever the backend reports one.
 final class SessionStoreRowStateTests: XCTestCase {
 
     func testDrivableReadySessionIsNotGrey() {
-        let session = SessionFixture.make(state: .ready)
+        let session = SessionFixture.make(state: .ready, displayState: .done)
         XCTAssertTrue(SessionListDomain.isDrivable(session))
         XCTAssertFalse(SessionListDomain.isGrey(session))
-        XCTAssertEqual(SessionListDomain.dotState(for: session), .ready)
+        XCTAssertEqual(SessionListDomain.dotState(for: session), .done)
     }
 
-    func testClosedSessionIsGreyDespiteHavingAState() {
+    func testClosedSessionIsNotDrivableDespiteHavingAState() {
         let session = SessionFixture.make(state: .closed)
         XCTAssertFalse(SessionListDomain.isDrivable(session))
-        XCTAssertEqual(SessionListDomain.dotState(for: session), .grey)
     }
 
-    func testSessionWithNoStateAtAllIsGrey() {
+    func testSessionWithNoStateAtAllIsNotDrivable() {
         let session = SessionFixture.make(state: nil)
         XCTAssertFalse(SessionListDomain.isDrivable(session))
-        XCTAssertEqual(SessionListDomain.dotState(for: session), .grey)
     }
 
     /// A message typed at a discovered session has nowhere to go — PAI holds no process for it —
-    /// regardless of how alive `presenceState` says it looks on screen.
-    func testDiscoveredSessionStaysNotDrivableWhateverPresenceStateSays() {
-        let session = SessionFixture.make(state: .closed, presenceState: .working, discovered: true)
+    /// regardless of how alive `displayState` says it looks on screen.
+    func testDiscoveredSessionStaysNotDrivableWhateverDisplayStateSays() {
+        let session = SessionFixture.make(state: .closed, displayState: .working, discovered: true)
         XCTAssertFalse(SessionListDomain.isDrivable(session))
     }
 
-    /// A subagent is never drivable whatever its state — the row anatomy's grey dot must not
-    /// depend on whether someone remembered to also null out `state` for one.
-    func testSubagentIsGreyEvenWithAReadyState() {
+    /// A subagent is never drivable whatever its state.
+    func testSubagentIsNotDrivableEvenWithAReadyState() {
         let session = SessionFixture.make(state: .ready, kind: .subagent)
         XCTAssertFalse(SessionListDomain.isDrivable(session))
-        XCTAssertEqual(SessionListDomain.dotState(for: session), .grey)
     }
 
     /// A supervisor DOES have its own live process — unlike a subagent, `isDrivable` cannot lean
     /// on "no process at all" for it, so this is the one case a refactor could plausibly drop.
-    func testSupervisorIsGreyEvenWithAReadyState() {
+    func testSupervisorIsNotDrivableEvenWithAReadyState() {
         let session = SessionFixture.make(state: .ready, kind: .supervisor)
         XCTAssertFalse(SessionListDomain.isDrivable(session))
-        XCTAssertEqual(SessionListDomain.dotState(for: session), .grey)
     }
 
     /// The sharpest divergence risk in this file: an unrecognized state string is not `nil` and
@@ -56,107 +51,103 @@ final class SessionStoreRowStateTests: XCTestCase {
     func testUnrecognizedStateStillReadsAsDrivable() {
         let session = SessionFixture.make(state: .unrecognized("future_state"))
         XCTAssertTrue(SessionListDomain.isDrivable(session))
-        // The dot itself still falls back to the closed-looking bucket — display-only, and
-        // distinct from drivability, which is why this assertion sits beside the one above
-        // rather than being inferred from it.
+    }
+
+    /// The dot no longer knows anything about drivability at all — a subagent reporting a real
+    /// `displayState` gets exactly that colour, same as any other session. Grey is now purely a
+    /// label/composer concept (`isGrey`), never the dot's own colour — see `SessionRowState.swift`.
+    func testASubagentsDotStillReflectsItsOwnDisplayStateDespiteBeingUndrivable() {
+        let session = SessionFixture.make(state: .ready, displayState: .done, kind: .subagent)
+        XCTAssertFalse(SessionListDomain.isDrivable(session))
+        XCTAssertEqual(SessionListDomain.dotState(for: session), .done)
+    }
+
+    /// A discovered session now gets a real dot from its own hook signals, folded into
+    /// `displayState` on the backend — it is no longer forced grey just because `state` sits
+    /// permanently `.closed` for it.
+    func testDiscoveredSessionGetsARealDotFromDisplayState() {
+        let working = SessionFixture.make(state: .closed, displayState: .working, discovered: true)
+        let done = SessionFixture.make(state: .closed, displayState: .done, discovered: true)
+        let closed = SessionFixture.make(state: .closed, displayState: .closed, discovered: true)
+
+        XCTAssertEqual(SessionListDomain.dotState(for: working), .working)
+        XCTAssertEqual(SessionListDomain.dotState(for: done), .done)
+        XCTAssertEqual(SessionListDomain.dotState(for: closed), .closed)
+    }
+
+    func testDotStateFallsBackToTheLegacyStatusBadgeWhenDisplayStateIsAbsent() {
+        let withDisplayState = SessionFixture.make(status: .error, displayState: .done)
+        XCTAssertEqual(SessionListDomain.dotState(for: withDisplayState), .done)
+
+        let withoutDisplayState = SessionFixture.make(status: .error, displayState: nil)
+        XCTAssertEqual(SessionListDomain.dotState(for: withoutDisplayState), .legacyError)
+    }
+
+    /// A value this build predates falls back to the same bucket a closed session renders,
+    /// matching the web's own `default:` branch.
+    func testUnrecognizedDisplayStateFallsBackToTheClosedBucket() {
+        let session = SessionFixture.make(displayState: .unrecognized("future_state"))
         XCTAssertEqual(SessionListDomain.dotState(for: session), .closed)
     }
 
-    func testGreyWinsOverALiveReadyStateWhenNotDrivable() {
-        // A subagent reporting `ready` must never render the green "all is well" dot — grey is
-        // supposed to win over everything, including a state that would otherwise look healthy.
-        let session = SessionFixture.make(state: .ready, kind: .subagent)
-        XCTAssertNotEqual(SessionListDomain.dotState(for: session), .ready)
-        XCTAssertEqual(SessionListDomain.dotState(for: session), .grey)
+    func testIsWorkingIsAStraightMappingFromDisplayState() {
+        XCTAssertTrue(SessionListDomain.isWorking(SessionFixture.make(displayState: .working)))
+        XCTAssertFalse(SessionListDomain.isWorking(SessionFixture.make(displayState: .done)))
+        XCTAssertFalse(SessionListDomain.isWorking(SessionFixture.make(displayState: nil)))
     }
 
-    /// A discovered session's `state` sits permanently `.closed` — there is no PAI process to
-    /// poll — so `presenceState` is the only field that can tell it apart from one that is
-    /// genuinely gone.
-    func testDiscoveredSessionReadsPresenceStateInsteadOfItsPermanentlyClosedState() {
-        let idle = SessionFixture.make(state: .closed, presenceState: .idle, discovered: true)
-        let working = SessionFixture.make(state: .closed, presenceState: .working, discovered: true)
-        let closed = SessionFixture.make(state: .closed, presenceState: .closed, discovered: true)
-        let unknown = SessionFixture.make(state: .closed, presenceState: nil, discovered: true)
-
-        XCTAssertEqual(SessionListDomain.dotState(for: idle), .ready)
-        XCTAssertEqual(SessionListDomain.dotState(for: working), .ready)
-        XCTAssertEqual(SessionListDomain.dotState(for: closed), .grey)
-        XCTAssertEqual(SessionListDomain.dotState(for: unknown), .grey)
-    }
-
-    /// A stale `presence_state: .idle` left over from before PAI closed a session it actually
-    /// launched must not turn that dot green — only a discovered session reads this field at all.
-    func testNonDiscoveredSessionNeverReadsPresenceStateForItsDot() {
-        let session = SessionFixture.make(state: .closed, presenceState: .idle, discovered: false)
-        XCTAssertEqual(SessionListDomain.dotState(for: session), .grey)
-    }
-
-    func testLegacyStatusFallsBackOnlyWhenStateIsAbsent() {
-        let withState = SessionFixture.make(status: .error, state: .ready)
-        XCTAssertEqual(SessionListDomain.dotState(for: withState), .ready)
-
-        let withoutState = SessionFixture.make(status: .error, state: nil)
-        // No `state` at all reads as not drivable (grey) before the legacy status is ever
-        // consulted for drivability — but the DOT still falls back to the legacy mapping, since
-        // dot color and drivability are governed by different rules (see `SessionRowState.swift`).
-        XCTAssertFalse(SessionListDomain.isDrivable(withoutState))
-    }
-
-    func testIsWorkingRequiresBothReadyAndWorkingTrue() {
-        XCTAssertTrue(SessionListDomain.isWorking(SessionFixture.make(state: .ready, working: true)))
-        XCTAssertFalse(SessionListDomain.isWorking(SessionFixture.make(state: .ready, working: false)))
-        XCTAssertFalse(SessionListDomain.isWorking(SessionFixture.make(state: .ready, working: nil)))
-        // A stale `working: true` reported outside `.ready` must not read as working — this is
-        // the exact guard the report calls out: `worker_status` does not self-clear.
-        XCTAssertFalse(SessionListDomain.isWorking(SessionFixture.make(state: .attention, working: true)))
-    }
-
-    /// `working` never fires for a discovered session (see `dotState(for:)`), so its spinner is
-    /// read off `presenceState` instead.
-    func testIsWorkingReadsPresenceStateForADiscoveredSession() {
-        let working = SessionFixture.make(state: .closed, presenceState: .working, discovered: true)
-        let idle = SessionFixture.make(state: .closed, presenceState: .idle, discovered: true)
-        XCTAssertTrue(SessionListDomain.isWorking(working))
-        XCTAssertFalse(SessionListDomain.isWorking(idle))
-    }
-
-    func testIsWorkingIgnoresPresenceStateForASessionPaiActuallyLaunched() {
-        let session = SessionFixture.make(state: .closed, presenceState: .working, discovered: false)
-        XCTAssertFalse(SessionListDomain.isWorking(session))
+    /// The one case a refactor could plausibly regress: `isWorking` used to special-case a
+    /// discovered session (reading `presenceState` instead of `state`/`working`). That whole
+    /// branch is gone now — a discovered session's spinner comes from the exact same field.
+    func testIsWorkingNeedsNoSpecialCaseForADiscoveredSession() {
+        let session = SessionFixture.make(state: .closed, displayState: .working, discovered: true)
+        XCTAssertTrue(SessionListDomain.isWorking(session))
     }
 
     func testDotStatePulsesOnlyForInFlightStates() {
         XCTAssertTrue(SessionDotState.starting.pulses)
         XCTAssertTrue(SessionDotState.blocked.pulses)
-        XCTAssertTrue(SessionDotState.attention.pulses)
+        XCTAssertTrue(SessionDotState.error.pulses)
         XCTAssertTrue(SessionDotState.legacyActive.pulses)
-        XCTAssertFalse(SessionDotState.ready.pulses)
-        XCTAssertFalse(SessionDotState.grey.pulses)
+        XCTAssertFalse(SessionDotState.working.pulses)
+        XCTAssertFalse(SessionDotState.done.pulses)
         XCTAssertFalse(SessionDotState.closed.pulses)
     }
 
     // MARK: - sessionLabel
 
-    func testSessionLabelReadsWorkingAheadOfThePlainStateName() {
-        let session = SessionFixture.make(state: .ready, working: true)
-        XCTAssertEqual(SessionListDomain.sessionLabel(for: session), "Working…")
+    func testSessionLabelReadsDisplayStateDirectly() {
+        XCTAssertEqual(SessionListDomain.sessionLabel(for: SessionFixture.make(displayState: .working)), "Working…")
+        XCTAssertEqual(
+            SessionListDomain.sessionLabel(for: SessionFixture.make(displayState: .blocked)), "Waiting on you")
+        XCTAssertEqual(
+            SessionListDomain.sessionLabel(for: SessionFixture.make(displayState: .error)), "Needs attention")
     }
 
-    func testSessionLabelIsGreyAwareAndNamesSubagentDistinctlyFromAnOrdinarySession() {
-        let subagent = SessionFixture.make(state: nil, kind: .subagent)
+    func testSessionLabelNamesSubagentAndSupervisorRegardlessOfDisplayState() {
+        let subagent = SessionFixture.make(state: nil, displayState: .done, kind: .subagent)
         XCTAssertEqual(SessionListDomain.sessionLabel(for: subagent), "Subagent")
 
-        let ordinary = SessionFixture.make(state: nil, kind: .conversation)
-        XCTAssertEqual(SessionListDomain.sessionLabel(for: ordinary), "Not driven by PAI")
-
-        let supervisor = SessionFixture.make(state: nil, kind: .supervisor)
+        let supervisor = SessionFixture.make(state: nil, displayState: .done, kind: .supervisor)
         XCTAssertEqual(SessionListDomain.sessionLabel(for: supervisor), "Supervisor")
     }
 
-    func testSessionLabelFallsBackToThePlainStateNameWhenNotWorking() {
-        XCTAssertEqual(SessionListDomain.sessionLabel(for: SessionFixture.make(state: .blocked)), "Waiting on you")
-        XCTAssertEqual(SessionListDomain.sessionLabel(for: SessionFixture.make(state: .attention)), "Needs attention")
+    /// A grey (not drivable) session's label appends the "not driven by PAI" suffix — unless
+    /// `displayState` is already `.closed`, which says as much on its own.
+    func testSessionLabelAppendsNotDrivenByPaiForAGreySessionUnlessAlreadyClosed() {
+        let greyWorking = SessionFixture.make(state: .closed, displayState: .working, discovered: true)
+        XCTAssertEqual(SessionListDomain.sessionLabel(for: greyWorking), "Working… · not driven by PAI")
+
+        let greyClosed = SessionFixture.make(state: .closed, displayState: .closed, discovered: true)
+        XCTAssertEqual(SessionListDomain.sessionLabel(for: greyClosed), "Closed")
+    }
+
+    func testSessionLabelWithNoDisplayStateFallsBackToGreyOrEmpty() {
+        let grey = SessionFixture.make(state: nil, displayState: nil)
+        XCTAssertEqual(SessionListDomain.sessionLabel(for: grey), "Not driven by PAI")
+
+        let drivable = SessionFixture.make(state: .ready, displayState: nil)
+        XCTAssertEqual(SessionListDomain.sessionLabel(for: drivable), "")
     }
 
     // MARK: - sessionHeaderTitle

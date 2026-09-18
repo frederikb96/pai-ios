@@ -691,13 +691,13 @@ final class SessionStoreListStoreTests: XCTestCase {
         await store.loadInitialSessions()
 
         store.applyLiveStatus(
-            sessionId: "s1", state: .ready, blocker: nil, working: true, presenceState: .working,
+            sessionId: "s1", state: .ready, blocker: nil, turnState: .working, displayState: .working,
             activityCounts: ActivityCounts(agents: 2, tasks: 1), secretGrantable: true,
             secretPrompt: nil
         )
 
         XCTAssertEqual(store.syncedSessions.first?.state, .ready)
-        XCTAssertEqual(store.syncedSessions.first?.working, true)
+        XCTAssertEqual(store.syncedSessions.first?.displayState, .working)
         XCTAssertEqual(store.syncedSessions.first?.activityCounts, ActivityCounts(agents: 2, tasks: 1))
         XCTAssertEqual(store.syncedSessions.first?.secretGrantable, true)
     }
@@ -705,7 +705,7 @@ final class SessionStoreListStoreTests: XCTestCase {
     /// `withLiveStatus` rebuilds the row from its own memberwise initializer — a parameter left
     /// to default to `nil` there would silently drop this field on every live update rather than
     /// carrying it through, which is exactly the trap this asserts against.
-    func testApplyLiveStatusCarriesPresenceStateThrough() async {
+    func testApplyLiveStatusCarriesDisplayStateThrough() async {
         let api = FakeSessionListApi()
         await api.setGetSessionsResult { _ in
             .success(SessionsPage(sessions: [SessionFixture.make(id: "s1", state: .closed)], nextCursor: nil))
@@ -714,12 +714,12 @@ final class SessionStoreListStoreTests: XCTestCase {
         await store.loadInitialSessions()
 
         store.applyLiveStatus(
-            sessionId: "s1", state: .closed, blocker: nil, working: nil, presenceState: .working,
+            sessionId: "s1", state: .closed, blocker: nil, turnState: nil, displayState: .working,
             activityCounts: nil, secretGrantable: nil,
             secretPrompt: nil
         )
 
-        XCTAssertEqual(store.syncedSessions.first?.presenceState, .working)
+        XCTAssertEqual(store.syncedSessions.first?.displayState, .working)
     }
 
     /// Same trap, same shape, for the field the composer's grant entry gates on — a session going
@@ -733,7 +733,7 @@ final class SessionStoreListStoreTests: XCTestCase {
         await store.loadInitialSessions()
 
         store.applyLiveStatus(
-            sessionId: "s1", state: nil, blocker: nil, working: nil, presenceState: nil,
+            sessionId: "s1", state: nil, blocker: nil, turnState: nil, displayState: nil,
             activityCounts: nil, secretGrantable: true,
             secretPrompt: nil
         )
@@ -755,8 +755,8 @@ final class SessionStoreListStoreTests: XCTestCase {
         await store.loadInitialSessions()
 
         store.applyLiveStatus(
-            sessionId: "s1", state: .ready, blocker: nil, working: true, presenceState: nil, activityCounts: nil,
-            secretGrantable: nil,
+            sessionId: "s1", state: .ready, blocker: nil, turnState: .working, displayState: nil,
+            activityCounts: nil, secretGrantable: nil,
             secretPrompt: nil
         )
 
@@ -823,7 +823,7 @@ final class SessionStoreListStoreTests: XCTestCase {
         let store = makeStore(api: api)
 
         store.applyLiveStatus(
-            sessionId: "not-loaded", state: .ready, blocker: nil, working: true, presenceState: nil,
+            sessionId: "not-loaded", state: .ready, blocker: nil, turnState: .working, displayState: nil,
             activityCounts: nil, secretGrantable: nil,
             secretPrompt: nil
         )

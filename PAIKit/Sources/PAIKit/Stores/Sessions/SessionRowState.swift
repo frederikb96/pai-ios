@@ -1,71 +1,51 @@
 import Foundation
 
 /// Swift port of the parts of `pai-cloud/web/src/utils/sessionState.ts` the session list needs.
-/// `sessionLabel`/`sessionHeaderTitle`/`resumeMayCollide` stay unported here — they belong to the
-/// chat header and the row actions menu, neither of which reads through this store.
+/// `sessionHeaderTitle`/`resumeMayCollide` stay unported here — they belong to the chat header and
+/// the row actions menu, neither of which reads through this store.
 
 /// Which bucket a session's dot falls into — a display concept, not a color; `Theme` owns the
-/// actual palette. Grey and the `.closed` bucket render the same, but are reached differently:
-/// grey wins on drivability (see `SessionListDomain.isGrey`), `.closed` is reached only for a
-/// drivable session whose `state` this build cannot recognize (`SessionState.unrecognized`) —
-/// see `dotState(for:)` below.
+/// actual palette. A straight mapping from `DisplayState`, plus the legacy `SessionStatus` bucket
+/// for a backend that predates it — see `dotState(for:)` below. There is no separate grey case
+/// here any more: drivability (`SessionListDomain.isGrey`) governs the composer/Resume choice and
+/// the row's label, never the dot's own colour — see that function's doc comment for why.
 public enum SessionDotState: Sendable, Equatable {
-    case grey
-    case starting, ready, blocked, attention, closed
+    case starting, working, done, blocked, error, closed
     case legacyPending, legacyActive, legacyCompleted, legacyError, legacyInterrupted
 }
 
 extension SessionDotState {
-    /// Whether the dot should pulse — `starting`/`blocked`/`attention` and the legacy `active`
-    /// all read as "something is happening"; everything else, including grey, is settled.
+    /// Whether the dot should pulse — `starting`/`blocked`/`error` and the legacy `active` all
+    /// read as "something is happening"; everything else is settled.
     public var pulses: Bool {
         switch self {
-        case .starting, .blocked, .attention, .legacyActive: return true
+        case .starting, .blocked, .error, .legacyActive: return true
         default: return false
         }
     }
 }
 
 public enum SessionListDomain {
-    /// Grey — not driven by PAI — wins over everything else, including a live `ready` transcript,
-    /// because that is the whole point of the color: it never turns green just because the
-    /// conversation happens to be going well without PAI's help. Otherwise prefers `state` when
-    /// present, falling back to the legacy `status` enum.
-    ///
-    /// `state` sits permanently `.closed` for a session PAI never launched (`discovered`) since
-    /// there is no process to poll, so it reads `presenceState` instead — the only field that
-    /// can tell such a session apart from one that is genuinely gone. Scoped to exactly that
-    /// case: a drivable session, and a non-discovered grey session, both still come from `state`
-    /// alone, unchanged.
+    /// A straight mapping from `display_state` — the one field both clients paint a session's dot
+    /// from (see `Session.displayState`'s doc comment). Nothing here re-derives anything from
+    /// `state`, `discovered` or `kind`: that folding already happened once, on the backend. A
+    /// backend that predates the field falls back to the legacy `status` badge rather than
+    /// inventing a colour, matching the web's own `sessionDotColor`.
     public static func dotState(for session: Session) -> SessionDotState {
-        if isGrey(session) {
-            if session.discovered == true { return dotState(forPresence: session.presenceState) }
-            return .grey
-        }
-        if let state = session.state { return dotState(for: state) }
+        if let displayState = session.displayState { return dotState(for: displayState) }
         return dotState(for: session.status)
     }
 
-    /// `.working` and `.idle` render identically (green, no pulse) — `isWorking` is what swaps
-    /// the dot for a spinner, exactly as it does for a PAI-launched session.
-    private static func dotState(forPresence presence: SessionPresenceState?) -> SessionDotState {
-        switch presence {
-        case .working, .idle: return .ready
-        case .closed, .unrecognized, nil: return .grey
-        }
-    }
-
-    public static func dotState(for state: SessionState) -> SessionDotState {
+    public static func dotState(for state: DisplayState) -> SessionDotState {
         switch state {
         case .starting: return .starting
-        case .ready: return .ready
+        case .working: return .working
+        case .done: return .done
         case .blocked: return .blocked
-        case .attention: return .attention
+        case .error: return .error
         case .closed: return .closed
-        // A state value this build predates. `isDrivable` below already reads this as drivable
-        // (matching the web, where an unrecognized string is merely not the literal `'closed'`);
-        // the dot itself falls back to the same bucket a closed session renders, which is what
-        // the web's own `default:` branch in `stateDotColor` does too.
+        // A value this build predates falls back to the same bucket a closed session renders,
+        // matching the web's own `default:` branch in `displayDotColor`.
         case .unrecognized: return .closed
         }
     }
@@ -81,17 +61,17 @@ public enum SessionListDomain {
         }
     }
 
-    /// True while Claude is actively mid-turn on an otherwise-`ready` session. Deliberately gated
-    /// on `state == .ready` rather than `working` alone: the agent's own `worker_status` does not
-    /// self-clear, so trusting it outside a session already known to be up would spin forever on
-    /// a stale value.
+    /// True while this session is making progress: mid-turn, or parked on something that will
+    /// wake it back up by itself. The spinner is shown in place of the dot for exactly this.
     ///
-    /// A discovered session's `state` never reaches `.ready` at all (see `dotState(for:)`), so it
-    /// reads `presenceState` instead — the same underlying signals, carried on the one field that
-    /// still updates for a session PAI holds no process for.
+    /// Note what it deliberately no longer means. It is not "a subagent or a background shell is
+    /// running" — a worker writing into the parent transcript is indistinguishable from the main
+    /// agent working, so those counts drive the badges beside the token figure and nothing else.
+    /// And it is not "the process has no live tmux" — a discovered session now reads this exactly
+    /// the same way a launched one does, since `displayState` already folded its own hook signals
+    /// in on the backend; there is no separate discovered-only path here any more.
     public static func isWorking(_ session: Session) -> Bool {
-        if session.discovered == true { return session.presenceState == .working }
-        return session.state == .ready && session.working == true
+        session.displayState == .working
     }
 
     /// Whether PAI has a live process of its own for this session — the only thing that decides
@@ -110,26 +90,33 @@ public enum SessionListDomain {
     /// closed when it went idle — not a fault.
     public static func isGrey(_ session: Session) -> Bool { !isDrivable(session) }
 
-    /// The label next to a session's dot/spinner — grey-aware, and reading "Working…" ahead of
-    /// the plain state label for the same reason the row's own spinner does: `isWorking` is a
-    /// truer answer than the state name once a turn is actually running. Swift port of
-    /// `sessionState.ts`'s `sessionLabel`.
-    public static func sessionLabel(for session: Session) -> String {
-        if isGrey(session) {
-            if session.kind == .subagent { return "Subagent" }
-            if session.kind == .supervisor { return "Supervisor" }
-            return "Not driven by PAI"
-        }
-        if isWorking(session) { return "Working…" }
-        guard let state = session.state else { return "" }
+    /// The plain-English name for a `DisplayState` — what `sessionLabel` below shows once it has
+    /// settled whether this session is grey. Swift port of `sessionState.ts`'s `displayLabel`.
+    public static func displayLabel(_ state: DisplayState) -> String {
         switch state {
         case .starting: return "Starting…"
-        case .ready: return "Ready"
+        case .working: return "Working…"
+        case .done: return "Done"
         case .blocked: return "Waiting on you"
-        case .attention: return "Needs attention"
+        case .error: return "Needs attention"
         case .closed: return "Closed"
         case let .unrecognized(raw): return raw
         }
+    }
+
+    /// The label next to a session's dot/spinner. Swift port of `sessionState.ts`'s
+    /// `sessionLabel`: a subagent or supervisor names itself regardless of drivability, since
+    /// neither has a `displayState` of its own worth reading; otherwise `displayState` supplies
+    /// the label, with " · not driven by PAI" appended for a grey session that is not already
+    /// showing `.closed` (which already says as much on its own).
+    public static func sessionLabel(for session: Session) -> String {
+        if session.kind == .subagent { return "Subagent" }
+        if session.kind == .supervisor { return "Supervisor" }
+        if let displayState = session.displayState {
+            let label = displayLabel(displayState)
+            return isGrey(session) && displayState != .closed ? "\(label) · not driven by PAI" : label
+        }
+        return isGrey(session) ? "Not driven by PAI" : ""
     }
 
     /// What to head a session's chat view with. A subagent is outside the phase-naming rule and

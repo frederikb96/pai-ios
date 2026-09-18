@@ -259,19 +259,19 @@ public final class SessionListStore {
     /// `secretGrantable` travels the same path so the composer's grant entry reflects a session
     /// going live or closing without waiting for the next poll — see `Session.secretGrantable`.
     public func applyLiveStatus(
-        sessionId: String, state: SessionState?, blocker: Blocker?, working: Bool?,
-        presenceState: SessionPresenceState?, activityCounts: ActivityCounts?, secretGrantable: Bool?,
+        sessionId: String, state: SessionState?, blocker: Blocker?, turnState: TurnState?,
+        displayState: DisplayState?, activityCounts: ActivityCounts?, secretGrantable: Bool?,
         secretPrompt: SecretPrompt?
     ) {
         if let index = syncedSessions.firstIndex(where: { $0.id == sessionId }) {
             syncedSessions[index] = syncedSessions[index].withLiveStatus(
-                state: state, blocker: blocker, working: working, presenceState: presenceState,
+                state: state, blocker: blocker, turnState: turnState, displayState: displayState,
                 activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt
             )
         }
         if let index = serverFilteredResults.firstIndex(where: { $0.session.id == sessionId }) {
             let updated = serverFilteredResults[index].session.withLiveStatus(
-                state: state, blocker: blocker, working: working, presenceState: presenceState,
+                state: state, blocker: blocker, turnState: turnState, displayState: displayState,
                 activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt
             )
             serverFilteredResults[index] = SessionSearchResult(
@@ -475,13 +475,13 @@ public final class SessionListStore {
                 case .closed, .alreadyClosed:
                     // Mirrors the backend's own mutation (`close_session` sets exactly `state`
                     // and `blocker`) rather than `applyLiveStatus`'s SSE-shaped update, which
-                    // would blank `working`/`presenceState`/`activityCounts`/`secretGrantable`
+                    // would blank `turnState`/`displayState`/`activityCounts`/`secretGrantable`
                     // this response says nothing about.
                     if let session = self.session(withId: id) {
                         self.replaceSession(
                             session.withLiveStatus(
-                                state: .closed, blocker: nil, working: session.working,
-                                presenceState: session.presenceState, activityCounts: session.activityCounts,
+                                state: .closed, blocker: nil, turnState: session.turnState,
+                                displayState: session.displayState, activityCounts: session.activityCounts,
                                 secretGrantable: session.secretGrantable, secretPrompt: session.secretPrompt
                             )
                         )
