@@ -93,7 +93,10 @@ struct TranscriptRowContent: View {
                     metrics: metrics,
                     // Only the first card carries it, so one message shows one time.
                     timestamp: cardIndex == 0 ? formattedTimestamp : nil,
-                    onToggle: card.plan.preview.isBounded || card.plan.isRevealed
+                    // The MEASURED truth, not the plan's intent: a bounded card whose body turned
+                    // out to fit has nothing to open, and offering a tap there is an affordance
+                    // that does nothing.
+                    onToggle: card.isTruncated || card.plan.isRevealed
                         ? { onToggleReveal(cardIndex) } : nil,
                     sessionID: sessionID,
                     apiClient: apiClient,
@@ -368,7 +371,9 @@ struct ActivityRowView<Content: View>: View {
                     .frame(height: card.contentHeight, alignment: .top)
                     .clipped()
                 if card.isTruncated {
-                    TrailerView(preview: card.plan.preview, isRevealed: card.plan.isRevealed)
+                    TrailerView(
+                        preview: card.plan.preview, isRevealed: card.plan.isRevealed,
+                        lineHeight: metrics.trailerLineHeight)
                 }
             }
             // Claims the whole body column rather than leaving a flexible spacer to compete for
@@ -449,6 +454,8 @@ private struct TimeColumn: View {
 private struct TrailerView: View {
     let preview: TranscriptCardPlan.Preview
     let isRevealed: Bool
+    /// The row reserved exactly this much for it, from the same font this draws in.
+    let lineHeight: Double
 
     private var caption: String {
         if isRevealed { return "− show less (\(preview.totalLines) lines)" }
@@ -461,7 +468,7 @@ private struct TrailerView: View {
             .font(PaiTypography.caption.font)
             .foregroundStyle(PaiPalette.Semantic.accentText)
             .lineLimit(1)
-            .frame(height: TranscriptRowMetrics.trailerHeight, alignment: .leading)
+            .frame(height: lineHeight, alignment: .leading)
     }
 }
 

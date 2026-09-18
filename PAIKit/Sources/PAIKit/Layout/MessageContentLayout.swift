@@ -47,11 +47,18 @@ public struct MessageLayoutMetrics: Sendable {
     public let activityLineHeight: Double
     /// One line of rendered prose, resolved the same way and for the same reason.
     public let proseLineHeight: Double
+    /// One line of the caption font the `… +N lines` trailer draws in. A fixed constant here is
+    /// the same mistake one size down: `.frame(height:)` does not clip, so at a large content
+    /// size category the trailer draws outside the slot the row reserved and over the row below.
+    public let trailerLineHeight: Double
 
-    public init(blockSpacing: Double, activityLineHeight: Double, proseLineHeight: Double) {
+    public init(
+        blockSpacing: Double, activityLineHeight: Double, proseLineHeight: Double, trailerLineHeight: Double
+    ) {
         self.blockSpacing = blockSpacing
         self.activityLineHeight = activityLineHeight
         self.proseLineHeight = proseLineHeight
+        self.trailerLineHeight = trailerLineHeight
     }
 }
 

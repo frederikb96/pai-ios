@@ -27,8 +27,6 @@ public enum TranscriptRowMetrics {
     /// One activity row's own vertical padding, per edge. Small on purpose: this is the number
     /// that decides whether a screenful of machinery is four rows or fourteen.
     public static let activityRowPadding: Double = 3
-    /// The `… +N lines` / `− show less` line under a bounded body.
-    public static let trailerHeight: Double = 17
     /// The right-hand column holding a row's timestamp. It shares the row rather than occupying a
     /// line of its own — a timestamp on its own line costs one line per row, which over a session
     /// is more vertical space than every tool result put together.
@@ -335,7 +333,7 @@ public enum TranscriptRowLayout {
             return TranscriptRowMetrics.activityRowPadding * 2
                 + metrics.activityLineHeight
                 + content
-                + (isTruncated ? TranscriptRowMetrics.trailerHeight : 0)
+                + (isTruncated ? metrics.trailerLineHeight : 0)
 
         case .prose:
             switch card.kind {
@@ -386,7 +384,7 @@ public enum TranscriptRowLayout {
                 }
                 return TranscriptRowMetrics.meRowPadding * 2 + content + labelChrome
                     + TranscriptRowMetrics.bubbleVerticalPadding
-                    + (isTruncated ? TranscriptRowMetrics.trailerHeight : 0)
+                    + (isTruncated ? metrics.trailerLineHeight : 0)
 
             default:
                 return TranscriptRowMetrics.meRowPadding * 2 + content

@@ -860,7 +860,8 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         MessageLayoutMetrics(
             blockSpacing: TranscriptContentMetrics.blockSpacing,
             activityLineHeight: TextKitBlockMeasurer.codeLineHeight(for: environment),
-            proseLineHeight: TextKitBlockMeasurer.proseLineHeight(for: environment))
+            proseLineHeight: TextKitBlockMeasurer.proseLineHeight(for: environment),
+            trailerLineHeight: TextKitBlockMeasurer.trailerLineHeight(for: environment))
     }
 
     // MARK: - Search: find / locate / reveal / mark

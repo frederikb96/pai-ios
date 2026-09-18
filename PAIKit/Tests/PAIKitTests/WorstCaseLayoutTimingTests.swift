@@ -95,7 +95,7 @@ final class WorstCaseLayoutTimingTests: XCTestCase {
         let measurer = StubBlockMeasurer()
         let cache = BlockHeightCache()
         let environment = MeasurementEnvironment(sizeCategoryToken: "L")
-        let metrics = MessageLayoutMetrics(blockSpacing: 8, activityLineHeight: 17, proseLineHeight: 21)
+        let metrics = MessageLayoutMetrics(blockSpacing: 8, activityLineHeight: 17, proseLineHeight: 21, trailerLineHeight: 15)
 
         let clock = ContinuousClock()
         let start = clock.now
