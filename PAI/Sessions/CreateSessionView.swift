@@ -444,13 +444,13 @@ struct CreateSessionView: View {
                     hasSession: false,
                     callMenuState: startsCallOnSend ? nil : .startAfterSend,
                     canGrantSecretAccess: false,
-                    onStartCallAfterSend: { startCallAfterSend(voiceController) },
                     onPastRecordings: { showingRecordingsSheet = true },
                     onAddPhoto: { showingPhotoPicker = true },
                     onAddFile: { showingFilePicker = true },
                     onTemporaryNote: { showingTemporaryNote = true },
                     onSecretGrant: {},
-                    onCancel: {}
+                    onCancel: {},
+                    onStartCallAfterSend: { startCallAfterSend(voiceController) }
                 )
 
                 VoiceRecorderButton(
