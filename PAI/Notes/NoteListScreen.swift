@@ -18,6 +18,9 @@ struct NoteListScreen: View {
     @State private var selectedTags: [String] = []
     @State private var mode: Mode = .filter
     @State private var showTagFilter = false
+    /// Folded and tokenised note text, kept across keystrokes — see ``NoteSearchCorpus``.
+    /// Owned by the screen so it dies with it; nothing about it is worth persisting.
+    @State private var searchCorpus = NoteSearchCorpus()
     @State private var showToolbarSettings = false
 
     @State private var searchResults: [NoteSearchHit] = []
@@ -29,10 +32,18 @@ struct NoteListScreen: View {
     @State private var semanticLoading = false
     @State private var semanticError: String?
 
+    /// Drives `.searchFocused` below, so the launcher's "Find note" tile can land here with the
+    /// keyboard already up and the filter ready to take a word.
+    @FocusState private var isFilterFocused: Bool
+
     @State private var actionsTargetId: String?
     @State private var previewTargetId: String?
 
-    private enum Mode: Equatable { case filter, fullText, semantic }
+    /// Which corpus the typed text is asked about: the loaded index, the server's full-text
+    /// search, or its semantic one. Switched by the chips above the list.
+    private enum Mode: String {
+        case filter, fullText, semantic
+    }
 
     /// Drives the debounced search `.task` — one id covering both server-reaching modes so a
     /// mode switch and a keystroke are never two separate tasks racing each other.
@@ -46,6 +57,10 @@ struct NoteListScreen: View {
             .paiNotesBackground()
             .navigationTitle("Notes")
             .searchable(text: $filterText, prompt: searchPrompt)
+            .searchFocused($isFilterFocused)
+            // `modeChanged` clears the previous mode's results, so switching never leaves them
+            // on screen under the new mode's prompt.
+            .onChange(of: mode) { _, _ in modeChanged() }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
@@ -102,6 +117,14 @@ struct NoteListScreen: View {
                 }
             }
             .task {
+                #if DEBUG
+                    if PaiFixtureLaunch.isEnabled(), PaiFixtureLaunch.focusesNotesFilter() {
+                        NotesFilterFocus.shared.arm()
+                    }
+                #endif
+                // Consumed before the index load below, which can take a moment on a large
+                // vault: the keyboard should be up while the list is still filling, not after.
+                if NotesFilterFocus.shared.consume() { isFilterFocused = true }
                 guard notes.notes.isEmpty else { return }
                 await notes.refresh()
             }
@@ -206,9 +229,16 @@ struct NoteListScreen: View {
         }
     }
 
-    /// Scrolled rather than wrapped. Four chips do not fit across a phone, and a `Label` given
-    /// less width than its text needs breaks the word instead of shrinking — "Favourites" reads as
-    /// "Favourite / s".
+    /// The row above the list: the mode, and what narrows the corpus before anything is typed.
+    ///
+    /// The mode also lives in the search field's own scope bar below, and deliberately so — the
+    /// two are one piece of state shown at the two different moments it is wanted. This row is
+    /// what is reachable while reading the list; the scope bar is what is on screen while the
+    /// keyboard is up and something has just been typed that the current mode cannot find, which
+    /// is when the switch is actually reached for and when this row is not there.
+    ///
+    /// Scrolled rather than wrapped: a `Label` given less width than its text needs breaks the
+    /// word instead of shrinking — "Favourites" reads as "Favourite / s".
     private var filterChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
@@ -224,6 +254,7 @@ struct NoteListScreen: View {
                     }
                     .buttonStyle(.bordered)
                     .tint(favouritesOnly ? PaiPalette.amber500 : PaiPalette.Semantic.textMuted)
+                    .accessibilityIdentifier("notes-favourites-chip")
                 }
 
                 tagFilterButton
@@ -234,18 +265,30 @@ struct NoteListScreen: View {
         }
     }
 
+    /// Writes the same `mode` the scope bar binds — one piece of state, two surfaces. Tapping the
+    /// chip that is already on returns to plain filtering, which is what makes it a toggle rather
+    /// than a third state nobody can leave.
     private func modeChip(target: Mode, label: String, systemImage: String) -> some View {
         Button {
             mode = mode == target ? .filter : target
-            filterText = ""
-            searchResults = []
-            semanticResults = []
         } label: {
             Label(label, systemImage: systemImage)
                 .font(PaiTypography.caption.font)
         }
         .buttonStyle(.bordered)
         .tint(mode == target ? PaiPalette.primary500 : PaiPalette.Semantic.textMuted)
+        .accessibilityIdentifier("notes-mode-\(target.rawValue)")
+    }
+
+    /// The query itself survives a scope change — trying the same words in another mode is the
+    /// whole reason to reach for the scope bar mid-search. Only the previous mode's results go,
+    /// so nothing from one mode is ever read under another mode's prompt.
+    private func modeChanged() {
+        searchResults = []
+        searchTruncated = false
+        searchError = nil
+        semanticResults = []
+        semanticError = nil
     }
 
     private var tagFilterButton: some View {
@@ -409,13 +452,14 @@ struct NoteListScreen: View {
     }
 
     private var visibleNotes: [NoteSummary] {
-        let live = notes.notes.filter { !$0.pendingDelete }
-        let scoped = favouritesOnly ? live.filter(\.favourite) : live
-        let tagged = scoped.filter { noteHasAllTags($0, selected: selectedTags) }
-        let filtered =
-            filterText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? tagged : tagged.filter { noteMatchesQuery($0, query: filterText) }
-        return sortNotes(filtered, order: browse.sortOrder)
+        // Prepared from the whole index rather than from the narrowed slice: the whole index is
+        // the same array on every keystroke, which is what lets the corpus recognise it and hand
+        // back its cached work. A slice is a fresh array each time and would defeat that.
+        let prepared = searchCorpus.prepared(notes.notes)
+        let live = prepared.filter { !$0.note.pendingDelete }
+        let scoped = favouritesOnly ? live.filter(\.note.favourite) : live
+        let tagged = scoped.filter { noteHasAllTags($0.note, selected: selectedTags) }
+        return searchAndSortNotes(tagged, query: filterText, order: browse.sortOrder)
     }
 }
 

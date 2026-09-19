@@ -20,11 +20,20 @@
         static let jumpMessageFlag = "-PaiFixtureJumpMessage"
         static let autoCreateSessionFlag = "-PaiFixtureAutoCreateSession"
         static let secretPromptFlag = "-PaiFixtureSecretPrompt"
+        static let notesFilterFocusFlag = "-PaiFixtureNotesFilterFocused"
 
         /// The session id every session-scoped fixture route answers under, regardless of which
         /// id the request actually named — fixed so a screenshot workflow can always ask for this
         /// one id without first discovering which session fixture mode decided to use.
         public static let sessionID = "305df4d3-1554-4fc3-be04-39a354a9e619"
+
+        /// Whether `-PaiFixtureNotesFilterFocused` was passed — how the Mac workflow reaches the
+        /// note index with its search field actually focused, which is the only state its scope
+        /// bar is on screen in. Without this the scope bar is invisible to every screenshot, and
+        /// a mode switch that silently failed to render would look exactly like one that works.
+        public static func focusesNotesFilter(arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
+            arguments.contains(notesFilterFocusFlag)
+        }
 
         /// Whether the process was launched with `-PaiFixtureMode`.
         public static func isEnabled(arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {

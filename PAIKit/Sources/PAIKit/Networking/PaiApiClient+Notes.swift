@@ -30,11 +30,40 @@ extension PaiApiClient {
         try await send(path: "/api/notes/config")
     }
 
-    /// The whole index, metadata only. The web loads it eagerly and filters client-side rather
-    /// than paging, because a vault is small enough and every filter is then instant; this
-    /// mirrors that, which is why the default limit is the route's own maximum page rather than
-    /// a screenful.
+    /// The **whole** index, metadata only — every page, followed to exhaustion, exactly as the
+    /// web's `useNoteIndex.ts` does. Filtering is then a client-side pass over everything, which
+    /// is the only reason it can be instant and unthrottled.
+    ///
+    /// 🚨 One page is not the index. `GET /api/notes` caps at 500 rows, and a vault well past
+    /// that size returns a page that looks complete from here: a successful response, hundreds of
+    /// notes, no error. Everything below the cut then reads as "no note matches" in the filter
+    /// box, which is indistinguishable from the filter being broken. Follow the pages.
+    ///
+    /// The route reports another page by returning exactly `limit` rows (its own `next_offset`
+    /// rule), so a short page ends the walk. `pageCap` is a runaway guard, not a corpus limit:
+    /// reaching it means the route stopped shortening its pages, which is a server bug rather
+    /// than a vault this large.
     public func getNotes(
+        containerId: String? = nil,
+        favourite: Bool? = nil,
+        limit: Int = 500,
+        offset: Int = 0
+    ) async throws -> [NoteSummary] {
+        let pageCap = 40
+        var all: [NoteSummary] = []
+        var nextOffset = offset
+        for _ in 0..<pageCap {
+            let page = try await getNotesPage(
+                containerId: containerId, favourite: favourite, limit: limit, offset: nextOffset)
+            all.append(contentsOf: page)
+            guard page.count == limit else { break }
+            nextOffset += limit
+        }
+        return all
+    }
+
+    /// One page, unfollowed — what ``getNotes(containerId:favourite:limit:offset:)`` walks.
+    public func getNotesPage(
         containerId: String? = nil,
         favourite: Bool? = nil,
         limit: Int = 500,
@@ -77,9 +106,13 @@ extension PaiApiClient {
     /// conflict resolution that has chosen "mine" does — everything else must pass the hash it
     /// last read, or a save silently discards whatever arrived from the vault in between.
     ///
-    /// `frontmatter` is sent back byte-for-byte as it was read. It is Freddy's own vault
-    /// metadata and nothing in this app understands it; omitting it from a save is not the same
-    /// as leaving it alone on this route, which merges by key presence.
+    /// `frontmatter` is sent back byte-for-byte as it was read — and the route never reads the
+    /// key at all (`patch_note_route` always merges the note's *stored* frontmatter), so sending
+    /// it is inert either way. That is deliberate rather than an oversight: a note's frontmatter
+    /// is Freddy's own vault metadata, nothing in this app understands it, and a client that
+    /// could overwrite it would be able to lose a `summary:` or a `uuid:` written elsewhere
+    /// while somebody was typing. It is also what makes adopting a moved hash safe — see
+    /// ``NoteBodyDivergence``.
     public func patchNote(
         id: String,
         body: String? = nil,

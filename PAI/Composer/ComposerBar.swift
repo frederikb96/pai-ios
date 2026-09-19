@@ -98,7 +98,15 @@ struct ComposerBar: View {
             guard let draftStore else { return }
             Task { await draftStore.flush(key: sessionID) }
         }
-        .onAppear { presentSecretPromptIfNeeded() }
+        .onAppear {
+            presentSecretPromptIfNeeded()
+            // A session created by one of the launcher's call tiles, or by the new-session
+            // screen's "Send as Call": the call opens here, from the screen the send landed on,
+            // rather than from the sheet that was dismissing when the session came into being.
+            if CallModeLaunchRequest.shared.consumeOpenCall(forSession: sessionID) {
+                showingCallMode = true
+            }
+        }
         .onChange(of: currentSecretPrompt) { _, _ in presentSecretPromptIfNeeded() }
         .sheet(item: $secretGrantTarget, onDismiss: { dismissedSecretPromptAt = currentSecretPrompt?.at }) { _ in
             SecretGrantSheet(sessionID: sessionID, session: currentSession, prompt: currentSecretPrompt)

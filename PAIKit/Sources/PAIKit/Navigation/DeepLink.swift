@@ -15,6 +15,8 @@ public enum DeepLink: Equatable, Sendable, Hashable {
     case note(id: String)
     case notesList
     case createSession
+    /// The Action Button's landing screen — see ``Route/quickActions``.
+    case quickActions
     /// A tapped push notification (row 5.28), named only by its own id — at send time the backend
     /// does not yet know which transcript message it will resolve to (`notifications.py`'s anchor
     /// is filled in lazily), so the payload can only ever carry the notification's own id. Unlike
@@ -35,6 +37,7 @@ public enum DeepLink: Equatable, Sendable, Hashable {
         case .note(let id): return [.notes, .note(id: id)]
         case .notesList: return [.notes]
         case .createSession: return [.createSession]
+        case .quickActions: return [.quickActions]
         case .notification: return [.notifications]
         }
     }
@@ -83,7 +86,8 @@ extension DeepLink {
     /// The custom URL scheme, for a shortcut or a widget that opens the app by URL rather than
     /// through an App Intent.
     ///
-    /// `pai://session/<id>`, `pai://note/<id>`, `pai://notes` and `pai://createsession`. Rejects
+    /// `pai://session/<id>`, `pai://note/<id>`, `pai://notes`, `pai://createsession` and
+    /// `pai://quickactions`. Rejects
     /// anything else rather than guessing, including a well-formed URL with an unknown host — a
     /// link the app does not understand must not silently open some other screen.
     public static func from(url: URL) -> DeepLink? {
@@ -116,6 +120,9 @@ extension DeepLink {
         case "createsession":
             guard segments.count == 1 else { return nil }
             return .createSession
+        case "quickactions":
+            guard segments.count == 1 else { return nil }
+            return .quickActions
         default:
             return nil
         }
@@ -131,6 +138,7 @@ extension DeepLink {
         case .note(let id): return URL(string: "pai://note/\(Self.escape(id))")
         case .notesList: return URL(string: "pai://notes")
         case .createSession: return URL(string: "pai://createsession")
+        case .quickActions: return URL(string: "pai://quickactions")
         case .notification(let id): return URL(string: "pai://notification/\(Self.escape(id))")
         }
     }

@@ -69,6 +69,18 @@ jobs:
           swift build --package-path PAIKit --build-tests 2>&1 | tee /tmp/build.log
           swift test --package-path PAIKit --skip-build
 
+      # 🚨 Release is a different compile, and the difference is not only optimisation: the type
+      # checker runs under a budget there that a Debug build does not enforce, so a chained
+      # collection pipeline whose element types it has to infer can compile all day locally and
+      # fail with "unable to type-check this expression in reasonable time" in Release. Nothing
+      # else free builds the package that way, and the first thing that would have caught it is
+      # the release archive itself — which is the one build where a failure costs a version
+      # number. Minutes here, and they are unmetered.
+      - name: Build the package the way a release builds it
+        run: |
+          set -o pipefail
+          swift build --package-path PAIKit -c release 2>&1 | tee -a /tmp/build.log
+
       # The only check that reaches the app target and the Linux-excluded package files, which
       # nothing else here compiles. See the script's header for what it can and cannot catch.
       - name: Syntax-check what Linux cannot compile

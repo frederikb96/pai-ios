@@ -86,6 +86,23 @@ public struct NoteDetail: Codable, Sendable, Equatable, Identifiable, Hashable {
         self.lastWriteSource = lastWriteSource
     }
 
+    /// The same note, holding the version the server reported in a conflict rather than the one
+    /// this client loaded — what a client adopts when it has decided the divergence is outside
+    /// the body it is editing (``NoteBodyDivergence``).
+    ///
+    /// 🚨 Every field is passed explicitly, including the ones that are unchanged. This is a
+    /// rebuild-from-self initialiser, so a property that relied on a default here would be reset
+    /// to that default on every adoption — silently, with the value having arrived from the wire
+    /// and survived decoding moments earlier.
+    public func adoptingHash(_ conflict: NoteConflict) -> NoteDetail {
+        NoteDetail(
+            id: id, name: name, summary: summary, containerId: containerId, favourite: favourite,
+            tags: tags, updatedAtMs: conflict.updatedAtMs, pendingDelete: pendingDelete,
+            frontmatter: conflict.frontmatter, body: conflict.body ?? body,
+            contentHash: conflict.currentHash, createdAt: createdAt, createdAtMs: createdAtMs,
+            lastWriteSource: lastWriteSource)
+    }
+
     enum CodingKeys: String, CodingKey {
         case id, name, summary, favourite, tags, frontmatter, body
         case containerId = "container_id"

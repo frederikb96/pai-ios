@@ -480,6 +480,163 @@ def check(path: Path) -> list[tuple[int, str, str]]:
     return findings
 
 
+
+
+# --- Memberwise-initialiser argument order -----------------------------------
+#
+# A struct with no `init` of its own gets one synthesised in declaration order, and Swift requires
+# a call site to pass its arguments in that order. Adding a parameter to a SwiftUI view and
+# passing it wherever it reads best at the call site therefore compiles nowhere but a macOS
+# runner — and the diagnostic ("incorrect argument labels in call") names both label lists in
+# full, so it is trivially checkable without a compiler.
+#
+# Deliberately narrow, the same way every other check here is: anything the scan cannot be sure
+# about is skipped rather than guessed at.
+
+#: `struct Name` / `struct Name<T>`, with any access modifiers and attributes before it.
+STRUCT_DECLARATION = re.compile(
+    r"^(?P<indent>\s*)(?:@\w+(?:\([^)]*\))?\s+)*"
+    r"(?:public |internal |private |fileprivate |final )*struct\s+(?P<name>\w+)\b"
+)
+#: A stored property of a struct: `var x = 1`, `let y: Int`, `var z: T = .a`. A computed property
+#: has a `{` where the `=` or the line end would be, and is not part of the memberwise init.
+STORED_PROPERTY = re.compile(
+    r"^\s*(?:public |internal |private(?:\(set\))? |fileprivate |private\(set\) )*"
+    r"(?:var|let)\s+(?P<name>\w+)\s*(?::\s*(?P<type>[^={]+?))?\s*(?:=\s*(?P<default>.+))?$"
+)
+PROPERTY_WRAPPER = re.compile(r"^\s*@\w+")
+#: One labelled argument at the top level of a call: `label:`.
+CALL_LABEL = re.compile(r"(?:^|[(,]\s*)(?P<label>\w+)\s*:")
+
+
+def _memberwise_structs(files: list[Path]) -> dict[str, list[str]]:
+    """Struct name -> the order its synthesised initialiser takes its arguments in.
+
+    A struct declaring any `init` of its own is left out entirely: its parameter order is
+    whatever that initialiser says, and reading it properly needs a parser rather than a regex.
+    A name declared more than once across the tree is left out too — the call site could mean
+    either, and guessing is how a scan starts costing more than it saves.
+    """
+    order: dict[str, list[str]] = {}
+    ambiguous: set[str] = set()
+    for path in files:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for index, line in enumerate(lines):
+            match = STRUCT_DECLARATION.match(line)
+            if not match or "{" not in line:
+                continue
+            name = match.group("name")
+            body_indent = len(match.group("indent"))
+            properties: list[str] = []
+            has_own_init = False
+            pending_wrapper = False
+            for body_line in lines[index + 1:]:
+                stripped = body_line.strip()
+                if stripped.startswith("}") and (len(body_line) - len(body_line.lstrip())) <= body_indent:
+                    break
+                if re.match(r"^\s*(?:public |internal |private |fileprivate )*init\b", body_line):
+                    has_own_init = True
+                    break
+                # Only the struct's own top level. Anything deeper belongs to a nested type or a
+                # closure, and a property wrapper changes the initialiser's parameter name.
+                if (len(body_line) - len(body_line.lstrip())) != body_indent + 4:
+                    continue
+                if PROPERTY_WRAPPER.match(body_line):
+                    # A wrapper on a *property* renames that parameter in the synthesised
+                    # initialiser, so the scan cannot read the order any more. A wrapper on a
+                    # method (`@ViewBuilder`, `@MainActor`) says nothing about it — and treating
+                    # the two alike is what silently excluded every SwiftUI view in the tree.
+                    pending_wrapper = True
+                    continue
+                prop = STORED_PROPERTY.match(body_line)
+                if pending_wrapper:
+                    pending_wrapper = False
+                    if prop and not stripped.endswith("{"):
+                        has_own_init = True
+                        break
+                    continue
+                if prop and not stripped.endswith("{"):
+                    properties.append(prop.group("name"))
+            if has_own_init or not properties:
+                continue
+            if name in order:
+                ambiguous.add(name)
+            order[name] = properties
+    for name in ambiguous:
+        order.pop(name, None)
+    return order
+
+
+def _call_argument_labels(text: str, open_paren: int) -> list[str] | None:
+    """The top-level argument labels of the call whose `(` is at `open_paren`, in order.
+
+    `None` when the call is unbalanced (it runs past the end of the file, or the scan lost track
+    of a string literal) — a call the scan cannot read is one it must not judge.
+    """
+    depth = 0
+    index = open_paren
+    in_string = False
+    segment_start = open_paren + 1
+    labels: list[str] = []
+    while index < len(text):
+        char = text[index]
+        if in_string:
+            if char == "\\":
+                index += 2
+                continue
+            if char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+            if depth == 0:
+                segment = text[segment_start:index]
+                label = CALL_LABEL.match(segment.strip())
+                if label:
+                    labels.append(label.group("label"))
+                return labels
+        elif char == "," and depth == 1:
+            segment = text[segment_start:index]
+            label = CALL_LABEL.match(segment.strip())
+            if label:
+                labels.append(label.group("label"))
+            segment_start = index + 1
+        index += 1
+    return None
+
+
+def check_memberwise_call_order(path: Path, declarations: dict[str, list[str]]) -> list[tuple[int, str, str]]:
+    text = path.read_text(encoding="utf-8")
+    findings: list[tuple[int, str, str]] = []
+    for match in re.finditer(r"\b([A-Z]\w*)\s*\(", text):
+        name = match.group(1)
+        properties = declarations.get(name)
+        if properties is None:
+            continue
+        labels = _call_argument_labels(text, match.end() - 1)
+        if not labels:
+            continue
+        # A label the struct does not declare means this is not the call the scan thinks it is —
+        # an extension's own initialiser, a same-named function, a type from a dependency. Judge
+        # nothing rather than guess.
+        if any(label not in properties for label in labels):
+            continue
+        expected = [p for p in properties if p in labels]
+        if labels == expected:
+            continue
+        line_number = text.count("\n", 0, match.start()) + 1
+        findings.append((
+            line_number, f"{name}(…)",
+            f"arguments to {name} are in a different order than its properties are declared in — "
+            f"a struct with no init of its own takes them in declaration order, so this compiles "
+            f"only on a macOS runner. Expected {expected}, found {labels}",
+        ))
+    return findings
+
+
 def main() -> int:
     targets = [Path(arg) for arg in sys.argv[1:]] or [ROOT / "PAI", ROOT / "PAIKit/Sources"]
     files = sorted(f for target in targets for f in target.rglob("*.swift"))
@@ -487,9 +644,13 @@ def main() -> int:
         print(f"no Swift files under {', '.join(str(t) for t in targets)}", file=sys.stderr)
         return 1
 
+    # Built across every file first: a view is declared in one and constructed in another, so
+    # this is the one check here that cannot be answered a file at a time.
+    declarations = _memberwise_structs(files)
+
     total = 0
     for path in files:
-        for line_number, source, message in check(path):
+        for line_number, source, message in check(path) + check_memberwise_call_order(path, declarations):
             total += 1
             print(f"::error file={path},line={line_number}::{message}")
             print(f"  {path}:{line_number}: {source}")

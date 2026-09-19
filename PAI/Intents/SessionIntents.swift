@@ -18,6 +18,24 @@ enum NewSessionLaunchChoice {
     }
 }
 
+/// Open the six-tile launcher — what the hardware Action Button lands on, and available to
+/// Shortcuts on its own so the same screen can be bound to anything else.
+struct OpenQuickActionsIntent: AppIntent {
+    static var title: LocalizedStringResource { "Quick Actions" }
+    static var description: IntentDescription {
+        IntentDescription("Open PAI's quick actions launcher.")
+    }
+    static var openAppWhenRun: Bool { true }
+
+    init() {}
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        DeepLinkInbox.shared.receive(.quickActions)
+        return .result()
+    }
+}
+
 /// Start a new **fast** session — vanilla Claude in a sandbox, for a throwaway question.
 struct NewFastSessionIntent: AppIntent {
     static var title: LocalizedStringResource { "New Fast Session" }

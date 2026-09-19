@@ -79,10 +79,15 @@ public final class SessionListStore {
     static let sessionsPageSize = 100
     static let searchResultLimit = 100
     static let defaultSemanticThreshold = 0.0
-    /// Long enough that ordinary typing produces one request, short enough that results still
-    /// feel responsive. Applied only to raw typed text — a chip click, a mode toggle and the
-    /// Enter key all bypass this, because each is a discrete choice, not a keystroke stream.
-    public static let defaultTextDebounceNanos: UInt64 = 1_000_000_000
+    /// Applied only to raw typed text — a chip click, a mode toggle and the Enter key all bypass
+    /// this, because each is a discrete choice, not a keystroke stream.
+    ///
+    /// This is the whole of what makes the session filter feel slow: the matcher itself
+    /// (`search.py`) scores the entire corpus in memory and is not the bottleneck, so a full
+    /// second of deliberate dead time before the request is what a reader experiences as lag.
+    /// Sized so a burst of typing still collapses into a couple of requests rather than one per
+    /// character.
+    public static let defaultTextDebounceNanos: UInt64 = 250_000_000
     private static let pollIntervalNanos: UInt64 = 10_000_000_000
 
     // MARK: Source A — the synced list

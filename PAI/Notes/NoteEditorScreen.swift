@@ -67,6 +67,11 @@ struct NoteEditorScreen: View {
             if NoteCreationFocus.shared.consume(id: noteID) {
                 isTitleFocused = true
                 selectsTitleOnFocus = true
+                // A note that did not exist a moment ago has nothing to read, so the stored
+                // reading preference is the wrong answer for it whatever it says: landing in
+                // preview shows an empty page with no visible way to type into it. Creating is
+                // an act of writing, and this is the one entry point that knows that.
+                isPreviewing = false
             }
         }
         .onChange(of: title) { _, newValue in
