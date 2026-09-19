@@ -219,17 +219,16 @@ public enum TranscriptRowPlan {
             let (name, args) = MessageDisplay.commandParts(message.content ?? "")
             let trimmedArgs = args.trimmingCharacters(in: .whitespacesAndNewlines)
             let hasArgs = !trimmedArgs.isEmpty
-            let revealed = isRevealed(0)
             return [
                 TranscriptCardPlan(
                     kind: .command(name: name, args: hasArgs ? args : nil),
                     register: .me,
-                    preview: !hasArgs || revealed
-                        ? .full(totalLines: lineCount(args))
-                        : TranscriptCardPlan.Preview(
-                            hiddenLines: 0, totalLines: lineCount(args),
-                            visualLines: MessageDisplay.Preview.command.visual),
-                    isRevealed: revealed,
+                    // Never bounded, like every other thing a person said. A `me` card has no
+                    // clip, no trailer and no tap — `MeRowView` draws none of the three — so a
+                    // bound here would be a height the row reserved, a body drawn past it, and no
+                    // affordance anywhere to reach what was cut.
+                    preview: .full(totalLines: lineCount(args)),
+                    isRevealed: true,
                     blocks: hasArgs ? [paragraph(args)] : []
                 )
             ]

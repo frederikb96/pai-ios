@@ -296,7 +296,12 @@ public enum TranscriptRowLayout {
         case .prose:
             return Double(lines) * metrics.proseLineHeight
         case .me:
-            return Double(lines) * metrics.proseLineHeight + TranscriptRowMetrics.bubbleVerticalPadding
+            // 🚨 Nothing a person said is ever bounded, and this is where that is enforced rather
+            // than merely true today: `MeRowView` draws no clip, no trailer and no tap, so a cap
+            // returned here would be height the row reserved, a bubble drawn straight past it,
+            // and no way for the reader to reach what was cut. Giving a `me` card a bound means
+            // giving the view all three first.
+            return nil
         case .activity:
             // A fenced block's padding sits inside the box it draws, so the cap has to allow for it
             // or the clip eats a line of text rather than the slack under it. A wrapping body draws
@@ -426,9 +431,10 @@ public enum TranscriptRowLayout {
                     return TranscriptRowMetrics.meRowPadding * 2 + TranscriptRowMetrics.bubbleLabelLineHeight
                         + TranscriptRowMetrics.bubbleVerticalPadding
                 }
+                // No trailer term: a command's arguments are never bounded, so there is never one
+                // to reserve — and reserving a line the view does not draw is a gap.
                 return TranscriptRowMetrics.meRowPadding * 2 + content + labelChrome
                     + TranscriptRowMetrics.bubbleVerticalPadding
-                    + (isTruncated ? metrics.trailerLineHeight : 0)
 
             default:
                 return TranscriptRowMetrics.meRowPadding * 2 + content

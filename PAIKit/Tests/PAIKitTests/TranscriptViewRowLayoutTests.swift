@@ -277,6 +277,31 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         XCTAssertEqual(cards.first?.headerHeight, 0)
     }
 
+    /// Nothing a person said is ever bounded — `MeRowView` draws no clip, no trailer and no tap,
+    /// so a bound would be height the row reserved with the bubble drawn straight past it and no
+    /// way to reach what was cut. A long command measures the same whether or not it is revealed,
+    /// which is the observable form of "no `me` card has a cap".
+    func testAMeCardIsNeverBoundedHoweverLongItIs() {
+        let msg = message(type: .user, subtype: "command", content: "/compact\n\n\(bubbleSensitiveText)")
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        func height(revealed: @escaping (Int) -> Bool) -> Double? {
+            TranscriptRowLayout.height(
+                for: msg, width: width, environment: environment, isRevealed: revealed, measurer: measurer,
+                cache: cache, metrics: metrics)
+        }
+
+        let content = measuredContentHeight(
+            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 92,
+            measurer: measurer, cache: cache)
+        // Padding, the whole body, the command's own label line and its gap, the bubble's padding
+        // — and no trailer, because nothing was cut.
+        let expected = 12 + content + 20 + 10
+        XCTAssertEqual(height(revealed: revealNone), expected)
+        XCTAssertEqual(height(revealed: revealAll), expected)
+    }
+
     // MARK: - The time separator
 
     /// One caption line and its padding, above the first card — and a block offset inside the row
