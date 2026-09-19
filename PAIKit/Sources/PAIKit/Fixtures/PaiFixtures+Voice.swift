@@ -18,10 +18,16 @@ extension PaiFixtures {
     public static let drafts: String = #"""
         [
           { "key": "new", "text": "Check whether the ", "session_type": "default",
-            "working_dir": "/home/frederik/Programming/pai-cloud", "updated_at": "2026-08-29T08:55:12Z" },
+            "working_dir": "/home/frederik/Programming/pai-cloud", "updated_at": "2026-08-29T08:55:12Z",
+            "regions": [], "attachments": [] },
           { "key": "305df4d3-1554-4fc3-be04-39a354a9e619",
             "text": "stt-rec: also double check the terminal frame shape against what the backend actually sends",
-            "session_type": null, "working_dir": null, "updated_at": "2026-08-29T09:40:02Z" }
+            "session_type": null, "working_dir": null, "updated_at": "2026-08-29T09:40:02Z",
+            "regions": [
+              { "take_id": "a1b2c3", "text": "and the ack watermark too", "state": "open", "seq": 3,
+                "updated_at": "2026-08-29T09:40:05Z" }
+            ],
+            "attachments": [] }
         ]
         """#
 

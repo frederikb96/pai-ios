@@ -453,7 +453,12 @@ final class PaiModelsTests: XCTestCase {
     func testPutDraftResultDiscriminatesSavedFromDeleted() throws {
         let saved = try JSONDecoder().decode(
             PutDraftResult.self,
-            from: Data(#"{"key":"new","text":"hi","session_type":null,"working_dir":null,"updated_at":null}"#.utf8)
+            from: Data(
+                #"""
+                {"key":"new","text":"hi","session_type":null,"working_dir":null,"updated_at":null,
+                 "regions":[],"attachments":[]}
+                """#.utf8
+            )
         )
         guard case let .saved(draft) = saved else { return XCTFail("Expected .saved") }
         XCTAssertEqual(draft.text, "hi")

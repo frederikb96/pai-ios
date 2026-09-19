@@ -1,11 +1,17 @@
 import Foundation
 
-/// Which of the two takes a ledger belongs to. The durable pipeline is one implementation for
-/// both, but a few fields only mean something for one of them: `call`'s `collecting` ranges and
-/// `boundaries` are meaningless for `microphone`, whose whole take is implicitly one collecting
-/// range with no boundaries at all.
+/// Which kind of take a ledger belongs to. The durable pipeline is one implementation for all
+/// three, but a few fields only mean something for one of them: `call`'s `collecting` ranges and
+/// `boundaries` are meaningless for `microphone` and `offline`, whose whole take is implicitly
+/// one collecting range with no boundaries at all.
+///
+/// `offline` is a genuinely separate mode, never inferred from `gapCount`/`delivered`: a live
+/// take that lost its link for an hour has both a gap and `delivered == false` too, and the two
+/// must look different because one is meant to be re-transcribed automatically and the other is
+/// not. Only the take's own starting intent — offline-only recording versus a live dictation or
+/// call — decides which case a ledger gets, set once at creation and never derived afterwards.
 public enum VoiceMode: String, Codable, Sendable, Equatable {
-    case microphone, call
+    case microphone, call, offline
 }
 
 /// One word, at its place in the take. Never a connection's own elapsed seconds — that is
@@ -187,7 +193,7 @@ extension TranscriptLedger {
     public func collectingBounds(capturedUpTo: Int) -> [SampleRange] {
         guard capturedUpTo > 0 else { return [] }
         switch mode {
-        case .microphone:
+        case .microphone, .offline:
             return [0..<capturedUpTo]
         case .call:
             return collecting.compactMap { range -> SampleRange? in

@@ -8,6 +8,70 @@ import Foundation
 
 // MARK: - Drafts
 
+/// One take's own dictated text, held apart from `Draft.text` so a machine's writes and a
+/// human's typing never collide. What every client renders is `text` followed by every open
+/// region in the order they were opened (the array's own order) — plain concatenation, never an
+/// offset into either string.
+///
+/// `state` becomes `overflow` when a write could not be kept (the draft's character ceiling) —
+/// a fact recorded on the row rather than a client retrying forever in silence.
+public struct DraftRegion: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { takeId }
+    public let takeId: String
+    public let text: String
+    public let state: String
+    public let seq: Int
+    public let updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case takeId = "take_id"
+        case text, state, seq
+        case updatedAt = "updated_at"
+    }
+
+    public init(takeId: String, text: String, state: String, seq: Int, updatedAt: String) {
+        self.takeId = takeId
+        self.text = text
+        self.state = state
+        self.seq = seq
+        self.updatedAt = updatedAt
+    }
+}
+
+/// One file added to a draft, uploaded to the server immediately rather than held on the device
+/// that picked it — so a message can be composed from several devices at once. `state` starts
+/// `uploading` and becomes `stored` or `failed`; a thumbnail shown for a `failed` upload would
+/// be a claim of cross-device visibility the system does not have.
+public struct DraftAttachment: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let filename: String
+    public let path: String
+    public let size: Int
+    public let contentType: String?
+    public let state: String
+    public let createdAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, filename, path, size
+        case contentType = "content_type"
+        case state
+        case createdAt = "created_at"
+    }
+
+    public init(
+        id: String, filename: String, path: String, size: Int, contentType: String?,
+        state: String, createdAt: String
+    ) {
+        self.id = id
+        self.filename = filename
+        self.path = path
+        self.size = size
+        self.contentType = contentType
+        self.state = state
+        self.createdAt = createdAt
+    }
+}
+
 /// Composer text that has not been sent yet, kept on the server so every client shows the same
 /// half-written message. `key` is a session id, or `"new"` for the not-yet-created session the
 /// New Session screen composes — only that draft carries `sessionType`/`workingDir`, its launch
@@ -26,6 +90,8 @@ public struct Draft: Codable, Sendable, Equatable, Identifiable {
     /// scoping as `model` above. `nil` lets Claude Code pick the plan's own default.
     public let thinking: String?
     public let updatedAt: String?
+    public let regions: [DraftRegion]
+    public let attachments: [DraftAttachment]
 
     enum CodingKeys: String, CodingKey {
         case key, text
@@ -33,11 +99,13 @@ public struct Draft: Codable, Sendable, Equatable, Identifiable {
         case workingDir = "working_dir"
         case model, thinking
         case updatedAt = "updated_at"
+        case regions, attachments
     }
 
     public init(
         key: String, text: String, sessionType: String?, workingDir: String?, model: String? = nil,
-        thinking: String? = nil, updatedAt: String?
+        thinking: String? = nil, updatedAt: String?,
+        regions: [DraftRegion] = [], attachments: [DraftAttachment] = []
     ) {
         self.key = key
         self.text = text
@@ -46,6 +114,8 @@ public struct Draft: Codable, Sendable, Equatable, Identifiable {
         self.model = model
         self.thinking = thinking
         self.updatedAt = updatedAt
+        self.regions = regions
+        self.attachments = attachments
     }
 }
 
