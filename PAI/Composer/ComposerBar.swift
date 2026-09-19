@@ -234,7 +234,6 @@ struct ComposerBar: View {
         // arrive. `.task(id:)` cancels on disappear, where a free-standing `Task` would leave one
         // more loop running per visit.
         .task(id: isRecordingHere(voiceController)) {
-            guard let draftStore else { return }
             guard isRecordingHere(voiceController) else { return }
             var lastText = drafts.draft(for: sessionID).displayText
             while !Task.isCancelled, isRecordingHere(voiceController) {
