@@ -115,11 +115,13 @@ struct CreateSessionView: View {
             // a first message — so the first turn is dictated into this composer, and the call
             // itself opens on the session that send creates. Arming the microphone here is what
             // makes that one press rather than two.
-            if CallModeLaunchRequest.shared.consume() {
-                startsCallOnSend = true
-                if let voiceController = environment.connection?.voice {
-                    await toggleRecording(voiceController: voiceController)
-                }
+            if CallModeLaunchRequest.shared.consume(), let voiceController = environment.connection?.voice {
+                await toggleRecording(voiceController: voiceController)
+                // Only a take that actually started commits this session to becoming a call.
+                // The microphone is one shared resource, so a call already running elsewhere
+                // refuses this one — and arming anyway would open a call afterwards on whatever
+                // the reader then typed by hand, having seen only an error about the microphone.
+                startsCallOnSend = isRecordingHere(voiceController)
             }
         }
         #if DEBUG
@@ -638,9 +640,19 @@ struct CreateSessionView: View {
     /// The plus menu's own way into the same thing the launcher's call tiles do: mark the
     /// session-to-be as a call, and start dictating the first turn straight away.
     private func startCallAfterSend(_ voiceController: VoiceRecorderController) {
-        startsCallOnSend = true
-        guard voiceController.state == .idle else { return }
-        Task { await toggleRecording(voiceController: voiceController) }
+        // Already dictating here — the reader tapped the microphone first and is now saying this
+        // should be a call. Toggling would end the take they are in the middle of.
+        if isRecordingHere(voiceController) {
+            startsCallOnSend = true
+            return
+        }
+        Task {
+            await toggleRecording(voiceController: voiceController)
+            // Same rule as the launcher path above: the commitment follows the take, never
+            // precedes it. `toggleRecording` is also the only thing that reports a microphone
+            // held elsewhere, so going through it is what makes that failure visible at all.
+            startsCallOnSend = isRecordingHere(voiceController)
+        }
     }
 
     private func applyVoiceResult(_ prefixedText: String) {

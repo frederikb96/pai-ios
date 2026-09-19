@@ -106,9 +106,13 @@ extension PaiApiClient {
     /// conflict resolution that has chosen "mine" does — everything else must pass the hash it
     /// last read, or a save silently discards whatever arrived from the vault in between.
     ///
-    /// `frontmatter` is sent back byte-for-byte as it was read. It is Freddy's own vault
-    /// metadata and nothing in this app understands it; omitting it from a save is not the same
-    /// as leaving it alone on this route, which merges by key presence.
+    /// `frontmatter` is sent back byte-for-byte as it was read — and the route never reads the
+    /// key at all (`patch_note_route` always merges the note's *stored* frontmatter), so sending
+    /// it is inert either way. That is deliberate rather than an oversight: a note's frontmatter
+    /// is Freddy's own vault metadata, nothing in this app understands it, and a client that
+    /// could overwrite it would be able to lose a `summary:` or a `uuid:` written elsewhere
+    /// while somebody was typing. It is also what makes adopting a moved hash safe — see
+    /// ``NoteBodyDivergence``.
     public func patchNote(
         id: String,
         body: String? = nil,
