@@ -214,6 +214,7 @@ struct ComposerBar: View {
         // arrive. `.task(id:)` cancels on disappear, where a free-standing `Task` would leave one
         // more loop running per visit.
         .task(id: isRecordingHere(voiceController)) {
+            guard let draftStore else { return }
             guard isRecordingHere(voiceController) else { return }
             var lastText = drafts.draft(for: sessionID).displayText
             while !Task.isCancelled, isRecordingHere(voiceController) {
@@ -221,6 +222,14 @@ struct ComposerBar: View {
                 if text != lastText {
                     lastText = text
                     scrollToTailOnNextUpdate = true
+                    // "Computer send the message" — see `SpokenSendCommand`'s own doc comment for
+                    // why this, rather than the full `CommandDetector`, is what a draft-region
+                    // take can still catch with no live transcript feed of its own.
+                    if let stripped = SpokenSendCommand.strip(from: text) {
+                        draftStore.setDraftText(key: sessionID, text: stripped)
+                        send(draftStore: draftStore)
+                        return
+                    }
                 }
                 try? await Task.sleep(for: .milliseconds(150))
             }

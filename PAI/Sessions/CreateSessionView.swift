@@ -482,6 +482,15 @@ struct CreateSessionView: View {
                 if currentText != lastText {
                     lastText = currentText
                     scrollToTailOnNextUpdate = true
+                    // "Computer send the message", spoken with the phone already pocketed — the
+                    // one command a hands-free take must still catch with no live transcript feed
+                    // to run the full detector against (see `SpokenSendCommand`'s own doc
+                    // comment). Strips the phrase, then sends exactly as tapping Send would.
+                    if let stripped = SpokenSendCommand.strip(from: currentText) {
+                        drafts.setDraftText(key: DraftKey.newSession, text: stripped)
+                        send(createSession)
+                        return
+                    }
                 }
                 try? await Task.sleep(for: .seconds(1))
             }
