@@ -22,13 +22,15 @@ struct RecordingsSheet: View {
     /// with a Settings-app toggle flipped while this sheet is open, which is not a case worth
     /// polling for.
     @State private var notificationsAuthorized: Bool?
+    @State private var showingNewRecordingPrompt = false
+    @State private var newRecordingName = ""
 
     private let storage = FileRecordingAudioStorage()
 
     var body: some View {
         NavigationStack {
             Group {
-                if settings.recordings.isEmpty {
+                if settings.recordings.isEmpty && !controller.isRecordingOffline {
                     ContentUnavailableView(
                         "No recordings yet", systemImage: "waveform",
                         description: Text("Recordings you make are kept on this device only.")
@@ -41,6 +43,9 @@ struct RecordingsSheet: View {
                                 Text("Notifications are off — only the tone will tell you about a drop.")
                                     .font(PaiTypography.caption.font)
                                     .foregroundStyle(PaiPalette.Semantic.warningText)
+                            }
+                            if controller.isRecordingOffline {
+                                offlineRecordingInProgressRow
                             }
                         }
                         ForEach(settings.recordings) { meta in
@@ -68,6 +73,19 @@ struct RecordingsSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    // A recording made here has nowhere to be transcribed to yet — it just sits
+                    // in this same list, named, until Freddy asks for it (tapping the row runs
+                    // the same retranscribe flow any other recording already offers).
+                    Button {
+                        newRecordingName = ""
+                        showingNewRecordingPrompt = true
+                    } label: {
+                        Label("New Recording", systemImage: "record.circle")
+                    }
+                    .disabled(!controller.canStart)
+                    .accessibilityIdentifier("new-offline-recording")
+                }
                 // Reachable here rather than only from Settings, because this sheet already has a
                 // session's composer to attach into — Settings' own "Share Voice Log" has no
                 // session to hand the file to, so it goes through the iOS share sheet instead.
@@ -80,6 +98,16 @@ struct RecordingsSheet: View {
                     .disabled(AppVoiceDiagnosticsLog.shared.totalSizeBytes() == 0)
                     .accessibilityIdentifier("attach-voice-log")
                 }
+            }
+            .alert("New Recording", isPresented: $showingNewRecordingPrompt) {
+                TextField("Name", text: $newRecordingName)
+                Button("Start") {
+                    let trimmed = newRecordingName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    Task { await controller.startOfflineRecording(name: trimmed.isEmpty ? "Recording" : trimmed) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Recorded on this device only, transcribed whenever you ask.")
             }
             .alert("Couldn't transcribe recording", isPresented: errorBinding) {
                 Button("OK", role: .cancel) {}
@@ -103,6 +131,22 @@ struct RecordingsSheet: View {
         return Text("\(String(format: "%.0f", usedMB)) MB in recordings · \(freeText)")
             .font(PaiTypography.caption.font)
             .foregroundStyle(PaiPalette.Semantic.textMuted)
+    }
+
+    /// No live duration ticker here on purpose — the same measured-CPU-cost rule that keeps
+    /// `VoiceVolumeOverlay` from animating on a flat input applies to a row that would otherwise
+    /// redraw once a second for as long as this sheet stays open in the background. The take's
+    /// real duration is measured from the captured samples once it stops, same as any other
+    /// recording — this row only needs to say that one is running.
+    private var offlineRecordingInProgressRow: some View {
+        HStack {
+            Image(systemName: "record.circle.fill")
+                .foregroundStyle(PaiPalette.Semantic.errorText)
+            Text("Recording…")
+                .font(PaiTypography.bodyEmphasized.font)
+            Spacer()
+            Button("Stop") { Task { await controller.stop() } }
+        }
     }
 
     private var errorBinding: Binding<Bool> {
@@ -212,6 +256,11 @@ private struct RecordingRow: View {
                         .font(PaiTypography.caption.font)
                         .foregroundStyle(PaiPalette.Semantic.warningText)
                 }
+                if let nameLine {
+                    Text(nameLine)
+                        .font(PaiTypography.caption.font)
+                        .foregroundStyle(PaiPalette.Semantic.textSecondary)
+                }
                 Text(headline)
                     .font(PaiTypography.bodyEmphasized.font)
                 if let coverageLine {
@@ -291,6 +340,19 @@ private struct RecordingRow: View {
         formatter.timeStyle = .short
         let duration = Int(meta.durationMs / 1000)
         return "\(formatter.string(from: date)) · \(duration)s"
+    }
+
+    /// The marker an offline recording gets in this list — its own name, plus what tells it apart
+    /// from an ordinary dictation take at a glance. A named *dictation* take (were one ever to
+    /// exist) would show just the name with no marker, though nothing today ever sets `name`
+    /// outside `startOfflineRecording(name:)`.
+    private var nameLine: String? {
+        switch (meta.name, meta.mode) {
+        case (let name?, .offline): "\(name) · Offline"
+        case (.some(let name), _): name
+        case (.none, .offline): "Offline"
+        case (.none, _): nil
+        }
     }
 
     private var micLine: String? {

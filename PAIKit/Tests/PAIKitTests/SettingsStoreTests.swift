@@ -221,4 +221,23 @@ final class SettingsStoreTests: XCTestCase {
             XCTAssertNil(store.elevenLabsKey.status)
         }
     }
+
+    /// A recording saved before `RecordingMeta.mode` existed has no `"mode"` key in its JSON at
+    /// all — it must still decode, as `nil`, which `RecordingsSheet` reads as an ordinary
+    /// dictation take exactly as it always was.
+    func testARecordingSavedBeforeModeExistedDecodesWithNilMode() throws {
+        let json = """
+            {"timestampMs": 5, "durationMs": 1000}
+            """
+        let meta = try JSONDecoder().decode(RecordingMeta.self, from: Data(json.utf8))
+        XCTAssertNil(meta.mode)
+    }
+
+    func testAnOfflineRecordingRoundTripsItsNameAndMode() throws {
+        let meta = RecordingMeta(timestampMs: 5, durationMs: 1000, name: "Client call", mode: .offline)
+        let encoded = try JSONEncoder().encode(meta)
+        let decoded = try JSONDecoder().decode(RecordingMeta.self, from: encoded)
+        XCTAssertEqual(decoded.name, "Client call")
+        XCTAssertEqual(decoded.mode, .offline)
+    }
 }

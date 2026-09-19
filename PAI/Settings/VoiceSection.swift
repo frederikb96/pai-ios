@@ -12,6 +12,8 @@ struct VoiceSection: View {
     /// optional rather than assuming `SettingsScreen` guarantees it.
     private var voice: VoiceRecorderController? { environment.connection?.voice }
 
+    @State private var showingRecordings = false
+
     var body: some View {
         Section {
             SecretField(
@@ -36,6 +38,16 @@ struct VoiceSection: View {
                     }
                 }
                 .accessibilityIdentifier("mic-device")
+
+                // The one way to start a recording tied to no session at all — a meeting, a
+                // thought while driving — named and left for later, exactly like any other
+                // recording once it is stopped. `RecordingsSheet` itself is what offers "New
+                // Recording"; nothing here has a composer to insert into or attach onto.
+                Button("Past Recordings") { showingRecordings = true }
+                    .accessibilityIdentifier("open-recordings")
+                    .sheet(isPresented: $showingRecordings) {
+                        RecordingsSheet(controller: voice, onInsertTranscript: { _ in }, onAttach: { _ in })
+                    }
             }
         } header: {
             Text("Voice Settings")

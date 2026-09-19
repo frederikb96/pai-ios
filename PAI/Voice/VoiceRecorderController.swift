@@ -96,6 +96,15 @@ final class VoiceRecorderController {
     /// appended to it rather than replacing it, and it is what a take that transcribed nothing
     /// restores.
     private var preVoiceText = ""
+    /// `true` for the whole of a take started by `startOfflineRecording(name:)` — never touches
+    /// `voiceSession` at all (no draft, nothing to dictate into, nothing to send live), so
+    /// `persistRecording()` reads this to know its duration must come from the captured samples
+    /// rather than from the uplink's own wall-clock `result`, which was never started.
+    private(set) var isRecordingOffline = false
+    /// The name given at `startOfflineRecording(name:)`, carried through to the `RecordingMeta`
+    /// `persistRecording()` writes — there is nowhere else to hold it between the two, since an
+    /// offline take has no draft of its own to stash it in.
+    private var pendingOfflineName: String?
     private var liveTextTask: Task<Void, Never>?
     /// One ordered consumer for every chunk `MicrophoneCapture` delivers — see
     /// `wireCaptureCallbacks()`'s own comment for why this exists instead of one `Task` per chunk.
@@ -290,7 +299,7 @@ final class VoiceRecorderController {
         pathObserver.stop()
     }
 
-    var canStart: Bool { !isStarting && voiceSession.canStart }
+    var canStart: Bool { !isStarting && !isRecordingOffline && voiceSession.canStart }
 
     // MARK: - Start / stop
 
@@ -303,7 +312,7 @@ final class VoiceRecorderController {
     /// replacing it. Passed in rather than read from `drafts` here so the caller's own idea of
     /// what is in the field — which may include an edit still inside the flush debounce — wins.
     func start(draftKey: String?, preText: String) async {
-        guard !isStarting, voiceSession.canStart else { return }
+        guard !isStarting, !isRecordingOffline, voiceSession.canStart else { return }
         isStarting = true
         defer { isStarting = false }
         setupFailure = nil
@@ -387,6 +396,62 @@ final class VoiceRecorderController {
             await persistRecording()
         }
         await startTask.value
+    }
+
+    /// Records to a local file only — no draft, no uplink, nothing transcribed until Freddy asks
+    /// for it from the recordings list. What Quick Actions' note-taking-style tile starts: a
+    /// meeting, a thought while driving, anything meant to be reviewed later rather than typed
+    /// into a session right now.
+    ///
+    /// Deliberately does not touch `voiceSession` at all — an offline recording has nowhere to
+    /// send audio and nothing to dictate into, so there is no uplink to start, no gate to open, no
+    /// backend connection required. `persistRecording()` reads `isRecordingOffline` to know its
+    /// duration has to come from the captured samples instead of the uplink's own wall-clock
+    /// `result`, which stays untouched for the whole of this take.
+    func startOfflineRecording(name: String) async {
+        guard !isStarting, !isRecordingOffline, voiceSession.canStart else { return }
+        isStarting = true
+        defer { isStarting = false }
+        setupFailure = nil
+
+        guard await requestMicrophonePermission() else {
+            setupFailure = .microphoneDenied
+            return
+        }
+        if let free = audioStorage.freeDiskSpaceBytes(), free < FileRecordingAudioStorage.minimumFreeBytes {
+            setupFailure = .insufficientStorage
+            return
+        }
+        do {
+            try configureAudioSession()
+        } catch {
+            setupFailure = .audioSessionFailed
+            return
+        }
+
+        let timestampMs = Date().timeIntervalSince1970 * 1000
+        takeTimestampMs = timestampMs
+        isRecordingOffline = true
+        pendingOfflineName = name
+        feedbackNotifier.beginTake(id: RecordingMeta.id(forTimestampMs: timestampMs))
+        AppVoiceDiagnosticsLog.shared.log(.info, .mode, "offline take started")
+        let hardwareRate = capture.hardwareSampleRate
+        let transportRate = VoiceAudioRatePolicy.transportRate(hardwareRate: hardwareRate)
+        currentTransportRateHz = transportRate
+        currentNarrowband = VoiceAudioRatePolicy.isNarrowband(rate: transportRate)
+        openStreamingFiles(
+            id: RecordingMeta.id(forTimestampMs: timestampMs), sentRate: transportRate, rawRate: hardwareRate)
+        wireCaptureCallbacks()
+
+        do {
+            try capture.start(targetSampleRate: transportRate)
+            isCapturing = true
+            beginCaptureWatchdog()
+        } catch {
+            setupFailure = .audioSessionFailed
+            capture.stop()
+            await persistRecording()
+        }
     }
 
     // MARK: - Live transcript
@@ -786,14 +851,17 @@ final class VoiceRecorderController {
     /// ran; a caller has nothing left to insert.
     func stop() async {
         guard isCapturing || voiceSession.state != .idle else { return }
+        let wasOffline = isRecordingOffline
         capture.stop()
         isCapturing = false
         endCaptureWatchdog()
+        // A no-op when `wasOffline` — the uplink was never started for this take, and `stop()`
+        // itself guards `state != .idle`.
         await voiceSession.stop(reason: .user)
         try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
 
         await persistRecording()
-        AppVoiceDiagnosticsLog.shared.log(.info, .mode, "microphone take stopped")
+        AppVoiceDiagnosticsLog.shared.log(.info, .mode, wasOffline ? "offline take stopped" : "microphone take stopped")
     }
 
     // MARK: - Permission
@@ -1165,16 +1233,26 @@ final class VoiceRecorderController {
         // a take can end arrives here.
         finishLiveText()
         // Captured before the early returns below, and before `activeLedger` is cleared at the
-        // end of this method — `nil` for a take that never got far enough to open a ledger.
+        // end of this method — `nil` for a take that never got far enough to open a ledger, and
+        // always `nil` for an offline take, which never opens one at all.
         let takeLedger = activeLedger
+        let wasOffline = isRecordingOffline
+        let offlineName = pendingOfflineName
+        isRecordingOffline = false
+        pendingOfflineName = nil
 
-        let result = voiceSession.result
         let sent = streamingSent
         let raw = streamingRaw
         streamingSent = nil
         streamingRaw = nil
         sent?.finalize()
         raw?.finalize()
+        // An offline take never starts `voiceSession`, so its own `result` stays at rest the
+        // whole time (`durationMs` reads 0 forever) — the captured samples are this take's only
+        // record of how long it ran.
+        let offlineDurationMs = Int(Double(sent?.sampleCount ?? 0) / Double(currentTransportRateHz) * 1000)
+        let result: (endedBy: RecordingEndReason, durationMs: Int, mutedMs: Int) =
+            wasOffline ? (endedBy: .user, durationMs: offlineDurationMs, mutedMs: 0) : voiceSession.result
 
         guard let timestampMs = takeTimestampMs else { return }
         takeTimestampMs = nil
@@ -1225,7 +1303,9 @@ final class VoiceRecorderController {
             narrowband: currentNarrowband,
             startup: nil,
             mutedMs: result.mutedMs > 0 ? Double(result.mutedMs) : nil,
-            transcription: takeLedger.map(Self.transcriptionMeta(for:))
+            transcription: takeLedger.map(Self.transcriptionMeta(for:)),
+            name: offlineName,
+            mode: wasOffline ? .offline : nil
         )
         settingsStore.saveRecording(meta)
         // A take reconnecting endlessly, or whose transcription stopped for a fatal reason, was

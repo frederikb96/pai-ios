@@ -164,6 +164,11 @@ public struct RecordingMeta: Codable, Sendable, Equatable, Identifiable {
     /// Set at start, editable after. A label for recognition — sorting stays chronological by
     /// `timestampMs` regardless of whether this is set.
     public let name: String?
+    /// `nil` means `.microphone` — an ordinary dictation take, the only kind that existed before
+    /// this field did, so an old recording decodes as exactly what it always was. `.offline` is
+    /// the only other value a local take can ever carry: nothing here ever produces `.call`,
+    /// which lives entirely server-side in `CallModeEngine`.
+    public let mode: VoiceMode?
 
     public init(
         timestampMs: Double, durationMs: Double, sampleRate: Double? = nil,
@@ -171,7 +176,7 @@ public struct RecordingMeta: Codable, Sendable, Equatable, Identifiable {
         endedBy: RecordingEndReason? = nil, silence: SilenceMeta? = nil, stt: SttMeta? = nil,
         transcript: String? = nil, levels: LevelStats? = nil, narrowband: Bool? = nil,
         startup: RecordingStartup? = nil, mutedMs: Double? = nil, transcription: TranscriptionMeta? = nil,
-        name: String? = nil
+        name: String? = nil, mode: VoiceMode? = nil
     ) {
         self.timestampMs = timestampMs
         self.durationMs = durationMs
@@ -189,5 +194,6 @@ public struct RecordingMeta: Codable, Sendable, Equatable, Identifiable {
         self.mutedMs = mutedMs
         self.transcription = transcription
         self.name = name
+        self.mode = mode
     }
 }
