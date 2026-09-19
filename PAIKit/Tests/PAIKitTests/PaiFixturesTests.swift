@@ -71,7 +71,7 @@ final class PaiFixturesTests: XCTestCase {
             PaiFixtures.outgoingPostMessageNewSession, PaiFixtures.outgoingPostMessageExistingSession,
             PaiFixtures.outgoingRenameSession, PaiFixtures.outgoingSetTitleLocked,
             PaiFixtures.outgoingAnswerBlocker, PaiFixtures.outgoingAddFavorite,
-            PaiFixtures.outgoingMintVoiceToken, PaiFixtures.errorSessionNotActive,
+            PaiFixtures.errorSessionNotActive,
             PaiFixtures.errorNonJsonFallback, PaiFixtures.cancelResponse, PaiFixtures.closeResponseError,
             PaiFixtures.closeResponseAlreadyClosed, PaiFixtures.deleteResponseAlreadyDeleted,
             PaiFixtures.resumeResponseRefused, PaiFixtures.answerBlockerNoBlocker,

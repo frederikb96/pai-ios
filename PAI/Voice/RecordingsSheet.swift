@@ -115,7 +115,7 @@ struct RecordingsSheet: View {
     /// only ever fills in a take's open gaps.
     private func retranscribe(_ meta: RecordingMeta) async {
         guard settings.elevenLabsKey.status?.set == true else {
-            errorMessage = "Set the ElevenLabs API key in Settings first."
+            errorMessage = "Set the ElevenLabs API key on the server first."
             return
         }
         guard let bytes = storage.load(id: meta.id) else {
@@ -126,19 +126,15 @@ struct RecordingsSheet: View {
         defer { transcribingID = nil }
 
         do {
-            let token = try await controller.mintBatchToken()
             let wav = bytes.raw ?? bytes.sent
             let language = Self.language(from: settings.sttLanguage)
-            let result = try await VoiceBatchTranscriber().transcribe(wav: wav, token: token, language: language)
-            switch result {
-            case .text(let text):
-                onInsertTranscript("\(VoiceRecordingResult.sttPrefix)\(text)")
-                dismiss()
-            case .noSpeechDetected:
+            let text = try await controller.transcribe(wav: wav, language: language)
+            guard !text.isEmpty else {
                 errorMessage = "No speech detected in recording."
-            case .failed(let error):
-                errorMessage = error.userMessage
+                return
             }
+            onInsertTranscript("\(VoiceRecordingResult.sttPrefix)\(text)")
+            dismiss()
         } catch {
             errorMessage = (error as? PaiError)?.userMessage ?? "\(error)"
         }

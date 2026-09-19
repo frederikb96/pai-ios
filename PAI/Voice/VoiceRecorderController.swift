@@ -817,9 +817,6 @@ final class VoiceRecorderController {
     /// `.playAndRecord` alone routes output to the receiver, which nobody hears with the phone in
     /// a pocket — exactly the case a connection-health cue exists to reach.
     ///
-    /// Internal rather than `private`: `WakeWordSampleCaptureController` wants this exact same
-    /// untouched-signal configuration for its own raw capture, and duplicating the four options
-    /// above would be a second copy of the same decision rather than a different one.
     func configureAudioSession() throws {
         try activateExclusiveThenMixable(mode: .measurement)
     }

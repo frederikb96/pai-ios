@@ -110,7 +110,7 @@ public final class VoiceUplinkSession {
     /// before it. The take reconnects either way; this is what a take that eventually gave up can
     /// still say about why.
     public private(set) var lastDisconnectDetail: String?
-    private(set) var lastNotice: (severity: String, code: String, text: String)?
+    public private(set) var lastNotice: (severity: String, code: String, text: String)?
 
     private let dependencies: VoiceUplinkDependencies
     private var transport: (any VoiceSocketTransportProtocol)?
@@ -423,6 +423,41 @@ public final class VoiceUplinkSession {
         for chunk in queued {
             await send(offset: chunk.offset, samples: chunk.samples, transport: transport)
         }
+    }
+
+    // MARK: - Interruption / manual retry
+
+    /// The system took the microphone (a call, Siri, another app) — capture has already stopped
+    /// by the time this is called; this only stops the uplink from fighting the backoff clock
+    /// while there is nothing to send anyway. The socket itself is left alone: an `AVAudioSession`
+    /// interruption says nothing about the network, so a connection that is still healthy stays
+    /// that way and `resumeAfterInterruption()` can pick up exactly where it left off.
+    public func pauseForInterruption() {
+        guard state == .recording || state == .connecting || state == .reconnecting else { return }
+        reconnectTask?.cancel()
+        state = .paused
+    }
+
+    /// `shouldResume == false` (the caller's own concern, not this method's) means the take is
+    /// ending, not resuming — see `VoiceRecorderController.giveUpAfterInterruption`.
+    public func resumeAfterInterruption() {
+        guard state == .paused else { return }
+        if transport != nil {
+            state = .recording
+            Task { await flushPending() }
+        } else {
+            state = .reconnecting
+            Task { await attemptReconnect() }
+        }
+    }
+
+    /// "On path satisfied, attempt immediately" — skips whatever backoff a reconnect is still
+    /// waiting out, since a network path just became available is exactly the signal that makes
+    /// waiting out the rest of it pointless.
+    public func retryReconnectNow() {
+        guard state == .reconnecting else { return }
+        reconnectTask?.cancel()
+        Task { await attemptReconnect() }
     }
 
     // MARK: - Mute

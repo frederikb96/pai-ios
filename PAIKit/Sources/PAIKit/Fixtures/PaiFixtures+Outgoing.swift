@@ -51,9 +51,4 @@ extension PaiFixtures {
     public static let outgoingAddFavorite: String = #"""
         { "path": "/home/frederik/Programming/pai-ios-fixtures" }
         """#
-
-    /// `POST /api/voice/token`.
-    public static let outgoingMintVoiceToken: String = #"""
-        { "purpose": "realtime" }
-        """#
 }
