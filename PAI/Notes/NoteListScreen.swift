@@ -39,19 +39,10 @@ struct NoteListScreen: View {
     @State private var actionsTargetId: String?
     @State private var previewTargetId: String?
 
-    /// `CaseIterable` and `Hashable` because these are the search field's own scopes — see the
-    /// `.searchScopes` modifier below.
-    private enum Mode: String, CaseIterable, Identifiable, Hashable {
+    /// Which corpus the typed text is asked about: the loaded index, the server's full-text
+    /// search, or its semantic one. Switched by the chips above the list.
+    private enum Mode: String {
         case filter, fullText, semantic
-        var id: String { rawValue }
-
-        var label: String {
-            switch self {
-            case .filter: return "Filter"
-            case .fullText: return "Full text"
-            case .semantic: return "Semantic"
-            }
-        }
     }
 
     /// Drives the debounced search `.task` — one id covering both server-reaching modes so a
@@ -67,21 +58,8 @@ struct NoteListScreen: View {
             .navigationTitle("Notes")
             .searchable(text: $filterText, prompt: searchPrompt)
             .searchFocused($isFilterFocused)
-            // The mode switch belongs to the search field, not to a row above the list. A row
-            // above the list is a sibling of the thing `.searchable` animates, and it is not on
-            // screen at the moment it is wanted — which is while the keyboard is up and
-            // something has just been typed that the current mode cannot find. A scope bar is
-            // the system's own answer to exactly that: it is attached to the field and it
-            // appears with it.
-            //
-            // `mode` stays the single piece of state; `modeChanged` does the same clearing the
-            // chips used to do, so switching scope never leaves the previous mode's results on
-            // screen under the new mode's prompt.
-            .searchScopes($mode) {
-                ForEach(Mode.allCases) { scope in
-                    Text(scope.label).tag(scope)
-                }
-            }
+            // `modeChanged` clears the previous mode's results, so switching never leaves them
+            // on screen under the new mode's prompt.
             .onChange(of: mode) { _, _ in modeChanged() }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
