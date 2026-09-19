@@ -106,7 +106,7 @@ public enum MessageDisplay {
 
         case "read":
             if let path = input.string("file_path") {
-                var parts = [abbreviatingHome(path)]
+                var parts = [path]
                 if let offset = input.number("offset") { parts.append("from line \(integer(offset))") }
                 if let limit = input.number("limit") { parts.append("\(integer(limit)) lines") }
                 return .inline(text: parts.joined(separator: " "))
@@ -115,7 +115,7 @@ public enum MessageDisplay {
         case "edit", "multiedit":
             if let path = input.string("file_path") {
                 return .edit(
-                    filePath: abbreviatingHome(path),
+                    filePath: path,
                     oldString: input.string("old_string"),
                     newString: input.string("new_string")
                 )
@@ -123,7 +123,7 @@ public enum MessageDisplay {
 
         case "write":
             if let path = input.string("file_path") {
-                return .write(filePath: abbreviatingHome(path), content: input.string("content"))
+                return .write(filePath: path, content: input.string("content"))
             }
 
         // A spawn is the one call whose *identity* is worth more than its arguments: which agent,
@@ -142,14 +142,14 @@ public enum MessageDisplay {
         case "grep":
             var parts: [String] = []
             if let pattern = input.string("pattern") { parts.append("/\(pattern)/") }
-            if let path = input.string("path") { parts.append("in \(abbreviatingHome(path))") }
+            if let path = input.string("path") { parts.append("in \(path)") }
             if let glob = input.string("glob") { parts.append("(\(glob))") }
             return .inline(text: parts.joined(separator: " "))
 
         case "glob":
             var parts: [String] = []
             if let pattern = input.string("pattern") { parts.append(pattern) }
-            if let path = input.string("path") { parts.append("in \(abbreviatingHome(path))") }
+            if let path = input.string("path") { parts.append("in \(path)") }
             return .inline(text: parts.joined(separator: " "))
 
         case "websearch":
@@ -209,8 +209,14 @@ public enum MessageDisplay {
     ///
     /// The paths in a transcript belong to whatever machine ran the session, never to the device
     /// reading it, so this is a text substitution over the two shapes a Unix home takes rather
-    /// than anything resolved from the current process. It applies wherever a path reaches the
-    /// screen, so what a reader searches for is what they can see.
+    /// than anything resolved from the current process.
+    ///
+    /// 🚨 A VIEW calls this, never the display model, and the difference is the search index. A
+    /// card's model text is what the client index counts occurrences in, while the server matches
+    /// the raw stored content — so shortening a path in the model makes the client match text the
+    /// store cannot find and miss text it can, which reaches the reader as a row highlighted while
+    /// the counter reads zero. The header is the one place this is drawn and the header is outside
+    /// the index, so shortening it there costs nothing.
     public static func abbreviatingHome(_ path: String) -> String {
         for root in ["/home/", "/Users/"] where path.hasPrefix(root) {
             let rest = path.dropFirst(root.count)

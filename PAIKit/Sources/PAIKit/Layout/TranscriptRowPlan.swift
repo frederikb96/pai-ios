@@ -124,6 +124,12 @@ public struct TranscriptCardPlan: Equatable, Sendable {
     /// A line drawn above the body and never bounded by the preview — the file an edit or a write
     /// acts on. It wraps rather than scrolling, so it is readable whatever the body is doing, and
     /// it is measured on its own so the clamp over the body cannot reach it.
+    ///
+    /// 🚨 Display text, and the one string here that is not also search text: ``blocks`` is what
+    /// the search index counts occurrences in, and this is deliberately outside it. That is what
+    /// lets the path be shortened to `~` for the reader without the client matching text the
+    /// server's own search over the raw stored content cannot find. Anything put here has to be
+    /// measured exactly as it is drawn, so shorten it here rather than in the view.
     public let header: String?
 
     public init(
@@ -349,11 +355,11 @@ public enum TranscriptRowPlan {
         case .edit:
             return slicedActivityCard(
                 kind: .toolCall(call), text: text, budget: MessageDisplay.Preview.diff, revealed: revealed,
-                header: MessageDisplay.headerPath(of: spec))
+                header: MessageDisplay.headerPath(of: spec).map(MessageDisplay.abbreviatingHome))
         case .write:
             return slicedActivityCard(
                 kind: .toolCall(call), text: text, budget: MessageDisplay.Preview.write, revealed: revealed,
-                header: MessageDisplay.headerPath(of: spec))
+                header: MessageDisplay.headerPath(of: spec).map(MessageDisplay.abbreviatingHome))
         case .agent:
             return clampedActivityCard(
                 kind: .toolCall(call), text: text, visual: MessageDisplay.Preview.agentPrompt.visual,

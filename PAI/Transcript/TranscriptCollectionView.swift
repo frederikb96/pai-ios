@@ -806,7 +806,10 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             else { continue }
             newRows.append(
                 TranscriptRow(id: message.id, message: message, height: height, timeSeparator: separator))
-            previousTimestamp = message.timestamp
+            // Only a row that carries a time updates the reference. A row without one — a message
+            // still on its way — says nothing about when the conversation was, and letting it
+            // clear this would stamp a full date on the next ordinary row.
+            if message.timestamp != nil { previousTimestamp = message.timestamp }
             isFirstRow = false
         }
 
@@ -864,6 +867,13 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             for: message, width: width, environment: environment,
             isRevealed: revealResolver(forMessageId: message.id), measurer: measurer, cache: cache,
             metrics: Self.layoutMetrics(for: environment), hasTimeSeparator: hasTimeSeparator)
+    }
+
+    /// What one row's separator costs in a given version of the row list — `0` when that row is
+    /// not in it, or carries none.
+    private func separatorHeight(forRowId id: Int, in list: [TranscriptRow]) -> Double {
+        guard list.first(where: { $0.id == id })?.timeSeparator != nil else { return 0 }
+        return TranscriptRowLayout.timeSeparatorHeight(metrics: Self.layoutMetrics(for: currentEnvironment()))
     }
 
     /// The label a row draws above itself, or `nil` for the rows between two.
@@ -1336,7 +1346,18 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             let anchorId = topVisibleRowId()
             let anchorOffsetBefore = anchorId.flatMap { layout.offsetTop(forRowId: $0) }
             if let anchorId, let anchorOffsetBefore {
-                layout.pendingAnchor = (id: anchorId, offsetTopBeforeUpdate: anchorOffsetBefore)
+                // 🚨 The anchor is the row's CONTENT, not its cell. A separator lives inside the
+                // cell, above the first card, so a row that gains or loses one has its content
+                // move within a cell the layout compensated perfectly — and the row this happens
+                // to is the one most likely to be the anchor, since an older page arrives exactly
+                // when the reader has reached the top of what is loaded. Biasing the recorded
+                // offset by the difference makes the layout's own delta land on the content.
+                let separatorDelta =
+                    separatorHeight(forRowId: anchorId, in: rows)
+                    - separatorHeight(forRowId: anchorId, in: newRows)
+                layout.pendingAnchor = (
+                    id: anchorId, offsetTopBeforeUpdate: anchorOffsetBefore + separatorDelta
+                )
             }
             applyDelta(delta, newRows: newRows, oldCount: oldIds.count) { [weak self] in
                 self?.reassertHoldIfNeeded()

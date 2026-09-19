@@ -18,7 +18,7 @@ public enum TranscriptRowMetrics {
     public static let railWidth: Double = 2
     /// The column holding one activity row's glyph.
     public static let markerColumnWidth: Double = 22
-    /// The gap between the marker column and the body, and between the body and the time column.
+    /// The gap between the marker column and the body, and the body's own trailing padding.
     public static let gridGap: Double = 6
     /// The inset from the row's leading edge to the rail.
     public static let activityHorizontalInset: Double = 8
@@ -27,12 +27,11 @@ public enum TranscriptRowMetrics {
     /// One activity row's own vertical padding, per edge. Small on purpose: this is the number
     /// that decides whether a screenful of machinery is four rows or fourteen.
     public static let activityRowPadding: Double = 3
-    /// What the removed time column keeps back, for the two registers that are not a bubble.
+    /// A right-hand margin for the two registers that are not a bubble.
     ///
-    /// Half of the width the column and its gap used to occupy. A bubble takes the whole of it —
-    /// its right edge is exactly where the time used to sit, which is what makes it read as
-    /// addressed from that edge — while activity rows and prose keep this much as a margin, since
-    /// dense monospace running to the screen's edge is harder to read than the width is worth.
+    /// A bubble ends at the row's own trailing inset, which is what makes it read as addressed
+    /// from that edge; activity rows and prose stop this much short of it, since dense monospace
+    /// running to the screen's edge is harder to read than the width is worth.
     public static let contentTrailingGutter: Double = 22
     /// The padding above and below a time separator's own line.
     ///
@@ -377,8 +376,7 @@ public enum TranscriptRowLayout {
         switch card.register {
         case .activity:
             // Label line, body, trailer — the label is always drawn and always exactly one line,
-            // because it is pinned to `.lineLimit(1)` in the view. The timestamp shares the row
-            // rather than adding a line of its own.
+            // because it is pinned to `.lineLimit(1)` in the view.
             return TranscriptRowMetrics.activityRowPadding * 2
                 + metrics.activityLineHeight
                 + content

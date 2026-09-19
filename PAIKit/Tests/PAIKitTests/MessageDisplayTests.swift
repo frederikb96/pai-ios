@@ -110,19 +110,20 @@ final class MessageDisplayTests: XCTestCase {
         XCTAssertEqual(MessageDisplay.abbreviatingHome("/etc/passwd"), "/etc/passwd")
     }
 
-    /// The abbreviation happens where a path is read off the wire, so every spec that carries one
-    /// gets it — a path that reached the screen unshortened in one tool and shortened in another
-    /// is two different answers to the same question.
-    func testAPathIsAbbreviatedWhereverACallCarriesOne() {
-        let edit = MessageDisplay.spec(for: call("Edit", ["file_path": .string("/home/frederik/a.swift")]))
-        XCTAssertEqual(MessageDisplay.headerPath(of: edit), "~/a.swift")
-
+    /// 🚨 The model keeps the raw path, because the model is what the client search index counts
+    /// occurrences in and the server matches against the raw stored content. A shortened path in
+    /// here would make the two disagree — a row highlighted while the counter reads zero.
+    /// Shortening belongs on the card header, which is outside the index.
+    func testTheModelKeepsTheRawPathSoSearchStillAgreesWithTheStore() {
         let read = MessageDisplay.spec(for: call("Read", ["file_path": .string("/home/frederik/a.swift")]))
-        XCTAssertEqual(MessageDisplay.displayText(of: read), "~/a.swift")
+        XCTAssertEqual(MessageDisplay.displayText(of: read), "/home/frederik/a.swift")
 
         let grep = MessageDisplay.spec(
             for: call("Grep", ["pattern": .string("x"), "path": .string("/home/frederik/src")]))
-        XCTAssertEqual(MessageDisplay.displayText(of: grep), "/x/ in ~/src")
+        XCTAssertEqual(MessageDisplay.displayText(of: grep), "/x/ in /home/frederik/src")
+
+        let edit = MessageDisplay.spec(for: call("Edit", ["file_path": .string("/home/frederik/a.swift")]))
+        XCTAssertEqual(MessageDisplay.headerPath(of: edit), "/home/frederik/a.swift")
     }
 
     // MARK: - Line-number stripping

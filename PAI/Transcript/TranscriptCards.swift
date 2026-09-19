@@ -113,6 +113,12 @@ struct TranscriptRowContent: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         // An overlay, never a border baked into the frame — it must not add a point to the row's
         // measured height, which `TranscriptRowLayout` already computed for a plain bubble.
+        //
+        // 🚨 And it must draw INSIDE that frame: `strokeBorder` puts the whole stroke within the
+        // shape rather than centred on its edge, and there is no negative padding pushing it out.
+        // A cell clips its content, so a ring drawn outside the row's own bounds does not arrive
+        // with a clipped edge — it does not arrive at all, and this ring is the only thing that
+        // says a deep link or a search step landed here.
         .overlay {
             if isRinged {
                 RoundedRectangle(cornerRadius: 10)
@@ -121,11 +127,11 @@ struct TranscriptRowContent: View {
                     // link "should not [visually] differ", one token apart only so each can
                     // toggle independently. `primary500` here was a genuine colour mismatch, not
                     // a missing token: the web's ring is yellow, not blue.
-                    .stroke(
+                    .strokeBorder(
                         bubbleFill(light: PaiPalette.yellow400, dark: PaiPalette.yellow500, colorScheme: colorScheme),
                         lineWidth: 2
                     )
-                    .padding(-6)
+                    .padding(1)
             }
         }
     }
@@ -320,7 +326,7 @@ struct TranscriptCardKindView: View {
 /// rows reads as one column rather than as a ragged edge.
 private let activityIconFont = Font.system(size: 12, weight: .medium)
 
-/// One row of machinery: a rail, a marker, a label line, a bounded body, and the time.
+/// One row of machinery: a rail, a marker, a label line, an optional header and a bounded body.
 ///
 /// There is no chevron and no box. Six kinds of card filling the same outlined slab is what made
 /// the transcript unreadable as "which of these is the answer"; a rail down the left reads as one
@@ -470,10 +476,12 @@ private struct TrailerView: View {
     let lineHeight: Double
 
     private var caption: String {
-        if isRevealed { return "− show less (\(preview.totalLines) lines)" }
-        if preview.hiddenLines > 0 { return "… +\(preview.hiddenLines) lines" }
+        if isRevealed { return "− show less (\(preview.totalLines) \(lineWord(preview.totalLines)))" }
+        if preview.hiddenLines > 0 { return "… +\(preview.hiddenLines) \(lineWord(preview.hiddenLines))" }
         return "… more"
     }
+
+    private func lineWord(_ count: Int) -> String { count == 1 ? "line" : "lines" }
 
     var body: some View {
         Text(caption)

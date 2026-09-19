@@ -91,7 +91,7 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
     // MARK: - Prose
 
     /// Claude's reply is not a bubble and not inside the activity grid: it wraps at the whole row
-    /// minus the time gutter, and carries only its own vertical padding. The literals here are
+    /// minus its insets and the content gutter, and carries only its own vertical padding. The literals here are
     /// never `TranscriptRowMetrics`'s own constants, so a mutation of one moves what the code
     /// measures at without moving this expectation.
     func testAnAssistantReplyIsProseAtFullWidthWithItsOwnPadding() {
@@ -105,12 +105,13 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
 
         let content = measuredContentHeight(
             MarkdownParser.parse(proseSensitiveText), atWidth: 400 - 38, measurer: measurer, cache: cache)
-        // 10 above and 10 below. No timestamp line: the time shares the row's own trailing column.
+        // 10 above and 10 below. No timestamp line: no row carries a time of its own.
         XCTAssertEqual(actual, content + 20)
     }
 
-    /// The timestamp costs no height at all now — it rides the trailing column. A row with one and
-    /// a row without must therefore measure identically, which is the whole point of moving it.
+    /// A row's own timestamp costs no height at all — time is a separator above the rows that
+    /// begin a new stretch, never a part of the row. A row carrying one and a row carrying none
+    /// must therefore measure identically.
     func testATimestampCostsNoHeight() {
         let withStamp = message(type: .assistant, content: proseSensitiveText)
         let withoutStamp = message(type: .assistant, content: proseSensitiveText, timestamp: nil)

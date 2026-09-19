@@ -275,6 +275,24 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         }
     }
 
+    /// The card header is where a path is shortened — it is display text and nothing else, so it
+    /// is the one string that may differ from what the search index reads. The body carries no
+    /// path at all, which is the point of lifting it out of a diff that scrolls sideways.
+    func testTheCardHeaderCarriesTheShortenedPathAndTheBodyCarriesNone() {
+        let calls = [
+            ToolCall(
+                id: "1", name: "Edit",
+                input: [
+                    "file_path": .string("/home/frederik/Programming/a.swift"),
+                    "old_string": .string("one"), "new_string": .string("two"),
+                ])
+        ]
+        let cards = TranscriptRowPlan.cards(for: message(type: .assistant, toolCalls: calls), isRevealed: revealNone)
+
+        XCTAssertEqual(cards.first?.header, "~/Programming/a.swift")
+        XCTAssertFalse(cards.first?.blocks.first?.plainText.contains("a.swift") ?? true)
+    }
+
     /// A command on one line has no line structure to preserve, so it wraps like prose and two
     /// lines of it reach the screen instead of the first screenful of one. The same command with a
     /// newline in it keeps the fence — the one input that tells the two apart.
