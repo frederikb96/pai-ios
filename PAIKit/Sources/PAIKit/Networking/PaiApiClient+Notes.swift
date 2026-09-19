@@ -30,11 +30,40 @@ extension PaiApiClient {
         try await send(path: "/api/notes/config")
     }
 
-    /// The whole index, metadata only. The web loads it eagerly and filters client-side rather
-    /// than paging, because a vault is small enough and every filter is then instant; this
-    /// mirrors that, which is why the default limit is the route's own maximum page rather than
-    /// a screenful.
+    /// The **whole** index, metadata only — every page, followed to exhaustion, exactly as the
+    /// web's `useNoteIndex.ts` does. Filtering is then a client-side pass over everything, which
+    /// is the only reason it can be instant and unthrottled.
+    ///
+    /// 🚨 One page is not the index. `GET /api/notes` caps at 500 rows, and a vault well past
+    /// that size returns a page that looks complete from here: a successful response, hundreds of
+    /// notes, no error. Everything below the cut then reads as "no note matches" in the filter
+    /// box, which is indistinguishable from the filter being broken. Follow the pages.
+    ///
+    /// The route reports another page by returning exactly `limit` rows (its own `next_offset`
+    /// rule), so a short page ends the walk. `pageCap` is a runaway guard, not a corpus limit:
+    /// reaching it means the route stopped shortening its pages, which is a server bug rather
+    /// than a vault this large.
     public func getNotes(
+        containerId: String? = nil,
+        favourite: Bool? = nil,
+        limit: Int = 500,
+        offset: Int = 0
+    ) async throws -> [NoteSummary] {
+        let pageCap = 40
+        var all: [NoteSummary] = []
+        var nextOffset = offset
+        for _ in 0..<pageCap {
+            let page = try await getNotesPage(
+                containerId: containerId, favourite: favourite, limit: limit, offset: nextOffset)
+            all.append(contentsOf: page)
+            guard page.count == limit else { break }
+            nextOffset += limit
+        }
+        return all
+    }
+
+    /// One page, unfollowed — what ``getNotes(containerId:favourite:limit:offset:)`` walks.
+    public func getNotesPage(
         containerId: String? = nil,
         favourite: Bool? = nil,
         limit: Int = 500,
