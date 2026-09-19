@@ -95,45 +95,57 @@ struct TranscriptRowContent: View {
             if let timeSeparator {
                 TimeSeparatorView(text: timeSeparator, lineHeight: metrics.trailerLineHeight)
             }
-            ForEach(Array(cards.enumerated()), id: \.offset) { cardIndex, card in
-                TranscriptCardKindView(
-                    card: card,
-                    metrics: metrics,
-                    // The MEASURED truth, not the plan's intent: a bounded card whose body turned
-                    // out to fit has nothing to open, and offering a tap there is an affordance
-                    // that does nothing.
-                    onToggle: card.isTruncated || card.plan.isRevealed
-                        ? { onToggleReveal(cardIndex) } : nil,
-                    sessionID: sessionID,
-                    apiClient: apiClient,
-                    highlightsByBlockIndex: highlightsByBlockIndex(forCardIndex: cardIndex)
-                )
+            // The cards get their own stack so the ring below encloses the message and not the
+            // separator above it — a landing that happens to begin a new stretch of time would
+            // otherwise draw the centred date inside the highlight, reading as part of what was
+            // landed on. 🚨 A real VStack, not the modifiers moved onto the `ForEach`: SwiftUI
+            // distributes a layout modifier over a multi-view, so a ring applied there would be
+            // one ring per card.
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(cards.enumerated()), id: \.offset) { cardIndex, card in
+                    TranscriptCardKindView(
+                        card: card,
+                        metrics: metrics,
+                        // The MEASURED truth, not the plan's intent: a bounded card whose body
+                        // turned out to fit has nothing to open, and offering a tap there is an
+                        // affordance that does nothing.
+                        onToggle: card.isTruncated || card.plan.isRevealed
+                            ? { onToggleReveal(cardIndex) } : nil,
+                        sessionID: sessionID,
+                        apiClient: apiClient,
+                        highlightsByBlockIndex: highlightsByBlockIndex(forCardIndex: cardIndex)
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // An overlay, never a border baked into the frame — it must not add a point to the
+            // row's measured height, which `TranscriptRowLayout` already computed for a plain
+            // bubble.
+            //
+            // 🚨 And it must draw INSIDE that frame: `strokeBorder` puts the whole stroke within
+            // the shape rather than centred on its edge, and there is no negative padding pushing
+            // it out. A cell clips its content, so a ring drawn outside the row's own bounds does
+            // not arrive with a clipped edge — it does not arrive at all, and this ring is the
+            // only thing that says a deep link or a search step landed here.
+            .overlay {
+                if isRinged {
+                    RoundedRectangle(cornerRadius: 10)
+                        // Matches the web's `ring-yellow-400 dark:ring-yellow-500` — the same ring
+                        // its own `MessageBubble.tsx` comment says a search current-match and a
+                        // deep link "should not [visually] differ", one token apart only so each
+                        // can toggle independently. `primary500` here was a genuine colour
+                        // mismatch, not a missing token: the web's ring is yellow, not blue.
+                        .strokeBorder(
+                            bubbleFill(
+                                light: PaiPalette.yellow400, dark: PaiPalette.yellow500,
+                                colorScheme: colorScheme),
+                            lineWidth: 2
+                        )
+                        .padding(1)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        // An overlay, never a border baked into the frame — it must not add a point to the row's
-        // measured height, which `TranscriptRowLayout` already computed for a plain bubble.
-        //
-        // 🚨 And it must draw INSIDE that frame: `strokeBorder` puts the whole stroke within the
-        // shape rather than centred on its edge, and there is no negative padding pushing it out.
-        // A cell clips its content, so a ring drawn outside the row's own bounds does not arrive
-        // with a clipped edge — it does not arrive at all, and this ring is the only thing that
-        // says a deep link or a search step landed here.
-        .overlay {
-            if isRinged {
-                RoundedRectangle(cornerRadius: 10)
-                    // Matches the web's `ring-yellow-400 dark:ring-yellow-500` — the same ring
-                    // its own `MessageBubble.tsx` comment says a search current-match and a deep
-                    // link "should not [visually] differ", one token apart only so each can
-                    // toggle independently. `primary500` here was a genuine colour mismatch, not
-                    // a missing token: the web's ring is yellow, not blue.
-                    .strokeBorder(
-                        bubbleFill(light: PaiPalette.yellow400, dark: PaiPalette.yellow500, colorScheme: colorScheme),
-                        lineWidth: 2
-                    )
-                    .padding(1)
-            }
-        }
     }
 
     /// Groups this card's own hits by which block they fall in — the shape every rendering
