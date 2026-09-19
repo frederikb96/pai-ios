@@ -9,6 +9,7 @@ private final class FakeNotesApi: NotesApiClient, @unchecked Sendable {
     private(set) var undeleteNoteCalls: [String] = []
     private(set) var createNoteCalls: [(name: String, containerId: String?)] = []
     private(set) var patchNoteCalls: [(id: String, name: String?)] = []
+    private(set) var patchNoteBodies: [String?] = []
 
     var deleteNoteResult: Bool = true
     var deleteNoteError: (any Error)?
@@ -92,12 +93,79 @@ private final class FakeNotesApi: NotesApiClient, @unchecked Sendable {
         return getNoteResult ?? NoteFixture.detail(id: id)
     }
 
+    /// Compare-and-swap, the way `PATCH /api/notes/{id}` actually behaves: a request whose
+    /// `expectedHash` is not the note's current hash is refused with the note as it stands. Off by
+    /// default; a test that needs the server to be able to refuse anything turns it on, because a
+    /// fake that accepts every write cannot express a client racing itself at all.
+    var casEnabled = false
+    private var casHash = "h"
+    private var casBody = ""
+
+    /// Off by default. A test driving two saves at once turns this on and holds the first request
+    /// open, so the second one is started while the first is genuinely still in flight.
+    var patchNoteGateEnabled = false
+    private var patchNoteStarted: CheckedContinuation<Void, Never>?
+    private var patchNoteHasStarted = false
+    private var patchNoteRelease: CheckedContinuation<Void, Never>?
+    private var patchNoteReleased = false
+
+    func waitUntilPatchNoteStarted() async {
+        await withCheckedContinuation { continuation in
+            gateLock.lock()
+            if patchNoteHasStarted {
+                gateLock.unlock()
+                continuation.resume()
+            } else {
+                patchNoteStarted = continuation
+                gateLock.unlock()
+            }
+        }
+    }
+
+    func releasePatchNote() {
+        gateLock.lock()
+        patchNoteReleased = true
+        let release = patchNoteRelease
+        patchNoteRelease = nil
+        gateLock.unlock()
+        release?.resume()
+    }
+
     func patchNote(
         id: String, body: String?, frontmatter: String?, name: String?, summary: String?,
         favourite: Bool?, containerId: String?, expectedHash: String?
     ) async throws -> NoteSaveResult {
         patchNoteCalls.append((id: id, name: name))
+        patchNoteBodies.append(body)
+        if patchNoteGateEnabled {
+            let started = gateLock.withLock {
+                patchNoteHasStarted = true
+                defer { patchNoteStarted = nil }
+                return patchNoteStarted
+            }
+            started?.resume()
+            await withCheckedContinuation { continuation in
+                gateLock.lock()
+                if patchNoteReleased {
+                    gateLock.unlock()
+                    continuation.resume()
+                } else {
+                    patchNoteRelease = continuation
+                    gateLock.unlock()
+                }
+            }
+        }
         if !patchNoteResults.isEmpty { return patchNoteResults.removeFirst() }
+        if casEnabled {
+            guard expectedHash == casHash else {
+                return .conflict(
+                    NoteConflict(currentHash: casHash, updatedAtMs: 0, frontmatter: nil, body: casBody))
+            }
+            casBody = body ?? casBody
+            casHash = "h\(patchNoteCalls.count)"
+            return .saved(
+                NoteFixture.detail(id: id, name: name ?? "Untitled", body: casBody, contentHash: casHash))
+        }
         return patchNoteResult ?? .saved(NoteFixture.detail(id: id, name: name ?? "Untitled"))
     }
 
@@ -167,16 +235,64 @@ private enum NoteFixture {
             updatedAtMs: 0, pendingDelete: pendingDelete)
     }
 
-    static func detail(id: String, name: String = "Note", body: String = "") -> NoteDetail {
+    static func detail(
+        id: String, name: String = "Note", body: String = "", contentHash: String = "h"
+    ) -> NoteDetail {
         NoteDetail(
             id: id, name: name, summary: nil, containerId: nil, favourite: false, tags: [],
-            updatedAtMs: 0, pendingDelete: false, frontmatter: nil, body: body, contentHash: "h",
+            updatedAtMs: 0, pendingDelete: false, frontmatter: nil, body: body, contentHash: contentHash,
             createdAt: nil, createdAtMs: nil, lastWriteSource: nil)
     }
 }
 
 @MainActor
 final class NotesStoreTests: XCTestCase {
+
+    /// The conflict banner fired constantly against notes nobody else was touching, and the cause
+    /// was the client racing itself: every save reads its `expectedHash` from `details[id]` and
+    /// only moves it on the way back, so a second save started while the first is in flight sends
+    /// a hash the first is about to invalidate. The server answers that with a conflict describing
+    /// the client's *own* earlier write, and since typing continued in between, the body check
+    /// reads it — correctly, for what it is designed to detect — as two different bodies.
+    ///
+    /// `flush` is the realistic second entry point: the editor calls it on scene-phase changes, on
+    /// disappear and from the preview toggle, all of which happen freely while a debounced save is
+    /// mid-request.
+    ///
+    /// The assertion is the one that matters and the one that fails without the gate: while the
+    /// first request is still open, no second request has been sent.
+    func testASecondSaveWaitsForTheOneAlreadyTalkingToTheServer() async {
+        let api = FakeNotesApi()
+        let store = NotesStore(api: api)
+        api.getNoteResult = NoteFixture.detail(id: "n1", body: "first")
+        await store.loadNote(id: "n1")
+
+        api.casEnabled = true
+        api.patchNoteGateEnabled = true
+        store.edit(id: "n1", body: "first and more")
+        let firstSave = Task { await store.flush(id: "n1") }
+        await api.waitUntilPatchNoteStarted()
+
+        // Typing carries on, then something that flushes — backgrounding, leaving the screen —
+        // lands while that request is still open.
+        store.edit(id: "n1", body: "first and more and yet more")
+        let secondSave = Task { await store.flush(id: "n1") }
+
+        api.releasePatchNote()
+        await firstSave.value
+        await secondSave.value
+
+        // The outcome Freddy sees, rather than a count taken mid-flight: a count is satisfied
+        // just as well by a second save that had not started yet, which is a fact about the test
+        // scheduler and not about the guard.
+        if case .conflict = store.saveState(for: "n1") {
+            XCTFail("a conflict was raised for a note only this client ever wrote")
+        }
+
+        // Serialising the saves must not cost the newest keystrokes: the last thing typed is the
+        // last thing sent.
+        XCTAssertEqual(api.patchNoteBodies.last, "first and more and yet more")
+    }
 
     /// `requestDelete` marks a row `pendingDelete` rather than removing it, for the undo window,
     /// and nothing prunes it back out short of a full `refresh()` — so a stale row is exactly what
