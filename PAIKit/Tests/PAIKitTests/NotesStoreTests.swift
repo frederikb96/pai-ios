@@ -15,6 +15,9 @@ private final class FakeNotesApi: NotesApiClient, @unchecked Sendable {
     var undeleteNoteResult: NoteDetail?
     var createNoteResult: NoteDetail?
     var patchNoteResult: NoteSaveResult?
+    /// Answers taken in order before `patchNoteResult`, for a test that needs a save to be
+    /// refused once and then accepted — the shape a conflict-and-retry actually has.
+    var patchNoteResults: [NoteSaveResult] = []
     var restoreRevisionResult: NoteDetail?
     var getNoteLinksResult: NoteLinkGraph = NoteLinkGraph(outgoing: [], backlinks: [], extractionSkipped: false)
     var getNotesResult: [NoteSummary] = []
@@ -94,6 +97,7 @@ private final class FakeNotesApi: NotesApiClient, @unchecked Sendable {
         favourite: Bool?, containerId: String?, expectedHash: String?
     ) async throws -> NoteSaveResult {
         patchNoteCalls.append((id: id, name: name))
+        if !patchNoteResults.isEmpty { return patchNoteResults.removeFirst() }
         return patchNoteResult ?? .saved(NoteFixture.detail(id: id, name: name ?? "Untitled"))
     }
 
@@ -163,10 +167,10 @@ private enum NoteFixture {
             updatedAtMs: 0, pendingDelete: pendingDelete)
     }
 
-    static func detail(id: String, name: String = "Note") -> NoteDetail {
+    static func detail(id: String, name: String = "Note", body: String = "") -> NoteDetail {
         NoteDetail(
             id: id, name: name, summary: nil, containerId: nil, favourite: false, tags: [],
-            updatedAtMs: 0, pendingDelete: false, frontmatter: nil, body: "", contentHash: "h",
+            updatedAtMs: 0, pendingDelete: false, frontmatter: nil, body: body, contentHash: "h",
             createdAt: nil, createdAtMs: nil, lastWriteSource: nil)
     }
 }
@@ -335,6 +339,83 @@ final class NotesStoreTests: XCTestCase {
         XCTAssertFalse(ok)
         XCTAssertTrue(api.patchNoteCalls.isEmpty)
         XCTAssertEqual(store.notes[0].name, "Old Name")
+    }
+
+    // MARK: The conflict bar, and what it is actually for
+
+    /// The bar exists for two people editing the same paragraph. It was firing for something
+    /// else: one content hash covers frontmatter *and* body, so the sync engine writing this
+    /// note back from disk — or a summary saved from the info panel — moves it without touching
+    /// a word of what is being typed. Nothing about that is a decision anyone can usefully make.
+    func testAHashThatMovedWithoutTheBodyIsAdoptedAndSavedRatherThanRaised() async {
+        let api = FakeNotesApi()
+        api.getNotesResult = [NoteFixture.summary(id: "n1")]
+        let store = NotesStore(api: api)
+        await store.refresh()
+        api.getNoteResult = NoteFixture.detail(id: "n1", name: "Note", body: "the shared body")
+        await store.loadNote(id: "n1")
+
+        // The server holds the same body it always did, under a hash that moved anyway.
+        api.patchNoteResults = [
+            .conflict(
+                NoteConflict(
+                    currentHash: "moved-by-the-frontmatter", updatedAtMs: 5, frontmatter: "uuid: x",
+                    body: "the shared body")),
+            .saved(NoteFixture.detail(id: "n1", name: "Note", body: "the shared body and mine")),
+        ]
+        store.edit(id: "n1", body: "the shared body and mine")
+        await store.flush(id: "n1")
+
+        XCTAssertEqual(store.saveState(for: "n1"), .clean)
+        XCTAssertEqual(api.patchNoteCalls.count, 2, "the adopted hash must be written with, not merely stored")
+    }
+
+    /// Two different bodies, neither of them this client's, is the one case the bar is for — and
+    /// resolving that silently would be a data-loss bug wearing a usability fix's clothes.
+    func testABodyThatGenuinelyMovedStillRaisesTheBar() async {
+        let api = FakeNotesApi()
+        api.getNotesResult = [NoteFixture.summary(id: "n1")]
+        let store = NotesStore(api: api)
+        await store.refresh()
+        api.getNoteResult = NoteFixture.detail(id: "n1", name: "Note", body: "the shared body")
+        await store.loadNote(id: "n1")
+
+        api.patchNoteResults = [
+            .conflict(
+                NoteConflict(
+                    currentHash: "someone-else", updatedAtMs: 5, frontmatter: nil,
+                    body: "what somebody else wrote"))
+        ]
+        store.edit(id: "n1", body: "what I wrote")
+        await store.flush(id: "n1")
+
+        guard case .conflict = store.saveState(for: "n1") else {
+            return XCTFail("a real divergence must still be put in front of the reader")
+        }
+        XCTAssertEqual(api.patchNoteCalls.count, 1, "a real conflict must not be written over")
+    }
+
+    /// Something rewriting this note's frontmatter on every sweep is a fault of its own; it must
+    /// not become an unbounded write loop that never reaches the reader either.
+    func testAHashThatKeepsMovingStopsRetryingAndRaisesTheBar() async {
+        let api = FakeNotesApi()
+        api.getNotesResult = [NoteFixture.summary(id: "n1")]
+        let store = NotesStore(api: api)
+        await store.refresh()
+        api.getNoteResult = NoteFixture.detail(id: "n1", name: "Note", body: "the shared body")
+        await store.loadNote(id: "n1")
+
+        api.patchNoteResult = .conflict(
+            NoteConflict(
+                currentHash: "moves-every-time", updatedAtMs: 5, frontmatter: "uuid: x",
+                body: "the shared body"))
+        store.edit(id: "n1", body: "the shared body and mine")
+        await store.flush(id: "n1")
+
+        guard case .conflict = store.saveState(for: "n1") else {
+            return XCTFail("a hash that never settles has to surface rather than spin")
+        }
+        XCTAssertLessThanOrEqual(api.patchNoteCalls.count, 2, "the retry must be bounded")
     }
 
     /// A conflict answer from a rename must not be silently swallowed as success — the caller

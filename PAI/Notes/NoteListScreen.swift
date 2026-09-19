@@ -246,15 +246,22 @@ struct NoteListScreen: View {
         }
     }
 
-    /// What narrows the corpus *before* anything is typed — which is why these stay a row above
-    /// the list while the mode switch moved into the search field's own scope bar. Both are
-    /// choices made while reading the list, not while typing into it.
+    /// The row above the list: the mode, and what narrows the corpus before anything is typed.
+    ///
+    /// The mode also lives in the search field's own scope bar below, and deliberately so — the
+    /// two are one piece of state shown at the two different moments it is wanted. This row is
+    /// what is reachable while reading the list; the scope bar is what is on screen while the
+    /// keyboard is up and something has just been typed that the current mode cannot find, which
+    /// is when the switch is actually reached for and when this row is not there.
     ///
     /// Scrolled rather than wrapped: a `Label` given less width than its text needs breaks the
     /// word instead of shrinking — "Favourites" reads as "Favourite / s".
     private var filterChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
+                modeChip(target: .fullText, label: "Full text", systemImage: "text.magnifyingglass")
+                modeChip(target: .semantic, label: "Semantic", systemImage: "sparkles")
+
                 if mode == .filter {
                     Button {
                         favouritesOnly.toggle()
@@ -273,6 +280,21 @@ struct NoteListScreen: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
         }
+    }
+
+    /// Writes the same `mode` the scope bar binds — one piece of state, two surfaces. Tapping the
+    /// chip that is already on returns to plain filtering, which is what makes it a toggle rather
+    /// than a third state nobody can leave.
+    private func modeChip(target: Mode, label: String, systemImage: String) -> some View {
+        Button {
+            mode = mode == target ? .filter : target
+        } label: {
+            Label(label, systemImage: systemImage)
+                .font(PaiTypography.caption.font)
+        }
+        .buttonStyle(.bordered)
+        .tint(mode == target ? PaiPalette.primary500 : PaiPalette.Semantic.textMuted)
+        .accessibilityIdentifier("notes-mode-\(target.rawValue)")
     }
 
     /// The query itself survives a scope change — trying the same words in another mode is the

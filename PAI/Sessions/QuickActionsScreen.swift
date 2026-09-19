@@ -17,66 +17,74 @@ struct QuickActionsScreen: View {
     @Environment(DraftStore.self) private var drafts
     @Environment(ToastCenter.self) private var toasts
 
-    /// Two columns, and the rows size themselves off the available height so the six tiles fill
-    /// the screen rather than huddling at the top. `.flexible` on both axes is what keeps a tile
-    /// a thumb-sized target on a small phone and a generous one on a large phone, without either
-    /// being described in points here.
     private let columns = [
         GridItem(.flexible(), spacing: 12),
         GridItem(.flexible(), spacing: 12),
     ]
 
+    private let spacing: CGFloat = 12
+    private let padding: CGFloat = 16
+    private let rows: CGFloat = 3
+
     var body: some View {
-        LazyVGrid(columns: columns, spacing: 12) {
-            tile(
-                title: "Home", subtitle: "Type", systemImage: "house.fill",
-                tint: PaiPalette.primary500, identifier: "quick-home"
-            ) {
-                startSession(type: "home", call: false)
-            }
-            tile(
-                title: "Fast", subtitle: "Type", systemImage: "bolt.fill",
-                tint: PaiPalette.amber500, identifier: "quick-fast"
-            ) {
-                startSession(type: "fast", call: false)
-            }
-            tile(
-                title: "Home", subtitle: "Call", systemImage: "phone.fill",
-                tint: PaiPalette.primary500, identifier: "quick-home-call"
-            ) {
-                startSession(type: "home", call: true)
-            }
-            tile(
-                title: "Fast", subtitle: "Call", systemImage: "phone.badge.waveform.fill",
-                tint: PaiPalette.amber500, identifier: "quick-fast-call"
-            ) {
-                startSession(type: "fast", call: true)
-            }
-            tile(
-                title: "Find note", subtitle: "Filter", systemImage: "magnifyingglass",
-                tint: PaiPalette.Semantic.textSecondary, identifier: "quick-find-note"
-            ) {
-                NotesFilterFocus.shared.arm()
-                environment.router.replace(with: [.notes])
-            }
-            tile(
-                title: "New note", subtitle: "Write", systemImage: "square.and.pencil",
-                tint: PaiPalette.Semantic.textSecondary, identifier: "quick-new-note"
-            ) {
-                Task { await createNote() }
-            }
+        // Measured rather than given a fixed tile height: the whole point is targets big enough
+        // to hit without looking, and a grid that sizes itself to its content leaves a third of
+        // the screen empty on a large phone while overflowing a small one.
+        GeometryReader { proxy in
+            grid(tileHeight: max(96, (proxy.size.height - padding * 2 - spacing * (rows - 1)) / rows))
         }
-        .padding(16)
-        .frame(maxHeight: .infinity, alignment: .top)
         .paiScreenBackground()
         .navigationTitle("Quick Actions")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("quick-actions-screen")
     }
 
+    private func grid(tileHeight: CGFloat) -> some View {
+        LazyVGrid(columns: columns, spacing: spacing) {
+            tile(
+                title: "Home", subtitle: "Type", systemImage: "house.fill",
+                tint: PaiPalette.primary500, height: tileHeight, identifier: "quick-home"
+            ) {
+                startSession(type: "home", call: false)
+            }
+            tile(
+                title: "Fast", subtitle: "Type", systemImage: "bolt.fill",
+                tint: PaiPalette.amber500, height: tileHeight, identifier: "quick-fast"
+            ) {
+                startSession(type: "fast", call: false)
+            }
+            tile(
+                title: "Home", subtitle: "Call", systemImage: "phone.fill",
+                tint: PaiPalette.primary500, height: tileHeight, identifier: "quick-home-call"
+            ) {
+                startSession(type: "home", call: true)
+            }
+            tile(
+                title: "Fast", subtitle: "Call", systemImage: "phone.badge.waveform.fill",
+                tint: PaiPalette.amber500, height: tileHeight, identifier: "quick-fast-call"
+            ) {
+                startSession(type: "fast", call: true)
+            }
+            tile(
+                title: "Find note", subtitle: "Filter", systemImage: "magnifyingglass",
+                tint: PaiPalette.Semantic.textSecondary, height: tileHeight, identifier: "quick-find-note"
+            ) {
+                NotesFilterFocus.shared.arm()
+                environment.router.replace(with: [.notes])
+            }
+            tile(
+                title: "New note", subtitle: "Write", systemImage: "square.and.pencil",
+                tint: PaiPalette.Semantic.textSecondary, height: tileHeight, identifier: "quick-new-note"
+            ) {
+                Task { await createNote() }
+            }
+        }
+        .padding(padding)
+    }
+
     private func tile(
-        title: String, subtitle: String, systemImage: String, tint: Color, identifier: String,
-        action: @escaping () -> Void
+        title: String, subtitle: String, systemImage: String, tint: Color, height: CGFloat,
+        identifier: String, action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 10) {
@@ -91,7 +99,7 @@ struct QuickActionsScreen: View {
                     .font(PaiTypography.caption.font)
                     .foregroundStyle(PaiPalette.Semantic.textMuted)
             }
-            .frame(maxWidth: .infinity, minHeight: 132, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .leading)
             .padding(16)
             .background(PaiPalette.Semantic.raisedSurface)
             .clipShape(RoundedRectangle(cornerRadius: 20))

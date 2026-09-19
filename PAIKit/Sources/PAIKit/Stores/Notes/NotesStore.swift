@@ -505,7 +505,11 @@ public final class NotesStore {
         await saveNow(id: id)
     }
 
-    private func saveNow(id: String) async {
+    /// `adoptedHashRetries` bounds the one retry that follows adopting a hash whose divergence
+    /// was outside the body. Something rewriting this note's frontmatter on every sweep would
+    /// otherwise spin here forever — a real fault in its own right, and not one worth turning
+    /// into an unbounded loop that never reaches the reader.
+    private func saveNow(id: String, adoptedHashRetries: Int = 1) async {
         guard let pending = drafts[id], let baseline = details[id] else { return }
         if case .conflict = saveState(for: id) { return }
         saveStates[id] = .saving
@@ -538,7 +542,26 @@ public final class NotesStore {
                         "saveNow(\(id)) conflict: sent expectedHash=\(baseline.contentHash.prefix(8)), "
                             + "server holds \(conflict.currentHash.prefix(8))")
                 #endif
-                saveStates[id] = .conflict(conflict)
+                // A hash that moved for a reason the body cannot see is not a conflict worth
+                // putting in front of anyone — see ``NoteBodyDivergence``. Adopt the server's
+                // hash and write again; the frontmatter that moved is the server's own, and the
+                // route merges its stored copy whatever a client sends.
+                switch NoteBodyDivergence.of(server: conflict.body, base: baseline.body, local: pending) {
+                case .none where adoptedHashRetries > 0:
+                    setDetail(baseline.adoptingHash(conflict), for: id)
+                    await saveNow(id: id, adoptedHashRetries: adoptedHashRetries - 1)
+                case .alreadyOurs:
+                    setDetail(baseline.adoptingHash(conflict), for: id)
+                    if drafts[id] == pending {
+                        drafts[id] = nil
+                        saveStates[id] = .clean
+                    } else {
+                        saveStates[id] = .dirty
+                        scheduleSave(id: id)
+                    }
+                case .none, .real:
+                    saveStates[id] = .conflict(conflict)
+                }
             }
         } catch {
             saveStates[id] = .failed((error as? PaiError)?.userMessage ?? "Could not save")
