@@ -8,8 +8,8 @@ import SwiftUI
 /// both riding `hasSession`.
 struct ComposerActionMenu: View {
     var hasSession: Bool
-    /// `nil` while there is no session yet to bind a call to — `CreateSessionView`'s own composer
-    /// has no menu entries for call mode at all, matching how it never offers a long-press either.
+    /// `nil` when the menu should offer nothing about call mode: a call already running that
+    /// this screen has nothing to say about, or a new session already marked as one.
     var callMenuState: ComposerCallMenuState? = nil
     /// The other session's own title, for `.runningElsewhere`'s label — `nil` falls back to a
     /// generic phrase rather than an empty one.
@@ -28,6 +28,8 @@ struct ComposerActionMenu: View {
     /// menu — so `CreateSessionView`'s own composer, which has no session yet, needs no override.
     var onStartOrReturnToCall: () -> Void = {}
     var onEndCall: () -> Void = {}
+    /// Only ever called for `.startAfterSend` — the new-session screen's own case.
+    var onStartCallAfterSend: () -> Void = {}
 
     var body: some View {
         Menu {
@@ -107,6 +109,13 @@ struct ComposerActionMenu: View {
                 Label("End Call", systemImage: "phone.down.fill")
             }
             .accessibilityIdentifier("composer-menu-end-call")
+        case .startAfterSend:
+            Button {
+                onStartCallAfterSend()
+            } label: {
+                Label("Send as Call", systemImage: "phone.fill")
+            }
+            .accessibilityIdentifier("composer-menu-start-call-after-send")
         case .runningElsewhere:
             Button {
                 onStartOrReturnToCall()

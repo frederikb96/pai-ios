@@ -298,6 +298,8 @@ struct RootView: View {
             TaskEditorView(taskId: id)
         case .callMode(let sessionID):
             CallModeRouteScreen(sessionID: sessionID)
+        case .quickActions:
+            QuickActionsScreen()
         }
     }
 

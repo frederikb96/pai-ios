@@ -111,6 +111,7 @@ final class DeepLinkTests: XCTestCase {
     func testParsesTheIdLessLinks() {
         XCTAssertEqual(DeepLink.from(url: URL(string: "pai://notes")!), .notesList)
         XCTAssertEqual(DeepLink.from(url: URL(string: "pai://createsession")!), .createSession)
+        XCTAssertEqual(DeepLink.from(url: URL(string: "pai://quickactions")!), .quickActions)
     }
 
     func testRejectsAnExtraSegmentAfterAnIdLessHost() {
@@ -123,7 +124,7 @@ final class DeepLinkTests: XCTestCase {
     func testAURLRoundTripsThroughParsing() {
         for link in [
             DeepLink.session(id: "a b/c"), .note(id: "n#1"), .note(id: "plain"), .notesList, .createSession,
-            .notification(id: "n/1"),
+            .quickActions, .notification(id: "n/1"),
         ] {
             guard let url = link.url else { return XCTFail("\(link) produced no URL") }
             XCTAssertEqual(DeepLink.from(url: url), link, "\(url) did not round-trip")
@@ -144,6 +145,12 @@ final class DeepLinkTests: XCTestCase {
 
     func testCreateSessionLandsOnTheCreateSessionRoute() {
         XCTAssertEqual(DeepLink.createSession.routes, [.createSession])
+    }
+
+    /// Replaces the path rather than pushing: the hardware button is pressed from wherever the
+    /// app was last left, and burying the launcher under that is how Back stops meaning anything.
+    func testQuickActionsLandsOnTheLauncherAlone() {
+        XCTAssertEqual(DeepLink.quickActions.routes, [.quickActions])
     }
 
     func testASessionLinkLandsDirectlyOnTheSession() {

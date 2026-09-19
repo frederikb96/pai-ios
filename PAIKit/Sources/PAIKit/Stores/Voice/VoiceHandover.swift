@@ -11,6 +11,10 @@ public enum ComposerCallMenuState: Equatable, Sendable {
     case returnToCall
     /// A call is running in a different session; the menu offers to stop it and start here.
     case runningElsewhere
+    /// There is no session yet — this is the new-session screen. A call cannot open before the
+    /// session it binds to exists (the backend refuses one with no first message), so the offer
+    /// is to dictate the first turn now and land in the call the send creates.
+    case startAfterSend
 }
 
 public enum ComposerCallMenu {

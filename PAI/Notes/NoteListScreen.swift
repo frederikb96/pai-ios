@@ -32,6 +32,10 @@ struct NoteListScreen: View {
     @State private var semanticLoading = false
     @State private var semanticError: String?
 
+    /// Drives `.searchFocused` below, so the launcher's "Find note" tile can land here with the
+    /// keyboard already up and the filter ready to take a word.
+    @FocusState private var isFilterFocused: Bool
+
     @State private var actionsTargetId: String?
     @State private var previewTargetId: String?
 
@@ -62,6 +66,7 @@ struct NoteListScreen: View {
             .paiNotesBackground()
             .navigationTitle("Notes")
             .searchable(text: $filterText, prompt: searchPrompt)
+            .searchFocused($isFilterFocused)
             // The mode switch belongs to the search field, not to a row above the list. A row
             // above the list is a sibling of the thing `.searchable` animates, and it is not on
             // screen at the moment it is wanted — which is while the keyboard is up and
@@ -134,6 +139,9 @@ struct NoteListScreen: View {
                 }
             }
             .task {
+                // Consumed before the index load below, which can take a moment on a large
+                // vault: the keyboard should be up while the list is still filling, not after.
+                if NotesFilterFocus.shared.consume() { isFilterFocused = true }
                 guard notes.notes.isEmpty else { return }
                 await notes.refresh()
             }

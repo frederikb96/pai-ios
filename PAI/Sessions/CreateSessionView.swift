@@ -50,6 +50,10 @@ struct CreateSessionView: View {
     @State private var showingFilePicker = false
     @State private var showingTemporaryNote = false
     @State private var showingRecordingsSheet = false
+    /// Whether the session this screen is about to create should become a call as soon as it
+    /// exists. Set from the launcher's call tiles and from the plus menu below; read once, in
+    /// `send(_:)`.
+    @State private var startsCallOnSend = false
 
     var body: some View {
         NavigationStack {
@@ -76,6 +80,10 @@ struct CreateSessionView: View {
             // this view), but flushing explicitly here is what makes Cancel-then-force-quit safe
             // without depending on the 700ms window having already elapsed.
             Task { await drafts.flush(key: DraftKey.newSession) }
+            // Dismissed without sending. Left armed, this would turn whichever session is
+            // created next into a call nobody asked for — `send(_:)` clears the flag itself for
+            // the case where the request is genuinely wanted.
+            if startsCallOnSend { CallModeLaunchRequest.shared.cancel() }
         }
         .task {
             guard createSession == nil, let connection = environment.connection else { return }
@@ -102,6 +110,17 @@ struct CreateSessionView: View {
             // The point of this screen is the text field — true whether it was reached by tapping
             // "+" or by a home-screen shortcut built to land here ready to type.
             isComposerFocused = true
+            // A call tile on the launcher asked for this session to be spoken rather than typed.
+            // There is no session yet to bind a call to — the backend will not create one without
+            // a first message — so the first turn is dictated into this composer, and the call
+            // itself opens on the session that send creates. Arming the microphone here is what
+            // makes that one press rather than two.
+            if CallModeLaunchRequest.shared.consume() {
+                startsCallOnSend = true
+                if let voiceController = environment.connection?.voice {
+                    await toggleRecording(voiceController: voiceController)
+                }
+            }
         }
         #if DEBUG
             .task {
@@ -423,7 +442,9 @@ struct CreateSessionView: View {
 
                 ComposerActionMenu(
                     hasSession: false,
+                    callMenuState: startsCallOnSend ? nil : .startAfterSend,
                     canGrantSecretAccess: false,
+                    onStartCallAfterSend: { startCallAfterSend(voiceController) },
                     onPastRecordings: { showingRecordingsSheet = true },
                     onAddPhoto: { showingPhotoPicker = true },
                     onAddFile: { showingFilePicker = true },
@@ -524,6 +545,16 @@ struct CreateSessionView: View {
                 // reopens it, rather than the push being dropped. An unanimated push has nothing of
                 // its own to race: the destination is simply already there, fully laid out, by the
                 // time the sheet finishes animating away and reveals it.
+                // Handed to the session's own composer rather than pushed from here — see
+                // `CallModeLaunchRequest.openCall(forSession:)` for why a presentation requested
+                // from behind this dismissing sheet would be dropped.
+                if startsCallOnSend {
+                    CallModeLaunchRequest.shared.openCall(forSession: session.id)
+                    // Cleared before the dismiss, because this screen's own teardown withdraws an
+                    // unused request — and after a send the request is not unused, it is on its
+                    // way to the session that was just created.
+                    startsCallOnSend = false
+                }
                 withTransaction(Transaction(animation: nil)) {
                     environment.router.push(.session(id: session.id))
                 }
@@ -602,6 +633,14 @@ struct CreateSessionView: View {
         case .stopping:
             break
         }
+    }
+
+    /// The plus menu's own way into the same thing the launcher's call tiles do: mark the
+    /// session-to-be as a call, and start dictating the first turn straight away.
+    private func startCallAfterSend(_ voiceController: VoiceRecorderController) {
+        startsCallOnSend = true
+        guard voiceController.state == .idle else { return }
+        Task { await toggleRecording(voiceController: voiceController) }
     }
 
     private func applyVoiceResult(_ prefixedText: String) {

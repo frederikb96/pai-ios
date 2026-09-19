@@ -123,6 +123,15 @@ struct PaiAppShortcuts: AppShortcutsProvider {
             systemImageName: "rectangle.stack.badge.plus"
         )
         AppShortcut(
+            intent: OpenQuickActionsIntent(),
+            phrases: [
+                "Open quick actions in \(.applicationName)",
+                "\(.applicationName) quick actions",
+            ],
+            shortTitle: "Quick Actions",
+            systemImageName: "square.grid.2x2.fill"
+        )
+        AppShortcut(
             intent: VoiceActionIntent(),
             phrases: [
                 "Toggle \(.applicationName) call",
