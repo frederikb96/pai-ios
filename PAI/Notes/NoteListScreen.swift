@@ -139,6 +139,11 @@ struct NoteListScreen: View {
                 }
             }
             .task {
+                #if DEBUG
+                    if PaiFixtureLaunch.isEnabled(), PaiFixtureLaunch.focusesNotesFilter() {
+                        NotesFilterFocus.shared.arm()
+                    }
+                #endif
                 // Consumed before the index load below, which can take a moment on a large
                 // vault: the keyboard should be up while the list is still filling, not after.
                 if NotesFilterFocus.shared.consume() { isFilterFocused = true }

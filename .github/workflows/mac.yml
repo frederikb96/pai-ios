@@ -329,6 +329,13 @@ jobs:
             fail=1
           fi
 
+          # The note index with its filter field focused. The mode switch lives in the search
+          # field's own scope bar, which the system only draws while that field is active — so
+          # the ordinary `notes` screenshot cannot show it, and a scope bar that silently failed
+          # to render would be indistinguishable from one that works.
+          screenshot notes-filtering -PaiFixtureRoute notes -PaiFixtureNotesFilterFocused
+          xcrun simctl terminate "$udid" "$bundle" || true
+
           names=$(python3 -c "import json; print('\n'.join(json.load(open('artifacts/screens.json'))['screens']))")
           while IFS= read -r name; do
             [ -n "$name" ] || continue
