@@ -54,6 +54,15 @@ struct NoteListScreen: View {
 
     var body: some View {
         list
+            // 🚨 Chrome attached to the container, never a row inside `list`. `.searchable`
+            // cross-fades the content it wraps when search becomes active, so a chip row laid
+            // out above the list is faded out mid-transition — it is drawn one frame and gone
+            // the next, in reserved space, which reads as the row randomly disappearing. A
+            // safe-area inset is not part of that content, so it stays put while the keyboard
+            // comes up, which is the one moment the switch is actually wanted.
+            .safeAreaInset(edge: .top, spacing: 0) {
+                filterChips
+            }
             .paiNotesBackground()
             .navigationTitle("Notes")
             .searchable(text: $filterText, prompt: searchPrompt)
@@ -202,40 +211,31 @@ struct NoteListScreen: View {
 
     @ViewBuilder
     private var list: some View {
-        VStack(spacing: 0) {
-            filterChips
-            Group {
-                if let error = notes.loadError, notes.notes.isEmpty {
-                    ContentUnavailableView(
-                        "Notes unavailable", systemImage: "exclamationmark.triangle", description: Text(error))
-                } else if mode == .fullText {
-                    fullTextResults
-                } else if mode == .semantic {
-                    semanticResultsView
-                } else if visibleNotes.isEmpty && !notes.isLoading {
-                    ContentUnavailableView(
-                        "No notes", systemImage: "note.text",
-                        description: Text(
-                            filterText.isEmpty && !favouritesOnly
-                                ? "Notes synced from a container appear here." : "No notes match"))
-                } else {
-                    List(visibleNotes) { note in
-                        row(for: note)
-                    }
-                    .listStyle(.plain)
-                    .paiNotesListBackground()
+        Group {
+            if let error = notes.loadError, notes.notes.isEmpty {
+                ContentUnavailableView(
+                    "Notes unavailable", systemImage: "exclamationmark.triangle", description: Text(error))
+            } else if mode == .fullText {
+                fullTextResults
+            } else if mode == .semantic {
+                semanticResultsView
+            } else if visibleNotes.isEmpty && !notes.isLoading {
+                ContentUnavailableView(
+                    "No notes", systemImage: "note.text",
+                    description: Text(
+                        filterText.isEmpty && !favouritesOnly
+                            ? "Notes synced from a container appear here." : "No notes match"))
+            } else {
+                List(visibleNotes) { note in
+                    row(for: note)
                 }
+                .listStyle(.plain)
+                .paiNotesListBackground()
             }
         }
     }
 
     /// The row above the list: the mode, and what narrows the corpus before anything is typed.
-    ///
-    /// The mode also lives in the search field's own scope bar below, and deliberately so — the
-    /// two are one piece of state shown at the two different moments it is wanted. This row is
-    /// what is reachable while reading the list; the scope bar is what is on screen while the
-    /// keyboard is up and something has just been typed that the current mode cannot find, which
-    /// is when the switch is actually reached for and when this row is not there.
     ///
     /// Scrolled rather than wrapped: a `Label` given less width than its text needs breaks the
     /// word instead of shrinking — "Favourites" reads as "Favourite / s".
