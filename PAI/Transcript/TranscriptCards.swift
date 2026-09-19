@@ -534,6 +534,114 @@ extension View {
             }
         }
     }
+
+    /// `transcriptRowCopy`, plus a way to read the row full screen with the text selectable by
+    /// hand — for the two kinds of message actually read here (his own, and the assistant's),
+    /// where a long take needs a specific paragraph pulled out rather than the whole thing.
+    /// A tool call or a thinking bubble keeps the plain `transcriptRowCopy` above: those are
+    /// rarely read start to end, and the fixed monospace width `ToolBodyText` already gives them
+    /// is the more useful reading shape for that content.
+    func transcriptRowCopyAndExpand(text: String) -> some View {
+        modifier(TranscriptRowExpandableCopy(text: text))
+    }
+}
+
+/// `transcriptRowCopyAndExpand`, skipped entirely for empty text — an attachment-only bubble has
+/// nothing to copy or expand, and offering to would put a menu item that copies an empty string
+/// on a long press over the attachment chip beside it.
+private struct OptionalCopyAndExpand: ViewModifier {
+    let text: String
+
+    func body(content: Content) -> some View {
+        if text.isEmpty {
+            content
+        } else {
+            content.transcriptRowCopyAndExpand(text: text)
+        }
+    }
+}
+
+/// Backs ``View/transcriptRowCopyAndExpand(text:)`` — a `@State` presentation flag needs a
+/// concrete view to live on, which a plain `View` extension method cannot hold itself.
+private struct TranscriptRowExpandableCopy: ViewModifier {
+    let text: String
+    @State private var isShowingFullScreen = false
+
+    func body(content: Content) -> some View {
+        content
+            .contextMenu {
+                Button {
+                    UIPasteboard.general.string = text
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+                Button {
+                    isShowingFullScreen = true
+                } label: {
+                    Label("View Full Screen", systemImage: "arrow.up.left.and.arrow.down.right")
+                }
+            }
+            .fullScreenCover(isPresented: $isShowingFullScreen) {
+                SelectableMessageTextScreen(text: text)
+            }
+    }
+}
+
+/// One message's own text, full screen and selectable by hand — for pulling one paragraph out of
+/// a long reply rather than copying the whole thing. A plain `UITextView` (`SelectableTextView`)
+/// rather than the transcript's own markdown renderer: selection is the entire point here, and
+/// `MarkdownContentView`'s precomputed-height blocks have no text-selection story of their own.
+private struct SelectableMessageTextScreen: View {
+    let text: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            SelectableTextView(text: text)
+                .padding()
+                .navigationTitle("Message")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { dismiss() }
+                    }
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button {
+                            UIPasteboard.general.string = text
+                        } label: {
+                            Label("Copy All", systemImage: "doc.on.doc")
+                        }
+                    }
+                }
+        }
+    }
+}
+
+/// A `UITextView` wrapper whose only job is selectable, non-editable text at the system's own
+/// text-selection UI (loupe, grips, the standard iOS copy menu) — SwiftUI's `Text` cannot be
+/// selected at all, and `.textSelection(.enabled)` (`Text`'s own opt-in) only covers a
+/// single-tap-to-select-word gesture, not the drag-to-extend selection this screen exists for.
+private struct SelectableTextView: UIViewRepresentable {
+    let text: String
+
+    func makeUIView(context: Context) -> UITextView {
+        let view = UITextView()
+        view.isEditable = false
+        view.isSelectable = true
+        // Matches `PaiTypography.body` (14pt, Dynamic Type-scaled against `.subheadline`) — that
+        // style has no public `UIFont` accessor of its own, only the SwiftUI `Font` it resolves
+        // to, so this mirrors its construction rather than reaching into it.
+        view.font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(for: .systemFont(ofSize: 14))
+        view.adjustsFontForContentSizeCategory = true
+        view.backgroundColor = .clear
+        view.textContainerInset = .zero
+        view.textContainer.lineFragmentPadding = 0
+        return view
+    }
+
+    func updateUIView(_ uiView: UITextView, context: Context) {
+        uiView.text = text
+    }
 }
 
 /// A code block's own horizontally-scrolling container — shared by `ToolBodyText` and
@@ -778,6 +886,7 @@ struct UserBubbleView: View {
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.leading, TranscriptRowMetrics.bubbleGutter)
+        .modifier(OptionalCopyAndExpand(text: text))
     }
 }
 
@@ -810,6 +919,7 @@ struct RelayedBubbleView: View {
         )
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.leading, TranscriptRowMetrics.bubbleGutter)
+        .modifier(OptionalCopyAndExpand(text: text))
     }
 }
 
@@ -865,6 +975,7 @@ struct ResentBubbleView: View {
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.leading, TranscriptRowMetrics.bubbleGutter)
+        .modifier(OptionalCopyAndExpand(text: text))
     }
 }
 
@@ -906,6 +1017,7 @@ struct AssistantProseView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .modifier(OptionalCopyAndExpand(text: blocks.map(\.plainText).joined(separator: "\n")))
     }
 }
 

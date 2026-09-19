@@ -33,10 +33,12 @@ struct VoiceRecorderButton: View {
                 .font(.system(size: 22))
                 .frame(width: 32, height: 32)
         }
-        .disabled(
-            displayState == .connecting || displayState == .stopping
-                || !canStart && displayState == .idle
-        )
+        // 🚨 `.connecting` stays tappable, deliberately — a connection attempt that cannot reach
+        // the backend used to leave no way out but waiting it out. Tapping it now cancels the
+        // uplink's own attempt (`VoiceUplinkSession.stop()` guards only on `!= .idle`, so this
+        // reaches it from `.connecting` too) and returns to idle, on every client. Never cancels
+        // the recording itself — the recorder has no idea a connection exists at all.
+        .disabled(displayState == .stopping || !canStart && displayState == .idle)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier("voice-recorder-button")
     }
@@ -68,9 +70,9 @@ struct VoiceRecorderButton: View {
 
     private var accessibilityLabel: String {
         switch displayState {
-        case .connecting: "Connecting…"
+        case .connecting: "Connecting… Tap to cancel"
         case .stopping: "Stopping…"
-        case .reconnecting: "Reconnecting…"
+        case .reconnecting: "Reconnecting… Tap to cancel"
         case .recording: "Stop recording"
         case .paused: "Paused — stop recording"
         case .transcriptionStopped: "Transcription stopped — recording continues"
