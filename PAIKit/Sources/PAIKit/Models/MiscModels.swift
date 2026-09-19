@@ -648,21 +648,6 @@ public struct SecretStatusMap: Codable, Sendable, Equatable {
     }
 }
 
-public struct VoiceToken: Codable, Sendable, Equatable {
-    public let token: String
-    public let expiresIn: Int
-
-    enum CodingKeys: String, CodingKey {
-        case token
-        case expiresIn = "expires_in"
-    }
-
-    public init(token: String, expiresIn: Int) {
-        self.token = token
-        self.expiresIn = expiresIn
-    }
-}
-
 // MARK: - SMTP settings
 //
 // Everything about how PAI sends its own alert mail except the password, which is a separate

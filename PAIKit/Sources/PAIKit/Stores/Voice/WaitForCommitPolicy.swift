@@ -1,6 +1,6 @@
 import Foundation
 
-/// Governs `VoiceRecordingSession.stop()`'s wait for ElevenLabs' final segment after the commit
+/// Governed the ElevenLabs-era session's wait for its final segment after the commit
 /// frame is sent. Android polls a `hasPendingTranscriptions` flag up to a 5s cap rather than the
 /// web's flat 500ms sleep, and the report recommends porting Android's form: a slow final segment
 /// is not truncated, and a fast one does not cost the full wait either way.

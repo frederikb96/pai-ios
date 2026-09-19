@@ -64,7 +64,7 @@ final class PaiFixturesTests: XCTestCase {
 
         let objects: [String] = [
             PaiFixtures.me, PaiFixtures.healthOk, PaiFixtures.healthDegraded, PaiFixtures.usage,
-            PaiFixtures.usageEmpty, PaiFixtures.secretStatuses, PaiFixtures.voiceToken,
+            PaiFixtures.usageEmpty, PaiFixtures.secretStatuses,
             PaiFixtures.claudeAuthHealthy, PaiFixtures.claudeAuthUnknown, PaiFixtures.claudeAuthSignedOut,
             PaiFixtures.claudeAuthLoginInProgress, PaiFixtures.recordingClean, PaiFixtures.recordingDegraded,
             PaiFixtures.browseResult, PaiFixtures.outgoingPutDraftNew, PaiFixtures.outgoingPutDraftSession,

@@ -7,13 +7,7 @@ struct SettingsScreen: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(SettingsStore.self) private var settings
 
-    /// `true` from `CallModeSettingsSheet`: signing out tears down the whole connection the call
-    /// itself is running on, which is not a choice to offer from on top of a running call.
     var hidesSignOut = false
-
-    /// What `CallModeSettingsSheet` scrolls to when it opens this screen over the call screen —
-    /// the one id both sides share, so the anchor and the target can never drift apart.
-    static let callModeSectionAnchorID = "settings-call-mode-section"
 
     var body: some View {
         Form {
@@ -29,25 +23,6 @@ struct SettingsScreen: View {
             SmtpSection(smtp: settings.smtp)
 
             VoiceSection(settings: settings)
-
-            CallModeSection(settings: settings)
-                .id(Self.callModeSectionAnchorID)
-
-            if let connection = environment.connection {
-                Section {
-                    NavigationLink("Wake Word Samples") {
-                        WakeWordSampleScreen(
-                            controller: connection.wakeWordSampleCapture, store: connection.wakeWordSamples)
-                    }
-                    .accessibilityIdentifier("open-wake-word-samples")
-                } header: {
-                    Text("Wake Word")
-                } footer: {
-                    Text(
-                        "Record real \"Computer\" utterances through this microphone to help retrain the offline wake word."
-                    )
-                }
-            }
 
             NotificationsSection()
 

@@ -41,10 +41,6 @@ final class RouteNamedTests: XCTestCase {
         XCTAssertEqual(Route.named("arcSpecList", sessionID: "anything"), .arcSpecList)
     }
 
-    func testNamedCallModeCarriesTheGivenSessionID() {
-        XCTAssertEqual(Route.named("callMode", sessionID: "abc"), .callMode(sessionID: "abc"))
-    }
-
     func testUnrecognisedNameParsesToNil() {
         XCTAssertNil(Route.named("not-a-real-screen", sessionID: "s1"))
     }

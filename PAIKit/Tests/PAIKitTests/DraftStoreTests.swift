@@ -158,6 +158,11 @@ private final class FakeDraftsFetching: DraftsFetching, @unchecked Sendable {
         return PaiDraftDeleteResult(key: key, deleted: true)
     }
 
+    func flattenDraft(key: String, takeIds: [String], baseUpdatedAt: String?) async throws -> PutDraftResult {
+        record("flattenDraft:\(key)")
+        return .saved(Draft(key: key, text: "", sessionType: nil, workingDir: nil, updatedAt: "server-flattened"))
+    }
+
     private func record(_ entry: String) {
         lock.lock()
         _callLog.append(entry)

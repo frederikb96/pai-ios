@@ -41,9 +41,6 @@ public final class SettingsStore {
         static let theme = "theme"
         static let showsNoteLineNumbers = "showsNoteLineNumbers"
         static let noteToolbarLayout = "noteToolbarLayout"
-        static let ttsVoiceId = "ttsVoiceId"
-        static let ttsSpeechRate = "ttsSpeechRate"
-        static let callInterruptsAllowed = "callInterruptsAllowed"
     }
 
     static let maxSentMessages = 10
@@ -68,19 +65,6 @@ public final class SettingsStore {
     /// avoid. Always sanitized before being stored here, so every read of this property is safe
     /// to hand straight to the bar with no further checking.
     public private(set) var noteToolbarLayout: [NoteToolbarActionId]
-
-    /// Freddy's pasted ElevenLabs voice id for call mode's spoken replies — a plain client-side
-    /// setting, not a secret: it names which voice to speak in, nothing that authenticates
-    /// anything. Empty means the app's own built-in default (`VoiceTtsProtocol.defaultVoiceId`) —
-    /// ElevenLabs itself has no server-side default to fall back to; an empty voice id in the
-    /// connection URL fails the handshake outright.
-    public private(set) var ttsVoiceId: String
-    /// `AVAudioUnitTimePitch.rate` call mode's speech output plays back at — `1.0` is ElevenLabs'
-    /// own generation speed, unchanged.
-    public private(set) var ttsSpeechRate: Double
-    /// Whether a spoken reply may start playing while a call is recording. Off holds replies
-    /// until recording stops, then plays them in order.
-    public private(set) var callInterruptsAllowed: Bool
 
     public let elevenLabsKey: WriteOnlySecretField
     public let smtp: SmtpSettingsStore
@@ -113,9 +97,6 @@ public final class SettingsStore {
         showsNoteLineNumbers = storage.value(forKey: Keys.showsNoteLineNumbers) ?? false
         let storedToolbarIds: [String] = storage.value(forKey: Keys.noteToolbarLayout) ?? []
         noteToolbarLayout = NoteToolbarLayout.sanitize(rawIds: storedToolbarIds)
-        ttsVoiceId = storage.value(forKey: Keys.ttsVoiceId) ?? ""
-        ttsSpeechRate = storage.value(forKey: Keys.ttsSpeechRate) ?? 1.0
-        callInterruptsAllowed = storage.value(forKey: Keys.callInterruptsAllowed) ?? false
     }
 
     // MARK: - Client-side settings, immediate apply
@@ -148,21 +129,6 @@ public final class SettingsStore {
     public func setSilenceDurationMs(_ ms: Double) {
         silenceDurationMs = ms
         storage.setValue(ms, forKey: Keys.silenceDurationMs)
-    }
-
-    public func setTtsVoiceId(_ voiceId: String) {
-        ttsVoiceId = voiceId
-        storage.setValue(voiceId, forKey: Keys.ttsVoiceId)
-    }
-
-    public func setCallInterruptsAllowed(_ allowed: Bool) {
-        callInterruptsAllowed = allowed
-        storage.setValue(allowed, forKey: Keys.callInterruptsAllowed)
-    }
-
-    public func setTtsSpeechRate(_ rate: Double) {
-        ttsSpeechRate = rate
-        storage.setValue(rate, forKey: Keys.ttsSpeechRate)
     }
 
     public func setShowsNoteLineNumbers(_ enabled: Bool) {

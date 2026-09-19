@@ -165,7 +165,6 @@
             exact("GET", "/api/auth/claude") { claudeAuthFixtureBody() },
             exact("GET", "/api/browse") { PaiFixtures.browseResult },
             exact("GET", "/api/favorites") { PaiFixtures.folderFavorites },
-            exact("POST", "/api/voice/token") { PaiFixtures.voiceToken },
             // Order matters here too, same reason as the notes routes below: `/summary` would
             // otherwise be read by the generic id lookup as a notification whose id is "summary".
             exact("GET", "/api/notifications/summary") { PaiFixtures.notificationsSummary },

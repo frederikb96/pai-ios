@@ -175,23 +175,6 @@ struct PAIApp: App {
                 }
             }
 
-            // What the plus menu's call-mode entry would show right now — the JSON counterpart to
-            // screenshotting a native `Menu`, which nothing here can force open. `boundSessionId`
-            // is `nil` while no call is active; a caller compares it against the session it cares
-            // about through `ComposerCallMenu.state`, already proven on Linux.
-            router.register("GET", "/call-mode/state") { _ in
-                struct Report: Encodable {
-                    let active: Bool
-                    let boundSessionId: String?
-                }
-                return DispatchQueue.main.sync {
-                    MainActor.assumeIsolated {
-                        let call = CallModeController.current
-                        return .encoding(Report(active: call?.isActive ?? false, boundSessionId: call?.activeSessionID))
-                    }
-                }
-            }
-
             router.register("GET", "/logs") { request in
                 let level = request.query["level"].flatMap(DebugLogBuffer.Level.init(rawValue:)) ?? .debug
                 let limit = request.query["limit"].flatMap(Int.init) ?? 100

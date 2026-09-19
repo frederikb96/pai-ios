@@ -1,0 +1,204 @@
+import Foundation
+
+/// The wire shapes of PAI Cloud's `GET /api/voice/socket` — Swift port of
+/// `pai-cloud/docs/VOICE_PROTOCOL.md`. This module owns parsing/building frames only; nothing here
+/// opens a connection or decides what to do with one (`VoiceSocketTransport`/`VoiceUplinkSession`).
+///
+/// Binary framing: an uplink audio frame is `[u32 seq][u32 sample_offset][pcm16 le]`; a downlink
+/// audio frame is `[u32 ref][pcm16 le]`. Both integers are big-endian, per the protocol doc.
+public enum VoiceSocketProtocol {
+    public static let audioUplinkHz = 16_000
+    public static let audioDownlinkHz = 24_000
+
+    /// `hello.transport` for this app.
+    public static let transportName = "ios"
+}
+
+/// Which transport a `hello` frame is speaking for, and what it can and cannot receive — the
+/// protocol doc's own `caps` object. iOS always declares an audio downlink (it can play
+/// synthesized speech back), so it is never the transport a `transcript` down frame targets —
+/// transcribed words reach it only through the draft it is dictating into.
+public struct VoiceSocketCapabilities: Sendable, Equatable {
+    public var audioDownlink: Bool
+    public var dtmf: Bool
+
+    public init(audioDownlink: Bool = true, dtmf: Bool = false) {
+        self.audioDownlink = audioDownlink
+        self.dtmf = dtmf
+    }
+
+    var jsonObject: [String: Any] {
+        ["audio_downlink": audioDownlink, "dtmf": dtmf]
+    }
+}
+
+// MARK: - Up frames: client -> backend
+
+public enum VoiceUpFrame: Sendable, Equatable {
+    case hello(transport: String, caps: VoiceSocketCapabilities, auth: String, resumeToken: String?, draftKey: String?)
+    case gate(open: Bool, reason: String)
+    case played(ref: Int)
+    case dtmf(digit: String)
+    case bye(reason: String)
+    case pong
+
+    /// The JSON text frame `WebSocket.send` should carry — never called for a binary audio frame,
+    /// which `VoiceSocketProtocol.packUplinkAudio` builds instead.
+    func encoded() throws -> String {
+        var object: [String: Any] = ["type": type]
+        switch self {
+        case let .hello(transport, caps, auth, resumeToken, draftKey):
+            object["transport"] = transport
+            object["caps"] = caps.jsonObject
+            object["auth"] = auth
+            if let resumeToken { object["resume_token"] = resumeToken }
+            if let draftKey { object["draft_key"] = draftKey }
+        case let .gate(open, reason):
+            object["open"] = open
+            object["reason"] = reason
+        case let .played(ref):
+            object["ref"] = ref
+        case let .dtmf(digit):
+            object["digit"] = digit
+        case let .bye(reason):
+            object["reason"] = reason
+        case .pong:
+            break
+        }
+        let data = try JSONSerialization.data(withJSONObject: object)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private var type: String {
+        switch self {
+        case .hello: return "hello"
+        case .gate: return "gate"
+        case .played: return "played"
+        case .dtmf: return "dtmf"
+        case .bye: return "bye"
+        case .pong: return "pong"
+        }
+    }
+}
+
+// MARK: - Down frames: backend -> client
+
+public enum VoiceBusOwner: String, Sendable, Equatable {
+    case computer, call, transcription
+    case unrecognized
+}
+
+public enum VoiceDownFrame: Sendable, Equatable {
+    case ready(resumeToken: String, busOwner: VoiceBusOwner, sessionId: String?)
+    case clear
+    case ack(throughSeq: Int)
+    case state(busOwner: VoiceBusOwner, phase: String, sessionId: String?, checkpoint: String?)
+    case notice(severity: String, code: String, text: String)
+    case ping
+    case transcript(text: String, isFinal: Bool, seq: Int)
+    /// A `type` this build does not recognize — logged and otherwise ignored, matching the
+    /// protocol doc: "a client that does not recognise a code falls back to showing `text`
+    /// plainly", generalized here to the whole frame so a backend release ahead of this app never
+    /// breaks a live socket.
+    case unrecognized(type: String)
+
+    static func decode(_ raw: [String: Any]) -> VoiceDownFrame? {
+        guard let type = raw["type"] as? String else { return nil }
+        switch type {
+        case "ready":
+            guard let resumeToken = raw["resume_token"] as? String else { return nil }
+            let owner = VoiceBusOwner(rawValue: raw["bus_owner"] as? String ?? "") ?? .unrecognized
+            return .ready(resumeToken: resumeToken, busOwner: owner, sessionId: raw["session_id"] as? String)
+        case "clear":
+            return .clear
+        case "ack":
+            guard let throughSeq = raw["through_seq"] as? Int else { return nil }
+            return .ack(throughSeq: throughSeq)
+        case "state":
+            let owner = VoiceBusOwner(rawValue: raw["bus_owner"] as? String ?? "") ?? .unrecognized
+            guard let phase = raw["phase"] as? String else { return nil }
+            return .state(
+                busOwner: owner, phase: phase, sessionId: raw["session_id"] as? String,
+                checkpoint: raw["checkpoint"] as? String
+            )
+        case "notice":
+            guard let severity = raw["severity"] as? String, let code = raw["code"] as? String,
+                let text = raw["text"] as? String
+            else { return nil }
+            return .notice(severity: severity, code: code, text: text)
+        case "ping":
+            return .ping
+        case "transcript":
+            guard let text = raw["text"] as? String, let isFinal = raw["is_final"] as? Bool,
+                let seq = raw["seq"] as? Int
+            else { return nil }
+            return .transcript(text: text, isFinal: isFinal, seq: seq)
+        default:
+            return .unrecognized(type: type)
+        }
+    }
+
+    /// `nil` on a body that is not even valid JSON, or not a JSON object — the caller drops it.
+    public static func decode(_ jsonText: String) -> VoiceDownFrame? {
+        guard let data = jsonText.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return decode(object)
+    }
+}
+
+/// `notice.code` values this backend currently emits — see `docs/VOICE_PROTOCOL.md`. A client
+/// falls back to showing `text` plainly for anything else.
+public enum VoiceNoticeCode {
+    public static let sttReconnecting = "stt_reconnecting"
+    public static let sttDegraded = "stt_degraded"
+    public static let ttsFailed = "tts_failed"
+    public static let sessionUnreachable = "session_unreachable"
+    public static let sessionBlocked = "session_blocked"
+    public static let draftUnavailable = "draft_unavailable"
+    public static let authExpired = "auth_expired"
+    public static let backendDraining = "backend_draining"
+    public static let takenOver = "taken_over"
+}
+
+// MARK: - Binary framing
+
+extension VoiceSocketProtocol {
+    /// Builds one uplink audio frame: `[u32 seq][u32 sample_offset][pcm16 le]`, big-endian header.
+    public static func packUplinkAudio(seq: Int, sampleOffset: Int, pcm16le samples: [Int16]) -> Data {
+        var data = Data(capacity: 8 + samples.count * 2)
+        data.append(bigEndianU32: UInt32(truncatingIfNeeded: seq))
+        data.append(bigEndianU32: UInt32(truncatingIfNeeded: sampleOffset))
+        samples.withUnsafeBufferPointer { buffer in
+            buffer.forEach { sample in
+                let le = sample.littleEndian
+                data.append(UInt8(truncatingIfNeeded: le))
+                data.append(UInt8(truncatingIfNeeded: le >> 8))
+            }
+        }
+        return data
+    }
+
+    /// Splits a downlink audio frame into its `ref` and PCM payload — `nil` if it is shorter than
+    /// the header alone.
+    public static func unpackDownlinkAudio(_ data: Data) -> (ref: Int, pcm: Data)? {
+        guard data.count >= 4 else { return nil }
+        let ref = Int(data.readBigEndianU32(at: 0))
+        return (ref, data.suffix(from: data.startIndex + 4))
+    }
+}
+
+extension Data {
+    fileprivate mutating func append(bigEndianU32 value: UInt32) {
+        append(UInt8(truncatingIfNeeded: value >> 24))
+        append(UInt8(truncatingIfNeeded: value >> 16))
+        append(UInt8(truncatingIfNeeded: value >> 8))
+        append(UInt8(truncatingIfNeeded: value))
+    }
+
+    fileprivate func readBigEndianU32(at offset: Int) -> UInt32 {
+        let base = startIndex + offset
+        return UInt32(self[base]) << 24 | UInt32(self[base + 1]) << 16 | UInt32(self[base + 2]) << 8
+            | UInt32(self[base + 3])
+    }
+}

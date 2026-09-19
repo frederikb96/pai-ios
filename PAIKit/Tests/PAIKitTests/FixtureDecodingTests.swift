@@ -121,7 +121,6 @@ final class FixtureDecodingTests: XCTestCase {
         _ = try decode([Draft].self, from: PaiFixtures.drafts, "drafts")
         _ = try decode([Draft].self, from: PaiFixtures.emptyDrafts, "empty drafts")
         _ = try decode(SecretStatusMap.self, from: PaiFixtures.secretStatuses, "secret statuses")
-        _ = try decode(VoiceToken.self, from: PaiFixtures.voiceToken, "voice token")
         _ = try decode(HealthResponse.self, from: PaiFixtures.healthOk, "health ok")
         _ = try decode(HealthResponse.self, from: PaiFixtures.healthDegraded, "health degraded")
         _ = try decode(ClaudeAuth.self, from: PaiFixtures.claudeAuthHealthy, "claude auth healthy")

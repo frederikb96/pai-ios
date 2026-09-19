@@ -13,10 +13,18 @@ private final class ConnectionHealthBox: @unchecked Sendable {
     var value = ConnectionHealth()
 }
 
-/// Ties `PAIKit`'s `VoiceRecordingSession` (the tested decision core: state machine, wire
-/// protocol, silence semantics, prefixing) to what only a real device can supply: microphone
-/// capture, `AVAudioSession` configuration and interruption/permission handling, and where a
-/// finished recording's bytes and metadata actually land.
+/// Ties `PAIKit`'s `VoiceUplinkSession` (the tested decision core: connect/reconnect, the ack
+/// watermark, liveness) to what only a real device can supply: microphone capture, `AVAudioSession`
+/// configuration and interruption/permission handling, and where a finished recording's bytes and
+/// metadata actually land.
+///
+/// The recorder and the uplink are deliberately two different things sharing one class: capture
+/// (`MicrophoneCapture` → `StreamingRecordingFile`) never stops for a network reason and has no
+/// idea a backend exists at all; `voiceSession` is the only thing that does, and its own state
+/// (`.reconnecting`, a dropped socket) never pauses the durable file underneath it. Freddy's own
+/// framing: "iOS doesn't even know that there is another module" — true of the recorder half, and
+/// this type is what keeps it true by never letting a connection problem reach `capture` or
+/// `streamingSent`/`streamingRaw`.
 ///
 /// 🚨 **One instance for the whole app, owned by `AppEnvironment.Connection`** — never one per
 /// composer. A recorder that belongs to a view dies when the view does, so switching to another
@@ -62,7 +70,7 @@ final class VoiceRecorderController {
         var id: String { uid }
     }
 
-    private(set) var voiceSession: VoiceRecordingSession
+    private(set) var voiceSession: VoiceUplinkSession
     private(set) var isCapturing = false
     private(set) var setupFailure: SetupFailure?
     /// The bytes behind past recordings. The list itself belongs to `SettingsStore`, which is
@@ -75,8 +83,10 @@ final class VoiceRecorderController {
 
     var state: VoiceRecordingState { voiceSession.state }
     var isMuted: Bool { voiceSession.isMuted }
-    var transcribedText: String { voiceSession.transcribedText }
-    var lastStartFailure: VoiceStartFailure? { voiceSession.lastStartFailure }
+    var lastStartFailure: VoiceUplinkStartFailure? { voiceSession.lastStartFailure }
+    /// The uplink's own last `notice`, for a composer that wants to say *why* transcription is
+    /// degraded rather than only that it is — `nil` once a fresh take starts.
+    var lastNotice: (severity: String, code: String, text: String)? { voiceSession.lastNotice }
 
     /// The session this take belongs to, or `nil` when nothing is being recorded. Set before the
     /// microphone opens and cleared only once the take's final text has been written, so a
@@ -126,15 +136,6 @@ final class VoiceRecorderController {
     /// idle, and for every take that is not the one currently running — those are read from disk.
     private var activeLedger: TranscriptLedger?
     private var ledgerTask: Task<Void, Never>?
-    /// Call mode's own active take id — the `voiceSession`-shaped counterpart for a take this
-    /// type does not itself drive. `reserveForCallMode()`'s mutual exclusion is what makes sharing
-    /// `activeLedger`/`currentTakeId` between the two safe: only one of `takeTimestampMs`/
-    /// `externalTakeId` is ever non-`nil` at a time.
-    private var externalTakeId: String?
-    /// Fires whenever a write to `externalTakeId`'s ledger lands while it is still the active
-    /// take — call mode's own hook for `CallModeStore.ledgerChanged()`, which needs to know the
-    /// moment a held send's gap might have closed, not only when its own cycle ends.
-    private var externalLedgerChanged: (() -> Void)?
     /// One backfill loop per take still owed a gap — the active take's, and any take
     /// `reconcileTakes()` found still incomplete at launch. Keyed so a second call for a take
     /// already being worked is a no-op rather than a duplicate loop racing itself.
@@ -164,6 +165,12 @@ final class VoiceRecorderController {
     private var peakAmplitude: Double = 0
     private var levelSum: Double = 0
     private var levelCount: Int = 0
+    /// The rate this take actually negotiated and whether that rate is narrowband — set once at
+    /// `start()`, read back by `persistRecording()`. `VoiceUplinkSession` has no opinion on either
+    /// (unlike the ElevenLabs-era session, which carried its own connection's rate): both are
+    /// properties of the hardware route at the moment capture began, never of the socket.
+    private var currentTransportRateHz = 0
+    private var currentNarrowband = false
 
     /// `VoiceRecordingSession` can end a take entirely on its own — a reconnect exhausting its
     /// attempts, a protocol error — with no call back into this type at all. Without something
@@ -209,7 +216,10 @@ final class VoiceRecorderController {
     /// Same discipline as `interruptionObserver`, for `AVAudioSession.routeChangeNotification`.
     private nonisolated(unsafe) var routeChangeObserver: NSObjectProtocol?
 
-    init(apiClient: PaiApiClient, settingsStore: SettingsStore, drafts: DraftStore, toasts: ToastCenter) {
+    init(
+        apiClient: PaiApiClient, requestFactory: PaiRequestFactory, authToken: @escaping @Sendable () -> String?,
+        settingsStore: SettingsStore, drafts: DraftStore, toasts: ToastCenter
+    ) {
         self.apiClient = apiClient
         self.settingsStore = settingsStore
         self.drafts = drafts
@@ -226,20 +236,13 @@ final class VoiceRecorderController {
         // `self.settingsStore`. The box is assigned to the stored property right after.
         let connectionHealthBox = ConnectionHealthBox()
         self.connectionHealthBox = connectionHealthBox
-        let audioStorage = self.audioStorage
 
-        voiceSession = VoiceRecordingSession(
-            dependencies: VoiceRecordingDependencies(
-                mintToken: { purpose in try await apiClient.mintVoiceToken(purpose: purpose) },
-                makeRealtimeTransport: { URLSessionVoiceRealtimeTransport() },
-                // The session is `@MainActor`, so it only ever calls this from the main actor —
-                // but the dependency's type cannot say so. Asserting the isolation we already have
-                // beats making the settings read `nonisolated`, which it genuinely is not.
-                settings: { MainActor.assumeIsolated { Self.voiceSettings(from: settingsStore) } },
-                ledgerStorage: audioStorage,
-                audioReader: audioStorage,
+        voiceSession = VoiceUplinkSession(
+            dependencies: VoiceUplinkDependencies(
+                makeTransport: { URLSessionVoiceSocketTransport() },
+                socketURL: { try requestFactory.voiceSocketURL() },
+                authToken: authToken,
                 feedback: { event in MainActor.assumeIsolated { feedbackNotifier.handle(event) } },
-                health: { MainActor.assumeIsolated { connectionHealthBox.value.state } },
                 connectionEvent: { event in
                     MainActor.assumeIsolated {
                         Self.applyConnectionHealthEvent(event, box: connectionHealthBox, notifier: feedbackNotifier)
@@ -273,192 +276,7 @@ final class VoiceRecorderController {
         pathObserver.stop()
     }
 
-    var canStart: Bool {
-        !isStarting && !isCallModeActive && !isSampleCaptureActive && voiceSession.canStart
-            && settingsStore.elevenLabsKey.status?.set != false
-    }
-
-    // MARK: - Sharing state with call mode and wake-word sample capture
-
-    /// Set while call mode owns the microphone — one of the two things (the other being
-    /// ``isSampleCaptureActive``) this and a microphone-mode take all need exclusively. `canStart`
-    /// above is what a composer's record button actually reads; call mode's own entry checks
-    /// `reserveForCallMode()`'s return value instead of racing a second read of this flag.
-    private(set) var isCallModeActive = false
-
-    /// Set while the wake-word sample screen (`WakeWordSampleCaptureController`, `PAI/Voice/WakeWordSamples/`)
-    /// owns the microphone — the third claimant on the one shared `MicrophoneCapture`, alongside a
-    /// microphone-mode take and call mode. Same shape as ``isCallModeActive``: a flag read by
-    /// `canStart`/`canStartSampleCapture` for display, and by `reserveForCallMode()` for the
-    /// actual guard.
-    private(set) var isSampleCaptureActive = false
-
-    /// Call mode's own entry point, never a composer's. Fails (returns `false`) while a
-    /// microphone-mode take or a wake-word sample capture is already running — none of the three
-    /// can ever share the one microphone — and succeeds otherwise, claiming it so neither of the
-    /// other two can start underneath a running call either.
-    func reserveForCallMode() -> Bool {
-        guard !isCallModeActive, !isSampleCaptureActive, voiceSession.state == .idle, !isCapturing else {
-            return false
-        }
-        isCallModeActive = true
-        AppVoiceDiagnosticsLog.shared.log(.info, .mode, "call mode reserved the microphone")
-        return true
-    }
-
-    func releaseFromCallMode() {
-        isCallModeActive = false
-        AppVoiceDiagnosticsLog.shared.log(.info, .mode, "call mode released the microphone")
-    }
-
-    /// The wake-word sample screen's own entry point, mirroring `reserveForCallMode()` exactly:
-    /// fails while call mode or a microphone-mode take already owns the microphone, and succeeds
-    /// otherwise, claiming it so neither of the other two can start underneath a sample run.
-    func reserveForSampleCapture() -> Bool {
-        guard !isCallModeActive, !isSampleCaptureActive, voiceSession.state == .idle, !isCapturing else {
-            return false
-        }
-        isSampleCaptureActive = true
-        AppVoiceDiagnosticsLog.shared.log(.info, .mode, "wake-word sample capture reserved the microphone")
-        return true
-    }
-
-    func releaseFromSampleCapture() {
-        isSampleCaptureActive = false
-        AppVoiceDiagnosticsLog.shared.log(.info, .mode, "wake-word sample capture released the microphone")
-    }
-
-    /// Whether `reserveForSampleCapture()` would currently succeed — what the wake-word sample
-    /// screen's own Start button reads to disable itself, mirroring `canStart`'s role for a
-    /// microphone-mode take rather than duplicating this same three-flag check in that screen's
-    /// own controller.
-    var canStartSampleCapture: Bool {
-        !isCallModeActive && !isSampleCaptureActive && voiceSession.state == .idle && !isCapturing
-    }
-
-    /// The shared `AVAudioEngine` wrapper call mode's own listener and speech output attach to —
-    /// the same instance a microphone-mode take, and a wake-word sample capture, both capture
-    /// through, never a second one. Safe to reach only while `isCallModeActive` or
-    /// `isSampleCaptureActive`, matching whichever of `reserveForCallMode()`/
-    /// `reserveForSampleCapture()`'s mutual exclusion is in effect; nothing here stops a caller
-    /// reaching it outside that window, since the type itself is passive when nothing has called
-    /// `start(targetSampleRate:)`.
-    var microphoneCapture: MicrophoneCapture { capture }
-
-    var sharedEarconPlayer: EarconPlayer { earconPlayer }
-
-    /// Routes a call-mode `FeedbackEvent` through the same notifier a microphone-mode take
-    /// already uses — one cue player, one set of connection-health notifications, never two.
-    func handleFeedback(_ event: FeedbackEvent) {
-        feedbackNotifier.handle(event)
-    }
-
-    /// Feeds a call-mode socket's own mint/connect/deliver/close into the same app-wide
-    /// `ConnectionHealth` machine a microphone-mode take's socket already reports into — one
-    /// machine, not one per mode, through the one accessor this type exposes for it.
-    func reportConnectionEvent(_ event: ConnectionHealthEvent) {
-        Self.applyConnectionHealthEvent(event, box: connectionHealthBox, notifier: feedbackNotifier)
-    }
-
-    var connectionHealthState: HealthState { connectionHealthBox.value.state }
-
-    /// The same permission gate `start()` already applies to a microphone-mode take, exposed for
-    /// call mode's own entry to reuse rather than duplicating the `AVAudioApplication` dance.
-    func ensureMicrophonePermission() async -> Bool {
-        await requestMicrophonePermission()
-    }
-
-    /// Call mode's own `AVAudioSession` configuration — `.voiceChat` rather than `.measurement`,
-    /// which is what turns on the system's own echo cancellation and gain control tuned for a
-    /// two-way conversation instead of a dictation. Never touches capture state; call mode's own
-    /// entry sequence starts the engine separately once this returns.
-    func configureAudioSessionForCallMode() throws {
-        try activateExclusiveThenMixable(mode: .voiceChat)
-    }
-
-    /// Ends call mode's hold on the audio session. A microphone-mode take configures and activates
-    /// its own session when it starts, so deactivating here is all a call leaves behind — and it
-    /// is what tells the app whose audio it paused that it may resume.
-    func restoreMicrophoneModeAudioSession() {
-        try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
-    }
-
-    /// Where an audio-session interruption goes while a call owns the microphone — `true` when it
-    /// began, and whether the system says the session may resume.
-    var callModeInterruptionHandler: ((_ began: Bool, _ shouldResume: Bool) async -> Void)?
-
-    /// The audio-storage handle call mode's own streaming file and backfill reads share with a
-    /// microphone-mode take's — a fresh `FileRecordingAudioStorage` rather than this type's own
-    /// private one, but not a second copy of anything: the type is a stateless wrapper around a
-    /// deterministic sandboxed path, so any number of instances resolve the identical directory
-    /// and the identical URL for a given take id.
-    var externalAudioStorage: FileRecordingAudioStorage { audioStorage }
-
-    /// Claims the shared `activeLedger`/`currentTakeId` slot for a take call mode drives rather
-    /// than `voiceSession` — mutually exclusive with a microphone-mode take by construction
-    /// (`reserveForCallMode()`), so there is never a genuine second claimant to conflict with.
-    /// `onLedgerChanged` fires whenever a write lands for this take while it is still the active
-    /// one — see `notifyExternalLedgerObserverIfCurrent`'s own doc comment.
-    ///
-    /// Also resets `feedbackNotifier`'s episode, exactly as `start()` does for a microphone-mode
-    /// take — without this, a call inherits whatever per-cause dedup state the previous take left
-    /// behind, and an error already reported there stays silently suppressed for this one.
-    func beginExternalTake(_ ledger: TranscriptLedger, onLedgerChanged: @escaping () -> Void) {
-        externalTakeId = ledger.takeId
-        externalLedgerChanged = onLedgerChanged
-        activeLedger = ledger
-        feedbackNotifier.beginTake(id: ledger.takeId)
-    }
-
-    /// Releases the slot `beginExternalTake` claimed — a backfill that completes afterward for
-    /// this same take id still lands correctly (`applyBackfillOutcome`'s own `takeId ==
-    /// currentTakeId` check now reads `false`, so it falls through to appending healed text into
-    /// the take's draft instead, exactly as a microphone-mode take already does once it has ended).
-    /// Lists a finished call's take in Past Recordings like any other take, transcript included,
-    /// so its audio and text stay reachable after the call — never deleted just because
-    /// everything in it was transcribed.
-    func saveExternalTake(takeId: String, sampleRate: Int, capturedSamples: Int) {
-        guard capturedSamples > 0, sampleRate > 0, let timestampMs = Double(takeId) else { return }
-        let meta = RecordingMeta(
-            timestampMs: timestampMs, durationMs: Double(capturedSamples) / Double(sampleRate) * 1000,
-            sampleRate: Double(sampleRate), rawStored: audioStorage.hasRaw(id: takeId), endedBy: .user)
-        settingsStore.saveRecording(meta)
-        if let ledger = currentExternalLedger { updateRecordingMeta(takeId: takeId, ledger: ledger) }
-    }
-
-    func endExternalTake() {
-        externalTakeId = nil
-        externalLedgerChanged = nil
-        activeLedger = nil
-    }
-
-    /// Call mode's own entry into the identical ledger write `persistLedger` already gives a
-    /// microphone-mode take — gap derivation, backfill scheduling and the "still catching up" cue
-    /// all follow from this one call, unchanged.
-    ///
-    /// 🚨 `acknowledged` must be the calling cycle's own `VoiceRecordingSession.acknowledgedRanges`,
-    /// shifted by `CallCycleAddressing` exactly the way `segments` already is — a gap is now
-    /// derived from what the connection acknowledged, never from word coverage, so an empty or
-    /// unshifted value here would show every captured sample as an open gap regardless of what
-    /// was actually said or covered. `pendingLiveRange` needs the identical shift, from the
-    /// calling cycle's own `VoiceRecordingSession.pendingLiveRange` — `nil` whenever no cycle is
-    /// currently open or its connection is not `.recording`, which correctly lets that stretch
-    /// become an ordinary gap.
-    func persistExternalLedger(
-        takeId: String, segments: [Segment], capturedUpTo: Int, acknowledged: [SampleRange],
-        pendingLiveRange: SampleRange?, collecting: [SampleRange]
-    ) {
-        persistLedger(
-            takeId: takeId, segments: segments, capturedUpTo: capturedUpTo, acknowledged: acknowledged,
-            pendingLiveRange: pendingLiveRange, collecting: collecting
-        )
-    }
-
-    /// The call's own ledger as of the last write — `nil` once `endExternalTake()` has released
-    /// the slot, exactly mirroring how `activeLedger` itself already goes stale for a
-    /// microphone-mode take the moment `currentTakeId` no longer names it. What
-    /// `CallModeStore.currentLedger` and this type's own delete-on-exit check both read.
-    var currentExternalLedger: TranscriptLedger? { externalTakeId != nil ? activeLedger : nil }
+    var canStart: Bool { !isStarting && voiceSession.canStart }
 
     // MARK: - Start / stop
 
@@ -517,15 +335,17 @@ final class VoiceRecorderController {
                 "Mic is narrowband (\(transportRate / 1000) kHz, \(currentInputLabel())) — "
                     + "transcription will be poor. Disconnect the headset to use the phone mic.")
         }
+        currentTransportRateHz = transportRate
+        currentNarrowband = VoiceAudioRatePolicy.isNarrowband(rate: transportRate)
         openStreamingFiles(
             id: RecordingMeta.id(forTimestampMs: timestampMs), sentRate: transportRate, rawRate: hardwareRate)
         wireCaptureCallbacks()
 
-        let startTask = Task { await voiceSession.start(hardwareSampleRate: hardwareRate) }
-        // `VoiceRecordingSession.start()` flips `state` to `.connecting` synchronously, before its
+        let startTask = Task { await voiceSession.start(draftKey: draftKey) }
+        // `VoiceUplinkSession.start()` flips `state` to `.connecting` synchronously, before its
         // first `await` — waiting for that to become observable (rather than a fixed delay) is
-        // what lets capture begin the moment the session can accept chunks, so the pre-connect
-        // buffer actually protects the start of the take instead of racing it.
+        // what lets capture begin the moment the session can accept chunks, so nothing captured
+        // in the first instant is lost even though the socket is not yet open.
         var guardIterations = 0
         while voiceSession.state == .idle && guardIterations < 200 {
             await Task.yield()
@@ -538,8 +358,6 @@ final class VoiceRecorderController {
             beginCaptureWatchdog()
             sessionWatcherTask?.cancel()
             sessionWatcherTask = Task { [weak self] in await self?.watchForSessionEndingOnItsOwn() }
-            liveTextTask?.cancel()
-            liveTextTask = Task { [weak self] in await self?.streamLiveTextIntoDraft() }
             let takeId = RecordingMeta.id(forTimestampMs: timestampMs)
             activeLedger = TranscriptLedger(
                 takeId: takeId, mode: .microphone, sampleRate: transportRate, draftKey: draftKey, preText: preText)
@@ -559,41 +377,19 @@ final class VoiceRecorderController {
 
     // MARK: - Live transcript
 
-    /// Streams the growing transcript into the session's draft while a take runs.
+    /// The one place a finished take's local state is torn down, called from `persistRecording()`
+    /// because that is the single funnel every ending goes through — the user's tap, a lost
+    /// connection, an interruption nothing could resume. **Writes nothing into the draft.**
     ///
-    /// 🚨 **Into the draft, not into a view's own text state.** The web writes the live partial
-    /// through its draft store (`MessageInput.tsx`'s `setText` → `setDraft`) and this app once did
-    /// not: it wrote a `@State` string the composer's own ten-second draft poll then overwrote
-    /// with the pre-recording text, so a pause in speaking made everything transcribed so far
-    /// vanish and the next word brought it all back. Writing here is also what keeps a take
-    /// meaningful after the composer is gone: the text is already somewhere that outlives it.
-    ///
-    /// Polling, matching the pattern used to watch this same `@Observable` session elsewhere.
-    private func streamLiveTextIntoDraft() async {
-        var lastPartial = ""
-        while !Task.isCancelled, voiceSession.state != .idle {
-            let partial = voiceSession.transcribedText
-            if partial != lastPartial, let draftKey = activeDraftKey {
-                lastPartial = partial
-                drafts.setDraftText(
-                    key: draftKey, text: VoiceRecordingResult.composeLiveText(pre: preVoiceText, partial: partial))
-            }
-            try? await Task.sleep(for: .milliseconds(150))
-        }
-    }
-
-    /// The one place a finished take's text reaches the draft, called from `persistRecording()`
-    /// because that is the single funnel every ending goes through — the user's tap, silence
-    /// detection, a lost connection, an interruption nothing could resume. Wiring this to the tap
-    /// alone is what left the other three endings writing nothing at all.
-    ///
-    /// 🚨 Folds the session's own, already-complete final state into the ledger synchronously
-    /// before reading it — `voiceSession.stop()` has already waited out the take's very last
-    /// commit by the time this runs, but the periodic ledger loop ticks once a second and can
-    /// easily have missed it, which used to drop the take's last sentence from the draft.
+    /// Unlike the ElevenLabs-era pipeline, this app never composes the dictated text itself: the
+    /// backend's `DraftRegionSink` writes every committed word straight into the session's draft
+    /// region as it is transcribed (`docs/VOICE_PROTOCOL.md`), server-side, over a plain
+    /// repository call rather than back down this socket — a live take's own text was already in
+    /// the draft, on every device, before this ever runs. What is left here is releasing the
+    /// recorder's claim on `activeDraftKey`, and folding the take's own ack watermark into the
+    /// ledger one last time so `mayBeDeleted`/backfill scheduling read the take's true final
+    /// state rather than whatever the periodic ledger loop's last tick happened to catch.
     private func finishLiveText() {
-        liveTextTask?.cancel()
-        liveTextTask = nil
         chunkConsumerTask?.cancel()
         chunkConsumerTask = nil
         chunkContinuation?.finish()
@@ -601,48 +397,41 @@ final class VoiceRecorderController {
         ledgerTask?.cancel()
         ledgerTask = nil
         if let takeId = currentTakeId, let base = activeLedger, base.takeId == takeId {
-            var folded = base.folding(
-                liveSegments: voiceSession.committedSegments, capturedUpTo: voiceSession.capturedUpTo,
-                newlyAcknowledged: voiceSession.acknowledgedRanges, pendingLiveRange: voiceSession.pendingLiveRange
-            )
-            // Nothing left uncovered the moment the take ends — the text about to be written
-            // below is the whole take, not a version with a marker still in it, so it really has
-            // been delivered.
+            var folded = Self.foldAckedRange(
+                into: base, ackedUpTo: voiceSession.ackedUpTo, capturedUpTo: voiceSession.capturedUpTo)
+            // Nothing left uncovered the moment the take ends — everything captured has already
+            // reached the backend, so it really has been delivered.
             if folded.gaps.isEmpty { folded = Self.markingDelivered(folded) }
             activeLedger = folded
             try? LedgerFile.write(folded, to: audioStorage.ledgerURL(id: takeId))
         }
-        defer {
-            activeDraftKey = nil
-            preVoiceText = ""
-        }
-        // A caller driving its own composer text passes no key; there is nothing to write, but
-        // the claim on the recorder still has to be released, which is what the `defer` is for.
-        guard let draftKey = activeDraftKey else { return }
-        let prefixed = assembledPrefixedText()
-        let combined =
-            prefixed.isEmpty
-            ? preVoiceText
-            : (preVoiceText.isEmpty ? prefixed : "\(preVoiceText) \(prefixed)")
-        drafts.setDraftText(key: draftKey, text: combined)
-    }
-
-    /// The take's prefixed text as of right now — from the ledger when one exists (live segments
-    /// plus whatever backfill has healed so far, with a marker over any gap still open), falling
-    /// back to the session's own `result.prefixedText` for a take that never got far enough to
-    /// open a ledger (a start failure before the first sample, say).
-    private func assembledPrefixedText() -> String {
-        guard let ledger = activeLedger else { return voiceSession.result.prefixedText }
-        return VoiceTextAssembly.assembledPrefixedText(from: ledger)
+        activeDraftKey = nil
+        preVoiceText = ""
     }
 
     /// Gives up the take without touching the draft — for the failures that happen before any
     /// audio was captured, where the field should read exactly as it did before the tap.
     private func releaseTakeWithoutText() {
-        liveTextTask?.cancel()
-        liveTextTask = nil
         activeDraftKey = nil
         preVoiceText = ""
+    }
+
+    /// Turns the uplink's own ack watermark into what the ledger's gap-derivation already
+    /// understands: a single `.live` `Segment` covering everything acked so far, empty-text on
+    /// purpose. The ledger's job under this protocol is audio-delivery bookkeeping — what has
+    /// reached the backend, what has not, and therefore what still needs a backfill or may never
+    /// be evicted — never rendering transcript text, which the backend's own draft region already
+    /// owns. Passing the whole `0..<ackedUpTo` range every call rather than only the newly-acked
+    /// slice is deliberate: `SeamMerge.merge` coalesces it with whatever `.live` coverage the
+    /// ledger already had, so a fold can never regress even if a call is skipped or reordered.
+    private static func foldAckedRange(into ledger: TranscriptLedger, ackedUpTo: Int, capturedUpTo: Int)
+        -> TranscriptLedger
+    {
+        let liveSegments: [Segment] = ackedUpTo > 0 ? [Segment(range: 0..<ackedUpTo, text: "", source: .live)] : []
+        return ledger.folding(
+            liveSegments: liveSegments, capturedUpTo: capturedUpTo,
+            newlyAcknowledged: ackedUpTo > 0 ? [0..<ackedUpTo] : []
+        )
     }
 
     /// Notices a take the session ended by itself — `isCapturing` is the signal that neither
@@ -669,7 +458,7 @@ final class VoiceRecorderController {
     // MARK: - Durable pipeline: ledger and backfill
 
     private var currentTakeId: String? {
-        takeTimestampMs.map { RecordingMeta.id(forTimestampMs: $0) } ?? externalTakeId
+        takeTimestampMs.map { RecordingMeta.id(forTimestampMs: $0) }
     }
 
     /// The active take's own ledger, kept in memory; a take that is not the one currently running
@@ -678,60 +467,42 @@ final class VoiceRecorderController {
         takeId == currentTakeId ? activeLedger : LedgerFile.read(from: audioStorage.ledgerURL(id: takeId))
     }
 
-    /// Watches the live session for a new committed segment or a state change and writes the
-    /// ledger when either happens — polling rather than reacting to `@Observable` directly,
-    /// matching every other loop that watches this same session from outside a SwiftUI view body.
-    /// One second is coarse on purpose: `capturedUpTo` is advisory (the WAV header is the
-    /// authoritative record, per the design), so nothing here needs sub-second freshness, only to
-    /// notice a new segment — and a gap it might have opened — soon enough to start backfilling it.
+    /// Watches the live session's own ack watermark and writes the ledger whenever it advances —
+    /// polling rather than reacting to `@Observable` directly, matching every other loop that
+    /// watches this same session from outside a SwiftUI view body. One second is coarse on
+    /// purpose: `capturedUpTo`/`ackedUpTo` are advisory (the WAV header is the authoritative
+    /// record of what was captured; the backend's own `ack` is the authority on what it received),
+    /// so nothing here needs sub-second freshness, only to notice a new gap soon enough to start
+    /// backfilling it.
     private func runLedgerLoop(takeId: String) async {
-        var lastSegmentCount = 0
+        var lastAckedUpTo = 0
         while !Task.isCancelled, voiceSession.state != .idle {
-            if voiceSession.committedSegments.count != lastSegmentCount {
-                lastSegmentCount = voiceSession.committedSegments.count
+            if voiceSession.ackedUpTo != lastAckedUpTo {
+                lastAckedUpTo = voiceSession.ackedUpTo
                 persistLedger(
-                    takeId: takeId, segments: voiceSession.committedSegments, capturedUpTo: voiceSession.capturedUpTo,
-                    acknowledged: voiceSession.acknowledgedRanges, pendingLiveRange: voiceSession.pendingLiveRange)
+                    takeId: takeId, ackedUpTo: voiceSession.ackedUpTo, capturedUpTo: voiceSession.capturedUpTo)
             }
             try? await Task.sleep(for: .seconds(1))
         }
-        // One last write regardless of how the loop above ended — the final segment or the
-        // final `capturedUpTo` can land in the gap between the loop's last tick and the state
-        // actually flipping to `.idle`. `finishLiveText()`'s own synchronous fold, called once
-        // `stop()` has fully returned, is what actually catches the take's very last commit —
-        // this last tick only narrows the window a concurrent backfill pass could read a stale
-        // ledger through, it is not itself what makes the final sentence land.
-        persistLedger(
-            takeId: takeId, segments: voiceSession.committedSegments, capturedUpTo: voiceSession.capturedUpTo,
-            acknowledged: voiceSession.acknowledgedRanges, pendingLiveRange: voiceSession.pendingLiveRange)
+        // One last write regardless of how the loop above ended — the final ack or the final
+        // `capturedUpTo` can land in the gap between the loop's last tick and the state actually
+        // flipping to `.idle`. `finishLiveText()`'s own synchronous fold, called once `stop()`
+        // has fully returned, is what actually catches the take's very last moment — this last
+        // tick only narrows the window a concurrent backfill pass could read a stale ledger
+        // through, it is not itself what makes the final stretch land.
+        persistLedger(takeId: takeId, ackedUpTo: voiceSession.ackedUpTo, capturedUpTo: voiceSession.capturedUpTo)
     }
 
-    /// Folds newly committed segments, how much has been captured, and what the connection has
-    /// newly acknowledged into `takeId`'s ledger (`TranscriptLedger.folding` — the same fold
-    /// `finishLiveText()`'s final synchronous call uses, so neither can disagree about what a
+    /// Folds the uplink's own ack watermark into `takeId`'s ledger (`foldAckedRange` — the same
+    /// fold `finishLiveText()`'s final synchronous call uses, so neither can disagree about what a
     /// take's last moment holds), and writes the result — the write order the design calls for
-    /// (audio already on disk by the time this runs; the ledger is therefore never ahead of it).
-    /// A new gap appearing since the last write schedules a backfill loop for it and sounds the
+    /// (audio already on disk by the time this runs; the ledger is therefore never ahead of it). A
+    /// new gap appearing since the last write schedules a backfill loop for it and sounds the
     /// "still catching up" cue.
-    ///
-    /// Generic over which mode produced `segments`/`capturedUpTo`/`collecting`/`acknowledged`: a
-    /// microphone-mode take passes `voiceSession`'s own (`collecting` left `nil`, carrying forward
-    /// whatever the ledger already has — always `[]` for that mode); call mode passes its own
-    /// cycle-shifted running totals (`CallCycleAddressing`) and a freshly computed `collecting`,
-    /// since that is the one field `.call` mode's own `derivedGaps` bounds itself to.
-    /// `acknowledged` has no default — a caller that does not shift and pass its own session's
-    /// `acknowledgedRanges` the same way it already shifts `segments` would silently show every
-    /// captured sample as an open gap, which a missing argument catches at compile time instead.
-    private func persistLedger(
-        takeId: String, segments: [Segment], capturedUpTo: Int, acknowledged: [SampleRange],
-        pendingLiveRange: SampleRange?, collecting: [SampleRange]? = nil
-    ) {
+    private func persistLedger(takeId: String, ackedUpTo: Int, capturedUpTo: Int) {
         guard let base = activeLedger, base.takeId == takeId else { return }
         let previousGapCount = base.gaps.count
-        let final = base.folding(
-            liveSegments: segments, capturedUpTo: capturedUpTo, newlyAcknowledged: acknowledged,
-            collecting: collecting, pendingLiveRange: pendingLiveRange
-        )
+        let final = Self.foldAckedRange(into: base, ackedUpTo: ackedUpTo, capturedUpTo: capturedUpTo)
         activeLedger = final
         try? LedgerFile.write(final, to: audioStorage.ledgerURL(id: takeId))
         if !final.gaps.isEmpty {
@@ -740,17 +511,6 @@ final class VoiceRecorderController {
             }
             scheduleBackfillIfNeeded(takeId: takeId)
         }
-        notifyExternalLedgerObserverIfCurrent(takeId: takeId)
-    }
-
-    /// `externalLedgerChanged`'s one caller — after either write path (`persistLedger`'s own live
-    /// writes, `applyBackfillOutcome`'s backfilled ones) lands for the take call mode is currently
-    /// driving. A no-op for a microphone-mode take, or for a call take that has already ended
-    /// (`endExternalTake()` clears both fields, so a backfill completing afterward correctly falls
-    /// through to `applyBackfillOutcome`'s own post-hoc draft healing instead).
-    private func notifyExternalLedgerObserverIfCurrent(takeId: String) {
-        guard takeId == externalTakeId else { return }
-        externalLedgerChanged?()
     }
 
     /// One backfill loop per take still owed a gap. A second call for a take already being
@@ -801,9 +561,8 @@ final class VoiceRecorderController {
                 let outcome = await BatchBackfiller.run(
                     request, sampleRate: sampleRate, language: language, audioReader: audioStorage, takeId: takeId,
                     transcribe: { [weak self] wav, requestLanguage in
-                        guard let self else { throw VoiceTransportError.notConnected }
-                        return try await self.batchTranscribe(
-                            wav: wav, language: requestLanguage, sampleRate: sampleRate)
+                        guard let self else { throw VoiceSocketTransportError.notConnected }
+                        return try await self.batchTranscribe(wav: wav, language: requestLanguage)
                     }
                 )
                 switch outcome {
@@ -816,47 +575,64 @@ final class VoiceRecorderController {
                     failed.append(contentsOf: request.gapRanges.map { (range: $0, error: error) })
                 }
             }
-            applyBackfillOutcome(takeId: takeId, newSegments: newSegments, resolved: resolved, failed: failed)
+            await applyBackfillOutcome(takeId: takeId, newSegments: newSegments, resolved: resolved, failed: failed)
             try? await Task.sleep(for: .milliseconds(300))
         }
     }
 
+    /// One client-minted take id per source take, for the region a backfill's own recovered text
+    /// lands in — stable across every pass so a second pass rewrites the same region rather than
+    /// minting a new one (`write_draft_region`'s own `seq` guard needs a consistent identity to
+    /// guard). Never the SAME id the live socket's own `DraftRegionSink` used server-side: this
+    /// app is never told that one (`docs/VOICE_PROTOCOL.md`'s framing section carries no take id
+    /// at all on the live socket), so a long-outage recovery lands as its own region, in whatever
+    /// position among the draft's regions it happens to be written — after, not necessarily
+    /// exactly where, the words it recovers were actually spoken. A real but accepted limitation;
+    /// see this run's own report.
+    private var backfillRegionIds: [String: String] = [:]
+    private var backfillRegionSeq: [String: Int] = [:]
+
     /// Applies one backfill pass against the ledger's *current* state
     /// (`TranscriptLedger.applyingBackfill` — never the snapshot `runBackfillLoop` started
     /// reading from, which its own network round trips can leave stale), updates the take's
-    /// `RecordingMeta` coverage, and — once every gap this take had is closed — heals its draft in
-    /// place (a take that is still the active one gets this for free through
-    /// `assembledPrefixedText` instead, so this only fires for a take that has already ended).
+    /// `RecordingMeta` coverage, and — once every gap this take had is closed — writes whatever
+    /// text this pass recovered into the take's own backfill region.
     ///
-    /// 🚨 Heals by replacing the take's own previously-inserted text (`DraftHeal.heal`), never by
-    /// appending — the draft already holds this take's text from `finishLiveText`, or the take was
-    /// sent and the draft moved on; appending the whole assembled take a second time duplicated it
-    /// either way. When the previous text can no longer be found (edited, already sent), the
-    /// recovered text is left in Recordings rather than surprising Freddy in an unrelated draft —
-    /// `delivered` stays `false` in that case, so retention never evicts audio nobody has seen.
-    /// Call-mode takes never reach this at all: they send turns as messages, not through a draft,
-    /// so appending here was always the wrong destination for them.
+    /// A take still actively recording never reaches the write below: the live socket is already
+    /// delivering everything it can, and a batch pass only ever fires for a gap the live path
+    /// missed (a drop longer than the bus's own reconnect grace window) — see
+    /// `VoiceUplinkSession`'s own doc comment. `newSegments` carries only what THIS pass
+    /// recovered; the region write below sends every `.batch` segment the ledger has accumulated
+    /// so far, matching `DraftRegionSink`'s own "always the take's full text so far" contract.
     private func applyBackfillOutcome(
         takeId: String, newSegments: [Segment], resolved: [SampleRange], failed: [(range: SampleRange, error: String)]
-    ) {
+    ) async {
         guard let ledger = readLedger(takeId: takeId) else { return }
-        let previousPrefixedText = VoiceTextAssembly.assembledPrefixedText(from: ledger)
         var final = ledger.applyingBackfill(newSegments: newSegments, resolved: resolved, failed: failed)
 
         if takeId == currentTakeId {
             activeLedger = final
-            notifyExternalLedgerObserverIfCurrent(takeId: takeId)
-        } else if final.mode == .microphone, !newSegments.isEmpty, final.gaps.isEmpty, let draftKey = final.draftKey {
-            let healedText = VoiceTextAssembly.assembledPrefixedText(from: final)
-            switch DraftHeal.heal(
-                currentDraftText: drafts.draft(for: draftKey).text, previousInsertedText: previousPrefixedText,
-                healedText: healedText
-            ) {
-            case let .replaced(newDraftText):
-                drafts.setDraftText(key: draftKey, text: newDraftText)
-                final = Self.markingDelivered(final)
-            case .notFound:
-                break
+        } else if final.mode == .microphone, !newSegments.isEmpty, let draftKey = final.draftKey {
+            let recoveredText = final.segments.filter { $0.source == .batch }
+                .sorted { $0.range.lowerBound < $1.range.lowerBound }
+                .map(\.text).filter { !$0.isEmpty }.joined(separator: " ")
+            if !recoveredText.isEmpty {
+                let regionId =
+                    backfillRegionIds[takeId]
+                    ?? {
+                        let fresh = "backfill-\(takeId)"
+                        backfillRegionIds[takeId] = fresh
+                        return fresh
+                    }()
+                let seq = (backfillRegionSeq[takeId] ?? 0) + 1
+                backfillRegionSeq[takeId] = seq
+                let prefixedText = "\(VoiceRecordingResult.sttPrefix)\(recoveredText)"
+                if let result = try? await apiClient.putDraftRegion(
+                    key: draftKey, takeId: regionId, text: prefixedText,
+                    state: final.gaps.isEmpty ? "final" : "open", seq: seq
+                ), case .written = result {
+                    if final.gaps.isEmpty { final = Self.markingDelivered(final) }
+                }
             }
         }
         try? LedgerFile.write(final, to: audioStorage.ledgerURL(id: takeId))
@@ -881,30 +657,17 @@ final class VoiceRecorderController {
         )
     }
 
-    /// The one caller of the batch endpoint's word-timestamp variant — converts its
-    /// connection-relative-to-the-request seconds into the take-offset-zero samples
-    /// `BatchBackfiller` expects back, the batch counterpart to what `SessionTimeline` does for
-    /// the live socket.
+    /// The one caller of the backend's own batch transcription route — it holds the ElevenLabs
+    /// key server-side and returns plain text only, no word-level timestamps (unlike the
+    /// ElevenLabs-era direct call this replaces). `BatchBackfiller`/`SeamMerge` already have a
+    /// no-timestamps fallback (a text suffix/prefix trim capped at eight words) for exactly this
+    /// case, so an empty `words` array here degrades gracefully rather than needing its own path.
     private func batchTranscribe(
-        wav: Data, language: VoiceSettings.Language, sampleRate: Int
+        wav: Data, language: VoiceSettings.Language
     ) async throws -> (text: String, words: [Word]) {
-        let token = try await apiClient.mintVoiceToken(purpose: .batch).token
-        let result = try await VoiceBatchTranscriber().transcribeWithWordTimestamps(
-            wav: wav, token: token, language: language)
-        switch result {
-        case let .words(text, words):
-            let converted: [Word] = words.compactMap { word in
-                let start = Int((word.start * Double(sampleRate)).rounded())
-                let end = Int((word.end * Double(sampleRate)).rounded())
-                guard start < end else { return nil }
-                return Word(range: start..<end, text: word.text, logprob: word.logprob)
-            }
-            return (text: text, words: converted)
-        case .noSpeechDetected:
-            return (text: "", words: [])
-        case let .failed(error):
-            throw error
-        }
+        let text = try await apiClient.transcribeVoiceTake(
+            takeId: UUID().uuidString, wav: wav, languageCode: language == .auto ? nil : language.rawValue)
+        return (text: text, words: [])
     }
 
     /// A take's `RecordingMeta.transcription` after a ledger change — what the recordings screen
@@ -983,11 +746,10 @@ final class VoiceRecorderController {
         voiceSession.toggleMute()
     }
 
-    /// A fresh single-use batch token for re-transcribing a past recording — minted here rather
-    /// than cached anywhere, the same discipline the realtime path follows: caching a single-use
-    /// token is a bug, not an optimisation.
-    func mintBatchToken() async throws -> String {
-        try await apiClient.mintVoiceToken(purpose: .batch).token
+    /// Re-transcribes a whole past recording through the same backend route the durable
+    /// pipeline's own backfill uses — no token to mint, the backend holds the ElevenLabs key.
+    func transcribe(wav: Data, language: VoiceSettings.Language) async throws -> String {
+        try await batchTranscribe(wav: wav, language: language).text
     }
 
     /// The recordings screen's "Transcribe now" — makes sure a take with open gaps has a backfill
@@ -1005,11 +767,11 @@ final class VoiceRecorderController {
         settingsStore.removeRecording(id: meta.id)
     }
 
-    /// Stops the take, persists the recording (audio + metadata), and returns the composer-ready
-    /// prefixed text for the caller to insert.
-    @discardableResult
-    func stop() async -> String {
-        guard isCapturing || voiceSession.state != .idle else { return "" }
+    /// Stops the take and persists the recording (audio + metadata). Nothing to return any more —
+    /// the backend already wrote every committed word into the draft's own region as the take
+    /// ran; a caller has nothing left to insert.
+    func stop() async {
+        guard isCapturing || voiceSession.state != .idle else { return }
         capture.stop()
         isCapturing = false
         endCaptureWatchdog()
@@ -1018,7 +780,6 @@ final class VoiceRecorderController {
 
         await persistRecording()
         AppVoiceDiagnosticsLog.shared.log(.info, .mode, "microphone take stopped")
-        return voiceSession.result.prefixedText
     }
 
     // MARK: - Permission
@@ -1145,10 +906,6 @@ final class VoiceRecorderController {
                 .info, .audioSession,
                 type == .began ? "interruption began" : "interruption ended (shouldResume: \(shouldResume))")
             Task { @MainActor [weak self] in
-                if let self, self.isCallModeActive, let handler = self.callModeInterruptionHandler {
-                    await handler(type == .began, shouldResume)
-                    return
-                }
                 switch type {
                 case .began: self?.handleInterruptionBegan()
                 case .ended: await self?.handleInterruptionEnded(shouldResume: shouldResume)
@@ -1185,7 +942,7 @@ final class VoiceRecorderController {
             // The same target the take started with, not whatever the hardware's own rate is
             // now — a route change mid-call (an AirPod reconnecting, say) must not change what
             // the socket already agreed to receive.
-            try capture.start(targetSampleRate: voiceSession.transportSampleRateHz)
+            try capture.start(targetSampleRate: currentTransportRateHz)
             isCapturing = true
             beginCaptureWatchdog()
             checkRawStreamStillMatchesHardwareRate()
@@ -1235,14 +992,13 @@ final class VoiceRecorderController {
         capture.onLevel = { [weak self] rms in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.voiceSession.ingestLevel(rms: rms)
                 self.peakAmplitude = max(self.peakAmplitude, rms)
                 self.levelSum += rms
                 self.levelCount += 1
             }
         }
         // One ordered consumer for every captured chunk, not one unstructured `Task` per chunk.
-        // `VoiceRecordingSession.ingestAudioChunk`'s own contract requires the app await each call
+        // `VoiceUplinkSession.ingestAudioChunk`'s own contract requires the app await each call
         // from a single consuming task, because that is the only thing that keeps chunks in
         // order: two chunks each spawned as their own `Task` can resume out of order across the
         // transport's own `await`, handing `SessionTimeline` an offset that no longer matches what
@@ -1374,7 +1130,7 @@ final class VoiceRecorderController {
             // `capture.start` re-reads the input node's own format, so the tap is reinstalled
             // against whatever the hardware is now — which is the half of this that matters, and
             // the half a restart at a remembered format would get wrong.
-            try capture.start(targetSampleRate: voiceSession.transportSampleRateHz)
+            try capture.start(targetSampleRate: currentTransportRateHz)
             lastChunkAt = Date()
             checkRawStreamStillMatchesHardwareRate()
         } catch {
@@ -1434,27 +1190,28 @@ final class VoiceRecorderController {
         let meta = RecordingMeta(
             timestampMs: timestampMs,
             durationMs: Double(result.durationMs),
-            sampleRate: Double(result.sampleRate),
+            sampleRate: Double(currentTransportRateHz),
             rawSampleRate: rawKept ? streamingRawSampleRate.map(Double.init) : nil,
             mic: mic,
             rawStored: rawKept,
             endedBy: result.endedBy,
             silence: SilenceMeta(
                 enabled: settings.silenceDetectionEnabled, threshold: settings.silenceThreshold,
-                durationMs: Double(settings.silenceDurationMs), triggered: result.silenceGatedMs > 0,
-                gatedMs: Double(result.silenceGatedMs)
+                durationMs: Double(settings.silenceDurationMs), triggered: false, gatedMs: 0
             ),
             stt: SttMeta(
-                model: VoiceRealtimeProtocol.modelId, language: settings.sttLanguage.rawValue,
-                vadSilenceSecs: Double(VoiceRealtimeProtocol.vadSilenceThresholdSecs) ?? 1.5,
-                vadThreshold: Double(VoiceRealtimeProtocol.vadThreshold) ?? 0.4
+                model: "scribe_v2_realtime", language: settings.sttLanguage.rawValue,
+                vadSilenceSecs: 1.5, vadThreshold: 0.4
             ),
-            transcript: takeLedger.map { VoiceTextAssembly.assembledText(from: $0) }
-                .flatMap { $0.isEmpty ? nil : $0 } ?? (result.text.isEmpty ? nil : result.text),
+            // Only what a backfill recovered — an ordinary take with no gap has nothing here any
+            // more, since the backend writes its text straight into the draft and never back to
+            // this device. A real, accepted narrowing relative to the ElevenLabs-era pipeline;
+            // see this run's own report.
+            transcript: takeLedger.map { VoiceTextAssembly.assembledText(from: $0) }.flatMap { $0.isEmpty ? nil : $0 },
             levels: LevelStats(
                 peak: peakAmplitude, rms: averageLevel, clippedSamples: 0, totalSamples: sent?.sampleCount ?? 0
             ),
-            narrowband: result.narrowband,
+            narrowband: currentNarrowband,
             startup: nil,
             mutedMs: result.mutedMs > 0 ? Double(result.mutedMs) : nil,
             transcription: takeLedger.map(Self.transcriptionMeta(for:))

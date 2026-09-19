@@ -8,12 +8,10 @@ import SwiftUI
 /// both riding `hasSession`.
 struct ComposerActionMenu: View {
     var hasSession: Bool
-    /// `nil` when the menu should offer nothing about call mode: a call already running that
-    /// this screen has nothing to say about, or a new session already marked as one.
-    var callMenuState: ComposerCallMenuState? = nil
-    /// The other session's own title, for `.runningElsewhere`'s label — `nil` falls back to a
-    /// generic phrase rather than an empty one.
-    var otherCallSessionName: String? = nil
+    /// Only the new-session screen offers this — an existing session's composer never does,
+    /// since there is nothing left for it to start (the ElevenLabs-backed local call mode this
+    /// once opened is gone; see this screen's own `startCallAfterSend`).
+    var offersStartCallAfterSend: Bool = false
     /// Server-computed (`Session.secretGrantable`), not derived from `hasSession` — a session can
     /// exist and still have nothing to grant against (sandboxed, no live conversation), and
     /// re-deriving that predicate here would drift from what the grant route itself checks.
@@ -24,17 +22,17 @@ struct ComposerActionMenu: View {
     var onTemporaryNote: () -> Void
     var onSecretGrant: () -> Void
     var onCancel: () -> Void
-    /// Unreachable while `callMenuState` is `nil` — the item that would call it is never in the
-    /// menu — so `CreateSessionView`'s own composer, which has no session yet, needs no override.
-    var onStartOrReturnToCall: () -> Void = {}
-    var onEndCall: () -> Void = {}
-    /// Only ever called for `.startAfterSend` — the new-session screen's own case.
     var onStartCallAfterSend: () -> Void = {}
 
     var body: some View {
         Menu {
-            if let callMenuState {
-                callModeItems(state: callMenuState)
+            if offersStartCallAfterSend {
+                Button {
+                    onStartCallAfterSend()
+                } label: {
+                    Label("Dictate Hands-Free", systemImage: "mic.fill")
+                }
+                .accessibilityIdentifier("composer-menu-start-call-after-send")
                 Divider()
             }
             Button {
@@ -84,47 +82,5 @@ struct ComposerActionMenu: View {
         }
         .accessibilityIdentifier("composer-action-menu")
         .accessibilityLabel("More options")
-    }
-
-    @ViewBuilder
-    private func callModeItems(state: ComposerCallMenuState) -> some View {
-        switch state {
-        case .start:
-            Button {
-                onStartOrReturnToCall()
-            } label: {
-                Label("Start Call Mode", systemImage: "phone.fill")
-            }
-            .accessibilityIdentifier("composer-menu-start-call")
-        case .returnToCall:
-            Button {
-                onStartOrReturnToCall()
-            } label: {
-                Label("Return to Call", systemImage: "phone.fill")
-            }
-            .accessibilityIdentifier("composer-menu-return-to-call")
-            Button(role: .destructive) {
-                onEndCall()
-            } label: {
-                Label("End Call", systemImage: "phone.down.fill")
-            }
-            .accessibilityIdentifier("composer-menu-end-call")
-        case .startAfterSend:
-            Button {
-                onStartCallAfterSend()
-            } label: {
-                Label("Send as Call", systemImage: "phone.fill")
-            }
-            .accessibilityIdentifier("composer-menu-start-call-after-send")
-        case .runningElsewhere:
-            Button {
-                onStartOrReturnToCall()
-            } label: {
-                Label(
-                    "Switch Call Here" + (otherCallSessionName.map { " (from \($0))" } ?? ""),
-                    systemImage: "arrow.triangle.swap")
-            }
-            .accessibilityIdentifier("composer-menu-switch-call")
-        }
     }
 }

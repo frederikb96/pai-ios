@@ -45,7 +45,7 @@ public enum ArcSubagentLookup {
     /// pages run out, in either sense (no more pages, or `maxPages` reached).
     ///
     /// `@Sendable` on `fetchPage`, matching `PushRegistrationStore.registerToken` and
-    /// `VoiceRecordingSession.mintToken` — this is a plain nonisolated function, so a caller's
+    /// the ElevenLabs-era mint closure this session no longer has — this is a plain nonisolated function, so a caller's
     /// closure literal crosses an isolation boundary to reach it and Swift 6 requires the
     /// closure TYPE be provably safe to send, not merely whatever it captures (`PaiApiClient`
     /// itself is already `Sendable`).

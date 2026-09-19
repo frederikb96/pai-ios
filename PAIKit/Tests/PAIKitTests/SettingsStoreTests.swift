@@ -45,8 +45,6 @@ final class SettingsStoreTests: XCTestCase {
             XCTAssertEqual(store.recordings, [])
             XCTAssertEqual(store.showsNoteLineNumbers, false)
             XCTAssertEqual(store.noteToolbarLayout, NoteToolbarLayout.defaultLayout)
-            XCTAssertEqual(store.ttsVoiceId, "")
-            XCTAssertEqual(store.ttsSpeechRate, 1.0)
         }
     }
 
@@ -58,19 +56,6 @@ final class SettingsStoreTests: XCTestCase {
 
             let second = try Self.makeStore(storage: storage)
             XCTAssertEqual(second.sttLanguage, .de)
-        }
-    }
-
-    func testSetTtsVoiceIdAndSpeechRatePersistAcrossStoreInstances() async throws {
-        try await MainActor.run {
-            let storage = SettingsInMemoryKeyValueStore()
-            let first = try Self.makeStore(storage: storage)
-            first.setTtsVoiceId("21m00Tcm4TlvDq8ikWAM")
-            first.setTtsSpeechRate(1.25)
-
-            let second = try Self.makeStore(storage: storage)
-            XCTAssertEqual(second.ttsVoiceId, "21m00Tcm4TlvDq8ikWAM")
-            XCTAssertEqual(second.ttsSpeechRate, 1.25)
         }
     }
 

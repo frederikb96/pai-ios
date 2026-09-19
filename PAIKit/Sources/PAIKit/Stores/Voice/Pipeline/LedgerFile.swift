@@ -11,7 +11,7 @@ import Foundation
 /// same volume — so this is provable on Linux exactly like `StreamingRecordingFile`.
 ///
 /// Every write goes through a temp file, fsync'd, then renamed over the real path: the take's
-/// audio is always written before the segment it produced is handed here (`VoiceRecordingSession`'s
+/// audio is always written before the segment it produced is handed here (the recorder's
 /// own write order), so a kill between the two leaves the ledger *behind* the audio — recovery
 /// reads that gap as more-captured-than-covered, which is the safe direction, never a repair step
 /// that has to guess. A kill mid-rename cannot happen: `rename(2)` either lands or it does not,

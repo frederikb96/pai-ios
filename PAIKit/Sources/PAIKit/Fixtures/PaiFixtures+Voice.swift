@@ -78,12 +78,6 @@ extension PaiFixtures {
         { "elevenlabs": { "set": true, "updated_at": "2026-07-02T11:00:00Z" } }
         """#
 
-    /// `POST /api/voice/token` — a single-use ElevenLabs token. The value is a fixture string,
-    /// not a working credential; nothing here is capable of authenticating to ElevenLabs.
-    public static let voiceToken: String = #"""
-        { "token": "fixture-voice-token-not-a-real-credential", "expires_in": 45 }
-        """#
-
     // MARK: - Claude sign-in on the VM (`GET /api/auth/claude`)
 
     public static let claudeAuthHealthy: String = #"""

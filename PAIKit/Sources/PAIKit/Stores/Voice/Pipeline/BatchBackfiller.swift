@@ -14,7 +14,7 @@ public enum BatchBackfiller {
         case failed(String)
     }
 
-    /// `transcribe` is `VoiceRecordingDependencies.batchTranscribe`'s shape — bytes in at offset
+    /// `transcribe` is the batch-transcribe closure's shape — bytes in at offset
     /// zero, words out at offset zero, take-relative shifting is this function's own job (it is
     /// the only caller that knows the request's start offset).
     public static func run(

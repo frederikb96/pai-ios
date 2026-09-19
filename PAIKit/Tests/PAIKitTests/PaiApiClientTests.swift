@@ -268,26 +268,6 @@ final class PaiApiClientTests: XCTestCase {
         XCTAssertTrue(path.hasSuffix("/api/settings/secrets/smtp_password"), path)
     }
 
-    func testMintVoiceTokenEncodesPurposeAsSnakeCaseString() async throws {
-        stubJSON(#"{"token":"t","expires_in":60}"#)
-        let client = try makeClient()
-        _ = try await client.mintVoiceToken(purpose: .batch)
-
-        let body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
-        XCTAssertTrue(body.contains(#""purpose":"batch""#), body)
-    }
-
-    /// The backend maps this exact string to ElevenLabs' `tts_websocket` token type — a
-    /// differently-cased or differently-spelled raw value 404s while compiling cleanly.
-    func testMintVoiceTokenEncodesTtsPurpose() async throws {
-        stubJSON(#"{"token":"t","expires_in":60}"#)
-        let client = try makeClient()
-        _ = try await client.mintVoiceToken(purpose: .tts)
-
-        let body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
-        XCTAssertTrue(body.contains(#""purpose":"tts""#), body)
-    }
-
     /// `attachSupervision`'s body flattens `session_id` and the config's own fields into ONE
     /// JSON object (the web's `{ session_id: sessionId, ...config }`), not `session_id` alongside
     /// a nested `config` key — the two custom `Encodable` calls sharing one `Encoder` is what

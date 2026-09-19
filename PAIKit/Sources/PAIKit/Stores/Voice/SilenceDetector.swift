@@ -56,7 +56,7 @@ public struct SilenceDetectorConfig: Sendable, Equatable {
 /// What the caller should do in response to one `observe` call. `.gate` and `.resume` can each
 /// fire any number of times over one take — unlike the auto-stop this type used to drive, a take
 /// with two separate pauses gates twice — while `.stop` is the backstop for a gate nobody ever
-/// spoke back into, and `VoiceRecordingSession` treats it exactly like `.gate` for the purpose of
+/// spoke back into, and `VoiceUplinkSession` treats it exactly like `.gate` for the purpose of
 /// tearing the gate down before ending the take.
 public enum SilenceAction: Sendable, Equatable {
     case none

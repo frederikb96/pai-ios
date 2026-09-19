@@ -43,7 +43,6 @@ struct CreateSessionView: View {
 
     @State private var textHeight: CGFloat = ComposerTextEditor.minHeight
     @State private var scrollToTailOnNextUpdate = false
-    @State private var preVoiceText = ""
     @FocusState private var isComposerFocused: Bool
 
     @State private var showingPhotoPicker = false
@@ -444,7 +443,7 @@ struct CreateSessionView: View {
 
                 ComposerActionMenu(
                     hasSession: false,
-                    callMenuState: startsCallOnSend ? nil : .startAfterSend,
+                    offersStartCallAfterSend: !startsCallOnSend,
                     canGrantSecretAccess: false,
                     onPastRecordings: { showingRecordingsSheet = true },
                     onAddPhoto: { showingPhotoPicker = true },
@@ -469,24 +468,22 @@ struct CreateSessionView: View {
                 }
             }
         }
-        // The recorder runs here with no draft key (see `isRecordingHere`'s doc comment), so
-        // unlike `ComposerBar` the live transcript has to be polled into the draft here rather
-        // than arriving already written. `.task(id:)` rather than a free-standing `Task` so it
-        // keeps running across `.paused`/`.reconnecting` but stops with the view, instead of
-        // outliving it once per visit.
+        // Nothing else on this screen re-polls `DraftStore` (it syncs once, on appear) — while
+        // dictating here the backend is writing new words into this draft's own region
+        // (`docs/VOICE_PROTOCOL.md`'s "Composer text sync ... is REST + SSE, not this socket"),
+        // so this take pulls them itself, at the same 1s cadence `ComposerBar` tightens to for its
+        // own active take. Also what keeps the editor scrolled to the tail as the field grows.
         .task(id: isRecordingHere(voiceController)) {
             guard isRecordingHere(voiceController) else { return }
-            var lastPartial = ""
-            while !Task.isCancelled, voiceController.state != .idle {
-                let partial = voiceController.transcribedText
-                if partial != lastPartial {
-                    lastPartial = partial
-                    drafts.setDraftText(
-                        key: DraftKey.newSession,
-                        text: VoiceRecordingResult.composeLiveText(pre: preVoiceText, partial: partial))
+            var lastText = drafts.draft(for: DraftKey.newSession).displayText
+            while !Task.isCancelled, isRecordingHere(voiceController) {
+                await drafts.syncFromServer()
+                let currentText = drafts.draft(for: DraftKey.newSession).displayText
+                if currentText != lastText {
+                    lastText = currentText
                     scrollToTailOnNextUpdate = true
                 }
-                try? await Task.sleep(for: .milliseconds(150))
+                try? await Task.sleep(for: .seconds(1))
             }
         }
         .padding(.horizontal, 12)
@@ -518,16 +515,26 @@ struct CreateSessionView: View {
     }
 
     private func send(_ createSession: CreateSessionStore) {
-        let messageText = text
+        let wasRecording = environment.connection.map { isRecordingHere($0.voice) } ?? false
         let attachmentsSnapshot = stagedAttachments
         let files = attachmentsSnapshot.map {
             PaiFileUpload(filename: $0.filename, mimeType: $0.mimeType, data: $0.data)
         }
-        if !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            settings.saveSentMessage(messageText)
-        }
         Task {
             errorMessage = nil
+            // A still-running take is still writing into this draft's own region on the backend —
+            // sending while it is open would race that write and post a message shorter than what
+            // was actually said. Stopping first closes the region cleanly; one more sync catches
+            // whatever committed in the instant before the stop reached the backend, so the words
+            // spoken right up to "computer send the message" are never the ones left behind.
+            if wasRecording, let voiceController = environment.connection?.voice {
+                await voiceController.stop()
+                await drafts.syncFromServer()
+            }
+            let messageText = text
+            if !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                settings.saveSentMessage(messageText)
+            }
             switch await createSession.create(message: messageText, files: files) {
             case .created(let session):
                 sessionList.prependOptimisticSession(session)
@@ -593,13 +600,13 @@ struct CreateSessionView: View {
     /// only storage — the same reasoning applies here.
     private var textBinding: Binding<String> {
         Binding(
-            get: { drafts.draft(for: DraftKey.newSession).text },
+            get: { drafts.draft(for: DraftKey.newSession).displayText },
             set: { newValue in drafts.setDraftText(key: DraftKey.newSession, text: newValue) }
         )
     }
 
     private var text: String {
-        drafts.draft(for: DraftKey.newSession).text
+        drafts.draft(for: DraftKey.newSession).displayText
     }
 
     private var stagedAttachments: [StagedAttachment] {
@@ -608,10 +615,12 @@ struct CreateSessionView: View {
 
     // MARK: - Voice
 
-    /// This sheet's take is the one the shared recorder is running with no draft key — see
-    /// `start(draftKey:preText:)`. Anything else belongs to a session's composer.
+    /// This sheet's take is the one the shared recorder is running against `DraftKey.newSession`
+    /// — the same key this screen's own composer reads, so the backend's `DraftRegionSink`
+    /// writes dictated words straight into the field this screen already shows, exactly as
+    /// `ComposerBar`'s own take does for an existing session.
     private func isRecordingHere(_ controller: VoiceRecorderController) -> Bool {
-        controller.activeDraftKey == nil && controller.state != .idle
+        controller.activeDraftKey == DraftKey.newSession && controller.state != .idle
     }
 
     private func toggleRecording(voiceController: VoiceRecorderController) async {
@@ -621,17 +630,13 @@ struct CreateSessionView: View {
         }
         switch voiceController.state {
         case .idle:
-            preVoiceText = text
-            // No draft key: the recorder itself never touches `DraftStore` for this take, so the
-            // transcript is polled into it explicitly above rather than arriving already written
-            // the way the chat composer's does.
-            await voiceController.start(draftKey: nil, preText: text)
+            await voiceController.start(draftKey: DraftKey.newSession, preText: text)
         case .recording, .connecting, .paused, .reconnecting, .transcriptionStopped:
             // A tap always means "end the take", regardless of which of these mid-take states it
-            // caught — `VoiceRecordingSession.stop` accepts all of them. Same rule as
-            // `ComposerBar`'s own record button: one control, one behaviour, on both screens.
-            let finalText = await voiceController.stop()
-            applyVoiceResult(finalText)
+            // caught. Same rule as `ComposerBar`'s own record button: one control, one behaviour,
+            // on both screens. Nothing to apply afterward — the backend already wrote every
+            // committed word into this draft's own region as it was transcribed.
+            await voiceController.stop()
         case .stopping:
             break
         }
@@ -653,15 +658,6 @@ struct CreateSessionView: View {
             // held elsewhere, so going through it is what makes that failure visible at all.
             startsCallOnSend = isRecordingHere(voiceController)
         }
-    }
-
-    private func applyVoiceResult(_ prefixedText: String) {
-        guard !prefixedText.isEmpty else {
-            drafts.setDraftText(key: DraftKey.newSession, text: preVoiceText)
-            return
-        }
-        let combined = preVoiceText.isEmpty ? prefixedText : "\(preVoiceText) \(prefixedText)"
-        drafts.setDraftText(key: DraftKey.newSession, text: combined)
     }
 
     private func appendTranscript(_ prefixedText: String) {

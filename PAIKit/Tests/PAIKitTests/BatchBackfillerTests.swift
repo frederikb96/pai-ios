@@ -66,7 +66,7 @@ final class BatchBackfillerTests: XCTestCase {
 
     func testAReaderFailureIsReportedAsFailedRatherThanCrashing() async {
         let request = BackfillPlanner.Request(range: 0..<16000, audioRange: 0..<16000, gapRanges: [0..<16000])
-        let reader = FakeAudioReader(error: VoiceTransportError.notConnected)
+        let reader = FakeAudioReader(error: VoiceSocketTransportError.notConnected)
 
         let outcome = await BatchBackfiller.run(
             request, sampleRate: sampleRate, language: .auto, audioReader: reader, takeId: "take-1",
@@ -81,7 +81,7 @@ final class BatchBackfillerTests: XCTestCase {
 
         let outcome = await BatchBackfiller.run(
             request, sampleRate: sampleRate, language: .auto, audioReader: reader, takeId: "take-1",
-            transcribe: { _, _ in throw VoiceTransportError.notConnected }
+            transcribe: { _, _ in throw VoiceSocketTransportError.notConnected }
         )
         guard case .failed = outcome else { return XCTFail("expected .failed") }
     }

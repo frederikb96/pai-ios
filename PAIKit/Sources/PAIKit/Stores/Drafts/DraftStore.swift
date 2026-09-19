@@ -95,11 +95,40 @@ public final class DraftStore {
 
     // MARK: - Editing
 
+    /// Writes the human's own text. **A machine never writes here** — a live dictation take
+    /// writes its own region instead (`writeDictationRegion(key:takeId:text:state:seq:)`), which
+    /// is what a keystroke landing here mid-take never collides with.
+    ///
+    /// Editing while a region is still open is a write to machine-owned text otherwise — see
+    /// ``DraftEntry/displayText`` — so this flattens first: the open regions fold into `text`
+    /// server-side (fire-and-forget; the local fold below is what makes the field editable at
+    /// once rather than waiting on the round trip) and this device stops tracking them as
+    /// separate regions from here on. A caller passing the CURRENT `displayText` back with one
+    /// character changed — exactly what a `TextEditor` binding does — is what makes the local
+    /// fold correct: `text` becomes the flattened whole, so this same edit is never applied twice.
     public func setDraftText(key: String, text: String) {
         var entry = draft(for: key)
+        if entry.hasOpenRegions {
+            flattenOpenRegions(key: key, entry: entry)
+            entry.regions = []
+        }
         entry.text = text
         drafts[key] = entry
         scheduleFlush(key)
+    }
+
+    /// Fires the server-side flatten and forgets it — this device's own fold above is what makes
+    /// the field usable immediately; the round trip only needs to happen at all so another device
+    /// reading this draft afterward sees the same flattened `text` rather than a region this
+    /// device has stopped believing exists.
+    private func flattenOpenRegions(key: String, entry: DraftEntry) {
+        let openTakeIds = entry.regions.filter { $0.state == "open" }.map(\.takeId)
+        guard !openTakeIds.isEmpty else { return }
+        let api = self.api
+        let baseUpdatedAt = entry.remoteUpdatedAt
+        Task {
+            _ = try? await api.flattenDraft(key: key, takeIds: openTakeIds, baseUpdatedAt: baseUpdatedAt)
+        }
     }
 
     /// Launch choices for the next session, held in the `new` draft only.
@@ -310,10 +339,17 @@ public final class DraftStore {
             {
                 continue
             }
-            if let local = drafts[row.key], local.remoteUpdatedAt == row.updatedAt { continue }
+            // `row.updatedAt` is the DRAFT row's own timestamp — a region write never touches it
+            // (`DraftRegion` is a separate table), so a live dictation take's newly committed
+            // words would never be adopted here if this gate only compared that field. Regions
+            // are compared on their own, since that is the one thing that actually changes on
+            // every poll while a take is running and `text` itself does not.
+            if let local = drafts[row.key], local.remoteUpdatedAt == row.updatedAt, local.regions == row.regions {
+                continue
+            }
             drafts[row.key] = DraftEntry(
                 text: row.text, sessionType: row.sessionType, workingDir: row.workingDir, model: row.model,
-                thinking: row.thinking, remoteUpdatedAt: row.updatedAt
+                thinking: row.thinking, remoteUpdatedAt: row.updatedAt, regions: row.regions
             )
         }
 

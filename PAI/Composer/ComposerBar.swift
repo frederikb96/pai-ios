@@ -51,7 +51,6 @@ struct ComposerBar: View {
     /// makes re-entering the session present an unanswered prompt again.
     @State private var dismissedSecretPromptAt: String?
     @State private var showingRecordingsSheet = false
-    @State private var showingCallMode = false
 
     init(sessionID: String) {
         self.sessionID = sessionID
@@ -82,14 +81,20 @@ struct ComposerBar: View {
             // Polls this session's draft while the composer is on screen, so a message half-typed
             // on another device shows up here live — the same 10s cadence the web's `App.tsx`
             // polls drafts on, scoped to just the composer's own lifetime rather than the whole
-            // app.
+            // app. Tightened to 1s while THIS composer's own take is dictating: the words a live
+            // take produces arrive only through this poll now (the backend writes them straight
+            // into the draft's own region — no local transcript feed exists to show them sooner —
+            // see `docs/VOICE_PROTOCOL.md`'s "Composer text sync ... is REST + SSE, not this
+            // socket"), so 10s would read as a broken microphone for most of every sentence.
             //
             // Nothing is copied out of the store afterwards: the field reads straight through
             // `textBinding`, so `syncFromServer`'s own reconciliation rules (an unflushed local
             // edit beats anything the server can report) are the only thing deciding what wins.
             // A second copy here is what once let this poll overwrite a live voice transcript.
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(10))
+                let interval: Duration =
+                    environment.connection?.voice.activeDraftKey == sessionID ? .seconds(1) : .seconds(10)
+                try? await Task.sleep(for: interval)
                 guard !Task.isCancelled else { return }
                 await draftStore?.syncFromServer()
             }
@@ -101,10 +106,15 @@ struct ComposerBar: View {
         .onAppear {
             presentSecretPromptIfNeeded()
             // A session created by one of the launcher's call tiles, or by the new-session
-            // screen's "Send as Call": the call opens here, from the screen the send landed on,
-            // rather than from the sheet that was dismissing when the session came into being.
-            if CallModeLaunchRequest.shared.consumeOpenCall(forSession: sessionID) {
-                showingCallMode = true
+            // screen's own "Dictate Hands-Free": the first turn was just spoken and sent, and the
+            // point of the tile was never touching the phone again — so dictation resumes here,
+            // into this session's own draft, from the screen the send landed on rather than from
+            // the sheet that was dismissing when the session came into being (the same ordering
+            // reason `CallModeLaunchRequest.openCall(forSession:)`'s own doc comment gives).
+            if CallModeLaunchRequest.shared.consumeOpenCall(forSession: sessionID),
+                let voiceController = environment.connection?.voice
+            {
+                Task { await voiceController.start(draftKey: sessionID, preText: "") }
             }
         }
         .onChange(of: currentSecretPrompt) { _, _ in presentSecretPromptIfNeeded() }
@@ -175,17 +185,13 @@ struct ComposerBar: View {
 
                 ComposerActionMenu(
                     hasSession: true,
-                    callMenuState: callMenuState,
-                    otherCallSessionName: otherCallSessionName,
                     canGrantSecretAccess: currentSecretGrantable ?? false,
                     onPastRecordings: { showingRecordingsSheet = true },
                     onAddPhoto: { showingPhotoPicker = true },
                     onAddFile: { showingFilePicker = true },
                     onTemporaryNote: { showingTemporaryNote = true },
                     onSecretGrant: { secretGrantTarget = SecretGrantTarget(promptAt: currentSecretPrompt?.at) },
-                    onCancel: { Task { await cancelSession() } },
-                    onStartOrReturnToCall: { startOrReturnToCall(voiceController: voiceController) },
-                    onEndCall: { Task { await environment.connection?.callMode.exit(reason: "End Call tapped") } }
+                    onCancel: { Task { await cancelSession() } }
                 )
 
                 VoiceRecorderButton(
@@ -203,16 +209,15 @@ struct ComposerBar: View {
                 }
             }
         }
-        // Keeps the field scrolled to the tail while a transcript grows into it — from a
-        // microphone take or a call bound to this session alike, since both write their live text
-        // into the same draft. Presentation only: the text keeps arriving in the draft store
-        // whether or not this view is on screen. `.task(id:)` cancels on disappear, where a
-        // free-standing `Task` would leave one more 150ms loop running per visit.
-        .task(id: isVoiceWritingHere(voiceController)) {
-            guard isVoiceWritingHere(voiceController) else { return }
-            var lastText = drafts.draft(for: sessionID).text
-            while !Task.isCancelled, isVoiceWritingHere(voiceController) {
-                let text = drafts.draft(for: sessionID).text
+        // Keeps the field scrolled to the tail while a take's own draft region grows — the 1s
+        // draft poll above is what actually pulls the new words in; this only notices once they
+        // arrive. `.task(id:)` cancels on disappear, where a free-standing `Task` would leave one
+        // more loop running per visit.
+        .task(id: isRecordingHere(voiceController)) {
+            guard isRecordingHere(voiceController) else { return }
+            var lastText = drafts.draft(for: sessionID).displayText
+            while !Task.isCancelled, isRecordingHere(voiceController) {
+                let text = drafts.draft(for: sessionID).displayText
                 if text != lastText {
                     lastText = text
                     scrollToTailOnNextUpdate = true
@@ -241,9 +246,6 @@ struct ComposerBar: View {
                 onInsertTranscript: { prefixed in appendTranscript(prefixed, draftStore: draftStore) },
                 onAttach: { files in stageAttachments(files) }
             )
-        }
-        .fullScreenCover(isPresented: $showingCallMode) {
-            CallModeScreen(sessionID: sessionID)
         }
         .accessibilityIdentifier("composer-bar")
     }
@@ -276,17 +278,17 @@ struct ComposerBar: View {
     /// everything transcribed since the last pause vanished until the next word rewrote it.
     private func textBinding(draftStore: DraftStore) -> Binding<String> {
         Binding(
-            get: { draftStore.draft(for: sessionID).text },
+            get: { draftStore.draft(for: sessionID).displayText },
             set: { newValue in draftStore.setDraftText(key: sessionID, text: newValue) }
         )
     }
 
     private var text: String {
-        draftStore?.draft(for: sessionID).text ?? ""
+        draftStore?.draft(for: sessionID).displayText ?? ""
     }
 
     private func appendTranscript(_ prefixedText: String, draftStore: DraftStore) {
-        let current = draftStore.draft(for: sessionID).text
+        let current = draftStore.draft(for: sessionID).displayText
         draftStore.setDraftText(
             key: sessionID, text: current.isEmpty ? prefixedText : "\(current) \(prefixedText)")
     }
@@ -296,12 +298,6 @@ struct ComposerBar: View {
     /// bar for a recording that is not its own.
     private func isRecordingHere(_ controller: VoiceRecorderController) -> Bool {
         controller.activeDraftKey == sessionID && controller.state != .idle
-    }
-
-    /// Whether any live voice source — a microphone take or a call — is writing into this
-    /// session's draft right now.
-    private func isVoiceWritingHere(_ controller: VoiceRecorderController) -> Bool {
-        isRecordingHere(controller) || environment.connection?.callMode.activeSessionID == sessionID
     }
 
     // MARK: - Voice
@@ -322,13 +318,11 @@ struct ComposerBar: View {
     /// running take (`isRecordingHere` handles that tap as an ordinary stop instead).
     private func microphoneHandoverAction(_ controller: VoiceRecorderController) -> VoiceHandoverAction {
         let running = controller.state == .idle ? nil : controller.activeDraftKey
-        return VoiceHandover.forMicrophoneTap(
-            sessionID: sessionID, microphoneTakeSessionID: running,
-            callModeActive: environment.connection?.callMode.isActive ?? false)
+        return VoiceHandover.forMicrophoneTap(sessionID: sessionID, microphoneTakeSessionID: running)
     }
 
     /// `nil` defers to `VoiceRecorderButton`'s own ordinary gate (`controller.canStart`) — the
-    /// case where a tap genuinely cannot start anything (already starting, no key configured).
+    /// case where a tap genuinely cannot start anything (already starting, not signed in).
     /// `true` forces the button tappable even though `controller.canStart` would refuse it: a
     /// handover tap does not itself start anything until the thing it is taking over has stopped,
     /// so the ordinary "is the microphone free right now" gate does not apply to it.
@@ -336,15 +330,16 @@ struct ComposerBar: View {
         guard !isRecordingHere(controller) else { return nil }
         switch microphoneHandoverAction(controller) {
         case .startOnly, .alreadyHere: return nil
-        case .stopMicrophoneTake, .stopCallMode: return true
+        case .stopMicrophoneTake: return true
         }
     }
 
     private func toggleRecording(draftStore: DraftStore, voiceController: VoiceRecorderController) async {
         if isRecordingHere(voiceController) {
             // A tap always means "end the take", regardless of which mid-take state it caught —
-            // `VoiceRecordingSession.stop` accepts all of them. The text itself is the recorder's
-            // business now, on every one of the ways a take can end; nothing is applied here.
+            // `VoiceUplinkSession.stop` accepts all of them. The text itself is already in the
+            // draft's own region by now, on every one of the ways a take can end; nothing is
+            // applied here.
             guard voiceController.state != .stopping else { return }
             await voiceController.stop()
             return
@@ -353,52 +348,13 @@ struct ComposerBar: View {
         sendErrorMessage = nil
         switch microphoneHandoverAction(voiceController) {
         case .stopMicrophoneTake:
-            // The other session's own draft keeps exactly the text its take had transcribed —
-            // `VoiceRecorderController.stop()` writes it there itself, the same as an ordinary
-            // tap-to-stop in that composer would.
+            // The other session's own take ends exactly as an ordinary tap-to-stop in that
+            // composer would — its region is already there, closed by the stop itself.
             await voiceController.stop()
-        case .stopCallMode:
-            await environment.connection?.callMode.exit(reason: "microphone take started elsewhere")
         case .startOnly, .alreadyHere:
             break
         }
         await voiceController.start(draftKey: sessionID, preText: draftStore.draft(for: sessionID).text)
-    }
-
-    // MARK: - Call mode
-
-    private var callMenuState: ComposerCallMenuState {
-        ComposerCallMenu.state(
-            callBoundSessionID: environment.connection?.callMode.activeSessionID, sessionID: sessionID)
-    }
-
-    /// The title of the session a call is running in elsewhere, for the plus menu's own
-    /// "Switch Call Here" label — `nil` when there is none to name, or it has none of its own.
-    private var otherCallSessionName: String? {
-        guard let otherID = environment.connection?.callMode.activeSessionID, otherID != sessionID else { return nil }
-        return sessions.rows.first { $0.session.id == otherID }?.session.title
-    }
-
-    /// The plus menu's one call-mode action, whatever state it is offered from — starting fresh,
-    /// reattaching to this session's own call, or switching a call running elsewhere over to here.
-    /// `VoiceHandover.forCallModeStart` decides which; this only ever runs `exit()` for whichever
-    /// half of "the new one wins, the old one stops cleanly" actually applies.
-    private func startOrReturnToCall(voiceController: VoiceRecorderController) {
-        Task {
-            let running = voiceController.state == .idle ? nil : voiceController.activeDraftKey
-            switch VoiceHandover.forCallModeStart(
-                sessionID: sessionID, callBoundSessionID: environment.connection?.callMode.activeSessionID,
-                microphoneTakeSessionID: running)
-            {
-            case .stopMicrophoneTake:
-                await voiceController.stop()
-            case .stopCallMode:
-                await environment.connection?.callMode.exit(reason: "call switched to another session")
-            case .startOnly, .alreadyHere:
-                break
-            }
-            showingCallMode = true
-        }
     }
 
     // MARK: - Send
@@ -409,34 +365,40 @@ struct ComposerBar: View {
 
     private func send(draftStore: DraftStore) {
         guard canSend, !isSending, let connection = environment.connection else { return }
-        // A call bound here owns the live text in this draft: Send goes through the call, the
-        // same as saying "send", which posts the draft together with the turn and clears both.
-        if connection.callMode.activeSessionID == sessionID {
-            Task { await connection.callMode.handleManual(.send) }
-            return
-        }
-
-        let messageText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let attachmentsSnapshot = stagedAttachments
-        let files = attachmentsSnapshot.map {
-            PaiFileUpload(filename: $0.filename, mimeType: $0.mimeType, data: $0.data)
-        }
-
-        if !messageText.isEmpty { settings.saveSentMessage(messageText) }
-
-        draftStore.setDraftText(key: sessionID, text: "")
-        staging.set([], for: sessionID)
         isSending = true
         sendErrorMessage = nil
-
-        let sendTask = Task<PostMessageResponse, Error> {
-            try await connection.apiClient.postMessage(sessionId: sessionID, message: messageText, files: files)
-        }
-        if !messageText.isEmpty {
-            transcript.trackSend(sessionId: sessionID, text: messageText, send: sendTask)
-        }
+        let wasRecording = isRecordingHere(connection.voice)
 
         Task {
+            // A still-running take is still writing into this draft's own region on the backend —
+            // sending while it is open would race that write and post a message shorter than
+            // what was actually said. Stopping first closes the region cleanly; one more sync
+            // catches whatever committed in the instant before the stop reached the backend, so
+            // the words spoken right up to "computer send the message" are never the ones left
+            // behind.
+            if wasRecording {
+                await connection.voice.stop()
+                await draftStore.syncFromServer()
+            }
+
+            let messageText = draftStore.draft(for: sessionID).displayText.trimmingCharacters(
+                in: .whitespacesAndNewlines)
+            let attachmentsSnapshot = stagedAttachments
+            let files = attachmentsSnapshot.map {
+                PaiFileUpload(filename: $0.filename, mimeType: $0.mimeType, data: $0.data)
+            }
+            if !messageText.isEmpty { settings.saveSentMessage(messageText) }
+
+            draftStore.setDraftText(key: sessionID, text: "")
+            staging.set([], for: sessionID)
+
+            let sendTask = Task<PostMessageResponse, Error> {
+                try await connection.apiClient.postMessage(sessionId: sessionID, message: messageText, files: files)
+            }
+            if !messageText.isEmpty {
+                transcript.trackSend(sessionId: sessionID, text: messageText, send: sendTask)
+            }
+
             do {
                 _ = try await sendTask.value
                 draftStore.clearDraft(key: sessionID)

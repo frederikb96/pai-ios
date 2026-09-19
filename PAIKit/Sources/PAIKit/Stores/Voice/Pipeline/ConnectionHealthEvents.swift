@@ -1,7 +1,7 @@
 import Foundation
 
 /// What `ConnectionHealth` reacts to — pure inputs, no I/O of its own. The app feeds
-/// `pathSatisfied` from `NWPathMonitor`; everything else comes from `VoiceRecordingSession`'s own
+/// `pathSatisfied` from `NWPathMonitor`; everything else comes from the uplink session's own
 /// realtime socket and token mint.
 public enum ConnectionHealthEvent: Sendable, Equatable {
     case pathSatisfied(Bool)

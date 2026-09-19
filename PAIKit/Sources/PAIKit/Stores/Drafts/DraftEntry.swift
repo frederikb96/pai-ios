@@ -23,10 +23,14 @@ public struct DraftEntry: Equatable, Sendable {
     /// Compared for **inequality, never ordered**, in ``DraftStore/syncFromServer()`` — the
     /// device's clock and the server's do not have to agree for that comparison to be correct.
     public var remoteUpdatedAt: String?
+    /// Every take's own region, in the order its take was opened — never written by typing, only
+    /// by a machine (live dictation, server-side; a backfill recovering a stretch the live path
+    /// missed, client-side). See ``displayText``.
+    public var regions: [DraftRegion] = []
 
     public init(
         text: String, sessionType: String?, workingDir: String?, model: String? = nil, thinking: String? = nil,
-        remoteUpdatedAt: String?
+        remoteUpdatedAt: String?, regions: [DraftRegion] = []
     ) {
         self.text = text
         self.sessionType = sessionType
@@ -34,7 +38,27 @@ public struct DraftEntry: Equatable, Sendable {
         self.model = model
         self.thinking = thinking
         self.remoteUpdatedAt = remoteUpdatedAt
+        self.regions = regions
     }
 
     public static let empty = DraftEntry(text: "", sessionType: nil, workingDir: nil, remoteUpdatedAt: nil)
+
+    /// What every client renders: `text` followed by every region's own text, in the order their
+    /// takes were opened — plain concatenation, never an offset into either string, matching the
+    /// backend's own `compose_draft_text` (`pai-cloud/backend/src/pai_cloud/repository.py`). A
+    /// region in ANY state (`open`, `final`, `overflow`) still contributes: none of those states
+    /// ever discard the text already accepted into it, only close it to further writes — see
+    /// `DraftStore`'s own doc comment on why editing this string first flattens.
+    ///
+    /// Each region's own contribution carries the `stt-rec: ` marker once, at its own start — the
+    /// backend writes a region's raw transcribed text with no prefix at all (`DraftRegionSink`
+    /// never adds one), so this is the one place that marks it as machine-produced, at the same
+    /// per-take granularity the ElevenLabs-era pipeline always prefixed at.
+    public var displayText: String {
+        let parts =
+            [text] + regions.filter { !$0.text.isEmpty }.map { "\(VoiceRecordingResult.sttPrefix)\($0.text)" }
+        return parts.filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    public var hasOpenRegions: Bool { regions.contains { $0.state == "open" } }
 }

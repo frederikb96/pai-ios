@@ -99,12 +99,6 @@ public enum Route: Hashable, Sendable {
     /// underneath it — a hardware button is a fresh start, not a detour from wherever the app
     /// was last left.
     case quickActions
-    /// Call mode, full-screen, bound to one session — reached from the composer's plus menu in
-    /// real usage, and by the fixture screenshot workflow the same way every
-    /// other full-screen-cover destination is. Carries no separate identity concern of its own
-    /// beyond the session id: a call is always freshly entered, never resumed at a different
-    /// stack depth.
-    case callMode(sessionID: String)
 
     /// Ignores `session`'s `messageID` — see that case's doc comment. Everything else is a plain
     /// per-case comparison, same as the synthesized version this replaces.
@@ -128,7 +122,6 @@ public enum Route: Hashable, Sendable {
         case (.arcOverview(let a), .arcOverview(let b)): return a == b
         case (.schedulerList, .schedulerList): return true
         case (.schedulerTask(let a), .schedulerTask(let b)): return a == b
-        case (.callMode(let a), .callMode(let b)): return a == b
         case (.quickActions, .quickActions): return true
         default: return false
         }
@@ -184,9 +177,6 @@ public enum Route: Hashable, Sendable {
         case .schedulerTask(let id):
             hasher.combine(17)
             hasher.combine(id)
-        case .callMode(let sessionID):
-            hasher.combine(18)
-            hasher.combine(sessionID)
         case .quickActions:
             hasher.combine(19)
         }
@@ -204,7 +194,7 @@ extension Route {
     public static let namedScreens: [String] = [
         "session", "terminal", "settings", "createSession", "subagents", "notes", "note", "noteContainers",
         "notePreview", "notifications", "recordings", "arcSpec", "apps", "arcSpecList", "arcReport", "arcOverview",
-        "schedulerList", "schedulerTask", "callMode", "quickActions",
+        "schedulerList", "schedulerTask", "quickActions",
     ]
 
     /// Every spec-scoped fixture route answers under, regardless of which uuid the request
@@ -248,7 +238,6 @@ extension Route {
         case "arcOverview": return .arcOverview(specUuid: fixtureArcSpecUuid)
         case "schedulerList": return .schedulerList
         case "schedulerTask": return .schedulerTask(id: nil)
-        case "callMode": return .callMode(sessionID: sessionID)
         case "quickActions": return .quickActions
         default: return nil
         }
@@ -397,7 +386,6 @@ public final class Router {
             switch route {
             case .session(let id, _): return id
             case .terminal(let sessionID): return sessionID
-            case .callMode(let sessionID): return sessionID
             case .settings, .createSession, .subagents, .notes, .note, .noteContainers, .notePreview,
                 .notifications, .recordings, .arcSpec, .apps, .arcSpecList, .arcReport, .arcOverview,
                 .schedulerList, .schedulerTask, .quickActions:
@@ -413,7 +401,7 @@ public final class Router {
         for route in path.reversed() {
             switch route {
             case .note(let id), .notePreview(let id): return id
-            case .session, .terminal, .callMode, .settings, .createSession, .subagents, .notes, .noteContainers,
+            case .session, .terminal, .settings, .createSession, .subagents, .notes, .noteContainers,
                 .notifications, .recordings, .arcSpec, .apps, .arcSpecList, .arcReport, .arcOverview,
                 .schedulerList, .schedulerTask, .quickActions:
                 continue

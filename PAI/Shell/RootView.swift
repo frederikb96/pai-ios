@@ -296,8 +296,6 @@ struct RootView: View {
             SchedulerListView()
         case .schedulerTask(let id):
             TaskEditorView(taskId: id)
-        case .callMode(let sessionID):
-            CallModeRouteScreen(sessionID: sessionID)
         case .quickActions:
             QuickActionsScreen()
         }
@@ -490,27 +488,6 @@ private struct RecordingsRouteScreen: View {
                         onAttach: { _ in }
                     )
                 }
-            }
-            .onChange(of: isPresented) { _, presented in
-                guard !presented else { return }
-                environment.router.pop()
-            }
-    }
-}
-
-/// What `.callMode` pushes to — reproduces the full-screen cover the composer's own plus menu
-/// presents, since `CallModeScreen` has no route of its own to navigate to
-/// in real usage. Shaped exactly like `CreateSessionRouteScreen` above, for the same reason: only
-/// the fixture screenshot workflow ever pushes this route.
-private struct CallModeRouteScreen: View {
-    let sessionID: String
-    @Environment(AppEnvironment.self) private var environment
-    @State private var isPresented = true
-
-    var body: some View {
-        Color.clear
-            .fullScreenCover(isPresented: $isPresented) {
-                CallModeScreen(sessionID: sessionID)
             }
             .onChange(of: isPresented) { _, presented in
                 guard !presented else { return }

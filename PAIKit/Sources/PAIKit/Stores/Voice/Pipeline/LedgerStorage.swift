@@ -15,7 +15,7 @@ public protocol TakeAudioReader: Sendable {
     func readSamples(id: String, range: WavByteRange) async throws -> Data
 }
 
-/// Stand-ins for `VoiceRecordingDependencies`' new fields until `VoiceRecorderController` wires
+/// Stand-ins for `VoiceUplinkDependencies`'s new fields until `VoiceRecorderController` wires
 /// the real, sandboxed implementations. Nothing in this package calls either yet — they exist
 /// only so today's construction sites keep compiling with today's behaviour. `public` because a
 /// default argument value must be at least as accessible as the initializer it defaults for.
@@ -29,6 +29,6 @@ public struct UnconfiguredLedgerStorage: LedgerStorage {
 public struct UnconfiguredTakeAudioReader: TakeAudioReader {
     public init() {}
     public func readSamples(id: String, range: WavByteRange) async throws -> Data {
-        throw VoiceTransportError.notConnected
+        throw VoiceSocketTransportError.notConnected
     }
 }

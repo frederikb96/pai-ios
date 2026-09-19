@@ -103,14 +103,20 @@ public enum SessionSearchMode: String, Sendable, Equatable {
     case fuzzy, semantic
 }
 
-/// Which ElevenLabs endpoint the minted token is for — `client.ts`'s `mintVoiceToken` inlines
-/// this union rather than naming it in `types.ts`, so it lives here for the same reason
-/// `PaiTerminalScrollDirection` does.
-public enum VoiceTokenPurpose: String, Sendable, Equatable {
-    case realtime, batch
-    /// Opens the multi-context TTS socket for speech out — the backend maps this to ElevenLabs'
-    /// `tts_websocket` token type.
-    case tts
+/// One take's own dictated region write — `PUT /api/drafts/{key}/takes/{take_id}`'s outcomes.
+/// A plain 200 decodes as `.written`; 410 (the take's region already closed — a flatten, or the
+/// character ceiling) and 413 (this very write would cross it) carry structured bodies the caller
+/// must read, not just a status to show, so both are passthrough cases here rather than a thrown
+/// `PaiError` — the same reasoning `SecretGrantResult` documents for its own 409/422/429.
+public enum DraftRegionWriteResult: Sendable, Equatable {
+    case written(DraftRegion)
+    /// 410 — this take's region is no longer open (flattened, or already overflowed). The
+    /// backend's own signal that a still-running backfill should fall back to text-search
+    /// healing against the current `text` instead of writing this region again.
+    case closed(DraftRegion)
+    /// 413 — accepting this write would push the draft over its character ceiling; the existing
+    /// region (if any) is closed as `overflow` server-side as part of the refusal.
+    case overflow(total: Int, limit: Int, region: DraftRegion?)
 }
 
 /// Raw bytes plus the server-assigned filename — a download, not a JSON response.
@@ -680,6 +686,21 @@ public struct PaiApiClient: Sendable {
         )
     }
 
+    /// Folds the named open regions into `text` and closes them — what a client calls before
+    /// editing dictated text itself, since editing is a write to machine-owned text otherwise.
+    /// `baseUpdatedAt` makes the write conditional, same as `putDraft`'s own.
+    public func flattenDraft(key: String, takeIds: [String], baseUpdatedAt: String?) async throws -> PutDraftResult {
+        struct Body: Encodable {
+            let takeIds: [String]; let baseUpdatedAt: String?
+            enum CodingKeys: String, CodingKey { case takeIds = "take_ids"; case baseUpdatedAt = "base_updated_at" }
+        }
+        return try await send(
+            path: "/api/drafts/\(Self.encodeDraftKey(key))/flatten",
+            method: "POST",
+            body: try Self.jsonBody(Body(takeIds: takeIds, baseUpdatedAt: baseUpdatedAt))
+        )
+    }
+
     public func deleteDraft(key: String) async throws -> PaiDraftDeleteResult {
         try await send(
             path: "/api/drafts/\(Self.encodeDraftKey(key))",
@@ -1077,17 +1098,77 @@ public struct PaiApiClient: Sendable {
         try await send(path: "/api/settings/smtp/test", method: "POST", body: nil, contentType: nil)
     }
 
-    // MARK: Voice token
+    // MARK: Voice takes — the live socket's own region write, and offline/backfill batch STT
 
-    /// Mints a single-use, short-lived ElevenLabs token for the app's own STT call — the app
-    /// never asks Freddy for that key directly.
-    public func mintVoiceToken(purpose: VoiceTokenPurpose) async throws -> VoiceToken {
-        struct Body: Encodable { let purpose: String }
-        return try await send(
-            path: "/api/voice/token",
-            method: "POST",
-            body: try Self.jsonBody(Body(purpose: purpose.rawValue))
+    /// Writes one take's own region of a draft — never `text`, which only typing writes. The
+    /// live dictation path never calls this itself (the backend's `DraftRegionSink` writes
+    /// straight through its own repository call, no HTTP round trip); this is what a client-side
+    /// backfill (recovering a stretch the live socket never delivered) or an offline recording's
+    /// later transcription uses to land its own text.
+    public func putDraftRegion(
+        key: String, takeId: String, text: String, state: String, seq: Int
+    ) async throws -> DraftRegionWriteResult {
+        struct Body: Encodable { let text: String; let state: String; let seq: Int }
+        let (statusCode, data) = try await sendPassingThrough(
+            path: "/api/drafts/\(Self.encodeDraftKey(key))/takes/\(takeId)",
+            method: "PUT",
+            body: try Self.jsonBody(Body(text: text, state: state, seq: seq)),
+            passthrough: [410, 413]
         )
+        switch statusCode {
+        case 410:
+            return .closed(try JSONDecoder().decode(DraftRegion.self, from: data))
+        case 413:
+            struct OverflowBody: Decodable { let total: Int; let limit: Int; let region: DraftRegion? }
+            let body = try JSONDecoder().decode(OverflowBody.self, from: data)
+            return .overflow(total: body.total, limit: body.limit, region: body.region)
+        default:
+            return .written(try JSONDecoder().decode(DraftRegion.self, from: data))
+        }
+    }
+
+    /// Abandons a take's region outright — a hard delete, never a tombstone (only the client that
+    /// owns a take could ever try to remove it).
+    public func deleteDraftRegion(key: String, takeId: String) async throws {
+        try await sendDiscardingResponse(
+            path: "/api/drafts/\(Self.encodeDraftKey(key))/takes/\(takeId)",
+            method: "DELETE",
+            body: nil,
+            contentType: nil
+        )
+    }
+
+    /// Re-transcribes a stretch of audio in batch through the backend, which holds the
+    /// ElevenLabs key server-side — the app never talks to ElevenLabs directly. `takeId` is
+    /// client-minted and opaque to the backend beyond correlation logging; passing a live bus's
+    /// `resumeToken`/sample range lets the backend merge the result into that bus's own
+    /// in-progress take, but this session has no bus to resume by the time it needs this call
+    /// (see `VoiceUplinkSession`'s own doc comment on the long-reconnect gap), so those three are
+    /// always omitted here and the caller writes the returned text into a draft region itself.
+    public func transcribeVoiceTake(takeId: String, wav: Data, languageCode: String?) async throws -> String {
+        let boundary = "PAIKit-\(UUID().uuidString)"
+        // The WAV needs its own file part with a content type — `appendFormFile`'s shape, but for
+        // raw bytes rather than a `PaiFileUpload`.
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append(
+            "Content-Disposition: form-data; name=\"audio\"; filename=\"take.wav\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: audio/wav\r\n\r\n".data(using: .utf8)!)
+        body.append(wav)
+        body.append("\r\n".data(using: .utf8)!)
+        if let languageCode {
+            Self.appendFormField(&body, boundary: boundary, name: "language_code", value: languageCode)
+        }
+        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+
+        struct ResponseBody: Decodable { let text: String }
+        let response: ResponseBody = try await send(
+            path: "/api/voice/takes/\(takeId)/audio",
+            method: "POST",
+            body: body,
+            contentType: "multipart/form-data; boundary=\(boundary)"
+        )
+        return response.text
     }
 
     // MARK: Claude sign-in on the VM

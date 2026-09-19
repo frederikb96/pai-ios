@@ -75,16 +75,6 @@ final class AppEnvironment {
         /// to outlive the screen that started it — see `VoiceRecorderController`'s doc comment.
         /// There is one microphone, so there is one of these.
         let voice: VoiceRecorderController
-        /// Call mode — app-wide for the same reason `voice` is: a call outlives the screen that
-        /// started it, and the Action Button's own intent needs to reach it with no screen open.
-        let callMode: CallModeController
-        /// Metadata for every recorded wake-word training take — the settings screen this drives
-        /// is the only reader, but the store lives here rather than inside that screen so its
-        /// samples survive the screen being dismissed mid-run.
-        let wakeWordSamples: WakeWordSampleStore
-        /// Drives wake-word sample capture — a third claimant on the one shared microphone,
-        /// alongside `voice` and `callMode` (`VoiceRecorderController.reserveForSampleCapture()`).
-        let wakeWordSampleCapture: WakeWordSampleCaptureController
         /// The notification feed (row 5.27) — app-wide rather than scoped to its own screen,
         /// since the unread count drives a badge visible from the session list's toolbar and the
         /// springboard, neither of which is that screen.
@@ -123,27 +113,21 @@ final class AppEnvironment {
     /// The token is cleared as well as the gate moved: leaving a rejected credential in the
     /// Keychain means the next launch tries it again and lands back here, which reads as the app
     /// being broken rather than as needing a new token.
-    /// `deliberate: false`: a token rejection can land at any moment, not only while Freddy is
-    /// looking at the screen making a deliberate choice, so a running call ending here plays the
-    /// cue and posts the notification the same as any other unattended end — otherwise the call's
-    /// own resources (the microphone, the audio session, its sockets) would simply be discarded
-    /// along with the rest of the connection, unfinalized and unannounced.
     func handleAuthenticationFailure(detail: String?) async {
         connection?.sessions.stopPolling()
         connection?.claudeAuth.stopPolling()
-        await connection?.callMode.exit(reason: "signed out (token rejected)", deliberate: false)
+        await connection?.voice.stop()
         tokens.write(nil)
         connection = nil
         lastAuthFailure = detail
         router.rejectToken()
     }
 
-    /// A deliberate tap, with Settings already on screen — the call's own confirmation tone is
-    /// enough, same as the call screen's own End button.
+    /// A deliberate tap, with Settings already on screen.
     func signOut() async {
         connection?.sessions.stopPolling()
         connection?.claudeAuth.stopPolling()
-        await connection?.callMode.exit(reason: "signed out (sign out tapped)")
+        await connection?.voice.stop()
         tokens.write(nil)
         connection = nil
         lastAuthFailure = nil
@@ -196,13 +180,8 @@ final class AppEnvironment {
         let toasts = ToastCenter()
         let transcript = TranscriptStore()
         let voice = VoiceRecorderController(
-            apiClient: client, settingsStore: settingsStore, drafts: draftStore, toasts: toasts)
-        let wakeWordSampleStore = WakeWordSampleStore(storage: defaults)
-        let wakeWordSampleAudio = WakeWordSampleAudioStorage()
-        // The list evicts on demand (Freddy's own delete/Clear All); the audio follows — same
-        // split `settingsStore.onRecordingEvicted` already uses for Past Recordings, so a sample's
-        // bytes can never outlive its metadata.
-        wakeWordSampleStore.onSampleRemoved = { sample in wakeWordSampleAudio.delete(fileName: sample.fileName) }
+            apiClient: client, requestFactory: factory, authToken: { [tokens] in tokens.read() },
+            settingsStore: settingsStore, drafts: draftStore, toasts: toasts)
 
         connection = Connection(
             requestFactory: factory,
@@ -222,12 +201,6 @@ final class AppEnvironment {
             notesBrowse: NotesBrowseStore(api: client, storage: defaults),
             staging: StagedAttachmentStore(),
             voice: voice,
-            callMode: CallModeController(
-                controller: voice, apiClient: client, requestFactory: factory, transcript: transcript,
-                drafts: draftStore, settingsStore: settingsStore),
-            wakeWordSamples: wakeWordSampleStore,
-            wakeWordSampleCapture: WakeWordSampleCaptureController(
-                voice: voice, store: wakeWordSampleStore, audioStorage: wakeWordSampleAudio),
             notifications: NotificationCenterStore(api: client),
             transcriptJumps: TranscriptJumpRequests()
         )
