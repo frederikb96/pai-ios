@@ -139,6 +139,18 @@ public final class NotesStore {
     private let api: NotesApiClient
     private var saveTasks: [String: Task<Void, Never>] = [:]
 
+    /// The `PATCH` in flight for a note, distinct from `saveTasks`, which holds only its debounce
+    /// timer.
+    ///
+    /// 🚨 A note is saved by one request at a time, and this is what enforces it. Every save reads
+    /// its `expectedHash` from `details[id]` before it starts, and only moves that on the way back
+    /// — so a second save started meanwhile carries a hash the first is about to invalidate, and
+    /// the server answers it with a conflict describing the client's own earlier write. With
+    /// typing continuing in the gap, that reads as two genuinely different bodies and raises the
+    /// banner, against a note nobody else has touched. Cancelling the debounce timer does not
+    /// prevent it: by then the request has left.
+    private var inFlightSaves: [String: Task<Void, Never>] = [:]
+
     public init(api: NotesApiClient) {
         self.api = api
     }
@@ -502,6 +514,12 @@ public final class NotesStore {
         guard drafts[id] != nil else { return }
         saveTasks[id]?.cancel()
         saveTasks[id] = nil
+        // Awaited rather than raced: this is the path that must not lose the last stretch of
+        // typing, and the cost is the one round trip already in progress.
+        if let running = inFlightSaves[id] { await running.value }
+        saveTasks[id]?.cancel()
+        saveTasks[id] = nil
+        guard drafts[id] != nil else { return }
         await saveNow(id: id)
     }
 
@@ -510,6 +528,28 @@ public final class NotesStore {
     /// otherwise spin here forever — a real fault in its own right, and not one worth turning
     /// into an unbounded loop that never reaches the reader.
     private func saveNow(id: String, adoptedHashRetries: Int = 1) async {
+        if let running = inFlightSaves[id] {
+            // That save reads the draft again when it returns and reschedules if anything was
+            // typed meanwhile, so it already covers whatever prompted this call.
+            await running.value
+            return
+        }
+        // The slot is cleared by the task itself, as its last act, so that everyone awaiting it
+        // resumes to a note with no save in flight. Clearing it here instead is a race the waiter
+        // loses: it resumes first, finds the finished task still parked in the slot, waits on it
+        // again and returns having saved nothing — which drops whatever was typed last.
+        let task = Task { [weak self] () -> Void in
+            await self?.performSave(id: id, adoptedHashRetries: adoptedHashRetries)
+            self?.inFlightSaves[id] = nil
+        }
+        inFlightSaves[id] = task
+        await task.value
+    }
+
+    /// The request itself. 🚨 Reached only through `saveNow`, which is what keeps it single-flight
+    /// — the adopt-and-retry below calls it directly rather than re-entering that gate, which
+    /// would wait on the task it is already running inside.
+    private func performSave(id: String, adoptedHashRetries: Int) async {
         guard let pending = drafts[id], let baseline = details[id] else { return }
         if case .conflict = saveState(for: id) { return }
         saveStates[id] = .saving
@@ -549,7 +589,7 @@ public final class NotesStore {
                 switch NoteBodyDivergence.of(server: conflict.body, base: baseline.body, local: pending) {
                 case .none where adoptedHashRetries > 0:
                     setDetail(baseline.adoptingHash(conflict), for: id)
-                    await saveNow(id: id, adoptedHashRetries: adoptedHashRetries - 1)
+                    await performSave(id: id, adoptedHashRetries: adoptedHashRetries - 1)
                 case .alreadyOurs:
                     setDetail(baseline.adoptingHash(conflict), for: id)
                     if drafts[id] == pending {
