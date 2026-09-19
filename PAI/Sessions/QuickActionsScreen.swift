@@ -269,10 +269,10 @@ private struct EditingSlot: Identifiable, Equatable {
     var id: Int { slot }
 }
 
-extension Binding {
+extension Binding<Int?> {
     /// Maps an optional binding through a transform, for `.sheet(item:)` over a plain `Int?`
     /// state that is not itself `Identifiable`.
-    fileprivate func map<T>(_ transform: @escaping (Wrapped) -> T) -> Binding<T?> where Wrapped == Int {
+    fileprivate func map<T>(_ transform: @escaping (Int) -> T) -> Binding<T?> {
         Binding<T?>(
             get: { self.wrappedValue.map(transform) },
             set: { newValue in if newValue == nil { self.wrappedValue = nil } }
