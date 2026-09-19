@@ -55,8 +55,9 @@ private func bubbleFill(light: Color, dark: Color, colorScheme: ColorScheme) -> 
 /// the same conclusion computed twice, which is exactly how a drawn row comes to disagree with
 /// its own height.
 ///
-/// The timestamp is not a line of its own. It rides the first card's trailing column, because a
-/// line per row costs more vertical space over a session than every tool result put together.
+/// No row carries a time of its own. A gutter for one costs its width on every row of every
+/// screen to answer a question a reader asks a handful of times a session; a separator above the
+/// rows that begin a new stretch answers it where it is asked, and gives the width back.
 struct TranscriptRowContent: View {
     @Environment(\.colorScheme) private var colorScheme
     let message: Message
@@ -72,6 +73,10 @@ struct TranscriptRowContent: View {
     /// Called with the index of the card the reader tapped — reveal is per segment, so opening a
     /// tool result does not also unfold the thought above it.
     let onToggleReveal: (Int) -> Void
+    /// The time to draw above this row, or `nil` for the rows between. Decided by the caller,
+    /// which is the only place that can see the row above this one — and decided identically for
+    /// the height, since a separator the height reserved and the view omitted is a gap.
+    var timeSeparator: String? = nil
     /// Every search hit that belongs to this message — already filtered by the caller, which
     /// knows the message id and this view does not need to. Empty outside a search.
     var highlights: [TranscriptSearchHit] = []
@@ -87,12 +92,13 @@ struct TranscriptRowContent: View {
         // No spacing between cards: the gap is a property of each register's own padding, not of
         // the pair, which is what lets a run of activity rows share one unbroken rail.
         VStack(alignment: .leading, spacing: 0) {
+            if let timeSeparator {
+                TimeSeparatorView(text: timeSeparator, lineHeight: metrics.trailerLineHeight)
+            }
             ForEach(Array(cards.enumerated()), id: \.offset) { cardIndex, card in
                 TranscriptCardKindView(
                     card: card,
                     metrics: metrics,
-                    // Only the first card carries it, so one message shows one time.
-                    timestamp: cardIndex == 0 ? formattedTimestamp : nil,
                     // The MEASURED truth, not the plan's intent: a bounded card whose body turned
                     // out to fit has nothing to open, and offering a tap there is an affordance
                     // that does nothing.
@@ -134,18 +140,23 @@ struct TranscriptRowContent: View {
         }
         return result
     }
+}
 
-    private var formattedTimestamp: String? {
-        guard let raw = message.timestamp, let date = IsoTimestamp.date(from: raw) else { return nil }
-        return Self.timeFormatter.string(from: date)
+/// The time between two stretches of a session. Centred, quiet, and one line tall — the row
+/// reserved exactly that, from the same font it draws in.
+private struct TimeSeparatorView: View {
+    let text: String
+    let lineHeight: Double
+
+    var body: some View {
+        Text(text)
+            .font(PaiTypography.caption.font)
+            .foregroundStyle(PaiPalette.Semantic.textFaint)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .frame(height: lineHeight)
+            .padding(.vertical, TranscriptRowMetrics.timeSeparatorPadding)
     }
-
-    private static let timeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
-        return formatter
-    }()
 }
 
 /// Routes one card to its specific presentation.
@@ -156,7 +167,6 @@ struct TranscriptRowContent: View {
 struct TranscriptCardKindView: View {
     let card: MeasuredCard
     let metrics: MessageLayoutMetrics
-    let timestamp: String?
     let onToggle: (() -> Void)?
     let sessionID: String
     let apiClient: PaiApiClient
@@ -220,7 +230,7 @@ struct TranscriptCardKindView: View {
             }
 
         case .assistantBubble(_, let filePaths):
-            ProseRowView(timestamp: timestamp) {
+            ProseRowView {
                 AssistantProseView(
                     blocks: card.plan.blocks, filePaths: filePaths, sessionID: sessionID, apiClient: apiClient,
                     highlights: highlightsByBlockIndex)
@@ -255,12 +265,11 @@ struct TranscriptCardKindView: View {
         icon: String, label: String?, @ViewBuilder content: @escaping () -> some View
     ) -> some View {
         ActivityRowView(
-            icon: icon, label: label, card: card, metrics: metrics, timestamp: timestamp, onToggle: onToggle,
-            content: content)
+            icon: icon, label: label, card: card, metrics: metrics, onToggle: onToggle, content: content)
     }
 
     private func me(@ViewBuilder content: @escaping () -> some View) -> some View {
-        MeRowView(timestamp: timestamp, content: content)
+        MeRowView(content: content)
     }
 
     /// Mirrors the web's `toolIcon` — bash/read/edit/grep/glob/agent/web/skill/mcp, default
@@ -328,7 +337,6 @@ struct ActivityRowView<Content: View>: View {
     let label: String?
     let card: MeasuredCard
     let metrics: MessageLayoutMetrics
-    let timestamp: String?
     let onToggle: (() -> Void)?
     @ViewBuilder let content: () -> Content
 
@@ -367,9 +375,25 @@ struct ActivityRowView<Content: View>: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(height: metrics.activityLineHeight, alignment: .leading)
-                content()
-                    .frame(height: card.contentHeight, alignment: .top)
-                    .clipped()
+                if let header = card.plan.header {
+                    // Wraps, never scrolls, never clipped: the point of lifting a path out of the
+                    // body is that it stays readable whatever the body is doing. Soft-broken the
+                    // same way the measurer broke it, since a path has nowhere to wrap on its own.
+                    Text(LongTokenSoftBreaker.apply(to: header).text)
+                        .font(PaiTypography.markdownCodeBlock.font)
+                        .foregroundStyle(PaiPalette.Semantic.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, metrics.blockSpacing)
+                }
+                // One container, one clip. Applied to `content()` directly it would land on each
+                // block a multi-block body is made of — every paragraph given the whole allowance
+                // to itself, and a row drawn several times the height its cell was given.
+                VStack(alignment: .leading, spacing: 0) {
+                    content()
+                }
+                .frame(height: card.contentHeight, alignment: .top)
+                .clipped()
                 if card.isTruncated {
                     TrailerView(
                         preview: card.plan.preview, isRevealed: card.plan.isRevealed,
@@ -381,17 +405,23 @@ struct ActivityRowView<Content: View>: View {
             // and narrower text is taller text.
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, TranscriptRowMetrics.gridGap)
-            TimeColumn(timestamp: timestamp)
         }
         .padding(.vertical, TranscriptRowMetrics.activityRowPadding)
         .padding(.leading, TranscriptRowMetrics.activityHorizontalInset)
-        .padding(.trailing, TranscriptRowMetrics.activityTrailingInset)
+        .padding(
+            .trailing, TranscriptRowMetrics.activityTrailingInset + TranscriptRowMetrics.contentTrailingGutter
+        )
         .background(card.plan.tone == .error ? PaiPalette.red500.opacity(0.06) : Color.clear)
         // The whole row answers a tap, not a chevron: on a phone there is no room for a target
         // beside the text, and a row is one thing to the reader whatever it is made of.
+        //
+        // 🚨 Only the GESTURE is conditional. Switching hit testing off for a row with nothing to
+        // reveal takes its sideways-scrolling code block with it — so whether a command could be
+        // read at all came down to whether that same row happened to have something hidden behind
+        // it, which is invisible from here and reads as scrolling that works on some rows and not
+        // others.
         .contentShape(Rectangle())
         .onTapGesture { onToggle?() }
-        .allowsHitTesting(onToggle != nil)
         .transcriptRowCopy(text: card.plan.blocks.map(\.plainText).joined(separator: "\n"))
     }
 }
@@ -401,51 +431,29 @@ struct ActivityRowView<Content: View>: View {
 /// A bubble around the longest text on screen is a box that only narrows what there is to read,
 /// and it makes the reply look like one more card in a stack of machinery rather than the answer.
 struct ProseRowView<Content: View>: View {
-    let timestamp: String?
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        HStack(alignment: .top, spacing: TranscriptRowMetrics.gridGap) {
-            content()
-                .frame(maxWidth: .infinity, alignment: .leading)
-            TimeColumn(timestamp: timestamp)
-        }
-        .padding(.vertical, TranscriptRowMetrics.proseRowPadding)
-        .padding(.leading, TranscriptRowMetrics.activityHorizontalInset)
-        .padding(.trailing, TranscriptRowMetrics.activityTrailingInset)
+        content()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, TranscriptRowMetrics.proseRowPadding)
+            .padding(.leading, TranscriptRowMetrics.activityHorizontalInset)
+            .padding(
+                .trailing, TranscriptRowMetrics.activityTrailingInset + TranscriptRowMetrics.contentTrailingGutter)
     }
 }
 
-/// Something a person said — right-aligned, keeping its bubble, with the time in the same column
-/// every other row uses so the transcript has one time gutter rather than three.
+/// Something a person said — right-aligned, keeping its bubble, ending at the same right edge
+/// every other register does.
 struct MeRowView<Content: View>: View {
-    let timestamp: String?
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        HStack(alignment: .top, spacing: TranscriptRowMetrics.gridGap) {
-            content()
-                .frame(maxWidth: .infinity, alignment: .trailing)
-            TimeColumn(timestamp: timestamp)
-        }
-        .padding(.vertical, TranscriptRowMetrics.meRowPadding)
-        .padding(.leading, TranscriptRowMetrics.activityHorizontalInset)
-        .padding(.trailing, TranscriptRowMetrics.activityTrailingInset)
-    }
-}
-
-/// The trailing time column every register shares. Fixed width, and drawn even when empty, so the
-/// bodies of adjacent rows line up instead of shifting by whether a row happened to carry a time.
-private struct TimeColumn: View {
-    let timestamp: String?
-
-    var body: some View {
-        Text(timestamp ?? "")
-            .font(PaiTypography.caption.font)
-            .foregroundStyle(PaiPalette.Semantic.textFaint)
-            .monospacedDigit()
-            .lineLimit(1)
-            .frame(width: TranscriptRowMetrics.timeColumnWidth, alignment: .trailing)
+        content()
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.vertical, TranscriptRowMetrics.meRowPadding)
+            .padding(.leading, TranscriptRowMetrics.activityHorizontalInset)
+            .padding(.trailing, TranscriptRowMetrics.activityTrailingInset)
     }
 }
 
@@ -565,7 +573,18 @@ struct ToolBodyText: View {
     var colorHint: ToolBodyColorHint?
     var highlightsByBlockIndex: [Int: [TranscriptHighlightSpan]] = [:]
 
+    /// Stacked with exactly the gap ``MessageContentLayoutComposer`` put between the same blocks
+    /// when it measured them — a body of one block (nearly every tool card) is unaffected, and a
+    /// body of many (a compaction summary, an agent's report) is the case that was drawn tighter
+    /// than it was measured.
     var body: some View {
+        VStack(alignment: .leading, spacing: TranscriptContentMetrics.blockSpacing) {
+            blockViews
+        }
+    }
+
+    @ViewBuilder
+    private var blockViews: some View {
         ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
             if case .codeBlock(_, let code) = block {
                 // Scrolls sideways rather than wrapping, exactly as `MarkdownContentView` draws

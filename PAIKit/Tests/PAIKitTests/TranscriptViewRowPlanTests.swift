@@ -258,10 +258,10 @@ final class TranscriptViewRowPlanTests: XCTestCase {
     }
 
     /// The Thinking card's own block is `.preformattedText`, never `.codeBlock` — the exact
-    /// distinction that stops it scrolling sideways instead of wrapping. A tool call's own body
-    /// is unaffected and still gets `.codeBlock`.
+    /// distinction that stops it scrolling sideways instead of wrapping. A multi-line command
+    /// keeps the fence, because its line structure is part of what it says.
     func testThinkingCardBlockIsPreformattedTextNotCodeBlock() {
-        let calls = [ToolCall(id: "1", name: "Bash", input: ["command": .string("ls")])]
+        let calls = [ToolCall(id: "1", name: "Bash", input: ["command": .string("ls \\\n  -la")])]
         let msg = message(type: .assistant, thinking: "Let me check.", toolCalls: calls)
 
         let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealAll)
@@ -271,7 +271,25 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         }
         XCTAssertEqual(text, "Let me check.")
         guard case .codeBlock = cards[1].blocks.first else {
-            return XCTFail("expected the tool call's own block to stay .codeBlock")
+            return XCTFail("expected a multi-line command's block to stay .codeBlock")
+        }
+    }
+
+    /// A command on one line has no line structure to preserve, so it wraps like prose and two
+    /// lines of it reach the screen instead of the first screenful of one. The same command with a
+    /// newline in it keeps the fence — the one input that tells the two apart.
+    func testASingleLineCommandWrapsAndAMultiLineOneKeepsItsFence() {
+        func block(forCommand command: String) -> MarkdownBlock? {
+            let calls = [ToolCall(id: "1", name: "Bash", input: ["command": .string(command)])]
+            return TranscriptRowPlan.cards(for: message(type: .assistant, toolCalls: calls), isRevealed: revealNone)
+                .first?.blocks.first
+        }
+
+        guard case .preformattedText = block(forCommand: "git log --oneline -20 -- some/long/path") else {
+            return XCTFail("expected a one-line command to wrap")
+        }
+        guard case .codeBlock = block(forCommand: "git log \\\n  --oneline") else {
+            return XCTFail("expected a multi-line command to keep its fence")
         }
     }
 

@@ -60,7 +60,7 @@ final class MessageDisplayTests: XCTestCase {
         let text = MessageDisplay.displayText(
             of: .edit(filePath: "/a.swift", oldString: "one\ntwo", newString: "three\nfour"))
 
-        XCTAssertEqual(text, "/a.swift\n- one\n- two\n+ three\n+ four")
+        XCTAssertEqual(text, "- one\n- two\n+ three\n+ four")
     }
 
     /// A line unchanged between old and new must appear once, not duplicated under both `-` and
@@ -70,13 +70,59 @@ final class MessageDisplayTests: XCTestCase {
         let text = MessageDisplay.displayText(
             of: .edit(filePath: "/a.swift", oldString: "keep\nold", newString: "keep\nnew"))
 
-        XCTAssertEqual(text, "/a.swift\nkeep\n- old\n+ new")
+        XCTAssertEqual(text, "keep\n- old\n+ new")
     }
 
-    func testEditDisplayTextWithNeitherStringIsJustTheFilePath() {
+    /// The path is the card's header, never part of its body — which is the point of lifting it
+    /// out: a diff scrolls sideways, and the first thing a reader needs is the one thing that
+    /// scrolls out of reach.
+    func testTheEditedPathIsTheHeaderAndNotInTheBody() {
+        let spec = MessageDisplay.ToolCallSpec.edit(filePath: "~/a.swift", oldString: "old", newString: "new")
+
+        XCTAssertEqual(MessageDisplay.headerPath(of: spec), "~/a.swift")
+        XCTAssertFalse(MessageDisplay.displayText(of: spec).contains("a.swift"))
+    }
+
+    /// An edit with nothing to diff has an empty body — the header alone says what happened.
+    func testEditDisplayTextWithNeitherStringIsEmpty() {
         let text = MessageDisplay.displayText(of: .edit(filePath: "/a.swift", oldString: nil, newString: nil))
 
-        XCTAssertEqual(text, "/a.swift")
+        XCTAssertEqual(text, "")
+    }
+
+    /// A write's content is its body and its path is its header, the same split an edit gets.
+    func testAWritesPathIsItsHeaderAndItsContentIsItsBody() {
+        let spec = MessageDisplay.ToolCallSpec.write(filePath: "~/b.txt", content: "hello")
+
+        XCTAssertEqual(MessageDisplay.headerPath(of: spec), "~/b.txt")
+        XCTAssertEqual(MessageDisplay.displayText(of: spec), "hello")
+    }
+
+    // MARK: - Home abbreviation
+
+    /// Both shapes a Unix home takes, and only at the front — a `/home/` deeper in a path is a
+    /// directory somebody named, not a home.
+    func testHomeIsAbbreviatedOnlyAtTheStartOfAPath() {
+        XCTAssertEqual(MessageDisplay.abbreviatingHome("/home/frederik/Programming/x"), "~/Programming/x")
+        XCTAssertEqual(MessageDisplay.abbreviatingHome("/Users/frederik/Code/y"), "~/Code/y")
+        XCTAssertEqual(MessageDisplay.abbreviatingHome("/home/frederik"), "~")
+        XCTAssertEqual(MessageDisplay.abbreviatingHome("/srv/home/frederik/x"), "/srv/home/frederik/x")
+        XCTAssertEqual(MessageDisplay.abbreviatingHome("/etc/passwd"), "/etc/passwd")
+    }
+
+    /// The abbreviation happens where a path is read off the wire, so every spec that carries one
+    /// gets it — a path that reached the screen unshortened in one tool and shortened in another
+    /// is two different answers to the same question.
+    func testAPathIsAbbreviatedWhereverACallCarriesOne() {
+        let edit = MessageDisplay.spec(for: call("Edit", ["file_path": .string("/home/frederik/a.swift")]))
+        XCTAssertEqual(MessageDisplay.headerPath(of: edit), "~/a.swift")
+
+        let read = MessageDisplay.spec(for: call("Read", ["file_path": .string("/home/frederik/a.swift")]))
+        XCTAssertEqual(MessageDisplay.displayText(of: read), "~/a.swift")
+
+        let grep = MessageDisplay.spec(
+            for: call("Grep", ["pattern": .string("x"), "path": .string("/home/frederik/src")]))
+        XCTAssertEqual(MessageDisplay.displayText(of: grep), "/x/ in ~/src")
     }
 
     // MARK: - Line-number stripping

@@ -106,7 +106,7 @@ public enum MessageDisplay {
 
         case "read":
             if let path = input.string("file_path") {
-                var parts = [path]
+                var parts = [abbreviatingHome(path)]
                 if let offset = input.number("offset") { parts.append("from line \(integer(offset))") }
                 if let limit = input.number("limit") { parts.append("\(integer(limit)) lines") }
                 return .inline(text: parts.joined(separator: " "))
@@ -115,7 +115,7 @@ public enum MessageDisplay {
         case "edit", "multiedit":
             if let path = input.string("file_path") {
                 return .edit(
-                    filePath: path,
+                    filePath: abbreviatingHome(path),
                     oldString: input.string("old_string"),
                     newString: input.string("new_string")
                 )
@@ -123,7 +123,7 @@ public enum MessageDisplay {
 
         case "write":
             if let path = input.string("file_path") {
-                return .write(filePath: path, content: input.string("content"))
+                return .write(filePath: abbreviatingHome(path), content: input.string("content"))
             }
 
         // A spawn is the one call whose *identity* is worth more than its arguments: which agent,
@@ -142,14 +142,14 @@ public enum MessageDisplay {
         case "grep":
             var parts: [String] = []
             if let pattern = input.string("pattern") { parts.append("/\(pattern)/") }
-            if let path = input.string("path") { parts.append("in \(path)") }
+            if let path = input.string("path") { parts.append("in \(abbreviatingHome(path))") }
             if let glob = input.string("glob") { parts.append("(\(glob))") }
             return .inline(text: parts.joined(separator: " "))
 
         case "glob":
             var parts: [String] = []
             if let pattern = input.string("pattern") { parts.append(pattern) }
-            if let path = input.string("path") { parts.append("in \(path)") }
+            if let path = input.string("path") { parts.append("in \(abbreviatingHome(path))") }
             return .inline(text: parts.joined(separator: " "))
 
         case "websearch":
@@ -205,26 +205,55 @@ public enum MessageDisplay {
         }
     }
 
-    /// Every string a ``ToolCallSpec`` puts on screen, in render order.
+    /// A home directory the transcript's own machine wrote, shortened the way a shell prompt does.
+    ///
+    /// The paths in a transcript belong to whatever machine ran the session, never to the device
+    /// reading it, so this is a text substitution over the two shapes a Unix home takes rather
+    /// than anything resolved from the current process. It applies wherever a path reaches the
+    /// screen, so what a reader searches for is what they can see.
+    public static func abbreviatingHome(_ path: String) -> String {
+        for root in ["/home/", "/Users/"] where path.hasPrefix(root) {
+            let rest = path.dropFirst(root.count)
+            guard let slash = rest.firstIndex(of: "/") else { return "~" }
+            return "~" + rest[slash...]
+        }
+        return path
+    }
+
+    /// The file a call acts on, drawn above its body instead of as the body's first line.
+    ///
+    /// A path is the one part of an edit or a write that is worth reading whatever else the row is
+    /// showing, and it is exactly the part a sideways-scrolling diff hides: the box starts at
+    /// column zero of a line that is usually longer than a phone. So it leaves the body entirely
+    /// and becomes the card's own header, which wraps and is never clipped.
+    public static func headerPath(of spec: ToolCallSpec) -> String? {
+        switch spec {
+        case .edit(let filePath, _, _): return filePath
+        case .write(let filePath, _): return filePath
+        default: return nil
+        }
+    }
+
+    /// Every string a ``ToolCallSpec`` puts on screen *in its body*, in render order — a path that
+    /// ``headerPath(of:)`` lifts out is not part of this.
     public static func displayText(of spec: ToolCallSpec) -> String {
         switch spec {
         case .bash(let command):
             return command
         case .inline(let text):
             return text
-        case .edit(let filePath, let oldString, let newString):
-            guard oldString != nil || newString != nil else { return filePath }
+        case .edit(_, let oldString, let newString):
+            guard oldString != nil || newString != nil else { return "" }
             let diffLines = EditDiff.lines(old: oldString ?? "", new: newString ?? "")
-            let rendered = diffLines.map { line -> String in
+            return diffLines.map { line -> String in
                 switch line {
                 case .context(let text): return text
                 case .removed(let text): return "- \(text)"
                 case .added(let text): return "+ \(text)"
                 }
-            }
-            return ([filePath] + rendered).joined(separator: "\n")
-        case .write(let filePath, let content):
-            return [filePath, content].compactMap { $0 }.joined(separator: "\n")
+            }.joined(separator: "\n")
+        case .write(_, let content):
+            return content ?? ""
         case .agent(let headline, let description, let prompt):
             return [headline, description, prompt].compactMap { $0 }.filter { !$0.isEmpty }
                 .joined(separator: "\n")

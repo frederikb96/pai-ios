@@ -27,10 +27,20 @@ public enum TranscriptRowMetrics {
     /// One activity row's own vertical padding, per edge. Small on purpose: this is the number
     /// that decides whether a screenful of machinery is four rows or fourteen.
     public static let activityRowPadding: Double = 3
-    /// The right-hand column holding a row's timestamp. It shares the row rather than occupying a
-    /// line of its own — a timestamp on its own line costs one line per row, which over a session
-    /// is more vertical space than every tool result put together.
-    public static let timeColumnWidth: Double = 38
+    /// What the removed time column keeps back, for the two registers that are not a bubble.
+    ///
+    /// Half of the width the column and its gap used to occupy. A bubble takes the whole of it —
+    /// its right edge is exactly where the time used to sit, which is what makes it read as
+    /// addressed from that edge — while activity rows and prose keep this much as a margin, since
+    /// dense monospace running to the screen's edge is harder to read than the width is worth.
+    public static let contentTrailingGutter: Double = 22
+    /// The padding above and below a time separator's own line.
+    ///
+    /// Time is a separator between stretches of a session rather than a column beside every row: a
+    /// fixed gutter costs its width on every single row, on the narrowest screen, to answer a
+    /// question a reader asks a few times a session. One line every several minutes costs almost
+    /// nothing and reads better, and what it gives back is the width itself.
+    public static let timeSeparatorPadding: Double = 6
 
     // MARK: - Prose and bubbles
 
@@ -115,6 +125,9 @@ public struct MeasuredCard: Sendable, Equatable {
     public let height: Double
     /// The content's height after the visual cap — what the view must clip to.
     public let contentHeight: Double
+    /// The header line's own height, `0` when the card has none. Outside ``contentHeight``,
+    /// because the preview's clamp must not be able to reach it.
+    public let headerHeight: Double
     /// Whether anything was cut: either source lines were sliced away, or the visual cap bit.
     /// The trailer exists if and only if this is true.
     public let isTruncated: Bool
@@ -123,7 +136,7 @@ public struct MeasuredCard: Sendable, Equatable {
 
     public init(
         plan: TranscriptCardPlan, offset: Double, height: Double, contentHeight: Double, isTruncated: Bool,
-        blockOffsets: [Double]
+        blockOffsets: [Double], headerHeight: Double = 0
     ) {
         self.plan = plan
         self.offset = offset
@@ -131,6 +144,7 @@ public struct MeasuredCard: Sendable, Equatable {
         self.contentHeight = contentHeight
         self.isTruncated = isTruncated
         self.blockOffsets = blockOffsets
+        self.headerHeight = headerHeight
     }
 }
 
@@ -156,17 +170,28 @@ public enum TranscriptRowLayout {
         isRevealed: (Int) -> Bool,
         measurer: some BlockMeasuring,
         cache: BlockHeightCache,
-        metrics: MessageLayoutMetrics
+        metrics: MessageLayoutMetrics,
+        hasTimeSeparator: Bool = false
     ) -> [MeasuredCard] {
         let cards = TranscriptRowPlan.cards(for: message, isRevealed: isRevealed)
         var measured: [MeasuredCard] = []
         measured.reserveCapacity(cards.count)
 
-        var cursor: Double = 0
+        var cursor: Double = hasTimeSeparator ? timeSeparatorHeight(metrics: metrics) : 0
         for card in cards {
+            let cardWidth = contentWidth(for: card.register, cellWidth: width)
             let content = MessageContentLayoutComposer.layout(
-                of: card.blocks, width: contentWidth(for: card.register, cellWidth: width),
+                of: card.blocks, width: cardWidth,
                 environment: environment, metrics: metrics, measurer: measurer, cache: cache)
+
+            // Measured on its own, at the body's width, through the same wrapping block kind the
+            // view draws it as — so a path too long for one line costs exactly the lines it takes.
+            let headerHeight =
+                card.header.map { header in
+                    cache.height(
+                        of: .preformattedText(header), width: cardWidth, environment: environment,
+                        measurer: measurer) + metrics.blockSpacing
+                } ?? 0
 
             let cap = visualCap(for: card, metrics: metrics)
             let clamped = cap.map { min(content.totalHeight, $0) } ?? content.totalHeight
@@ -177,16 +202,25 @@ public enum TranscriptRowLayout {
                 card.preview.hiddenLines > 0 || card.preview.wasTrimmed
                 || (cap != nil && content.totalHeight > clamped)
 
-            let height = cardHeight(
-                of: card, content: clamped, isTruncated: isTruncated, cellWidth: width, metrics: metrics)
+            let height =
+                cardHeight(
+                    of: card, content: clamped, isTruncated: isTruncated, cellWidth: width, metrics: metrics)
+                + headerHeight
 
             measured.append(
                 MeasuredCard(
                     plan: card, offset: cursor, height: height, contentHeight: clamped,
-                    isTruncated: isTruncated, blockOffsets: content.blocks.map(\.offset)))
+                    isTruncated: isTruncated, blockOffsets: content.blocks.map(\.offset),
+                    headerHeight: headerHeight))
             cursor += height
         }
         return measured
+    }
+
+    /// The height one time separator occupies above the row that carries it — one line of the same
+    /// caption font a trailer draws in, with its own padding either side.
+    public static func timeSeparatorHeight(metrics: MessageLayoutMetrics) -> Double {
+        metrics.trailerLineHeight + 2 * TranscriptRowMetrics.timeSeparatorPadding
     }
 
     /// `nil` for a message whose plan is empty — a route that renders nothing at all. A caller
@@ -199,13 +233,16 @@ public enum TranscriptRowLayout {
         isRevealed: (Int) -> Bool,
         measurer: some BlockMeasuring,
         cache: BlockHeightCache,
-        metrics: MessageLayoutMetrics
+        metrics: MessageLayoutMetrics,
+        hasTimeSeparator: Bool = false
     ) -> Double? {
         let cards = measure(
             for: message, width: width, environment: environment, isRevealed: isRevealed, measurer: measurer,
-            cache: cache, metrics: metrics)
+            cache: cache, metrics: metrics, hasTimeSeparator: hasTimeSeparator)
         guard !cards.isEmpty else { return nil }
-        return cards.reduce(0) { $0 + $1.height }
+        // The separator sits above the first card rather than inside any of them, so it is added
+        // here rather than summed — `measure` only shifts the cards' own offsets past it.
+        return cards.reduce(hasTimeSeparator ? timeSeparatorHeight(metrics: metrics) : 0) { $0 + $1.height }
     }
 
     /// The vertical distance from the top of `message`'s row to the top of one block inside one
@@ -230,15 +267,18 @@ public enum TranscriptRowLayout {
         isRevealed: (Int) -> Bool,
         measurer: some BlockMeasuring,
         cache: BlockHeightCache,
-        metrics: MessageLayoutMetrics
+        metrics: MessageLayoutMetrics,
+        hasTimeSeparator: Bool = false
     ) -> Double? {
         let cards = measure(
             for: message, width: width, environment: environment, isRevealed: isRevealed, measurer: measurer,
-            cache: cache, metrics: metrics)
+            cache: cache, metrics: metrics, hasTimeSeparator: hasTimeSeparator)
         guard cards.indices.contains(cardIndex) else { return nil }
 
         let card = cards[cardIndex]
-        var total = card.offset + chromeBeforeContent(of: card.plan, metrics: metrics)
+        // `card.offset` already carries the separator; the header is chrome inside the card, drawn
+        // between the label line and the body, so a hit in the body sits past it.
+        var total = card.offset + chromeBeforeContent(of: card.plan, metrics: metrics) + card.headerHeight
         if card.blockOffsets.indices.contains(blockIndex) {
             total += card.blockOffsets[blockIndex]
         }
@@ -258,9 +298,13 @@ public enum TranscriptRowLayout {
         case .me:
             return Double(lines) * metrics.proseLineHeight + TranscriptRowMetrics.bubbleVerticalPadding
         case .activity:
-            // A code block's padding sits inside the box it draws, so the cap has to allow for it
-            // or the clip eats a line of text rather than the slack under it.
-            return Double(lines) * metrics.activityLineHeight + 2 * TranscriptRowMetrics.codeBlockPadding
+            // A fenced block's padding sits inside the box it draws, so the cap has to allow for it
+            // or the clip eats a line of text rather than the slack under it. A wrapping body draws
+            // no box at all, so allowing for one there would show most of a line the row claims is
+            // hidden.
+            let isFenced = card.blocks.contains { if case .codeBlock = $0 { return true } else { return false } }
+            return Double(lines) * metrics.activityLineHeight
+                + (isFenced ? 2 * TranscriptRowMetrics.codeBlockPadding : 0)
         }
     }
 
@@ -297,24 +341,24 @@ public enum TranscriptRowLayout {
                 0,
                 cellWidth - TranscriptRowMetrics.activityHorizontalInset - TranscriptRowMetrics.railWidth
                     - TranscriptRowMetrics.markerColumnWidth - TranscriptRowMetrics.gridGap
-                    - TranscriptRowMetrics.gridGap - TranscriptRowMetrics.timeColumnWidth
-                    - TranscriptRowMetrics.activityTrailingInset)
+                    - TranscriptRowMetrics.gridGap - TranscriptRowMetrics.activityTrailingInset
+                    - TranscriptRowMetrics.contentTrailingGutter)
         case .prose:
             // Full width, deliberately: Claude's reply is the longest text on screen and a
             // container around it only narrows what there is to read.
             return max(
                 0,
-                cellWidth - TranscriptRowMetrics.activityHorizontalInset - TranscriptRowMetrics.gridGap
-                    - TranscriptRowMetrics.timeColumnWidth - TranscriptRowMetrics.activityTrailingInset)
+                cellWidth - TranscriptRowMetrics.activityHorizontalInset
+                    - TranscriptRowMetrics.activityTrailingInset - TranscriptRowMetrics.contentTrailingGutter)
         case .me:
             // The row's own chrome first — a bubble sits inside `MeRowView`, which already spent
-            // the inset, the gap and the time column — and only then the bubble's own gutter and
-            // padding. Measuring at the bubble's share of the WHOLE cell wraps the text wider than
-            // it draws, which is a row measured shorter than it is.
+            // the insets — and only then the bubble's own gutter and padding. Measuring at the
+            // bubble's share of the WHOLE cell wraps the text wider than it draws, which is a row
+            // measured shorter than it is.
             return max(
                 0,
-                cellWidth - TranscriptRowMetrics.activityHorizontalInset - TranscriptRowMetrics.gridGap
-                    - TranscriptRowMetrics.timeColumnWidth - TranscriptRowMetrics.activityTrailingInset
+                cellWidth - TranscriptRowMetrics.activityHorizontalInset
+                    - TranscriptRowMetrics.activityTrailingInset
                     - TranscriptRowMetrics.bubbleGutter - 2 * TranscriptRowMetrics.bubbleHorizontalPadding)
         }
     }

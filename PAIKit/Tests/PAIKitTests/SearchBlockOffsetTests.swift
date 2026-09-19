@@ -68,7 +68,7 @@ final class SearchBlockOffsetTests: XCTestCase {
     /// The second card in a turn must be pushed down by the first card's own full height —
     /// proving the preceding-cards loop, not just one card's own chrome.
     func testBlockOffsetInASecondCardAccountsForTheFirstCardsWholeHeight() {
-        let cardSensitiveText = text(linesAtWidth: 400 - 90)
+        let cardSensitiveText = text(linesAtWidth: 400 - 74)
         let msg = message(type: .assistant, content: "Reply.", thinking: cardSensitiveText)
         let measurer = StubBlockMeasurer()
         let cache = BlockHeightCache()
@@ -80,7 +80,7 @@ final class SearchBlockOffsetTests: XCTestCase {
             measurer: measurer, cache: cache, metrics: metrics)
 
         let thinkingContent = MessageContentLayoutComposer.layout(
-            of: [.preformattedText(cardSensitiveText)], width: 400 - 90, environment: environment,
+            of: [.preformattedText(cardSensitiveText)], width: 400 - 74, environment: environment,
             metrics: metrics, measurer: measurer, cache: cache
         ).totalHeight
         let thinkingHeight = 3 + 17 + thinkingContent + 3

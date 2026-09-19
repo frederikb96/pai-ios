@@ -15,14 +15,14 @@ import Foundation
 extension PaiFixtures {
 
     /// `GET /api/session/{id}/messages?tail=true` for the session above — the 52 curated rows
-    /// below (ids 9001...9052, a private range chosen only to be easy to spot in a debugger),
+    /// below (ids 9001...9054, a private range chosen only to be easy to spot in a debugger),
     /// followed by ``fillerTranscriptEntries``. `PaiFixtureURLProtocol` slices this whole array by
     /// `tail`/`before_id`/`after_id`/`around_id`, matching the real endpoint's own paging — a
     /// request that ignores every query parameter is what this used to be, and it could only ever
     /// answer the ordinary open, never a jump into unloaded history.
     public static let transcript: String = "[\n" + curatedTranscriptEntries + ",\n" + fillerTranscriptEntries + "\n]"
 
-    /// The 52 hand-written rows: every `Message.type`, every system `subtype`, both legacy row
+    /// The 54 hand-written rows: every `Message.type`, every system `subtype`, both legacy row
     /// shapes, every tool family, and the markdown stress cases — see this file's own doc comment.
     private static let curatedTranscriptEntries: String = #"""
           { "id": 9001, "session_id": "305df4d3-1554-4fc3-be04-39a354a9e619", "type": "user", "subtype": null,
@@ -352,10 +352,22 @@ extension PaiFixtures {
             "thinking": null, "tool_calls": null, "tool_result": null, "hook_summary": null,
             "tokens": { "input_tokens": 1204, "output_tokens": 312, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 18344,
                         "cache_creation": { "ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 0 } },
-            "created_at": "2026-08-29T09:41:55Z" }
+            "created_at": "2026-08-29T09:41:55Z" },
+
+          { "id": 9053, "session_id": "305df4d3-1554-4fc3-be04-39a354a9e619", "type": "system", "subtype": "compact_summary",
+            "timestamp": "2026-08-29T09:42:05Z",
+            "content": "1. **Primary Request and Intent:**\n\nThe reader asked for a redesign of the session transcript in both clients, with the density of a terminal and none of its appearance. Every card renders its own kind rather than a shared slab.\n\n- Remove the per-type expand settings entirely, and replace them with one automatic presentation.\n- Never clip anything without saying so, and never hide the affordance that gets it back.\n- Do not regress virtualized scrolling or deep links into a message.\n\n2. **Key Technical Concepts:**\n\n- One message is one row is one identity; the whole scroll machinery is keyed on it.\n- A row's height is measured, never estimated, and the drawing view reads the same measurement.\n- Two bounds on a preview: a source-line slice and a visual line cap.\n\n## What the measurement showed\n\nForty real messages occupied 2,516 points and carried 790 characters of text. Two thirds of that height was chrome whose entire content was the name of a tool.\n\n### Where it went wrong\n\nA height cap applied to a body of several blocks landed on each block instead of on the stack, so every paragraph was given the whole allowance to itself and the row drew many times its reserved height.\n\n> The symptom was text painted over neighbouring rows, which reads as corruption rather than as a row that is too tall.\n\n3. **Files and Code Sections:**\n\n- The row plan, which decides how many cards a message becomes.\n- The layout, which is the single measurement pass both the height and the drawing read.\n- The card views, one per register.\n\n4. **Errors and fixes:**\n\nA stale build directory served a bundle missing the branch's last commit, so an evening of browser checks reported green against code that was not in it.",
+            "thinking": null, "tool_calls": null, "tool_result": null, "hook_summary": null, "tokens": null,
+            "created_at": "2026-08-29T09:42:05Z" },
+
+          { "id": 9054, "session_id": "305df4d3-1554-4fc3-be04-39a354a9e619", "type": "assistant", "subtype": null,
+            "timestamp": "2026-08-29T09:42:15Z",
+            "content": "**Both halves are done.** The transcript now shows what happened rather than that something happened, and the numbers came out better than the design predicted.\n\nWhat changed, in order of how much it matters:\n\n- A command shows the command and the start of its output, instead of a box containing the word `Bash`.\n- An edit renders as a real diff with its file path above it, wrapped and always readable.\n- A reply is prose on the page rather than a bubble, at the full width of the row.\n\nThe measurement, on one pinned session with 450 rows loaded, is **8.4 times more text for 24% more height per row**. The height check agrees to a third of a point across sixty rows, which is the number that actually matters: a row drawn taller than its cell is what drags the reader around.\n\n```swift\nlet cap = visualCap(for: card, metrics: metrics)\nlet clamped = cap.map { min(content.totalHeight, $0) } ?? content.totalHeight\n```\n\nOne thing left for you: install the build. Everything else is shipped.",
+            "thinking": null, "tool_calls": null, "tool_result": null, "hook_summary": null, "tokens": null,
+            "created_at": "2026-08-29T09:42:15Z" }
         """#
 
-    /// Generated padding after the curated 52 — ids 9053...9900, plain `user`/`assistant`
+    /// Generated padding after the curated 54 — ids 9055...9902, plain `user`/`assistant`
     /// exchanges with no coverage the curated rows do not already have. Only the corpus SIZE is
     /// its job: a jump target has to be separable from the loaded tail window by more than one
     /// `around_id` page's own width for `locate` to ever take the `.replaced` path rather than the
@@ -369,14 +381,14 @@ extension PaiFixtures {
     /// (the full-screen image viewer's own) cannot rely on scrolling there and fetches the
     /// attachment directly instead, by path, independent of message pagination.
     private static let fillerTranscriptEntries: String = {
-        // Five seconds after the curated set's own last timestamp ("2026-08-29T09:41:55Z") —
+        // Five seconds after the curated set's own last timestamp ("2026-08-29T09:42:15Z") —
         // parsed rather than a second hand-typed literal, so the two can never quietly drift apart.
-        let curatedEnd = transcriptTimestampFormatter.date(from: "2026-08-29T09:41:55Z") ?? Date()
+        let curatedEnd = transcriptTimestampFormatter.date(from: "2026-08-29T09:42:15Z") ?? Date()
         let base = curatedEnd.addingTimeInterval(5)
         var parts: [String] = []
         parts.reserveCapacity(848)
         for offset in 0..<848 {
-            let id = 9053 + offset
+            let id = 9055 + offset
             let isUser = offset.isMultiple(of: 2)
             let type = isUser ? "user" : "assistant"
             let timestamp = transcriptTimestampFormatter.string(from: base.addingTimeInterval(TimeInterval(offset * 5)))

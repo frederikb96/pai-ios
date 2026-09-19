@@ -121,10 +121,14 @@ public struct TranscriptCardPlan: Equatable, Sendable {
     /// rather than measured by some separate path, so every card — markdown or not — goes through
     /// the one measured layout this package already proves.
     public let blocks: [MarkdownBlock]
+    /// A line drawn above the body and never bounded by the preview — the file an edit or a write
+    /// acts on. It wraps rather than scrolling, so it is readable whatever the body is doing, and
+    /// it is measured on its own so the clamp over the body cannot reach it.
+    public let header: String?
 
     public init(
         kind: Kind, register: Register, tone: Tone = .normal, preview: Preview, isRevealed: Bool,
-        blocks: [MarkdownBlock]
+        blocks: [MarkdownBlock], header: String? = nil
     ) {
         self.kind = kind
         self.register = register
@@ -132,6 +136,7 @@ public struct TranscriptCardPlan: Equatable, Sendable {
         self.preview = preview
         self.isRevealed = isRevealed
         self.blocks = blocks
+        self.header = header
     }
 }
 
@@ -327,9 +332,13 @@ public enum TranscriptRowPlan {
 
         switch spec {
         case .bash:
+            // A command written on one line is prose-shaped: nothing about where it breaks carries
+            // meaning, so it wraps and two lines of it are on screen instead of the first
+            // sixty characters. A multi-line command is the opposite — its line structure IS the
+            // command — so it keeps the sideways-scrolling box that preserves it.
             return clampedActivityCard(
                 kind: .toolCall(call), text: text, visual: MessageDisplay.Preview.command.visual,
-                revealed: revealed)
+                revealed: revealed, wraps: !text.contains("\n"))
         case .inline:
             // Never bounded: these are the arguments themselves — a path, a pattern, a query — and
             // they are short by construction. A path is also the one thing here where the end
@@ -340,10 +349,12 @@ public enum TranscriptRowPlan {
                 isRevealed: true, blocks: text.isEmpty ? [] : [codeBlock(text)])
         case .edit:
             return slicedActivityCard(
-                kind: .toolCall(call), text: text, budget: MessageDisplay.Preview.diff, revealed: revealed)
+                kind: .toolCall(call), text: text, budget: MessageDisplay.Preview.diff, revealed: revealed,
+                header: MessageDisplay.headerPath(of: spec))
         case .write:
             return slicedActivityCard(
-                kind: .toolCall(call), text: text, budget: MessageDisplay.Preview.write, revealed: revealed)
+                kind: .toolCall(call), text: text, budget: MessageDisplay.Preview.write, revealed: revealed,
+                header: MessageDisplay.headerPath(of: spec))
         case .agent:
             return clampedActivityCard(
                 kind: .toolCall(call), text: text, visual: MessageDisplay.Preview.agentPrompt.visual,
@@ -456,7 +467,7 @@ public enum TranscriptRowPlan {
     /// is what keeps one long line from filling a phone after the line slice already passed.
     private static func slicedActivityCard(
         kind: TranscriptCardPlan.Kind, text: String, budget: MessageDisplay.PreviewBudget, revealed: Bool,
-        tone: TranscriptCardPlan.Tone = .normal
+        tone: TranscriptCardPlan.Tone = .normal, header: String? = nil
     ) -> TranscriptCardPlan {
         let slice = MessageDisplay.previewLines(text, budget)
         let shown = revealed ? text : slice.shown
@@ -467,13 +478,19 @@ public enum TranscriptRowPlan {
                 : TranscriptCardPlan.Preview(
                     hiddenLines: slice.hidden, totalLines: slice.total, visualLines: budget.visual),
             isRevealed: revealed,
-            blocks: shown.isEmpty ? [] : [codeBlock(shown)])
+            blocks: shown.isEmpty ? [] : [codeBlock(shown)],
+            header: header)
     }
 
     /// A body with no line structure worth slicing — bounded by its visual limit alone.
+    ///
+    /// `wraps` picks which of the two non-markdown block kinds carries it: a wrapping one, whose
+    /// height is a real layout pass at this width, or the sideways-scrolling fence, whose height is
+    /// its line count. Both are measured by the same path; they differ only in whether a line that
+    /// does not fit becomes another line or becomes scrollable.
     private static func clampedActivityCard(
         kind: TranscriptCardPlan.Kind, text: String, visual: Int, revealed: Bool,
-        tone: TranscriptCardPlan.Tone = .normal
+        tone: TranscriptCardPlan.Tone = .normal, wraps: Bool = false
     ) -> TranscriptCardPlan {
         let shown = revealed ? text : clampHeadroom(text, visualLines: visual)
         return TranscriptCardPlan(
@@ -484,7 +501,7 @@ public enum TranscriptRowPlan {
                     hiddenLines: 0, totalLines: lineCount(text), visualLines: visual,
                     wasTrimmed: shown.count < text.count),
             isRevealed: revealed,
-            blocks: shown.isEmpty ? [] : [codeBlock(shown)])
+            blocks: shown.isEmpty ? [] : [wraps ? .preformattedText(shown) : codeBlock(shown)])
     }
 
     /// Far more text than `visualLines` can ever hold, and not one character more.

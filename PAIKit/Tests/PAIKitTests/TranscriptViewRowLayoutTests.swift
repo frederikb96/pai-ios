@@ -24,20 +24,21 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         String(repeating: "x", count: Int(width) * count)
     }
 
-    /// Sized against 264 = 400 − 60 − 48 − 2×14: a bubble sits inside a row that has already
-    /// spent the leading inset, the gap and the time column (60 together), and only then pays its
-    /// own gutter and horizontal padding. The content width every bubble asserts on — a command's
-    /// own arguments, a relayed prompt. Not Freddy's own prompt, which this file has no test for
-    /// since `UserBubbleView` shares the identical formula.
-    private lazy var bubbleSensitiveText = text(linesAtWidth: 400 - 136)
-    /// Sized against 340 = 400 − 8 (leading inset) − 6 (the gap before the time column) − 38
-    /// (the time column) − 8 (trailing inset): the width Claude's own reply wraps at, which is
-    /// the whole row minus the time gutter and nothing else.
-    private lazy var proseSensitiveText = text(linesAtWidth: 400 - 60)
-    /// Sized against 310 = 340 − 2 (the rail) − 22 (the marker column) − 6 (the gap after it):
-    /// an activity row's body sits inside the grid, so it is narrower than prose by exactly the
-    /// two columns to its left.
-    private lazy var cardSensitiveText = text(linesAtWidth: 400 - 90)
+    /// Sized against 308 = 400 − 8 (leading inset) − 8 (trailing inset) − 48 (gutter) − 2×14
+    /// (the bubble's own padding): a bubble sits inside a row that has already spent both insets,
+    /// and only then pays its own gutter and horizontal padding. A bubble takes the whole trailing
+    /// edge — it is the one register with no content gutter. The content width every bubble
+    /// asserts on — a command's own arguments, a relayed prompt. Not Freddy's own prompt, which
+    /// this file has no test for since `UserBubbleView` shares the identical formula.
+    private lazy var bubbleSensitiveText = text(linesAtWidth: 400 - 92)
+    /// Sized against 362 = 400 − 8 (leading inset) − 8 (trailing inset) − 22 (the content
+    /// gutter): the width Claude's own reply wraps at, which is the whole row minus its insets
+    /// and the margin that keeps text off the screen's edge.
+    private lazy var proseSensitiveText = text(linesAtWidth: 400 - 38)
+    /// Sized against 326 = 362 − 2 (the rail) − 22 (the marker column) − 2×6 (the body's own
+    /// horizontal padding): an activity row's body sits inside the grid, so it is narrower than
+    /// prose by exactly the columns to its left and its own padding.
+    private lazy var cardSensitiveText = text(linesAtWidth: 400 - 74)
 
     private func message(
         type: MessageType,
@@ -103,7 +104,7 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             metrics: metrics)
 
         let content = measuredContentHeight(
-            MarkdownParser.parse(proseSensitiveText), atWidth: 400 - 60, measurer: measurer, cache: cache)
+            MarkdownParser.parse(proseSensitiveText), atWidth: 400 - 38, measurer: measurer, cache: cache)
         // 10 above and 10 below. No timestamp line: the time shares the row's own trailing column.
         XCTAssertEqual(actual, content + 20)
     }
@@ -141,10 +142,39 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             metrics: metrics)
 
         let text = MessageDisplay.displayText(of: MessageDisplay.spec(for: calls[0]))
+        // A one-line command wraps rather than scrolling, so it is the wrapping block kind.
         let content = measuredContentHeight(
-            [.codeBlock(language: nil, code: text)], atWidth: 400 - 90, measurer: measurer, cache: cache)
+            [.preformattedText(text)], atWidth: 400 - 74, measurer: measurer, cache: cache)
         // 3 above and 3 below, plus the one label line the row always reserves.
         XCTAssertEqual(actual, 6 + 17 + content)
+    }
+
+    /// A command written across several lines keeps the sideways-scrolling fence, because its line
+    /// structure is part of the command. The fence draws a box, so its cap allows for that box's
+    /// padding where a wrapping body's does not — the one number that distinguishes the two.
+    func testAMultiLineCommandKeepsTheFenceAndItsBoxPadding() {
+        // The same 400 characters of headroom the wrapping case next door measures, and the same
+        // two laid-out lines — so the ONLY difference between the two expectations is the cap,
+        // which is exactly what this pair is for.
+        let command = String(repeating: "a", count: 200) + "\n" + String(repeating: "b", count: 400)
+        let calls = [ToolCall(id: "1", name: "Bash", input: ["command": .string(command)])]
+        let msg = message(type: .assistant, toolCalls: calls, timestamp: nil)
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        let actual = TranscriptRowLayout.height(
+            for: msg, width: width, environment: environment, isRevealed: revealNone, measurer: measurer, cache: cache,
+            metrics: metrics)
+
+        let content = measuredContentHeight(
+            [.codeBlock(language: nil, code: String(command.prefix(400)))], atWidth: 400 - 74,
+            measurer: measurer, cache: cache)
+        XCTAssertEqual(content, 40)
+        // A fence's cap is two lines of 17 plus its own box padding, 8 above and below — 16 more
+        // than a wrapping body's, which is enough room here that nothing is clipped at all. The
+        // wrapping case with the identical body clamps to 34.
+        let expected = 6 + 17 + content + 15
+        XCTAssertEqual(actual, expected)
     }
 
     /// The same call unrevealed is bounded and pays for a trailer. A body far longer than the
@@ -162,13 +192,17 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             for: msg, width: width, environment: environment, isRevealed: revealNone, measurer: measurer, cache: cache,
             metrics: metrics)
 
-        // 2 × 200 characters of headroom, measured at the grid width, then the trailer the trim
-        // itself earns — one line of the caption font, which is a Dynamic Type height and not a
-        // constant, so the expectation names the one this test's own metrics carry.
+        // 2 × 200 characters of headroom, measured at the grid width — which still lays out
+        // taller than the two-line cap, so the cap is what the row reserves — then the trailer the
+        // trim itself earns, one line of the caption font this test's own metrics carry. A
+        // wrapping body draws no box, so its cap allows for no box padding.
         let content = measuredContentHeight(
-            [.codeBlock(language: nil, code: String(cardSensitiveText.prefix(400)))], atWidth: 400 - 90,
+            [.preformattedText(String(cardSensitiveText.prefix(400)))], atWidth: 400 - 74,
             measurer: measurer, cache: cache)
-        XCTAssertEqual(actual, 6 + 17 + content + 15)
+        XCTAssertEqual(content, 40)
+        let cap: Double = 2 * 17
+        let expected = 6 + 17 + cap + 15
+        XCTAssertEqual(actual, expected)
     }
 
     /// A body that fits inside its cap is not truncated, so it reserves no trailer — the case a
@@ -184,8 +218,89 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             metrics: metrics)
 
         let content = measuredContentHeight(
-            [.codeBlock(language: nil, code: "ls")], atWidth: 400 - 90, measurer: measurer, cache: cache)
+            [.preformattedText("ls")], atWidth: 400 - 74, measurer: measurer, cache: cache)
         XCTAssertEqual(actual, 6 + 17 + content)
+    }
+
+    // MARK: - The header line
+
+    /// An edit's path is measured above the body, at the body's own width, and is not part of what
+    /// the preview bounds — this row's body IS bounded (48 of its 60 diff lines are cut, so it
+    /// reserves a trailer) and the header still costs its full two wrapped lines.
+    func testAnEditsPathIsMeasuredAboveItsBodyAndOutsideTheBound() {
+        let path = "/src/" + String(repeating: "p", count: 500)
+        let old = (0..<30).map { "old\($0)" }.joined(separator: "\n")
+        let new = (0..<30).map { "new\($0)" }.joined(separator: "\n")
+        let calls = [
+            ToolCall(
+                id: "1", name: "Edit",
+                input: [
+                    "file_path": .string(path), "old_string": .string(old), "new_string": .string(new),
+                ])
+        ]
+        let msg = message(type: .assistant, toolCalls: calls, timestamp: nil)
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        let actual = TranscriptRowLayout.height(
+            for: msg, width: width, environment: environment, isRevealed: revealNone, measurer: measurer, cache: cache,
+            metrics: metrics)
+
+        let spec = MessageDisplay.spec(for: calls[0])
+        let shown = MessageDisplay.previewLines(MessageDisplay.displayText(of: spec), MessageDisplay.Preview.diff)
+        XCTAssertGreaterThan(shown.hidden, 0)
+        let body = measuredContentHeight(
+            [.codeBlock(language: nil, code: shown.shown)], atWidth: 400 - 74, measurer: measurer, cache: cache)
+        let header = measuredContentHeight(
+            [.preformattedText(path)], atWidth: 400 - 74, measurer: measurer, cache: cache)
+        // Two wrapped lines, so a header measured at the row's width rather than the body's, or
+        // left inside the bound, comes out a different number.
+        XCTAssertEqual(header, 40)
+        // Padding, label line, header and the gap under it, the bounded body, the trailer.
+        let chrome: Double = 6 + 17 + 4 + 15
+        let expected = chrome + header + body
+        XCTAssertEqual(actual, expected)
+    }
+
+    /// A card with no header pays nothing for one — the case a formula that always added the gap
+    /// would get wrong, and that is every row but two kinds.
+    func testACardWithNoHeaderPaysNothingForOne() {
+        let calls = [ToolCall(id: "1", name: "Bash", input: ["command": .string("ls")])]
+        let msg = message(type: .assistant, toolCalls: calls, timestamp: nil)
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        let cards = TranscriptRowLayout.measure(
+            for: msg, width: width, environment: environment, isRevealed: revealNone, measurer: measurer, cache: cache,
+            metrics: metrics)
+
+        XCTAssertEqual(cards.first?.headerHeight, 0)
+    }
+
+    // MARK: - The time separator
+
+    /// One caption line and its padding, above the first card — and a block offset inside the row
+    /// moves by exactly the same, or a search landing sits a separator too high.
+    func testATimeSeparatorCostsOneCaptionLineAndShiftsWhatIsBelowIt() {
+        let msg = message(type: .assistant, content: proseSensitiveText)
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        func height(separator: Bool) -> Double? {
+            TranscriptRowLayout.height(
+                for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer,
+                cache: cache, metrics: metrics, hasTimeSeparator: separator)
+        }
+        func offset(separator: Bool) -> Double? {
+            TranscriptRowLayout.blockOffset(
+                cardIndex: 0, blockIndex: 0, for: msg, width: width, environment: environment,
+                isRevealed: revealAll, measurer: measurer, cache: cache, metrics: metrics,
+                hasTimeSeparator: separator)
+        }
+
+        // 15 is this test's own caption line height; 6 above and 6 below it.
+        XCTAssertEqual(height(separator: true)! - height(separator: false)!, 15 + 12)
+        XCTAssertEqual(offset(separator: true)! - offset(separator: false)!, 15 + 12)
     }
 
     /// A row whose body is empty still reserves its label line — a system notice with nothing to
@@ -223,7 +338,7 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             [
                 .paragraph(InlineText(runs: [InlineRun(text: cardSensitiveText)])),
                 .paragraph(InlineText(runs: [InlineRun(text: "a short body")])),
-            ], atWidth: 400 - 90, measurer: measurer, cache: cache)
+            ], atWidth: 400 - 74, measurer: measurer, cache: cache)
         // Never bounded, so never a trailer, however long the body is.
         XCTAssertEqual(actual, 6 + 17 + content)
     }
@@ -242,11 +357,11 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             metrics: metrics)
 
         let thinkingContent = measuredContentHeight(
-            [.preformattedText(cardSensitiveText)], atWidth: 400 - 90, measurer: measurer, cache: cache)
+            [.preformattedText(cardSensitiveText)], atWidth: 400 - 74, measurer: measurer, cache: cache)
         let thinkingHeight = 6 + 17 + thinkingContent
         let proseHeight =
             measuredContentHeight(
-                MarkdownParser.parse(proseSensitiveText), atWidth: 400 - 60, measurer: measurer, cache: cache) + 20
+                MarkdownParser.parse(proseSensitiveText), atWidth: 400 - 38, measurer: measurer, cache: cache) + 20
 
         XCTAssertEqual(actual, thinkingHeight + proseHeight)
     }
@@ -287,7 +402,7 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             metrics: metrics)
 
         let content = measuredContentHeight(
-            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 136,
+            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 92,
             measurer: measurer, cache: cache)
         // 12: the row's padding. 10: the text bubble's own vertical padding. 44: two 22pt chips.
         // 12: two 6pt gaps (bubble → first chip, first chip → second).
@@ -311,7 +426,7 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             metrics: metrics)
 
         let content = measuredContentHeight(
-            MarkdownParser.parse(messageContent), atWidth: 400 - 60, measurer: measurer, cache: cache)
+            MarkdownParser.parse(messageContent), atWidth: 400 - 38, measurer: measurer, cache: cache)
         // 20: the prose row's own padding. 44: two 22pt chips. 12: two 6pt gaps.
         XCTAssertEqual(actual, 20 + content + 44 + 12)
     }
@@ -345,7 +460,7 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             metrics: metrics)
 
         let content = measuredContentHeight(
-            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 136,
+            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 92,
             measurer: measurer,
             cache: cache)
         // 12: the row's padding. 16 + 4: the command-name line's own pinned height, plus the gap
@@ -366,7 +481,7 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             metrics: metrics)
 
         let content = measuredContentHeight(
-            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 136,
+            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 92,
             measurer: measurer,
             cache: cache)
         XCTAssertEqual(actual, 12 + content + 16 + 4 + 10)
@@ -385,7 +500,7 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             metrics: metrics)
 
         let content = measuredContentHeight(
-            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 136,
+            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 92,
             measurer: measurer,
             cache: cache)
         XCTAssertEqual(actual, 12 + content + 16 + 4 + 10)
@@ -425,7 +540,7 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             metrics: metrics)
 
         let content = measuredContentHeight(
-            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 136,
+            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 92,
             measurer: measurer,
             cache: cache)
         // content + label chrome (16 + 4) + bubble padding (10), then two 22pt chips and two 6pt

@@ -54,6 +54,10 @@ private struct TranscriptRow {
     let id: Int
     let message: Message
     let height: Double
+    /// The time drawn above this row, or `nil` for the rows between. Decided once, when the window
+    /// is measured, and read by both the height and the cell — a row that reserves a separator and
+    /// then draws none is a gap, and the reverse is an overlap.
+    let timeSeparator: String?
 }
 
 /// The transcript list: a `UICollectionView` on ``TranscriptLayout``, owning the bootstrap/SSE
@@ -787,14 +791,23 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
 
         var newRows: [TranscriptRow] = []
         newRows.reserveCapacity(displayMessages.count)
+        // Against the previous message that actually produced a row, not the previous message in
+        // the store: a run of hidden entries between two rows is not a pause in the conversation.
+        var previousTimestamp: String?
+        var isFirstRow = true
         for message in displayMessages {
+            let separator = Self.timeSeparatorText(
+                previousTimestamp: isFirstRow ? nil : previousTimestamp, message: message)
             guard
                 let height = TranscriptRowLayout.height(
                     for: message, width: width, environment: environment,
                     isRevealed: revealResolver(forMessageId: message.id), measurer: measurer,
-                    cache: cache, metrics: metrics)
+                    cache: cache, metrics: metrics, hasTimeSeparator: separator != nil)
             else { continue }
-            newRows.append(TranscriptRow(id: message.id, message: message, height: height))
+            newRows.append(
+                TranscriptRow(id: message.id, message: message, height: height, timeSeparator: separator))
+            previousTimestamp = message.timestamp
+            isFirstRow = false
         }
 
         #if DEBUG
@@ -843,15 +856,43 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// Recomputed rather than stored alongside the row: every block height behind it is already
     /// in `cache`, so this is an array walk, and computing it here means the cell can never draw
     /// from a plan the height was not taken from.
-    private func measuredCards(for message: Message) -> [MeasuredCard] {
+    private func measuredCards(for message: Message, hasTimeSeparator: Bool) -> [MeasuredCard] {
         let width = measurementWidth()
         guard width > 0 else { return [] }
         let environment = currentEnvironment()
         return TranscriptRowLayout.measure(
             for: message, width: width, environment: environment,
             isRevealed: revealResolver(forMessageId: message.id), measurer: measurer, cache: cache,
-            metrics: Self.layoutMetrics(for: environment))
+            metrics: Self.layoutMetrics(for: environment), hasTimeSeparator: hasTimeSeparator)
     }
+
+    /// The label a row draws above itself, or `nil` for the rows between two.
+    ///
+    /// Formatting lives here rather than in the package because it is locale- and timezone-bound;
+    /// the *decision* is `TranscriptTimeSeparator`'s, which is a pure function of two timestamps
+    /// and proven on Linux.
+    private static func timeSeparatorText(previousTimestamp: String?, message: Message) -> String? {
+        guard let raw = message.timestamp, let date = IsoTimestamp.date(from: raw) else { return nil }
+        switch TranscriptTimeSeparator.style(previousTimestamp: previousTimestamp, currentTimestamp: raw) {
+        case .none: return nil
+        case .time: return timeOnlyFormatter.string(from: date)
+        case .dateAndTime: return dateAndTimeFormatter.string(from: date)
+        }
+    }
+
+    private static let timeOnlyFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    private static let dateAndTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
 
     /// The line heights a visual clamp is capped by, read off the same fonts the views draw with.
     /// Resolved here rather than written down as constants: a clamp measured from one number and
@@ -1147,7 +1188,8 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             TranscriptRowLayout.blockOffset(
                 cardIndex: hit.cardIndex, blockIndex: hit.blockIndex, for: rows[index].message, width: width,
                 environment: environment, isRevealed: revealResolver(forMessageId: hit.messageId),
-                measurer: measurer, cache: cache, metrics: metrics) ?? 0
+                measurer: measurer, cache: cache, metrics: metrics,
+                hasTimeSeparator: rows[index].timeSeparator != nil) ?? 0
         // A row can run to thousands of points and a code block inside it can run to hundreds of
         // lines on its own — landing on the block's own top still leaves a hit on line 300 far
         // below the viewport. Added only for a hit whose block actually is a code block; every
@@ -1658,16 +1700,17 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                     let measured = TranscriptRowLayout.height(
                         for: row.message, width: width, environment: environment,
                         isRevealed: revealResolver(forMessageId: row.id), measurer: measurer, cache: cache,
-                        metrics: metrics)
+                        metrics: metrics, hasTimeSeparator: row.timeSeparator != nil)
                 else { return nil }
 
                 let content = TranscriptRowContent(
                     message: row.message,
-                    cards: measuredCards(for: row.message),
+                    cards: measuredCards(for: row.message, hasTimeSeparator: row.timeSeparator != nil),
                     metrics: metrics,
                     sessionID: sessionID,
                     apiClient: apiClient,
-                    onToggleReveal: { _ in }
+                    onToggleReveal: { _ in },
+                    timeSeparator: row.timeSeparator
                 )
                 let hosting = UIHostingController(rootView: content.frame(width: width))
                 let rendered = hosting.sizeThatFits(
@@ -1737,6 +1780,12 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell
     {
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: Self.cellReuseIdentifier, for: indexPath)
+        // A cell is exactly as tall as the row was measured to be, and nothing it contains may
+        // paint outside that. Belt to the braces of measuring correctly: a disagreement then shows
+        // as a clipped edge on the row that caused it, never as text drawn over its neighbours,
+        // where it reads as corruption and names the wrong row.
+        cell.contentView.clipsToBounds = true
+        cell.clipsToBounds = true
         guard indexPath.item < rows.count else { return cell }
         let row = rows[indexPath.item]
         let messageId = row.id
@@ -1748,13 +1797,14 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                 let highlights = self.searchHighlights(forMessageId: messageId)
                 TranscriptRowContent(
                     message: row.message,
-                    cards: self.measuredCards(for: row.message),
+                    cards: self.measuredCards(for: row.message, hasTimeSeparator: row.timeSeparator != nil),
                     metrics: Self.layoutMetrics(for: self.currentEnvironment()),
                     sessionID: self.sessionID,
                     apiClient: self.apiClient,
                     onToggleReveal: { [weak self] index in
                         self?.toggleReveal(messageId: messageId, cardIndex: index)
                     },
+                    timeSeparator: row.timeSeparator,
                     highlights: highlights,
                     currentHit: self.currentSearchHit(forMessageId: messageId, among: highlights),
                     // The web rings a deep-link target and the current search hit identically —
