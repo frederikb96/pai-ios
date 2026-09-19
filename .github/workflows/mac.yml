@@ -89,12 +89,6 @@ jobs:
           grep -q '"pai"' /tmp/built-info.txt \
             || { echo '::error::the pai:// URL scheme is missing — every note shortcut opens nothing'; \
                  cat /tmp/built-info.txt; exit 1; }
-          # Call mode's offline wake-word engine loads the trained "computer" classifier from the
-          # bundle and falls back to the transcript while recording when it is missing, so a
-          # model dropped from the copy phase fails quietly on a phone.
-          models=$(find "$app" -name 'computer.onnx' | wc -l | tr -d ' ')
-          [ "$models" -ge 1 ] && find "$app" -name 'thresholds.json' | grep -q . \
-            || { echo "::error::the \"computer\" wake-word model is missing from the bundle (found $models)"; exit 1; }
           # App Store Connect rejects an upload (ITMS-90208) when an embedded framework's
           # MinimumOSVersion is empty or below the app's own, and says so only by email afterwards.
           app_min=$(plutil -extract MinimumOSVersion raw "$app/Info.plist")
@@ -106,7 +100,7 @@ jobs:
             [ -n "$fw_min" ] && { [ "$fw_min" = "$app_min" ] || [ "$lowest" = "$app_min" ]; } \
               || { echo "::error::$plist declares MinimumOSVersion '${fw_min}' below the app's $app_min — App Store Connect will reject the upload"; exit 1; }
           done
-          echo 'background modes, URL scheme, generated keys, wake-word models and framework minimum OS all present'
+          echo 'background modes, URL scheme, generated keys and framework minimum OS all present'
 
       # Runs after the app build on purpose. This step compiles the whole package on a macOS host,
       # which is the only place the UIKit-guarded files compile at all — so it fails for reasons
@@ -154,8 +148,8 @@ jobs:
           app=$(find build/dd/Build/Products -name '*.app' -maxdepth 3 | head -1)
           [ -n "$app" ] || { echo 'build produced no .app'; exit 1; }
           xcrun simctl install "$udid" "$app"
-          # Call mode opens the microphone on entry; without a grant its screenshot is the
-          # system permission prompt rather than the screen.
+          # A call tile's own screenshot arms dictation on entry; without a grant its screenshot
+          # is the system permission prompt rather than the screen.
           xcrun simctl privacy "$udid" grant microphone com.frederikberg.pai
 
       # Fixture mode, the launch-argument router and the debug bridge are all `#if DEBUG` — none

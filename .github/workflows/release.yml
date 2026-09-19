@@ -85,18 +85,6 @@ jobs:
           MARKETING_VERSION: ${{ steps.version.outputs.marketing }}
           CURRENT_PROJECT_VERSION: ${{ steps.version.outputs.build }}
 
-      # Call mode's offline wake-word engine loads the trained "computer" classifier from the
-      # bundle and falls back to the transcript while recording when it is missing — the same
-      # check `Mac` runs against the `.app`, run here against the signed `.ipa` since this
-      # workflow builds no `.app` of its own to grep.
-      - name: Verify the wake-word model is bundled
-        run: |
-          ipa="build/pai-${{ steps.version.outputs.marketing }}.ipa"
-          [ -f "$ipa" ] || { echo "::error::expected ipa not found: $ipa"; exit 1; }
-          unzip -l "$ipa" | grep -q 'computer\.onnx$' \
-            || { echo "::error::the \"computer\" wake-word model is missing from the ipa"; unzip -l "$ipa"; exit 1; }
-          unzip -l "$ipa" | grep -q 'thresholds\.json$' \
-            || { echo "::error::thresholds.json is missing from the ipa"; exit 1; }
 
       # 🚨 UPLOADING IS NOT DISTRIBUTING. The lane sets `skip_waiting_for_build_processing`
       # deliberately — waiting would hold the Mac runner for 10-30 idle minutes — which also means
