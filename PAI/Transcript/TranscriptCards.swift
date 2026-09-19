@@ -422,7 +422,11 @@ struct ActivityRowView<Content: View>: View {
         // others.
         .contentShape(Rectangle())
         .onTapGesture { onToggle?() }
-        .transcriptRowCopy(text: card.plan.blocks.map(\.plainText).joined(separator: "\n"))
+        // The header is part of what this row says, so it is part of what copying it yields —
+        // matching the web, whose own copy text has always carried the path.
+        .transcriptRowCopy(
+            text: ([card.plan.header] + card.plan.blocks.map(\.plainText))
+                .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n"))
     }
 }
 
