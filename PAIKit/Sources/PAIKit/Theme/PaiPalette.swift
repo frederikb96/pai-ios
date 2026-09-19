@@ -156,6 +156,16 @@
         public static let relay500 = Color("relay500")
         public static let relay600 = Color("relay600")
 
+        // MARK: - Assistant (index.css --color-assistant-400/500, what marks Claude's own prose
+        // so it can be found while skimming past the tool rows. A hue nothing else in the
+        // transcript uses is the point of it: blue is what Freddy typed, `relay` is another
+        // session, yellow is a landing and grey is a tool row. The web pairs it with a rail; this
+        // client uses the wash alone, because here the tool rows already own the left rail and a
+        // second one would read as one of them at exactly the speed this is meant to help.
+
+        public static let assistant400 = Color("assistant400")
+        public static let assistant500 = Color("assistant500")
+
         // MARK: - Literal hex from index.css itself (not part of the Tailwind scale at all)
 
         /// Search-hit highlight colours. The web's `::highlight()` rules cannot carry padding or

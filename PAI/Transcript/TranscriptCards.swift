@@ -455,13 +455,29 @@ struct ActivityRowView<Content: View>: View {
 struct ProseRowView<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         content()
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, TranscriptRowMetrics.proseRowPadding)
             .padding(.leading, TranscriptRowMetrics.activityHorizontalInset)
             .padding(
-                .trailing, TranscriptRowMetrics.activityTrailingInset + TranscriptRowMetrics.contentTrailingGutter)
+                .trailing, TranscriptRowMetrics.activityTrailingInset + TranscriptRowMetrics.contentTrailingGutter
+            )
+            // 🚨 The wash is applied AFTER every padding and adds none of its own, so it changes
+            // no geometry whatever: a background paints the frame it is given, and this row's
+            // frame is exactly what `TranscriptRowLayout` already measured. Insetting it would
+            // narrow the text without the measurement knowing, which is the disagreement that
+            // clips a line off the bottom of a row.
+            .background(
+                bubbleFill(
+                    light: PaiPalette.assistant500, dark: PaiPalette.assistant400,
+                    colorScheme: colorScheme
+                )
+                .opacity(colorScheme == .dark ? 0.07 : 0.06),
+                in: RoundedRectangle(cornerRadius: 10)
+            )
     }
 }
 
