@@ -62,6 +62,20 @@ struct ComposerBar: View {
         staging.attachments(for: sessionID)
     }
 
+    /// What the strip actually shows: this device's own staged files, plus whatever another
+    /// device has uploaded onto the same draft — dropping a remote entry the moment this device's
+    /// own upload of it lands, so a file this device just picked never shows twice while its
+    /// upload is still in flight or has already finished.
+    private var displayAttachments: [ComposerAttachment] {
+        let claimedRemoteIds = Set(
+            stagedAttachments.compactMap { attachment -> String? in
+                guard case .uploaded(let id) = attachment.uploadState else { return nil }
+                return id
+            })
+        let remoteOnly = drafts.draft(for: sessionID).attachments.filter { !claimedRemoteIds.contains($0.id) }
+        return stagedAttachments.map(ComposerAttachment.staged) + remoteOnly.map(ComposerAttachment.remote)
+    }
+
     var body: some View {
         Group {
             if let session = currentSession, !SessionListDomain.isDrivable(session) {
@@ -165,8 +179,8 @@ struct ComposerBar: View {
                     .accessibilityIdentifier("voice-failure-message")
             }
 
-            if !stagedAttachments.isEmpty {
-                AttachmentPreviewStrip(attachments: stagedAttachments, onRemove: removeAttachment)
+            if !displayAttachments.isEmpty {
+                AttachmentPreviewStrip(attachments: displayAttachments, onRemove: removeAttachment)
             }
 
             if let sendErrorMessage {
@@ -376,6 +390,7 @@ struct ComposerBar: View {
 
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !stagedAttachments.isEmpty
+            || !drafts.draft(for: sessionID).attachments.isEmpty
     }
 
     private func send(draftStore: DraftStore) {
@@ -399,9 +414,15 @@ struct ComposerBar: View {
             let messageText = draftStore.draft(for: sessionID).displayText.trimmingCharacters(
                 in: .whitespacesAndNewlines)
             let attachmentsSnapshot = stagedAttachments
-            let files = attachmentsSnapshot.map {
-                PaiFileUpload(filename: $0.filename, mimeType: $0.mimeType, data: $0.data)
-            }
+            // An attachment already uploaded onto this draft rides along via
+            // `_claim_draft_attachments` (the backend's own auto-claim, keyed on the draft) —
+            // sending its bytes again here would attach it twice. Only what never made it to the
+            // server (still uploading, or the upload failed) needs to travel inline, as a
+            // fallback rather than the normal path.
+            let files = attachmentsSnapshot.filter { attachment in
+                if case .uploaded = attachment.uploadState { return false }
+                return true
+            }.map { PaiFileUpload(filename: $0.filename, mimeType: $0.mimeType, data: $0.data) }
             if !messageText.isEmpty { settings.saveSentMessage(messageText) }
 
             draftStore.setDraftText(key: sessionID, text: "")
@@ -428,8 +449,21 @@ struct ComposerBar: View {
         }
     }
 
-    private func removeAttachment(_ attachment: StagedAttachment) {
-        staging.remove(id: attachment.id, from: sessionID)
+    /// A staged item still uploading is removed locally only — its upload may still land after
+    /// this, leaving an unclaimed attachment on the draft until the next send claims or a later
+    /// clear discards it, same order of magnitude as any other in-flight request a user cancels
+    /// by leaving. One already on the server, or one another device put there, is removed there
+    /// too, so the chip does not reappear on the next sync.
+    private func removeAttachment(_ attachment: ComposerAttachment) {
+        switch attachment {
+        case .staged(let staged):
+            staging.remove(id: staged.id, from: sessionID)
+            if case .uploaded(let attachmentId) = staged.uploadState {
+                Task { await drafts.removeAttachment(key: sessionID, attachmentId: attachmentId) }
+            }
+        case .remote(let remote):
+            Task { await drafts.removeAttachment(key: sessionID, attachmentId: remote.id) }
+        }
     }
 
     /// The one entry point every attachment source (photo picker, file picker, temporary note,
@@ -448,9 +482,28 @@ struct ComposerBar: View {
         let oversize = staged.filter { $0.currentSize > maxAttachmentBytes }
         let accepted = staged.filter { $0.currentSize <= maxAttachmentBytes }
         staging.append(accepted, to: sessionID)
+        for attachment in accepted { uploadAttachment(attachment) }
         if let first = oversize.first {
             let suffix = oversize.count > 1 ? " and \(oversize.count - 1) other file(s)" : ""
             sendErrorMessage = "\(first.filename)\(suffix) exceeds the 50MB limit and was not attached."
+        }
+    }
+
+    /// Uploads a freshly staged file onto the draft the moment it is picked — the whole point of
+    /// staging server-side rather than only at send, per Freddy's own reason for asking: composing
+    /// one message from several devices at once, seeing an image added from a laptop while still
+    /// dictating on the phone. A failed upload leaves the bytes staged exactly as before this
+    /// existed, so `send(draftStore:)` still has them to fall back to sending inline.
+    private func uploadAttachment(_ attachment: StagedAttachment) {
+        staging.updateUploadState(.uploading, forId: attachment.id, in: sessionID)
+        Task {
+            let file = PaiFileUpload(
+                filename: attachment.filename, mimeType: attachment.mimeType, data: attachment.data)
+            if let uploaded = await drafts.addAttachment(key: sessionID, file: file) {
+                staging.updateUploadState(.uploaded(attachmentId: uploaded.id), forId: attachment.id, in: sessionID)
+            } else {
+                staging.updateUploadState(.failed, forId: attachment.id, in: sessionID)
+            }
         }
     }
 

@@ -4,11 +4,13 @@ import Observation
 /// Composer text kept on the server so every one of Freddy's clients shows the same half-written
 /// message. Swift port of `pai-cloud/web/src/stores/drafts.ts`.
 ///
-/// **What this deliberately does not hold:** staged photo/file attachments. The web keeps those
-/// client-local and never syncs them (`docs/ARCHITECTURE.md` "Drafts": "Attachments are not
-/// synced: they stay in the client that picked them"), and how iOS collects them — a
-/// `PHPickerViewController`/`UIDocumentPickerViewController` result — is app-target state, not
-/// this package's job to model; see the composer block's own scope note.
+/// **What this deliberately does not hold:** a staged attachment's own bytes, before they reach
+/// the server — how iOS collects them (a `PHPickerViewController`/`UIDocumentPickerViewController`
+/// result) is app-target state, not this package's job to model. Once uploaded, though, the
+/// attachment itself is exactly as shared as `text` or a dictation region: `addAttachment`/
+/// `removeAttachment` write through immediately (no debounce — there is no draft of an
+/// attachment, only uploaded or not), and `syncFromServer` folds in whatever another device
+/// added, which is the whole point: composing one message from several devices at once.
 ///
 /// **Local persistence across a relaunch is deliberately not built in.** The web mirrors to
 /// `localStorage` as a convenience only — its own comment: "the server copy is still
@@ -166,6 +168,29 @@ public final class DraftStore {
         entry.thinking = id
         drafts[DraftKey.newSession] = entry
         scheduleFlush(DraftKey.newSession)
+    }
+
+    // MARK: - Attachments
+
+    /// Uploads a staged file onto this draft immediately — not debounced like `setDraftText`,
+    /// since there is nothing to coalesce: each attachment is its own request, made once, the
+    /// moment it is picked. `nil` on failure; the caller (`StagedAttachmentStore`) is what keeps
+    /// the bytes around to fall back to sending inline at message-send time.
+    public func addAttachment(key: String, file: PaiFileUpload) async -> DraftAttachment? {
+        guard let attachment = try? await api.addDraftAttachment(key: key, file: file) else { return nil }
+        var entry = draft(for: key)
+        entry.attachments.append(attachment)
+        drafts[key] = entry
+        return attachment
+    }
+
+    /// Removes an attachment from this draft — the local copy first, so the chip disappears at
+    /// once rather than waiting on `syncFromServer`'s own poll, then the server's.
+    public func removeAttachment(key: String, attachmentId: String) async {
+        var entry = draft(for: key)
+        entry.attachments.removeAll { $0.id == attachmentId }
+        drafts[key] = entry
+        _ = try? await api.removeDraftAttachment(key: key, attachmentId: attachmentId)
     }
 
     // MARK: - Clearing
@@ -339,17 +364,20 @@ public final class DraftStore {
             {
                 continue
             }
-            // `row.updatedAt` is the DRAFT row's own timestamp — a region write never touches it
-            // (`DraftRegion` is a separate table), so a live dictation take's newly committed
-            // words would never be adopted here if this gate only compared that field. Regions
-            // are compared on their own, since that is the one thing that actually changes on
-            // every poll while a take is running and `text` itself does not.
-            if let local = drafts[row.key], local.remoteUpdatedAt == row.updatedAt, local.regions == row.regions {
+            // `row.updatedAt` is the DRAFT row's own timestamp — neither a region write nor an
+            // attachment upload touches it (both live in their own tables), so a live dictation
+            // take's newly committed words, or another device's just-added file, would never be
+            // adopted here if this gate only compared that field. Both are compared on their own,
+            // since they are what actually changes on every poll while `text` itself does not.
+            if let local = drafts[row.key], local.remoteUpdatedAt == row.updatedAt, local.regions == row.regions,
+                local.attachments == row.attachments
+            {
                 continue
             }
             drafts[row.key] = DraftEntry(
                 text: row.text, sessionType: row.sessionType, workingDir: row.workingDir, model: row.model,
-                thinking: row.thinking, remoteUpdatedAt: row.updatedAt, regions: row.regions
+                thinking: row.thinking, remoteUpdatedAt: row.updatedAt, regions: row.regions,
+                attachments: row.attachments
             )
         }
 

@@ -419,8 +419,8 @@ struct CreateSessionView: View {
                 }
             }
 
-            if !stagedAttachments.isEmpty {
-                AttachmentPreviewStrip(attachments: stagedAttachments, onRemove: removeAttachment)
+            if !displayAttachments.isEmpty {
+                AttachmentPreviewStrip(attachments: displayAttachments, onRemove: removeAttachment)
             }
 
             // Same left-to-right order as `ComposerBar`: field, plus, mic, send. Two composers
@@ -523,15 +523,21 @@ struct CreateSessionView: View {
 
     private func canSend(_ createSession: CreateSessionStore) -> Bool {
         !createSession.isCreating
-            && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !stagedAttachments.isEmpty)
+            && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !stagedAttachments.isEmpty
+                || !drafts.draft(for: DraftKey.newSession).attachments.isEmpty)
     }
 
     private func send(_ createSession: CreateSessionStore) {
         let wasRecording = environment.connection.map { isRecordingHere($0.voice) } ?? false
         let attachmentsSnapshot = stagedAttachments
-        let files = attachmentsSnapshot.map {
-            PaiFileUpload(filename: $0.filename, mimeType: $0.mimeType, data: $0.data)
-        }
+        // Already-uploaded bytes ride along via the backend's own auto-claim
+        // (`_claim_draft_attachments`, keyed on the `new` draft) — only what never made it to the
+        // server needs to travel inline. See `ComposerBar.send(draftStore:)` for the identical
+        // reasoning.
+        let files = attachmentsSnapshot.filter { attachment in
+            if case .uploaded = attachment.uploadState { return false }
+            return true
+        }.map { PaiFileUpload(filename: $0.filename, mimeType: $0.mimeType, data: $0.data) }
         Task {
             errorMessage = nil
             // A still-running take is still writing into this draft's own region on the backend —
@@ -590,8 +596,17 @@ struct CreateSessionView: View {
 
     // MARK: - Attachments
 
-    private func removeAttachment(_ attachment: StagedAttachment) {
-        staging.remove(id: attachment.id, from: DraftKey.newSession)
+    /// See `ComposerBar.removeAttachment` for why a still-uploading item is removed locally only.
+    private func removeAttachment(_ attachment: ComposerAttachment) {
+        switch attachment {
+        case .staged(let staged):
+            staging.remove(id: staged.id, from: DraftKey.newSession)
+            if case .uploaded(let attachmentId) = staged.uploadState {
+                Task { await drafts.removeAttachment(key: DraftKey.newSession, attachmentId: attachmentId) }
+            }
+        case .remote(let remote):
+            Task { await drafts.removeAttachment(key: DraftKey.newSession, attachmentId: remote.id) }
+        }
     }
 
     /// The one entry point every attachment source funnels through — a 50MB file discovered here
@@ -600,9 +615,25 @@ struct CreateSessionView: View {
         let oversize = staged.filter { $0.currentSize > maxAttachmentBytes }
         let accepted = staged.filter { $0.currentSize <= maxAttachmentBytes }
         staging.append(accepted, to: DraftKey.newSession)
+        for attachment in accepted { uploadAttachment(attachment) }
         if let first = oversize.first {
             let suffix = oversize.count > 1 ? " and \(oversize.count - 1) other file(s)" : ""
             errorMessage = "\(first.filename)\(suffix) exceeds the 50MB limit and was not attached."
+        }
+    }
+
+    /// See `ComposerBar.uploadAttachment` — identical reasoning, scoped to `DraftKey.newSession`.
+    private func uploadAttachment(_ attachment: StagedAttachment) {
+        staging.updateUploadState(.uploading, forId: attachment.id, in: DraftKey.newSession)
+        Task {
+            let file = PaiFileUpload(
+                filename: attachment.filename, mimeType: attachment.mimeType, data: attachment.data)
+            if let uploaded = await drafts.addAttachment(key: DraftKey.newSession, file: file) {
+                staging.updateUploadState(
+                    .uploaded(attachmentId: uploaded.id), forId: attachment.id, in: DraftKey.newSession)
+            } else {
+                staging.updateUploadState(.failed, forId: attachment.id, in: DraftKey.newSession)
+            }
         }
     }
 
@@ -623,6 +654,19 @@ struct CreateSessionView: View {
 
     private var stagedAttachments: [StagedAttachment] {
         staging.attachments(for: DraftKey.newSession)
+    }
+
+    /// This device's own staged files, plus whatever another device has uploaded onto the same
+    /// not-yet-created-session draft — see `ComposerBar`'s identical property for why a remote
+    /// entry drops out once this device's own upload of it lands.
+    private var displayAttachments: [ComposerAttachment] {
+        let claimedRemoteIds = Set(
+            stagedAttachments.compactMap { attachment -> String? in
+                guard case .uploaded(let id) = attachment.uploadState else { return nil }
+                return id
+            })
+        let remoteOnly = drafts.draft(for: DraftKey.newSession).attachments.filter { !claimedRemoteIds.contains($0.id) }
+        return stagedAttachments.map(ComposerAttachment.staged) + remoteOnly.map(ComposerAttachment.remote)
     }
 
     // MARK: - Voice

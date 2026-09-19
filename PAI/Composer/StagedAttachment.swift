@@ -3,10 +3,23 @@ import PAIKit
 import UIKit
 import UniformTypeIdentifiers
 
-/// A photo, file or temporary note staged in the composer, not yet sent. Deliberately local-only
-/// — the web never syncs staged attachments across devices either
-/// (`docs/ARCHITECTURE.md`: "Attachments are not synced: they stay in the client that picked
-/// them"), which is also why this lives beside the text field rather than in `DraftStore`.
+/// Whether a staged attachment has reached the draft on the server yet — uploaded the instant it
+/// is picked, per Freddy's own ask (compose one message from several devices, adding images from
+/// a laptop while dictating on a phone), rather than only at send. `.uploaded` is what lets
+/// `postMessage` skip re-sending the bytes: the backend's own `_claim_draft_attachments` already
+/// moves anything staged under this draft key onto the session at send time.
+enum AttachmentUploadState: Equatable {
+    case uploading
+    case uploaded(attachmentId: String)
+    /// The upload failed — `postMessage` falls back to sending the bytes directly at send time,
+    /// same as before this existed, so a flaky connection never loses the attachment outright.
+    case failed
+}
+
+/// A photo, file or temporary note staged in the composer, not yet sent. The bytes themselves
+/// stay local until sent (or until the background upload below succeeds) — but unlike before,
+/// every staged attachment now uploads onto the draft immediately, which is what makes it visible
+/// on Freddy's other devices while he is still composing.
 struct StagedAttachment: Identifiable, Equatable {
     /// Settable so a restore from disk can keep the id it was stored under. Left to itself it
     /// would be given a fresh one, and the data file named after the old id would be treated as
@@ -22,6 +35,9 @@ struct StagedAttachment: Identifiable, Equatable {
     /// exactly the test the preview strip uses to decide whether to show the
     /// "2.4 MB → 810.3 KB" caption.
     var originalSize: Int
+    /// `nil` until the background upload starts — a value already restored from a previous
+    /// launch (`loadPersisted()`) has never been uploaded from this process and starts fresh.
+    var uploadState: AttachmentUploadState?
 
     var currentSize: Int { data.count }
     var wasCompressed: Bool { currentSize != originalSize }

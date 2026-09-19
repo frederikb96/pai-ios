@@ -27,10 +27,14 @@ public struct DraftEntry: Equatable, Sendable {
     /// by a machine (live dictation, server-side; a backfill recovering a stretch the live path
     /// missed, client-side). See ``displayText``.
     public var regions: [DraftRegion] = []
+    /// Files uploaded onto this draft — by this device or another one, indistinguishably: the
+    /// point of uploading on stage rather than at send is composing one message from several
+    /// devices at once, so a phone must see what a laptop just added before either sends.
+    public var attachments: [DraftAttachment] = []
 
     public init(
         text: String, sessionType: String?, workingDir: String?, model: String? = nil, thinking: String? = nil,
-        remoteUpdatedAt: String?, regions: [DraftRegion] = []
+        remoteUpdatedAt: String?, regions: [DraftRegion] = [], attachments: [DraftAttachment] = []
     ) {
         self.text = text
         self.sessionType = sessionType
@@ -39,6 +43,7 @@ public struct DraftEntry: Equatable, Sendable {
         self.thinking = thinking
         self.remoteUpdatedAt = remoteUpdatedAt
         self.regions = regions
+        self.attachments = attachments
     }
 
     public static let empty = DraftEntry(text: "", sessionType: nil, workingDir: nil, remoteUpdatedAt: nil)

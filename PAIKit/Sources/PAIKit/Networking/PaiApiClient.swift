@@ -710,6 +710,34 @@ public struct PaiApiClient: Sendable {
         )
     }
 
+    /// Uploads one file onto a draft immediately — so it appears on every one of Freddy's devices
+    /// as soon as it is added, not only once the message is sent. `POST /api/messages` claims
+    /// whatever a draft's own attachments are for that same key at send time on its own; this
+    /// route is the only one a client ever needs to call to get a file there.
+    public func addDraftAttachment(key: String, file: PaiFileUpload) async throws -> DraftAttachment {
+        let boundary = "PAIKit-\(UUID().uuidString)"
+        var body = Data()
+        Self.appendFormFile(&body, boundary: boundary, name: "file", file: file)
+        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        return try await send(
+            path: "/api/drafts/\(Self.encodeDraftKey(key))/attachments",
+            method: "POST",
+            body: body,
+            contentType: "multipart/form-data; boundary=\(boundary)"
+        )
+    }
+
+    /// Tombstones one draft attachment — "added on the phone" and "removed on the laptop" both
+    /// resolve to removed even if the add's own confirmation is still in flight.
+    public func removeDraftAttachment(key: String, attachmentId: String) async throws {
+        try await sendDiscardingResponse(
+            path: "/api/drafts/\(Self.encodeDraftKey(key))/attachments/\(attachmentId)",
+            method: "DELETE",
+            body: nil,
+            contentType: nil
+        )
+    }
+
     /// `.urlPathAllowed` treats `/` as a legal *path* character (correct for a whole path, wrong
     /// for a single path *segment*, where a literal `/` in a key must not be read as a segment
     /// separator) — matches `client.ts`'s `encodeURIComponent(key)`, which escapes `/` too. Relies

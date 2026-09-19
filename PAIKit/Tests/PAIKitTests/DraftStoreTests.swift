@@ -163,6 +163,38 @@ private final class FakeDraftsFetching: DraftsFetching, @unchecked Sendable {
         return .saved(Draft(key: key, text: "", sessionType: nil, workingDir: nil, updatedAt: "server-flattened"))
     }
 
+    /// Consecutive `addDraftAttachment` calls left to fail before succeeding — mirrors
+    /// `putFailuresRemaining`'s shape, for the test proving a failed upload reports `nil` rather
+    /// than throwing out of `DraftStore.addAttachment`.
+    private var _addAttachmentFailuresRemaining = 0
+    var addAttachmentFailuresRemaining: Int {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _addAttachmentFailuresRemaining
+        }
+        set {
+            lock.lock()
+            _addAttachmentFailuresRemaining = newValue
+            lock.unlock()
+        }
+    }
+
+    func addDraftAttachment(key: String, file: PaiFileUpload) async throws -> DraftAttachment {
+        record("addDraftAttachment:\(key):\(file.filename)")
+        if addAttachmentFailuresRemaining > 0 {
+            addAttachmentFailuresRemaining -= 1
+            throw SimulatedFailure()
+        }
+        return DraftAttachment(
+            id: "attachment-\(file.filename)", filename: file.filename, path: "/tmp/\(file.filename)",
+            size: file.data.count, contentType: file.mimeType, state: "stored", createdAt: "t1")
+    }
+
+    func removeDraftAttachment(key: String, attachmentId: String) async throws {
+        record("removeDraftAttachment:\(key):\(attachmentId)")
+    }
+
     private func record(_ entry: String) {
         lock.lock()
         _callLog.append(entry)
@@ -665,5 +697,72 @@ final class DraftStoreTests: XCTestCase {
         await store.syncFromServer()
 
         XCTAssertEqual(store.draft(for: "s1").text, "never yet flushed")
+    }
+
+    // MARK: - Attachments
+
+    func testAddAttachmentAppendsTheUploadedRowAndReturnsIt() async {
+        let store = DraftStore(api: FakeDraftsFetching(), scheduler: InstantDraftScheduler())
+        let file = PaiFileUpload(filename: "photo.jpg", mimeType: "image/jpeg", data: Data("bytes".utf8))
+
+        let uploaded = await store.addAttachment(key: "s1", file: file)
+
+        XCTAssertEqual(uploaded?.filename, "photo.jpg")
+        XCTAssertEqual(store.draft(for: "s1").attachments.map(\.filename), ["photo.jpg"])
+    }
+
+    /// A failed upload must not silently attach itself anyway — `nil` is the caller's signal to
+    /// fall back to sending the bytes inline at message-send time.
+    func testAddAttachmentReturnsNilOnFailureAndAddsNothing() async {
+        let fake = FakeDraftsFetching()
+        fake.addAttachmentFailuresRemaining = 1
+        let store = DraftStore(api: fake, scheduler: InstantDraftScheduler())
+        let file = PaiFileUpload(filename: "photo.jpg", mimeType: "image/jpeg", data: Data("bytes".utf8))
+
+        let uploaded = await store.addAttachment(key: "s1", file: file)
+
+        XCTAssertNil(uploaded)
+        XCTAssertEqual(store.draft(for: "s1").attachments, [])
+    }
+
+    /// The local copy drops immediately — a caller does not wait on the server round trip to make
+    /// the chip disappear.
+    func testRemoveAttachmentDropsItLocallyAndTellsTheServer() async {
+        let fake = FakeDraftsFetching()
+        let store = DraftStore(api: fake, scheduler: InstantDraftScheduler())
+        let file = PaiFileUpload(filename: "photo.jpg", mimeType: "image/jpeg", data: Data("bytes".utf8))
+        guard let uploaded = await store.addAttachment(key: "s1", file: file) else {
+            return XCTFail("upload should have succeeded")
+        }
+
+        await store.removeAttachment(key: "s1", attachmentId: uploaded.id)
+
+        XCTAssertEqual(store.draft(for: "s1").attachments, [])
+        XCTAssertTrue(fake.callLog.contains("removeDraftAttachment:s1:\(uploaded.id)"))
+    }
+
+    /// A sync must adopt an attachment another device uploaded even when the draft row's own
+    /// `updatedAt` has not moved — the same reasoning `DraftRegion` already needed, since an
+    /// attachment lives in its own table too.
+    func testSyncAdoptsAnAttachmentAddedByAnotherDeviceEvenWithAnUnchangedUpdatedAt() async {
+        let fake = FakeDraftsFetching()
+        let attachment = DraftAttachment(
+            id: "a1", filename: "from-laptop.png", path: "/tmp/from-laptop.png", size: 10,
+            contentType: "image/png", state: "stored", createdAt: "t1")
+        fake.remoteDrafts = [
+            Draft(key: "s1", text: "seed", sessionType: nil, workingDir: nil, updatedAt: "t1")
+        ]
+        let store = DraftStore(api: fake, scheduler: InstantDraftScheduler())
+        await store.syncFromServer()
+        XCTAssertEqual(store.draft(for: "s1").attachments, [])
+
+        fake.remoteDrafts = [
+            Draft(
+                key: "s1", text: "seed", sessionType: nil, workingDir: nil, updatedAt: "t1",
+                attachments: [attachment])
+        ]
+        await store.syncFromServer()
+
+        XCTAssertEqual(store.draft(for: "s1").attachments, [attachment])
     }
 }

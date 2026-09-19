@@ -44,6 +44,16 @@ final class StagedAttachmentStore {
         set(attachments(for: sessionID).filter { $0.id != id }, for: sessionID)
     }
 
+    /// Called once the upload `stageAttachments` kicked off resolves, so the send path can tell a
+    /// file already on the server (skip its bytes, the backend will claim it by draft key) from
+    /// one still local (send the bytes, same as before this existed).
+    func updateUploadState(_ state: AttachmentUploadState, forId id: StagedAttachment.ID, in sessionID: String) {
+        var items = attachments(for: sessionID)
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].uploadState = state
+        set(items, for: sessionID)
+    }
+
     /// Reads whatever `persist(_:for:)` wrote before this launch back into memory. Called once,
     /// before any screen can stage anything of its own — a later call would clobber an
     /// in-progress edit with whatever was on disk when the app last quit.

@@ -9,6 +9,8 @@ public protocol DraftsFetching: Sendable {
     ) async throws -> PutDraftResult
     func deleteDraft(key: String) async throws -> PaiDraftDeleteResult
     func flattenDraft(key: String, takeIds: [String], baseUpdatedAt: String?) async throws -> PutDraftResult
+    func addDraftAttachment(key: String, file: PaiFileUpload) async throws -> DraftAttachment
+    func removeDraftAttachment(key: String, attachmentId: String) async throws
 }
 
 extension PaiApiClient: DraftsFetching {}
