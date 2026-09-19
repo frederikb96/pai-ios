@@ -37,27 +37,6 @@ struct VoiceSection: View {
                 }
                 .accessibilityIdentifier("mic-device")
             }
-
-            Toggle("Silence Detection", isOn: silenceEnabledBinding)
-                .accessibilityIdentifier("silence-detection-enabled")
-
-            if settings.silenceDetectionEnabled {
-                VStack(alignment: .leading) {
-                    Text("Threshold: \(settings.silenceThreshold, specifier: "%.3f")")
-                        .font(PaiTypography.caption.font)
-                        .foregroundStyle(PaiPalette.Semantic.textMuted)
-                    Slider(value: silenceThresholdBinding, in: 0.001...0.05, step: 0.001)
-                }
-                .accessibilityIdentifier("silence-threshold")
-
-                VStack(alignment: .leading) {
-                    Text("Duration: \(settings.silenceDurationMs / 1000, specifier: "%.1f")s")
-                        .font(PaiTypography.caption.font)
-                        .foregroundStyle(PaiPalette.Semantic.textMuted)
-                    Slider(value: silenceDurationSecondsBinding, in: 1...30, step: 0.5)
-                }
-                .accessibilityIdentifier("silence-duration")
-            }
         } header: {
             Text("Voice Settings")
         } footer: {
@@ -73,24 +52,6 @@ struct VoiceSection: View {
 
     private var micDeviceBinding: Binding<String> {
         Binding(get: { settings.micDeviceId }, set: { settings.setMicDeviceId($0) })
-    }
-
-    private var silenceEnabledBinding: Binding<Bool> {
-        Binding(
-            get: { settings.silenceDetectionEnabled },
-            set: { settings.setSilenceDetectionEnabled($0) })
-    }
-
-    private var silenceThresholdBinding: Binding<Double> {
-        Binding(get: { settings.silenceThreshold }, set: { settings.setSilenceThreshold($0) })
-    }
-
-    /// The store keeps milliseconds (matching the wire format); the slider works in seconds,
-    /// matching the web's display — the conversion happens only at this one edge.
-    private var silenceDurationSecondsBinding: Binding<Double> {
-        Binding(
-            get: { settings.silenceDurationMs / 1000 },
-            set: { settings.setSilenceDurationMs($0 * 1000) })
     }
 
     private func languageLabel(_ language: SttLanguage) -> String {

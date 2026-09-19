@@ -19,10 +19,9 @@ public enum SttLanguage: String, Codable, Sendable, CaseIterable {
 ///
 /// Three different persistence shapes live here, deliberately kept distinct rather than implied
 /// by which method happens to get called:
-/// - **client-side, immediate** — STT language, mic device, silence detection, the TTS voice id
-///   and speech rate, the two diagnostic lists, expand preferences: a `set...` call persists to
-///   `storage` and updates published state in the same step, same as the web's `localStorage` +
-///   immediate apply.
+/// - **client-side, immediate** — STT language, mic device, the two diagnostic lists, expand
+///   preferences: a `set...` call persists to `storage` and updates published state in the same
+///   step, same as the web's `localStorage` + immediate apply.
 /// - **server-persisted, draft-and-save** — `smtp`, a whole sub-store, because Save/dirty
 ///   tracking/validation is real state, not a detail this store should flatten away.
 /// - **write-only secret** — `elevenLabsKey` (and `smtp.password`): presence is fetched, the
@@ -33,9 +32,6 @@ public final class SettingsStore {
     private enum Keys {
         static let sttLanguage = "sttLanguage"
         static let micDeviceId = "micDeviceId"
-        static let silenceDetectionEnabled = "silenceDetectionEnabled"
-        static let silenceThreshold = "silenceThreshold"
-        static let silenceDurationMs = "silenceDurationMs"
         static let sentMessages = "sentMessages"
         static let recordings = "recordings"
         static let theme = "theme"
@@ -48,9 +44,6 @@ public final class SettingsStore {
 
     public private(set) var sttLanguage: SttLanguage
     public private(set) var micDeviceId: String
-    public private(set) var silenceDetectionEnabled: Bool
-    public private(set) var silenceThreshold: Double
-    public private(set) var silenceDurationMs: Double
     public private(set) var sentMessages: [SentMessage]
     public private(set) var recordings: [RecordingMeta]
     /// Client-side only, like the web's. Nothing about the appearance reaches the server.
@@ -88,9 +81,6 @@ public final class SettingsStore {
 
         sttLanguage = storage.value(forKey: Keys.sttLanguage) ?? .auto
         micDeviceId = storage.value(forKey: Keys.micDeviceId) ?? ""
-        silenceDetectionEnabled = storage.value(forKey: Keys.silenceDetectionEnabled) ?? false
-        silenceThreshold = storage.value(forKey: Keys.silenceThreshold) ?? 0.005
-        silenceDurationMs = storage.value(forKey: Keys.silenceDurationMs) ?? 3000
         sentMessages = storage.value(forKey: Keys.sentMessages) ?? []
         recordings = storage.value(forKey: Keys.recordings) ?? []
         theme = storage.value(forKey: Keys.theme) ?? .system
@@ -114,21 +104,6 @@ public final class SettingsStore {
     public func setMicDeviceId(_ deviceId: String) {
         micDeviceId = deviceId
         storage.setValue(deviceId, forKey: Keys.micDeviceId)
-    }
-
-    public func setSilenceDetectionEnabled(_ enabled: Bool) {
-        silenceDetectionEnabled = enabled
-        storage.setValue(enabled, forKey: Keys.silenceDetectionEnabled)
-    }
-
-    public func setSilenceThreshold(_ threshold: Double) {
-        silenceThreshold = threshold
-        storage.setValue(threshold, forKey: Keys.silenceThreshold)
-    }
-
-    public func setSilenceDurationMs(_ ms: Double) {
-        silenceDurationMs = ms
-        storage.setValue(ms, forKey: Keys.silenceDurationMs)
     }
 
     public func setShowsNoteLineNumbers(_ enabled: Bool) {

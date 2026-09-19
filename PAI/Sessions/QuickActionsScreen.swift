@@ -59,8 +59,19 @@ struct QuickActionsScreen: View {
         // Measured rather than given a fixed tile height: the whole point is targets big enough
         // to hit without looking, and a grid that sizes itself to its content leaves part of the
         // screen empty on a large phone while overflowing a small one.
+        //
+        // 🚨 A `.frame(minHeight:maxHeight:)` proposes a size — it does not forcibly clip a child
+        // that refuses to shrink smaller, so on a device where the five-way division comes out
+        // below a tile's own minimum content height (icon + title + subtitle + padding), the grid
+        // as a whole grows past what `GeometryReader` measured, which is exactly the "last row
+        // cut off" failure this screen exists to fix. The `ScrollView` below is the backstop for
+        // that case — never the primary mechanism — so a smaller phone than this was tuned
+        // against scrolls a few points rather than hard-clipping the bottom row again.
         GeometryReader { proxy in
-            grid(rowHeight: max(64, (proxy.size.height - padding * 2 - spacing * (rowCount - 1)) / rowCount))
+            ScrollView {
+                grid(rowHeight: max(88, (proxy.size.height - padding * 2 - spacing * (rowCount - 1)) / rowCount))
+                    .frame(minHeight: proxy.size.height, alignment: .top)
+            }
         }
         .paiScreenBackground()
         .navigationTitle("Quick Actions")
@@ -136,7 +147,7 @@ struct QuickActionsScreen: View {
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "waveform.circle.fill")
-                    .font(.system(size: 28, weight: .semibold))
+                    .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(PaiPalette.primary500)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Computer")
@@ -145,14 +156,16 @@ struct QuickActionsScreen: View {
                     Text("Talk to the switchboard")
                         .font(PaiTypography.caption.font)
                         .foregroundStyle(PaiPalette.Semantic.textMuted)
+                        .lineLimit(1)
                 }
                 Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .leading)
-            .padding(16)
+            .frame(maxWidth: .infinity, minHeight: height, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
             .background(PaiPalette.Semantic.raisedSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 20))
-            .contentShape(RoundedRectangle(cornerRadius: 20))
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .contentShape(RoundedRectangle(cornerRadius: 18))
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("quick-computer")
@@ -164,26 +177,29 @@ struct QuickActionsScreen: View {
         identifier: String, action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 26, weight: .semibold))
+                    .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(tint)
                 Spacer(minLength: 0)
                 Text(title)
                     .font(PaiTypography.panelTitle.font)
                     .foregroundStyle(PaiPalette.Semantic.textPrimary)
+                    .lineLimit(1)
                 Text(subtitle)
                     .font(PaiTypography.caption.font)
                     .foregroundStyle(PaiPalette.Semantic.textMuted)
+                    .lineLimit(1)
             }
-            .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .leading)
-            .padding(14)
+            .frame(maxWidth: .infinity, minHeight: height, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
             .background(PaiPalette.Semantic.raisedSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .clipShape(RoundedRectangle(cornerRadius: 18))
             // Claims the whole tile. A plain `Button` is hit-tested against what it draws, so a
             // label with a `Spacer` in it answers a tap on the text and ignores the empty space
             // around it — which on a control this size is most of it.
-            .contentShape(RoundedRectangle(cornerRadius: 20))
+            .contentShape(RoundedRectangle(cornerRadius: 18))
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(identifier)
@@ -204,9 +220,9 @@ struct QuickActionsScreen: View {
             }
             UIApplication.shared.open(url)
         } label: {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
                 Image(systemName: "checklist")
-                    .font(.system(size: 26, weight: .semibold))
+                    .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(PaiPalette.Semantic.textSecondary)
                 Spacer(minLength: 0)
                 Text(shortcut.isConfigured ? shortcut.name.isEmpty ? "Shortcut" : shortcut.name : "Set up")
@@ -218,11 +234,12 @@ struct QuickActionsScreen: View {
                     .foregroundStyle(PaiPalette.Semantic.textMuted)
                     .lineLimit(1)
             }
-            .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .leading)
-            .padding(14)
+            .frame(maxWidth: .infinity, minHeight: height, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
             .background(PaiPalette.Semantic.raisedSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 20))
-            .contentShape(RoundedRectangle(cornerRadius: 20))
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .contentShape(RoundedRectangle(cornerRadius: 18))
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(identifier)

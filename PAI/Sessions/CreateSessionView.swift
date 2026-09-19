@@ -414,6 +414,9 @@ struct CreateSessionView: View {
             if isRecordingHere(voiceController) {
                 VoiceRecordingIndicator(controller: voiceController)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if voiceController.state != .recording {
+                    VoiceVolumeOverlay(controller: voiceController)
+                }
             }
 
             if !stagedAttachments.isEmpty {

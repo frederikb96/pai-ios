@@ -192,6 +192,20 @@ final class VoiceRecorderController {
     /// This covers the rest, including whatever is not on that list, because the failure is
     /// detectable without knowing its cause: audio was flowing, and now it is not.
     private var lastChunkAt: Date?
+    /// The most recent buffer's own RMS, `0...1` — what the volume overlay draws its waveform
+    /// from. Updated at the same ~100ms cadence buffers actually arrive at; nothing here re-taps
+    /// the microphone or runs a second `AnalyserNode`-equivalent.
+    private(set) var currentLevel: Double = 0
+    /// What the volume overlay actually renders — see `MicrophoneHealthState`'s own doc comment
+    /// for why "no buffers arriving" is never derived from amplitude. `.notHearing` while nothing
+    /// is even recording is meaningless to a caller that already checks `state != .idle` first.
+    var microphoneHealth: MicrophoneHealthState {
+        guard isCapturing else { return .quiet }
+        if let lastChunkAt, Date().timeIntervalSince(lastChunkAt) > Self.captureStallSeconds {
+            return .notHearing
+        }
+        return currentLevel > MicrophoneHealthState.quietFloor ? .hearing(level: currentLevel) : .quiet
+    }
     private var captureWatchdogTask: Task<Void, Never>?
     private var captureRestartAttempts = 0
     private var lastCaptureRestartAt: Date?
@@ -989,6 +1003,7 @@ final class VoiceRecorderController {
         capture.onLevel = { [weak self] rms in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                self.currentLevel = rms
                 self.peakAmplitude = max(self.peakAmplitude, rms)
                 self.levelSum += rms
                 self.levelCount += 1
@@ -1192,10 +1207,9 @@ final class VoiceRecorderController {
             mic: mic,
             rawStored: rawKept,
             endedBy: result.endedBy,
-            silence: SilenceMeta(
-                enabled: settings.silenceDetectionEnabled, threshold: settings.silenceThreshold,
-                durationMs: Double(settings.silenceDurationMs), triggered: false, gatedMs: 0
-            ),
+            // Nothing gates on this any more — the new protocol streams continuously while the
+            // gate is open, and the setting this used to read no longer exists.
+            silence: nil,
             stt: SttMeta(
                 model: "scribe_v2_realtime", language: settings.sttLanguage.rawValue,
                 vadSilenceSecs: 1.5, vadThreshold: 0.4
@@ -1302,12 +1316,6 @@ final class VoiceRecorderController {
             case .en: .en
             case .de: .de
             }
-        return VoiceSettings(
-            sttLanguage: language,
-            micDeviceId: settingsStore.micDeviceId,
-            silenceDetectionEnabled: settingsStore.silenceDetectionEnabled,
-            silenceThreshold: settingsStore.silenceThreshold,
-            silenceDurationMs: Int(settingsStore.silenceDurationMs)
-        )
+        return VoiceSettings(sttLanguage: language, micDeviceId: settingsStore.micDeviceId)
     }
 }

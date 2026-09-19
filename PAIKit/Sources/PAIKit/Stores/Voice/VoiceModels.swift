@@ -39,21 +39,9 @@ public struct VoiceSettings: Sendable, Equatable {
     /// `''` means the system default input — never a real device identifier, so it is always
     /// safe to persist even when no device is currently selected.
     public var micDeviceId: String
-    public var silenceDetectionEnabled: Bool
-    public var silenceThreshold: Double
-    public var silenceDurationMs: Int
 
-    public init(
-        sttLanguage: Language = .auto,
-        micDeviceId: String = "",
-        silenceDetectionEnabled: Bool = false,
-        silenceThreshold: Double = 0.005,
-        silenceDurationMs: Int = 3000
-    ) {
+    public init(sttLanguage: Language = .auto, micDeviceId: String = "") {
         self.sttLanguage = sttLanguage
         self.micDeviceId = micDeviceId
-        self.silenceDetectionEnabled = silenceDetectionEnabled
-        self.silenceThreshold = silenceThreshold
-        self.silenceDurationMs = silenceDurationMs
     }
 }

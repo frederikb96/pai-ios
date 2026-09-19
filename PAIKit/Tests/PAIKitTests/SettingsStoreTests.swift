@@ -3,9 +3,6 @@ import XCTest
 
 /// `SettingsStore`'s defaults are the fresh-install contract: `stores/settings.ts` is explicit
 /// that every one of these has to read as "quiet" the first time the app ever runs.
-/// `testDefaultsOnAFreshInstall` was run against a build with `silenceDetectionEnabled`
-/// hardcoded `true` and failed as expected, which is what makes a green run of it trustworthy
-/// rather than a default that happens to match by coincidence.
 ///
 /// Every test body runs inside `MainActor.run` rather than the class or its methods being
 /// `@MainActor` — `SettingsStore` and friends are correctly `@MainActor`, but a Linux XCTest
@@ -38,9 +35,6 @@ final class SettingsStoreTests: XCTestCase {
 
             XCTAssertEqual(store.sttLanguage, .auto)
             XCTAssertEqual(store.micDeviceId, "")
-            XCTAssertEqual(store.silenceDetectionEnabled, false)
-            XCTAssertEqual(store.silenceThreshold, 0.005)
-            XCTAssertEqual(store.silenceDurationMs, 3000)
             XCTAssertEqual(store.sentMessages, [])
             XCTAssertEqual(store.recordings, [])
             XCTAssertEqual(store.showsNoteLineNumbers, false)
