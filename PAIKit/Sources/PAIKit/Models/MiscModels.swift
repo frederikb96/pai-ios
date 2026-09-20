@@ -39,9 +39,15 @@ public struct DraftRegion: Codable, Sendable, Equatable, Identifiable {
 }
 
 /// One file added to a draft, uploaded to the server immediately rather than held on the device
-/// that picked it — so a message can be composed from several devices at once. `state` starts
-/// `uploading` and becomes `stored` or `failed`; a thumbnail shown for a `failed` upload would
-/// be a claim of cross-device visibility the system does not have.
+/// that picked it — so a message can be composed from several devices at once.
+///
+/// `state` starts `uploading` and becomes `stored` or `failed`; a thumbnail shown for a `failed`
+/// upload would be a claim of cross-device visibility the system does not have. `unclaimed` is
+/// the one a send produces: the file is on the server and the move onto the session did not
+/// happen, so the message went without it and the next send will try again.
+///
+/// Deliberately a `String` rather than an enum: an unknown value from a newer backend must render
+/// as an ordinary attachment, not fail the whole draft's decode.
 public struct DraftAttachment: Codable, Sendable, Equatable, Identifiable {
     public let id: String
     public let filename: String

@@ -62,18 +62,10 @@ struct ComposerBar: View {
         staging.attachments(for: sessionID)
     }
 
-    /// What the strip actually shows: this device's own staged files, plus whatever another
-    /// device has uploaded onto the same draft — dropping a remote entry the moment this device's
-    /// own upload of it lands, so a file this device just picked never shows twice while its
-    /// upload is still in flight or has already finished.
+    /// What the strip actually shows. The join itself lives in the store, beside the upload that
+    /// produces the id it joins on.
     private var displayAttachments: [ComposerAttachment] {
-        let claimedRemoteIds = Set(
-            stagedAttachments.compactMap { attachment -> String? in
-                guard case .uploaded(let id) = attachment.uploadState else { return nil }
-                return id
-            })
-        let remoteOnly = drafts.draft(for: sessionID).attachments.filter { !claimedRemoteIds.contains($0.id) }
-        return stagedAttachments.map(ComposerAttachment.staged) + remoteOnly.map(ComposerAttachment.remote)
+        staging.composerAttachments(for: sessionID, draft: drafts.draft(for: sessionID))
     }
 
     var body: some View {
@@ -448,21 +440,8 @@ struct ComposerBar: View {
         }
     }
 
-    /// A staged item still uploading is removed locally only — its upload may still land after
-    /// this, leaving an unclaimed attachment on the draft until the next send claims or a later
-    /// clear discards it, same order of magnitude as any other in-flight request a user cancels
-    /// by leaving. One already on the server, or one another device put there, is removed there
-    /// too, so the chip does not reappear on the next sync.
     private func removeAttachment(_ attachment: ComposerAttachment) {
-        switch attachment {
-        case .staged(let staged):
-            staging.remove(id: staged.id, from: sessionID)
-            if case .uploaded(let attachmentId) = staged.uploadState {
-                Task { await drafts.removeAttachment(key: sessionID, attachmentId: attachmentId) }
-            }
-        case .remote(let remote):
-            Task { await drafts.removeAttachment(key: sessionID, attachmentId: remote.id) }
-        }
+        staging.remove(attachment, from: sessionID, via: drafts)
     }
 
     /// The one entry point every attachment source (photo picker, file picker, temporary note,
@@ -478,31 +457,8 @@ struct ComposerBar: View {
     }
 
     private func stageAttachments(_ staged: [StagedAttachment]) {
-        let oversize = staged.filter { $0.currentSize > maxAttachmentBytes }
-        let accepted = staged.filter { $0.currentSize <= maxAttachmentBytes }
-        staging.append(accepted, to: sessionID)
-        for attachment in accepted { uploadAttachment(attachment) }
-        if let first = oversize.first {
-            let suffix = oversize.count > 1 ? " and \(oversize.count - 1) other file(s)" : ""
-            sendErrorMessage = "\(first.filename)\(suffix) exceeds the 50MB limit and was not attached."
-        }
-    }
-
-    /// Uploads a freshly staged file onto the draft the moment it is picked — the whole point of
-    /// staging server-side rather than only at send, per Freddy's own reason for asking: composing
-    /// one message from several devices at once, seeing an image added from a laptop while still
-    /// dictating on the phone. A failed upload leaves the bytes staged exactly as before this
-    /// existed, so `send(draftStore:)` still has them to fall back to sending inline.
-    private func uploadAttachment(_ attachment: StagedAttachment) {
-        staging.updateUploadState(.uploading, forId: attachment.id, in: sessionID)
-        Task {
-            let file = PaiFileUpload(
-                filename: attachment.filename, mimeType: attachment.mimeType, data: attachment.data)
-            if let uploaded = await drafts.addAttachment(key: sessionID, file: file) {
-                staging.updateUploadState(.uploaded(attachmentId: uploaded.id), forId: attachment.id, in: sessionID)
-            } else {
-                staging.updateUploadState(.failed, forId: attachment.id, in: sessionID)
-            }
+        if let refused = staging.stage(staged, for: sessionID, via: drafts) {
+            sendErrorMessage = refused
         }
     }
 

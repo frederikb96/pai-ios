@@ -1,4 +1,5 @@
 import Foundation
+import PAIKit
 import Observation
 import UIKit
 
@@ -44,7 +45,7 @@ final class StagedAttachmentStore {
         set(attachments(for: sessionID).filter { $0.id != id }, for: sessionID)
     }
 
-    /// Called once the upload `stageAttachments` kicked off resolves, so the send path can tell a
+    /// Called once the upload `stage(_:for:via:)` kicked off resolves, so the send path can tell a
     /// file already on the server (skip its bytes, the backend will claim it by draft key) from
     /// one still local (send the bytes, same as before this existed).
     func updateUploadState(_ state: AttachmentUploadState, forId id: StagedAttachment.ID, in sessionID: String) {
@@ -52,6 +53,69 @@ final class StagedAttachmentStore {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].uploadState = state
         set(items, for: sessionID)
+    }
+
+    // MARK: - The lifecycle, in one place
+
+    /// Accepts what fits, rejects what does not, and starts each accepted file's upload onto the
+    /// draft. Returns the message for anything refused, or `nil` — a 50MB file fails here with a
+    /// named reason rather than staging, previewing, and only failing at send with a 413.
+    ///
+    /// Staging and uploading are one call rather than two the caller sequences: a file staged and
+    /// never uploaded is invisible on every other device, which is exactly the half that was
+    /// missing, and nothing about a view is the right place to decide it.
+    @discardableResult
+    func stage(_ candidates: [StagedAttachment], for sessionID: String, via drafts: DraftStore) -> String? {
+        let oversize = candidates.filter { $0.currentSize > maxAttachmentBytes }
+        let accepted = candidates.filter { $0.currentSize <= maxAttachmentBytes }
+        append(accepted, to: sessionID)
+        for attachment in accepted { upload(attachment, in: sessionID, via: drafts) }
+        guard let first = oversize.first else { return nil }
+        let suffix = oversize.count > 1 ? " and \(oversize.count - 1) other file(s)" : ""
+        return "\(first.filename)\(suffix) exceeds the 50MB limit and was not attached."
+    }
+
+    /// Uploads a freshly staged file onto the draft the moment it is picked — the whole point of
+    /// staging server-side rather than only at send: composing one message from several devices,
+    /// seeing an image added from a laptop while still dictating on the phone. A failed upload
+    /// leaves the bytes staged, so the send still has them to fall back to sending inline.
+    private func upload(_ attachment: StagedAttachment, in sessionID: String, via drafts: DraftStore) {
+        updateUploadState(.uploading, forId: attachment.id, in: sessionID)
+        Task {
+            let file = PaiFileUpload(
+                filename: attachment.filename, mimeType: attachment.mimeType, data: attachment.data)
+            if let uploaded = await drafts.addAttachment(key: sessionID, file: file) {
+                updateUploadState(.uploaded(attachmentId: uploaded.id), forId: attachment.id, in: sessionID)
+            } else {
+                updateUploadState(.failed, forId: attachment.id, in: sessionID)
+            }
+        }
+    }
+
+    /// Drops a chip, and wherever the file also exists on the server, drops it there too.
+    ///
+    /// A file still uploading is removed locally only — its upload may land after this, leaving a
+    /// row the next send claims or a later clear discards, the same order of magnitude as any
+    /// in-flight request abandoned by leaving a screen.
+    func remove(_ attachment: ComposerAttachment, from sessionID: String, via drafts: DraftStore) {
+        switch attachment {
+        case .staged(let staged):
+            remove(id: staged.id, from: sessionID)
+            guard let remoteId = staged.remoteAttachmentId else { return }
+            Task { await drafts.removeAttachment(key: sessionID, attachmentId: remoteId) }
+        case .remote(let remote):
+            Task { await drafts.removeAttachment(key: sessionID, attachmentId: remote.id) }
+        }
+    }
+
+    /// Every chip for this draft: what this device staged, then whatever another device put on the
+    /// same draft. A remote row one of our own uploads already became is dropped — the same file
+    /// must not be drawn twice just because both halves know about it.
+    func composerAttachments(for sessionID: String, draft: DraftEntry) -> [ComposerAttachment] {
+        let staged = attachments(for: sessionID)
+        let remoteOnly = DraftAttachmentDisplay.remoteOnly(
+            draft.attachments, claimedRemoteIds: Set(staged.compactMap(\.remoteAttachmentId)))
+        return staged.map(ComposerAttachment.staged) + remoteOnly.map(ComposerAttachment.remote)
     }
 
     /// Reads whatever `persist(_:for:)` wrote before this launch back into memory. Called once,
@@ -78,11 +142,17 @@ final class StagedAttachmentStore {
     // named by its id — the manifest carries the key rather than the directory name encoding it,
     // so the sanitizing done to make a session id safe as a path component never has to be undone.
 
+    /// `remoteAttachmentId` is what survives a relaunch: an attachment already uploaded onto the
+    /// draft must come back knowing it, or the send treats it as never uploaded and sends the
+    /// bytes inline *while the backend also claims the draft row* — the same photo attached twice,
+    /// and drawn twice in the strip, because neither half can tell they are the same file.
+    /// Absent for one written before this was recorded, and for one whose upload never landed.
     private struct AttachmentRecord: Codable, Sendable {
         let id: String
         let filename: String
         let mimeType: String
         let originalSize: Int
+        var remoteAttachmentId: String?
     }
 
     private struct AttachmentManifest: Codable, Sendable {
@@ -129,7 +199,8 @@ final class StagedAttachmentStore {
             key: sessionID,
             records: attachments.map {
                 AttachmentRecord(
-                    id: $0.id.uuidString, filename: $0.filename, mimeType: $0.mimeType, originalSize: $0.originalSize)
+                    id: $0.id.uuidString, filename: $0.filename, mimeType: $0.mimeType,
+                    originalSize: $0.originalSize, remoteAttachmentId: $0.remoteAttachmentId)
             })
         let files = attachments.map { (name: $0.id.uuidString, data: $0.data) }
         let previous = pendingWrites[sessionID]
@@ -179,6 +250,7 @@ final class StagedAttachmentStore {
         let previewImage = record.mimeType.hasPrefix("image/") ? UIImage(data: data) : nil
         return StagedAttachment(
             id: id, filename: record.filename, mimeType: record.mimeType, data: data, previewImage: previewImage,
-            originalSize: record.originalSize)
+            originalSize: record.originalSize,
+            uploadState: record.remoteAttachmentId.map { .uploaded(attachmentId: $0) })
     }
 }

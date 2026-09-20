@@ -35,9 +35,17 @@ struct StagedAttachment: Identifiable, Equatable {
     /// exactly the test the preview strip uses to decide whether to show the
     /// "2.4 MB → 810.3 KB" caption.
     var originalSize: Int
-    /// `nil` until the background upload starts — a value already restored from a previous
-    /// launch (`loadPersisted()`) has never been uploaded from this process and starts fresh.
+    /// `nil` until the background upload starts. A file restored from a previous launch comes
+    /// back `.uploaded` when the draft row it became was recorded alongside it — without that,
+    /// the send would treat an already-uploaded file as never uploaded and attach it twice.
     var uploadState: AttachmentUploadState?
+
+    /// The draft-attachment row this became on the server, or `nil` while it is only local.
+    /// What joins a staged file to the row another device would see.
+    var remoteAttachmentId: String? {
+        guard case .uploaded(let id) = uploadState else { return nil }
+        return id
+    }
 
     var currentSize: Int { data.count }
     var wasCompressed: Bool { currentSize != originalSize }

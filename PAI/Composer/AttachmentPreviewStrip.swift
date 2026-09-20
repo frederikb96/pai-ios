@@ -58,6 +58,21 @@ private struct StagedAttachmentChip: View {
                 thumbnail
                 removeButton
             }
+            if attachment.uploadState == .uploading {
+                Text("Uploading…")
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Semantic.textMuted)
+                    .lineLimit(1)
+            }
+            if attachment.uploadState == .failed {
+                // Not a lost file: the bytes are still here and the send carries them inline.
+                // Said out loud anyway, because "it is only on this phone" is the difference
+                // between a message his laptop can finish and one it cannot.
+                Text("Only on this device")
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Semantic.errorText)
+                    .lineLimit(1)
+            }
             if attachment.wasCompressed {
                 Text("\(formatFileSize(attachment.originalSize)) → \(formatFileSize(attachment.currentSize))")
                     .font(PaiTypography.caption.font)
@@ -109,32 +124,50 @@ private struct RemoteAttachmentChip: View {
     let attachment: DraftAttachment
     let onRemove: () -> Void
 
-    var body: some View {
-        ZStack(alignment: .topTrailing) {
-            HStack(spacing: 4) {
-                Image(systemName: "icloud.and.arrow.down")
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(attachment.filename)
-                        .font(PaiTypography.caption.font)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Text(formatFileSize(attachment.size))
-                        .font(PaiTypography.caption.font)
-                        .foregroundStyle(PaiPalette.Semantic.textMuted)
-                }
-            }
-            .padding(8)
-            .frame(width: 120, height: 64, alignment: .leading)
-            .background(PaiPalette.Semantic.raisedSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+    /// `unclaimed` is the backend saying a message has already gone without this file. Drawn
+    /// identically to a healthy row, the only thing that ever said so was the chip refusing to
+    /// disappear — minutes after the message had sent.
+    private var problem: String? {
+        guard attachment.needsAttention else { return nil }
+        return attachment.state == "unclaimed"
+            ? "Last message went without this"
+            : "Never reached the server"
+    }
 
-            Button(action: onRemove) {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.white, .black.opacity(0.6))
-                    .font(.system(size: 18))
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ZStack(alignment: .topTrailing) {
+                HStack(spacing: 4) {
+                    Image(systemName: problem == nil ? "icloud.and.arrow.down" : "exclamationmark.icloud")
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(attachment.filename)
+                            .font(PaiTypography.caption.font)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text(formatFileSize(attachment.size))
+                            .font(PaiTypography.caption.font)
+                            .foregroundStyle(PaiPalette.Semantic.textMuted)
+                    }
+                }
+                .padding(8)
+                .frame(width: 120, height: 64, alignment: .leading)
+                .background(PaiPalette.Semantic.raisedSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                Button(action: onRemove) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.white, .black.opacity(0.6))
+                        .font(.system(size: 18))
+                }
+                .offset(x: 6, y: -6)
+                .accessibilityLabel("Remove file")
             }
-            .offset(x: 6, y: -6)
-            .accessibilityLabel("Remove file")
+            if let problem {
+                Text(problem)
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Semantic.errorText)
+                    .lineLimit(2)
+            }
         }
         .frame(maxWidth: 120)
     }
