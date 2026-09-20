@@ -125,13 +125,14 @@ public final class ComputerCallSession {
     private var watchdogTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var reconnectAttempt = 0
+    /// This socket's own frame counter — restarts at 0 on EVERY `ready`, fresh bus or resumed
+    /// alike (`docs/VOICE_PROTOCOL.md`, "Framing": `seq` is scoped to this client connection,
+    /// never to the bus, and always restarts at 0 on the reconnected socket even when
+    /// `ready.resumed` is `true`). Computer keeps no `inFlight`/ack-watermark table to prune
+    /// alongside it, unlike `VoiceUplinkSession` — nothing here reads an ack at all.
     private var nextSeq = 0
     private var sampleOffset = 0
     private var resumeToken: String?
-    /// The `resume_token` this session last sent on `hello` — compared against what `ready`
-    /// answers with to tell a genuine resume (same bus) from a fresh one, same as
-    /// `VoiceUplinkSession.sentResumeToken`.
-    private var sentResumeToken: String?
     /// Whether this bus has already had its gate opened once. `ComputerEngine` ignores `on_gate`
     /// entirely, so re-sending it on every reconnect would be harmless — this still tracks it,
     /// matching the protocol's general contract that a client only opens a gate once per take,
@@ -158,7 +159,6 @@ public final class ComputerCallSession {
         nextSeq = 0
         sampleOffset = 0
         resumeToken = nil
-        sentResumeToken = nil
         hasOpenedGate = false
         reconnectAttempt = 0
         isStopping = false
@@ -203,7 +203,6 @@ public final class ComputerCallSession {
             return
         }
 
-        sentResumeToken = resumeToken
         lastReceiveAt = dependencies.now()
         startWatchdog()
         receiveTask = Task { [weak self] in await self?.receiveLoop() }
@@ -235,15 +234,16 @@ public final class ComputerCallSession {
 
     private func handle(_ frame: VoiceDownFrame) async {
         switch frame {
-        case let .ready(newResumeToken, owner, sessId):
-            let isFreshBus = sentResumeToken == nil || newResumeToken != sentResumeToken
+        case let .ready(newResumeToken, owner, resumed, sessId):
             resumeToken = newResumeToken
             reconnectAttempt = 0
             busOwner = owner
             sessionId = sessId
             connectionState = isStopping ? connectionState : .active
-            if isFreshBus {
-                nextSeq = 0
+            // `seq` restarts at 0 on every socket regardless of `resumed` — see this type's own
+            // `nextSeq` doc comment.
+            nextSeq = 0
+            if !resumed {
                 sampleOffset = 0
                 hasOpenedGate = false
             }
