@@ -118,21 +118,14 @@ public final class VoiceUplinkSession {
     private var watchdogTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var reconnectAttempt = 0
+    /// This socket's own frame counter — restarts at 0 on EVERY `ready`, fresh bus or resumed
+    /// alike (`docs/VOICE_PROTOCOL.md`, "Framing": "`seq` always restarts at 0 on the reconnected
+    /// socket, even when `ready.resumed` is `true`" — `seq` is scoped to this client connection,
+    /// never to the bus). `inFlight` is cleared alongside it in the `.ready` handler for the same
+    /// reason: its keys are this socket's own `seq` values, and a stale entry from the connection
+    /// this one replaced would otherwise collide with the new socket's own seq 0, 1, 2, ….
     private var nextSeq = 0
-    /// Frames sent but not yet acked this connection's whole lifetime — `seq` never resets across
-    /// a reconnect that resumes the SAME bus (`docs/VOICE_PROTOCOL.md`: "seq is this client
-    /// connection's own monotonically increasing frame counter, starting at 0 on hello" — true for
-    /// a genuinely fresh bus; a resumed one keeps counting from where it left off, since the
-    /// server's own watermark for that bus is never reset either, see `ledger.py`'s
-    /// `UplinkWatermark`). Reset to 0 only when `attachedResumeToken` below turns out not to match
-    /// what a reconnect actually resumed.
     private var resumeToken: String?
-    /// The `resume_token` this session last sent on `hello` — compared against what `ready`
-    /// answers with to tell a genuine resume (same bus, same take, do not resend `gate open`)
-    /// from a fresh bus (the grace window lapsed; the take must be reopened server-side or its
-    /// words are silently dropped — `DraftRegionSink.deliver` is a no-op until `start_take()` has
-    /// run). See this type's own doc comment.
-    private var sentResumeToken: String?
     private var currentDraftKey: String?
     /// This take's own client-minted identity, carried on `gate open` so the backend's
     /// `start_take(take_id:)` addresses the same draft region on every reconnect within this
@@ -186,7 +179,6 @@ public final class VoiceUplinkSession {
         ackedUpTo = 0
         nextSeq = 0
         resumeToken = nil
-        sentResumeToken = nil
         currentDraftKey = draftKey
         currentTakeId = takeId
         hasOpenedGateForCurrentTake = false
@@ -234,7 +226,6 @@ public final class VoiceUplinkSession {
             return
         }
 
-        sentResumeToken = resumeToken
         lastReceiveAt = dependencies.now()
         startWatchdog()
         receiveTask = Task { [weak self] in await self?.receiveLoop() }
@@ -269,34 +260,41 @@ public final class VoiceUplinkSession {
 
     private func handle(_ frame: VoiceDownFrame) async {
         switch frame {
-        case let .ready(newResumeToken, _, _):
-            let isFreshBus = sentResumeToken == nil || newResumeToken != sentResumeToken
+        case let .ready(newResumeToken, _, resumed, _):
             resumeToken = newResumeToken
             reconnectAttempt = 0
             dependencies.connectionEvent(.mintSucceeded)
             let wasReconnecting = state == .reconnecting
             state = isStopping ? state : .recording
-            if isFreshBus {
-                // Every fresh bus needs this, including the very first connect of a brand-new
-                // take: the take must be (re)opened server-side, or every word transcribed from
-                // here is silently dropped (`DraftRegionSink.deliver` no-ops with no
-                // `start_take()` behind it). A fresh bus also means the ack watermark reset to
-                // nothing on the server's side; resume sending from wherever local delivery is
-                // actually confirmed, so nothing already acked is resent, but nothing captured
-                // since is skipped either.
-                nextSeq = 0
+            // `seq` restarts at 0 on every socket regardless of `resumed` — the socket's own
+            // counter, never the bus's (`docs/VOICE_PROTOCOL.md`, "Framing"). `inFlight`'s keys
+            // are this socket's own `seq` values, so a stale entry from the connection this one
+            // replaced would otherwise collide with the new socket's own seq 0, 1, 2, ….
+            nextSeq = 0
+            inFlight = [:]
+            if !resumed {
+                // A genuinely fresh bus needs this, including the very first connect of a
+                // brand-new take: the take must be (re)opened server-side, or every word
+                // transcribed from here is silently dropped (`DraftRegionSink.deliver` no-ops
+                // with no `start_take()` behind it). A fresh bus also means the ack watermark
+                // reset to nothing on the server's side; resume sending from wherever local
+                // delivery is actually confirmed, so nothing already acked is resent, but
+                // nothing captured since is skipped either.
                 ackedUpTo = 0
                 // `takeId` rides only on the FIRST open of this take, deliberately not on a later
-                // reopen. The backend mints a fresh region for a take_id it has never seen, which
-                // is safe by construction (`write_draft_region`'s stale-seq guard only ever
-                // compares against a row that already exists) — but re-sending the SAME take_id
-                // on a reconnect that reopens a take which already delivered live text would hand
-                // the fresh engine's own reset `seq` (0, 1, 2, …) to a region whose stored `seq`
-                // is already higher, and every further word would silently no-op against that
-                // guard rather than actually reaching the draft. Until that interaction is
-                // confirmed safe server-side, a reconnect past the resume grace window keeps the
-                // pre-existing behavior: a fresh region for the recovered continuation, which is
-                // a real, accepted, previously-reported limitation — not a regression from this.
+                // reopen — now a decision made WITH `resumed` in hand, not a guess forced by not
+                // having it. The backend mints a fresh region for a take_id it has never seen,
+                // which is safe by construction (`write_draft_region`'s stale-seq guard only
+                // ever compares against a row that already exists) — but re-sending the SAME
+                // take_id on a reopen that already delivered live text would hand the fresh
+                // engine's own reset `seq` (0, 1, 2, …) to a region whose stored `seq` is already
+                // higher, and every further word would silently no-op against that guard rather
+                // than actually reaching the draft. `resumed` tells this client the bus/engine
+                // identity, not whether `write_draft_region`'s own guard has been made tolerant
+                // of that reset — nothing server-side has changed on that front — so a genuinely
+                // fresh bus (`resumed == false`) still gets a fresh region for the recovered
+                // continuation: a real, accepted, previously-reported limitation, not a
+                // regression from this fix.
                 let takeId = hasOpenedGateForCurrentTake ? nil : currentTakeId
                 hasOpenedGateForCurrentTake = true
                 try? await transport?.send(.gate(open: true, reason: "button", takeId: takeId))
