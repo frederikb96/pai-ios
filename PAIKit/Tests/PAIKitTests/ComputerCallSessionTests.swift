@@ -6,6 +6,7 @@ import XCTest
 /// called from whichever isolation context `ComputerCallSession`'s own tasks run on.
 private actor FakeComputerCallTransport: VoiceSocketTransportProtocol {
     private(set) var sentFrames: [VoiceUpFrame] = []
+    private(set) var sentAudioFrames: [Data] = []
     private var toReceive: [VoiceSocketMessage] = []
     private var pendingReceives: [CheckedContinuation<VoiceSocketMessage, Error>] = []
     /// Set by `failReceives` when no `receive()` call is suspended yet to fail directly — the
@@ -20,7 +21,9 @@ private actor FakeComputerCallTransport: VoiceSocketTransportProtocol {
         sentFrames.append(frame)
     }
 
-    func sendAudio(_ data: Data) async throws {}
+    func sendAudio(_ data: Data) async throws {
+        sentAudioFrames.append(data)
+    }
 
     func receive() async throws -> VoiceSocketMessage {
         if let detail = pendingFailureDetail {
@@ -106,7 +109,8 @@ final class ComputerCallSessionTests: XCTestCase {
         let session = makeSession(transport: transport)
 
         let startTask = Task { await session.start() }
-        await transport.enqueue(.control(.ready(resumeToken: "r1", busOwner: .computer, sessionId: nil)))
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
         await waitUntil { await transport.sentFrames.count >= 2 }
 
         XCTAssertEqual(session.connectionState, .active)
@@ -131,7 +135,8 @@ final class ComputerCallSessionTests: XCTestCase {
         let session = makeSession(transport: transport)
 
         let startTask = Task { await session.start() }
-        await transport.enqueue(.control(.ready(resumeToken: "r1", busOwner: .computer, sessionId: nil)))
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
         await waitUntil { await transport.sentFrames.count >= 2 }
 
         await transport.enqueue(
@@ -163,7 +168,8 @@ final class ComputerCallSessionTests: XCTestCase {
         session.onAudioDown = { ref, pcm in Task { await recorder.recordAudioDown(ref: ref, pcm: pcm) } }
 
         let startTask = Task { await session.start() }
-        await transport.enqueue(.control(.ready(resumeToken: "r1", busOwner: .computer, sessionId: nil)))
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
         await waitUntil { session.connectionState == .active }
 
         await transport.enqueue(.audio(ref: 3, pcm: Data([1, 2, 3, 4])))
@@ -185,7 +191,8 @@ final class ComputerCallSessionTests: XCTestCase {
         session.onClearRequested = { Task { await recorder.recordClear() } }
 
         let startTask = Task { await session.start() }
-        await transport.enqueue(.control(.ready(resumeToken: "r1", busOwner: .computer, sessionId: nil)))
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
         await waitUntil { session.connectionState == .active }
 
         await transport.enqueue(.control(.clear))
@@ -205,7 +212,8 @@ final class ComputerCallSessionTests: XCTestCase {
         let session = makeSession(transport: transport)
 
         let startTask = Task { await session.start() }
-        await transport.enqueue(.control(.ready(resumeToken: "r1", busOwner: .computer, sessionId: nil)))
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
         await waitUntil { session.connectionState == .active }
 
         await session.notePlayed(ref: 7)
@@ -232,7 +240,8 @@ final class ComputerCallSessionTests: XCTestCase {
         let session = makeSession(transport: transport)
 
         let startTask = Task { await session.start() }
-        await transport.enqueue(.control(.ready(resumeToken: "r1", busOwner: .computer, sessionId: nil)))
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
         await waitUntil { session.connectionState == .active }
 
         await transport.failReceives(detail: "close 1000: computer ended the call")
@@ -255,7 +264,8 @@ final class ComputerCallSessionTests: XCTestCase {
         let session = makeSession(transport: transport)
 
         let startTask = Task { await session.start() }
-        await transport.enqueue(.control(.ready(resumeToken: "r1", busOwner: .computer, sessionId: nil)))
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
         await waitUntil { session.connectionState == .active }
 
         await transport.failReceives(detail: nil)
@@ -274,7 +284,8 @@ final class ComputerCallSessionTests: XCTestCase {
         let session = makeSession(transport: transport)
 
         let startTask = Task { await session.start() }
-        await transport.enqueue(.control(.ready(resumeToken: "r1", busOwner: .computer, sessionId: nil)))
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
         await waitUntil { session.connectionState == .active }
 
         await session.end()
@@ -290,5 +301,60 @@ final class ComputerCallSessionTests: XCTestCase {
         }
         XCTAssertEqual(session.connectionState, .idle)
         XCTAssertEqual(session.lastEndReason, .user)
+    }
+
+    /// `ready.resumed == true` must NOT resend `gate open` — the bus/engine never detached, so
+    /// re-opening it would be wrong, not just redundant. Mirrors
+    /// `VoiceUplinkSessionTests.testAResumedReadyDoesNotResendGateOpen`.
+    func testAResumedReadyDoesNotResendGateOpen() async {
+        let transport = FakeComputerCallTransport()
+        let session = makeSession(transport: transport)
+
+        let startTask = Task { await session.start() }
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
+        await waitUntil { session.connectionState == .active }
+
+        await transport.enqueue(.control(.ready(resumeToken: "r1", busOwner: .computer, resumed: true, sessionId: nil)))
+        for _ in 0..<20 { await Task.yield() }
+
+        let frames = await transport.sentFrames
+        XCTAssertEqual(frames.count, 2, "a resumed ready must not send a second gate frame")
+
+        await session.end()
+        _ = await startTask.value
+    }
+
+    /// The wire `seq` counter restarts at 0 on EVERY `ready`, including a resumed one — the same
+    /// fix `VoiceUplinkSessionTests.testSeqRestartsAtZeroOnAResumedReadyToo` proves for dictation,
+    /// here for Computer's own uplink.
+    func testSeqRestartsAtZeroOnAResumedReadyToo() async {
+        let transport = FakeComputerCallTransport()
+        let session = makeSession(transport: transport)
+
+        let startTask = Task { await session.start() }
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
+        await waitUntil { session.connectionState == .active }
+
+        await session.sendMicChunk(pcm16le: [1, 2, 3])
+        await waitUntil { await transport.sentAudioFrames.count >= 1 }
+
+        // A rotated token on the SAME bus — the case a token-comparison inference would have
+        // misread as a fresh bus.
+        await transport.enqueue(.control(.ready(resumeToken: "r2", busOwner: .computer, resumed: true, sessionId: nil)))
+        for _ in 0..<20 { await Task.yield() }
+
+        await session.sendMicChunk(pcm16le: [4, 5, 6])
+        await waitUntil { await transport.sentAudioFrames.count >= 2 }
+
+        let expected = VoiceSocketProtocol.packUplinkAudio(seq: 0, sampleOffset: 3, pcm16le: [4, 5, 6])
+        let sentAudio = await transport.sentAudioFrames
+        XCTAssertEqual(
+            sentAudio.last, expected,
+            "seq must restart at 0 on the new socket even though the bus resumed")
+
+        await session.end()
+        _ = await startTask.value
     }
 }
