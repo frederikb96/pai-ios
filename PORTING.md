@@ -331,6 +331,19 @@ connecting) mid-call — `ComputerAudioIO`'s configuration-change handler rebuil
 scratch, reasoned to be safe the same way a fresh call's own setup is, but never watched happen on
 a real device while a call is live.
 
+### Verify: Settings' Computer and History sections, and the three ways a call starts — pai-cloud anchor: `web/src/components/SettingsPanel.tsx`
+Needs `PAI/` because: `ComputerSection`, `SpokenVoiceSection` and `HistorySection` are `Form`
+sections whose behaviour is bound to a live screen — a decimal-pad speed field whose Save button
+withdraws while the typed value is unusable, two write-only secret fields that never show what
+they hold, and three sheets opened from rows that also show a count. The draft-and-save logic
+(`SpokenVoiceSettingsDraft`) is unit-tested; that nothing collapses, mislays focus or draws an
+error where a hint belongs is not.
+
+The same pass covers the call entries, which are also `PAI/` only: a quick-action tile opening a
+call into its own session, the composer's "Call this session" item appearing only when no call is
+live, and the session list's leading swipe to close. Each is one tap against a real backend, and
+none of them has been run.
+
 ## A search hit inside an expanded Thinking card does not scroll to the hit
 
 Needs a device or a Mac run to fix and to verify, which is why it is here.
