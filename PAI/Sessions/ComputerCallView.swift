@@ -103,10 +103,27 @@ struct ComputerCallView: View {
         case .reconnecting:
             return "Reconnecting…"
         case .active:
-            if controller.session.busOwner == .call {
-                return "Connected to a Kai session."
+            // `isSpeaking` overrides whatever `phase` says: it is derived from downlink audio
+            // actually rendering (`ComputerCallController`'s own doc comment), which is the only
+            // way this client can tell right now — `ComputerEngine` announces `phase: "listening"`
+            // once, at attach, and never again, so nothing server-side currently says "speaking"
+            // or "generating" at all. Any OTHER phase value is rendered as-is rather than matched
+            // against a fixed set, so a phase the backend starts sending later (the protocol
+            // document names more than this engine implements yet) shows up with no client
+            // change.
+            if controller.session.busOwner == .computer, controller.isSpeaking {
+                return "Computer is speaking…"
             }
-            return controller.isSpeaking ? "Computer is speaking…" : "Listening…"
+            let phaseText = Self.humanized(phase: controller.session.phase)
+            if controller.session.busOwner == .call {
+                return "Connected to a Kai session — \(phaseText)"
+            }
+            return phaseText
         }
+    }
+
+    private static func humanized(phase: String) -> String {
+        guard let first = phase.first else { return "…" }
+        return "\(first.uppercased())\(phase.dropFirst())…"
     }
 }
