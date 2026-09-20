@@ -90,7 +90,8 @@ final class PaiApiClientTests: XCTestCase {
     func testGetSessionsSendsEveryFilterOnTheQueryString() async throws {
         stubJSON("[]")
         let client = try makeClient()
-        _ = try await client.getSessions(cursor: "c1", agent: "vm", kind: .subagent, parent: "p1", q: "hello")
+        _ = try await client.getSessions(
+            cursor: "c1", agent: "vm", kind: .exactly(.subagent), parent: "p1", q: "hello")
 
         let query = PaiStubURLProtocol.capturedRequest?.url?.query ?? ""
         XCTAssertTrue(query.contains("cursor=c1"), query)
@@ -98,6 +99,18 @@ final class PaiApiClientTests: XCTestCase {
         XCTAssertTrue(query.contains("kind=subagent"), query)
         XCTAssertTrue(query.contains("parent=p1"), query)
         XCTAssertTrue(query.contains("q=hello"), query)
+    }
+
+    /// `listed` is a named SET rather than a kind — what belongs in the session list is the
+    /// server's decision, so it has to reach the wire as that literal rather than as whichever
+    /// kinds this client currently believes in.
+    func testGetSessionsSendsTheListedSetAsItsOwnValue() async throws {
+        stubJSON("[]")
+        let client = try makeClient()
+        _ = try await client.getSessions(kind: .listed)
+
+        let query = PaiStubURLProtocol.capturedRequest?.url?.query ?? ""
+        XCTAssertTrue(query.contains("kind=listed"), query)
     }
 
     func testSearchSessionsSendsModeAndAgentWhenProvided() async throws {

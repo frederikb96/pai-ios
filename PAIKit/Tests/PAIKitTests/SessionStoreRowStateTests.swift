@@ -45,6 +45,15 @@ final class SessionStoreRowStateTests: XCTestCase {
         XCTAssertFalse(SessionListDomain.isDrivable(session))
     }
 
+    /// A spoken Computer conversation reports a real, honest state — the pipeline wrote it from
+    /// a genuine conversation — so, like a supervisor, drivability cannot lean on "no state at
+    /// all" for it. Offering a composer would swallow whatever he typed: the backend refuses a
+    /// send to one outright.
+    func testASpokenComputerConversationIsNotDrivable() {
+        let session = SessionFixture.make(state: .ready, kind: .computer)
+        XCTAssertFalse(SessionListDomain.isDrivable(session))
+    }
+
     /// The sharpest divergence risk in this file: an unrecognized state string is not `nil` and
     /// is not the literal `.closed`, so it reads as drivable — offering a composer for it is
     /// correct, not a bug, because the web (no closed union at runtime) would do the same.
@@ -140,6 +149,11 @@ final class SessionStoreRowStateTests: XCTestCase {
 
         let supervisor = SessionFixture.make(state: nil, displayState: .done, kind: .supervisor)
         XCTAssertEqual(SessionListDomain.sessionLabel(for: supervisor), "Supervisor")
+
+        // Every processless kind is grey, so the dot cannot tell them apart — the label is the
+        // only thing that says which of them this row is.
+        let computer = SessionFixture.make(state: nil, displayState: .done, kind: .computer)
+        XCTAssertEqual(SessionListDomain.sessionLabel(for: computer), "Spoken with Computer")
     }
 
     /// A grey (not drivable) session's label appends the "not driven by PAI" suffix — unless

@@ -2,9 +2,9 @@ import PAIKit
 import SwiftUI
 
 /// What the composer becomes when PAI is not driving this session — a common, healthy state, not
-/// an error. Ports `MessageInput.tsx`'s four variants exactly: the composer is *replaced*, never
-/// merely disabled, because the four messages below explain four genuinely different situations a
-/// disabled text field cannot distinguish.
+/// an error. Ports `MessageInput.tsx`'s variants exactly: the composer is *replaced*, never
+/// merely disabled, because the messages below explain genuinely different situations a disabled
+/// text field cannot distinguish.
 struct NonDrivableComposerBar: View {
     @Environment(AppEnvironment.self) private var environment
     let session: Session
@@ -28,6 +28,13 @@ struct NonDrivableComposerBar: View {
                         environment.router.push(.session(id: parentSessionId))
                     }
                 }
+
+            case .computer:
+                // No parent to offer, unlike the two above: this conversation is not part of
+                // anything else, it simply already happened.
+                Text("This is a conversation you had with Computer — read-only.")
+                    .font(PaiTypography.body.font)
+                    .foregroundStyle(PaiPalette.Semantic.textMuted)
 
             case .supervisor:
                 Text("This is a supervisor's own conversation — read-only.")
@@ -88,6 +95,7 @@ struct NonDrivableComposerBar: View {
     private enum Variant {
         case subagent
         case supervisor
+        case computer
         case machineOffline(String)
         case collideConfirm
         case plainResume
@@ -96,11 +104,14 @@ struct NonDrivableComposerBar: View {
     private var variant: Variant {
         if session.kind == .subagent { return .subagent }
         if session.kind == .supervisor { return .supervisor }
+        if session.kind == .computer { return .computer }
         let machineSlug = session.agent ?? MachineStore.defaultMachineSlug
         if let machine = machines.allMachines.first(where: { $0.slug == machineSlug }), !machine.online {
             return .machineOffline(machine.displayName)
         }
-        let mayCollide = (session.discovered ?? false) && (session.remoteControl ?? false) && session.kind != .subagent
+        let mayCollide =
+            (session.discovered ?? false) && (session.remoteControl ?? false)
+            && !(session.kind.map(sessionKindsWithoutProcess.contains) ?? false)
         return mayCollide ? .collideConfirm : .plainResume
     }
 

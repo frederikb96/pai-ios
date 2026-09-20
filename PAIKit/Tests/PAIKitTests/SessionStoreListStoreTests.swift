@@ -317,6 +317,10 @@ final class SessionStoreListStoreTests: XCTestCase {
                         SessionFixture.make(id: "convo", kind: .conversation),
                         SessionFixture.make(id: "sub", kind: .subagent),
                         SessionFixture.make(id: "sup", kind: .supervisor),
+                        // Not excluded: a spoken Computer conversation belongs in this list
+                        // exactly like any other conversation of Freddy's — it simply cannot be
+                        // typed into once opened.
+                        SessionFixture.make(id: "spoken", kind: .computer),
                     ], nextCursor: nil
                 )
             )
@@ -324,7 +328,21 @@ final class SessionStoreListStoreTests: XCTestCase {
         let store = makeStore(api: api)
         await store.loadInitialSessions()
 
-        XCTAssertEqual(store.rows.map(\.id), ["convo"])
+        XCTAssertEqual(store.rows.map(\.id), ["convo", "spoken"])
+    }
+
+    /// The list asks the SERVER which kinds belong in it, by name, rather than enumerating them
+    /// here — so a kind added later appears without this client changing, and the two clients
+    /// cannot drift into showing different lists.
+    func testTheListAsksForTheServersOwnNamedSetOfKinds() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in .success(SessionsPage(sessions: [], nextCursor: nil)) }
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        let browseCalls = await api.getSessionsCalls.filter { $0.since == nil }
+        XCTAssertFalse(browseCalls.isEmpty)
+        XCTAssertTrue(browseCalls.allSatisfy { $0.kind == .listed })
     }
 
     /// An id query filters CLIENT-SIDE on top of whichever source is active — including a

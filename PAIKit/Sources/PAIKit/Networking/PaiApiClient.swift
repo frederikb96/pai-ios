@@ -360,7 +360,7 @@ public struct PaiApiClient: Sendable {
         limit: Int? = nil,
         cursor: String? = nil,
         agent: String? = nil,
-        kind: SessionKind? = nil,
+        kind: SessionKindFilter? = nil,
         parent: String? = nil,
         q: String? = nil
     ) async throws -> SessionsPage {
@@ -369,16 +369,7 @@ public struct PaiApiClient: Sendable {
         if let limit { query.append(URLQueryItem(name: "limit", value: String(limit))) }
         if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
         if let agent { query.append(URLQueryItem(name: "agent", value: agent)) }
-        if let kind {
-            let raw: String
-            switch kind {
-            case .conversation: raw = "conversation"
-            case .subagent: raw = "subagent"
-            case .supervisor: raw = "supervisor"
-            case let .unrecognized(value): raw = value
-            }
-            query.append(URLQueryItem(name: "kind", value: raw))
-        }
+        if let kind { query.append(URLQueryItem(name: "kind", value: kind.queryValue)) }
         if let parent { query.append(URLQueryItem(name: "parent", value: parent)) }
         if let q { query.append(URLQueryItem(name: "q", value: q)) }
 

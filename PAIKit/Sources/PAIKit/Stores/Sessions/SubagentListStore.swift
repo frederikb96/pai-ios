@@ -6,7 +6,7 @@ import Observation
 /// here, next to the protocol it satisfies.
 public protocol SubagentListApiClient: Sendable {
     func getSessions(
-        since: String?, limit: Int?, cursor: String?, agent: String?, kind: SessionKind?, parent: String?, q: String?
+        since: String?, limit: Int?, cursor: String?, agent: String?, kind: SessionKindFilter?, parent: String?, q: String?
     ) async throws -> SessionsPage
 }
 
@@ -61,7 +61,7 @@ public final class SubagentListStore {
         defer { isLoading = false }
         do {
             let page = try await api.getSessions(
-                since: nil, limit: Self.pageSize, cursor: cursor, agent: nil, kind: .subagent,
+                since: nil, limit: Self.pageSize, cursor: cursor, agent: nil, kind: .exactly(.subagent),
                 parent: parentSessionId, q: nil
             )
             // Defensive, matching `SessionListStore.rows`' own `kind != .subagent` filter on the
@@ -98,7 +98,7 @@ public final class SubagentListStore {
     private func refreshTopPage() async -> Bool {
         guard
             let page = try? await api.getSessions(
-                since: nil, limit: Self.pageSize, cursor: nil, agent: nil, kind: .subagent,
+                since: nil, limit: Self.pageSize, cursor: nil, agent: nil, kind: .exactly(.subagent),
                 parent: parentSessionId, q: nil
             )
         else { return false }

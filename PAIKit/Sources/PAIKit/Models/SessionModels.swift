@@ -185,12 +185,53 @@ public enum SessionKind: Sendable, Hashable {
     /// session's own menu, and excluded from the session list and every one of its filters the
     /// same way a subagent already is.
     case supervisor
+    /// A conversation Freddy had with Computer out loud. Unlike the two above it DOES belong in
+    /// the session list — it is one of his conversations, named by its own phase summary and
+    /// searchable beside everything else. What it is not is a session: there is no process
+    /// behind it and never was, so nothing may offer to resume it, send to it, or open a
+    /// terminal on it, and the backend refuses all three regardless.
+    case computer
     case unrecognized(String)
+}
+
+/// Kinds with no process of their own — nothing here can be resumed, sent to, or opened in a
+/// terminal. Mirrors `SESSION_KINDS_WITHOUT_PROCESS` in `models.py`; one set rather than the
+/// cases repeated at each site, since a kind added to some of those checks and not the others is
+/// a difference nothing detects.
+public let sessionKindsWithoutProcess: Set<SessionKind> = [.subagent, .supervisor, .computer]
+
+/// What `GET /api/sessions?kind=` may be asked for. `.listed` is a named SET rather than a kind:
+/// what belongs in the session list is the server's decision, so a kind added later shows up in
+/// both clients without either being changed, and the two cannot drift into showing different
+/// lists.
+public enum SessionKindFilter: Sendable, Hashable {
+    case listed
+    case exactly(SessionKind)
+
+    public var queryValue: String {
+        switch self {
+        case .listed: return "listed"
+        case let .exactly(kind): return kind.queryValue
+        }
+    }
+}
+
+extension SessionKind {
+    public var queryValue: String {
+        switch self {
+        case .conversation: return "conversation"
+        case .subagent: return "subagent"
+        case .supervisor: return "supervisor"
+        case .computer: return "computer"
+        case let .unrecognized(raw): return raw
+        }
+    }
 }
 
 extension SessionKind: Codable {
     private static let knownValues: [String: SessionKind] = [
         "conversation": .conversation, "subagent": .subagent, "supervisor": .supervisor,
+        "computer": .computer,
     ]
 
     public init(from decoder: Decoder) throws {
@@ -200,12 +241,7 @@ extension SessionKind: Codable {
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
-        switch self {
-        case .conversation: try container.encode("conversation")
-        case .subagent: try container.encode("subagent")
-        case .supervisor: try container.encode("supervisor")
-        case let .unrecognized(raw): try container.encode(raw)
-        }
+        try container.encode(queryValue)
     }
 }
 

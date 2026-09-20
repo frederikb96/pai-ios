@@ -13,7 +13,7 @@ actor FakeSessionListApi: SessionListApiClient {
         let limit: Int?
         let cursor: String?
         let agent: String?
-        let kind: SessionKind?
+        let kind: SessionKindFilter?
         let q: String?
     }
 
@@ -43,7 +43,7 @@ actor FakeSessionListApi: SessionListApiClient {
     let gate = CallGate()
 
     func getSessions(
-        since: String?, limit: Int?, cursor: String?, agent: String?, kind: SessionKind?, parent: String?, q: String?
+        since: String?, limit: Int?, cursor: String?, agent: String?, kind: SessionKindFilter?, parent: String?, q: String?
     ) async throws -> SessionsPage {
         let call = GetSessionsCall(since: since, limit: limit, cursor: cursor, agent: agent, kind: kind, q: q)
         getSessionsCalls.append(call)
@@ -206,7 +206,7 @@ actor FakeClaudeAuthApi: ClaudeAuthApiClient {
 actor FakeSubagentListApi: SubagentListApiClient {
     struct GetSessionsCall: Equatable {
         let cursor: String?
-        let kind: SessionKind?
+        let kind: SessionKindFilter?
         let parent: String?
     }
 
@@ -216,7 +216,7 @@ actor FakeSubagentListApi: SubagentListApiClient {
     var results: [Result<SessionsPage, PaiError>] = [.success(SessionsPage(sessions: [], nextCursor: nil))]
 
     func getSessions(
-        since: String?, limit: Int?, cursor: String?, agent: String?, kind: SessionKind?, parent: String?, q: String?
+        since: String?, limit: Int?, cursor: String?, agent: String?, kind: SessionKindFilter?, parent: String?, q: String?
     ) async throws -> SessionsPage {
         calls.append(GetSessionsCall(cursor: cursor, kind: kind, parent: parent))
         let result =

@@ -69,10 +69,11 @@ public enum SessionListDomain {
     /// whether it can be typed into. `remote_control` deliberately plays no part: it records that
     /// the CONVERSATION registered with Remote Control at some point and never goes back to
     /// false, so it would stay true long after the terminal that set it is gone. A subagent is
-    /// never drivable, whatever its state. A supervisor DOES have its own process, but is
+    /// never drivable, whatever its state, and nor is a spoken Computer conversation — a record
+    /// of something that already happened. A supervisor DOES have its own process, but is
     /// deliberately never drivable either — Freddy reads its verdicts, he never types into it.
     public static func isDrivable(_ session: Session) -> Bool {
-        if session.kind == .subagent || session.kind == .supervisor { return false }
+        if let kind = session.kind, sessionKindsWithoutProcess.contains(kind) { return false }
         guard let state = session.state else { return false }
         return state != .closed
     }
@@ -103,6 +104,7 @@ public enum SessionListDomain {
     public static func sessionLabel(for session: Session) -> String {
         if session.kind == .subagent { return "Subagent" }
         if session.kind == .supervisor { return "Supervisor" }
+        if session.kind == .computer { return "Spoken with Computer" }
         if let displayState = session.displayState {
             let label = displayLabel(displayState)
             return isGrey(session) && displayState != .closed ? "\(label) · not driven by PAI" : label

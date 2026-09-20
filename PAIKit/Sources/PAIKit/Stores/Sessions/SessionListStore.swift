@@ -6,7 +6,7 @@ import Observation
 /// here, next to the protocol it satisfies, not inside `PaiApiClient.swift` itself.
 public protocol SessionListApiClient: Sendable {
     func getSessions(
-        since: String?, limit: Int?, cursor: String?, agent: String?, kind: SessionKind?, parent: String?, q: String?
+        since: String?, limit: Int?, cursor: String?, agent: String?, kind: SessionKindFilter?, parent: String?, q: String?
     ) async throws -> SessionsPage
     func searchSessions(
         q: String, mode: SessionSearchMode?, agent: String?, limit: Int?
@@ -168,7 +168,9 @@ public final class SessionListStore {
         let scoped = source.filter { scheduledOnly ? $0.taskId != nil : $0.taskId == nil }
         // A subagent (opened from its parent's own subagents screen) or a supervisor (opened
         // from its worker's own menu) lands in this same synced store so a chat view can find it
-        // by id — neither may ever surface as a row of its own here.
+        // by id — neither may ever surface as a row of its own here. A spoken Computer
+        // conversation is not one of these: it belongs in the list exactly like any other
+        // conversation, it simply cannot be typed into once opened.
         let withoutSubagents = scoped.filter { $0.kind != .subagent && $0.kind != .supervisor }
         let matched =
             isIdQuery
@@ -369,7 +371,7 @@ public final class SessionListStore {
     public func loadInitialSessions() async {
         guard
             let page = try? await api.getSessions(
-                since: nil, limit: Self.sessionsPageSize, cursor: nil, agent: nil, kind: .conversation, parent: nil,
+                since: nil, limit: Self.sessionsPageSize, cursor: nil, agent: nil, kind: .listed, parent: nil,
                 q: nil
             )
         else { return }
@@ -417,7 +419,7 @@ public final class SessionListStore {
         defer { loadingMoreSyncedSessions = false }
         guard
             let page = try? await api.getSessions(
-                since: nil, limit: Self.sessionsPageSize, cursor: cursor, agent: nil, kind: .conversation, parent: nil,
+                since: nil, limit: Self.sessionsPageSize, cursor: cursor, agent: nil, kind: .listed, parent: nil,
                 q: nil
             )
         else { return }
@@ -573,7 +575,7 @@ public final class SessionListStore {
             } else {
                 do {
                     let page = try await self.api.getSessions(
-                        since: nil, limit: Self.sessionsPageSize, cursor: nil, agent: machine, kind: .conversation,
+                        since: nil, limit: Self.sessionsPageSize, cursor: nil, agent: machine, kind: .listed,
                         parent: nil, q: nil
                     )
                     guard !Task.isCancelled, self.generation == myGeneration else { return }
@@ -609,7 +611,7 @@ public final class SessionListStore {
         defer { if generation == myGeneration { serverFilteredLoading = false } }
         guard
             let page = try? await api.getSessions(
-                since: nil, limit: Self.sessionsPageSize, cursor: cursor, agent: machine, kind: .conversation,
+                since: nil, limit: Self.sessionsPageSize, cursor: cursor, agent: machine, kind: .listed,
                 parent: nil,
                 q: nil
             )
