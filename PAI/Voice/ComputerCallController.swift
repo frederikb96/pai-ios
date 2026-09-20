@@ -30,7 +30,11 @@ final class ComputerCallController {
     private let audioIO = ComputerAudioIO()
     private let toasts: ToastCenter
     private let audioSession = AVAudioSession.sharedInstance()
-    private var interruptionObserver: NSObjectProtocol?
+    /// `nonisolated(unsafe)` so `deinit` — which is nonisolated — can unregister it, same
+    /// discipline as `VoiceRecorderController.interruptionObserver`: written once on the main
+    /// actor during setup and read once at deallocation, when nothing else holds a reference, so
+    /// there is no concurrent access for the isolation to protect.
+    private nonisolated(unsafe) var interruptionObserver: NSObjectProtocol?
     /// One ordered consumer for every captured chunk, not one unstructured `Task` per chunk —
     /// exactly `VoiceRecorderController.wireCaptureCallbacks`'s own reasoning: two chunks each
     /// spawned as their own `Task` can resume out of order across `sendMicChunk`'s own `await`,
@@ -38,7 +42,9 @@ final class ComputerCallController {
     /// synchronously from `onMicChunk` and draining it from one long-running task is what actually
     /// guarantees order, rather than merely hoping the scheduler preserves it.
     private var micChunkContinuation: AsyncStream<[Int16]>.Continuation?
-    private var micChunkConsumerTask: Task<Void, Never>?
+    /// Same `nonisolated(unsafe)` discipline as `interruptionObserver` — `deinit` only ever calls
+    /// `cancel()` on whatever this held, never anything that touches this actor's isolated state.
+    private nonisolated(unsafe) var micChunkConsumerTask: Task<Void, Never>?
 
     init(requestFactory: PaiRequestFactory, authToken: @escaping @Sendable () -> String?, toasts: ToastCenter) {
         self.toasts = toasts

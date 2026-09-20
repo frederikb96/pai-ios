@@ -131,9 +131,16 @@ final class ComputerAudioIO: @unchecked Sendable {
             onFinished()
             return
         }
+        // `loadUnaligned` rather than `bindMemory`: this payload is `data.suffix(from:)` off a
+        // larger buffer (`VoiceSocketProtocol.unpackDownlinkAudio`), so it is not guaranteed to
+        // be 2-byte aligned — binding misaligned memory to `Int16` is undefined behavior even
+        // though it usually "works". `Int16(littleEndian:)` matches the wire format explicitly
+        // rather than relying on every Apple target happening to be little-endian already.
         data.withUnsafeBytes { raw in
-            guard let base = raw.bindMemory(to: Int16.self).baseAddress else { return }
-            channelData[0].update(from: base, count: sampleCount)
+            for index in 0..<sampleCount {
+                channelData[0][index] = Int16(
+                    littleEndian: raw.loadUnaligned(fromByteOffset: index * 2, as: Int16.self))
+            }
         }
         playerNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in
             onFinished()
