@@ -198,6 +198,10 @@ struct ComposerBar: View {
                 ComposerActionMenu(
                     hasSession: true,
                     canGrantSecretAccess: currentSecretGrantable ?? false,
+                    offersComputer: true,
+                    isOnTheCall: callIsInThisSession,
+                    isCallLive: environment.connection?.computerCall.isLive ?? false,
+                    onComputer: { ComputerCallEntry.open(environment) },
                     onPastRecordings: { showingRecordingsSheet = true },
                     onAddPhoto: { showingPhotoPicker = true },
                     onAddFile: { showingFilePicker = true },
@@ -311,6 +315,15 @@ struct ComposerBar: View {
         let current = draftStore.draft(for: sessionID).displayText
         draftStore.setDraftText(
             key: sessionID, text: current.isEmpty ? prefixedText : "\(current) \(prefixedText)")
+    }
+
+    /// Whether the live call is inside this session — the third of the three ways back to the
+    /// voice screen, and the one that has to be visible from where Freddy already is. Read off
+    /// the call's own reported session id rather than anything this screen records, since the
+    /// backend is what decides which session a bus is in.
+    private var callIsInThisSession: Bool {
+        guard let call = environment.connection?.computerCall, call.isLive else { return false }
+        return call.session.busOwner == .call && call.session.sessionId == sessionID
     }
 
     /// Whether the running take is *this* composer's. The recorder is app-wide, so a take started

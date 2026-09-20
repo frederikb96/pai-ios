@@ -105,6 +105,17 @@ struct RootView: View {
                     // bar the same way, since a `VStack` respects the top safe area by default.
                     VStack(spacing: 0) {
                         ClaudeAuthBanner()
+                        // Sits with the auth banner rather than inside the stack, and for the
+                        // same reason its own comment gives: this has to push the screen down,
+                        // not draw over it, and a pushed screen that paints its own background
+                        // does not reliably honour a safe-area inset reserved outside the stack.
+                        ComputerCallBar(
+                            controller: connection.computerCall,
+                            sessions: connection.sessions,
+                            isShowingCall: environment.router.path.last == .computerCall
+                        ) {
+                            environment.router.surface(.computerCall)
+                        }
                         NavigationStack(path: navigationPath) {
                             SessionListView()
                                 .navigationDestination(for: Route.self) { route in
@@ -298,6 +309,8 @@ struct RootView: View {
             TaskEditorView(taskId: id)
         case .quickActions:
             QuickActionsScreen()
+        case .computerCall:
+            ComputerCallView()
         }
     }
 

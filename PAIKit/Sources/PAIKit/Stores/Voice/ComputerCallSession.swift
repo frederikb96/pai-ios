@@ -360,6 +360,17 @@ public final class ComputerCallSession {
         try? await transport.sendAudio(frame)
     }
 
+    // MARK: - Controls
+
+    /// One of the controls a call's own spoken grammar offers, sent as a frame instead of said
+    /// out loud. Dropped while this bus is not inside a session's call mode: Computer's own
+    /// engine has nothing to do with any of them, so a frame sent there would be a button that
+    /// silently did nothing rather than one the screen never offered.
+    public func send(command: VoiceCallCommand) async {
+        guard connectionState == .active, busOwner == .call, let transport else { return }
+        try? await transport.send(.command(command))
+    }
+
     // MARK: - Downlink playback receipt
 
     /// The app-side player finished actually rendering the chunk carrying `ref` — forwarded as

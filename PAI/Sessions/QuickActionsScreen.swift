@@ -47,7 +47,6 @@ struct QuickActionsScreen: View {
     @AppStorage("quickActionShortcut2Name") private var shortcut2Name = ""
     @AppStorage("quickActionShortcut2URL") private var shortcut2URLString = ""
     @State private var editingShortcutSlot: Int?
-    @State private var isShowingComputerCall = false
 
     private var shortcut1: QuickActionShortcut {
         QuickActionShortcut(name: shortcut1Name, urlString: shortcut1URLString)
@@ -83,9 +82,6 @@ struct QuickActionsScreen: View {
                 name: editing.slot == 1 ? $shortcut1Name : $shortcut2Name,
                 urlString: editing.slot == 1 ? $shortcut1URLString : $shortcut2URLString
             )
-        }
-        .fullScreenCover(isPresented: $isShowingComputerCall) {
-            ComputerCallView()
         }
     }
 
@@ -147,7 +143,7 @@ struct QuickActionsScreen: View {
     /// without even glancing at the grid's own two-column rhythm.
     private func computerTile(height: CGFloat) -> some View {
         Button {
-            openComputerCall()
+            ComputerCallEntry.open(environment)
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "waveform.circle.fill")
@@ -271,18 +267,6 @@ struct QuickActionsScreen: View {
             CallModeLaunchRequest.shared.cancel()
         }
         environment.router.replace(with: [.createSession])
-    }
-
-    /// The phone has one microphone: a dictation take already in progress must be stopped before
-    /// Computer's own full-duplex session opens it for itself, or the two engines would fight
-    /// over the same hardware.
-    private func openComputerCall() {
-        Task {
-            if let voice = environment.connection?.voice, voice.state != .idle {
-                await voice.stop()
-            }
-            isShowingComputerCall = true
-        }
     }
 
     private func createNote() async {

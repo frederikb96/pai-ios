@@ -10,10 +10,12 @@ import PAIKit
 /// the same reason: the session has no idea a microphone exists, and this type has no idea a
 /// backend does.
 ///
-/// One instance per call rather than app-wide like `VoiceRecorderController`: nothing here needs
-/// to survive the screen that started it (unlike a dictation take, no draft is being written that
-/// another device could be watching fill in), so `ComputerCallView` owns this directly and it
-/// ends when the view goes away.
+/// One instance for the app's life, exactly like `VoiceRecorderController` and for the same
+/// reason: the microphone is a single exclusive resource, and a call is a thing Freddy starts
+/// and then stops looking at. `ComputerCallView` is a window onto this, never its owner — so
+/// backing out of that screen to read a session or a note leaves the call running, which is the
+/// whole point of it. What ends a call is the End control, a sign-out, or the backend closing
+/// the socket; nothing about navigation does.
 @MainActor
 @Observable
 final class ComputerCallController {
@@ -104,13 +106,28 @@ final class ComputerCallController {
         }
     }
 
+    /// Whether a call is running right now — what the app-wide call bar and every door onto the
+    /// voice screen read, so none of them re-derives it from a different field.
+    var isLive: Bool { session.connectionState != .idle }
+
     func end() async {
         audioIO.stop()
-        micChunkContinuation?.finish()
-        micChunkContinuation = nil
+        // The chunk stream is deliberately NOT finished here: this controller outlives any one
+        // call, and a finished `AsyncStream` cannot be reopened — the next call would capture
+        // audio into a consumer that had already returned, with nothing anywhere saying so.
+        // `sendMicChunk` drops whatever arrives while the session is idle, and `audioIO.stop()`
+        // means nothing arrives at all.
         pendingPlaybackChunks = 0
         isSpeaking = false
         await session.end()
+    }
+
+    /// Sends one of the controls the call's own spoken grammar also offers
+    /// (`docs/VOICE_PROTOCOL.md`'s `command` frame). Only a bus a Kai session's call mode owns
+    /// acts on these; Computer's own engine ignores them, so the caller gates on the face it is
+    /// showing rather than this type second-guessing which engine is attached.
+    func send(command: VoiceCallCommand) async {
+        await session.send(command: command)
     }
 
     private func play(ref: Int, pcm: Data) {

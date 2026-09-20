@@ -42,6 +42,41 @@ final class RouterTests: XCTestCase {
         XCTAssertTrue(router.path.isEmpty)
     }
 
+    /// A screen reachable from several places at once — the voice screen, reached from the
+    /// launcher, from any composer's plus menu, and from the call bar — must be one screen. A
+    /// plain push from the second door would stack a copy under the first, so backing out of one
+    /// would land on the other and read as a back gesture that did nothing.
+    func testSurfacingAScreenAlreadyOnThePathPopsToItRatherThanStackingACopy() {
+        let router = Router(gate: .ready)
+        router.push(.computerCall)
+        router.push(.session(id: "abc"))
+        router.push(.notes)
+
+        router.surface(.computerCall)
+
+        XCTAssertEqual(router.path, [.computerCall])
+    }
+
+    func testSurfacingAScreenThatIsNotOnThePathPushesIt() {
+        let router = Router(gate: .ready)
+        router.push(.session(id: "abc"))
+
+        router.surface(.computerCall)
+
+        XCTAssertEqual(router.path, [.session(id: "abc"), .computerCall])
+    }
+
+    /// Already on top: nothing to pop, and nothing to push either. Re-pushing would leave two.
+    func testSurfacingTheTopmostScreenChangesNothing() {
+        let router = Router(gate: .ready)
+        router.push(.session(id: "abc"))
+        router.push(.computerCall)
+
+        router.surface(.computerCall)
+
+        XCTAssertEqual(router.path, [.session(id: "abc"), .computerCall])
+    }
+
     func testPoppingAnEmptyPathIsHarmless() {
         let router = Router(gate: .ready)
         router.pop()

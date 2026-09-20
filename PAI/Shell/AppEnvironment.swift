@@ -75,6 +75,10 @@ final class AppEnvironment {
         /// to outlive the screen that started it — see `VoiceRecorderController`'s doc comment.
         /// There is one microphone, so there is one of these.
         let voice: VoiceRecorderController
+        /// The call with Computer, and the Kai session it may be inside. App-wide for the same
+        /// reason `voice` is: a call outlives the screen that shows it, and leaving that screen
+        /// to read a session mid-call is what the voice screen is for.
+        let computerCall: ComputerCallController
         /// The notification feed (row 5.27) — app-wide rather than scoped to its own screen,
         /// since the unread count drives a badge visible from the session list's toolbar and the
         /// springboard, neither of which is that screen.
@@ -117,6 +121,7 @@ final class AppEnvironment {
         connection?.sessions.stopPolling()
         connection?.claudeAuth.stopPolling()
         await connection?.voice.stop()
+        await connection?.computerCall.end()
         tokens.write(nil)
         connection = nil
         lastAuthFailure = detail
@@ -128,6 +133,7 @@ final class AppEnvironment {
         connection?.sessions.stopPolling()
         connection?.claudeAuth.stopPolling()
         await connection?.voice.stop()
+        await connection?.computerCall.end()
         tokens.write(nil)
         connection = nil
         lastAuthFailure = nil
@@ -182,6 +188,8 @@ final class AppEnvironment {
         let voice = VoiceRecorderController(
             apiClient: client, requestFactory: factory, authToken: { [tokens] in tokens.read() },
             settingsStore: settingsStore, drafts: draftStore, toasts: toasts)
+        let computerCall = ComputerCallController(
+            requestFactory: factory, authToken: { [tokens] in tokens.read() }, toasts: toasts)
 
         connection = Connection(
             requestFactory: factory,
@@ -201,6 +209,7 @@ final class AppEnvironment {
             notesBrowse: NotesBrowseStore(api: client, storage: defaults),
             staging: StagedAttachmentStore(),
             voice: voice,
+            computerCall: computerCall,
             notifications: NotificationCenterStore(api: client),
             transcriptJumps: TranscriptJumpRequests()
         )

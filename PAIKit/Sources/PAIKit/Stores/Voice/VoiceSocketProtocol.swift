@@ -32,6 +32,38 @@ public struct VoiceSocketCapabilities: Sendable, Equatable {
     }
 }
 
+/// A control a screen offers as a button, naming the same thing one of a call's spoken commands
+/// names — `docs/VOICE_PROTOCOL.md`'s `command` up frame. Only a bus a Kai session's call mode
+/// owns acts on these.
+///
+/// The raw values are the backend's own vocabulary (`call_engine.CLIENT_COMMANDS`), which is its
+/// spoken grammar plus `start`: there is no spoken "start", because what begins a take by voice
+/// is the wake word rather than a phrase.
+///
+/// Deliberately not `CommandKind`, which this package also carries: that type is the Swift
+/// original's *recogniser* vocabulary and still names three kinds this backend has no concept of
+/// (`start` there means something else again — a locally-detected phrase). A wire enum that could
+/// express a value no engine acts on would be a frame nothing answers.
+public enum VoiceCallCommand: String, Sendable, Equatable, CaseIterable {
+    /// Begin a take — the button equivalent of saying the wake word.
+    case start
+    /// End the take without sending it; the call drops back to its quiet phase.
+    case stop
+    /// End the take and send what was dictated to the session.
+    case send
+    /// Drop the reply currently being spoken.
+    case skip
+    /// Leave the session and return to Computer, without ending the call. Only the backend can
+    /// do this — switching which engine a bus is attached to is its own act, not the client's.
+    case listen
+}
+
+// The spoken grammar's "end" has no case here on purpose: hanging up is something this client
+// does itself, by closing the socket (`ComputerCallController.end()`), which works on either
+// face and while the connection is too unhealthy for a frame to arrive. Asking the backend to
+// hang up would be a second mechanism for one action, and the one that fails exactly when it is
+// most wanted.
+
 // MARK: - Up frames: client -> backend
 
 public enum VoiceUpFrame: Sendable, Equatable {
@@ -44,6 +76,7 @@ public enum VoiceUpFrame: Sendable, Equatable {
     case gate(open: Bool, reason: String, takeId: String? = nil)
     case played(ref: Int)
     case dtmf(digit: String)
+    case command(VoiceCallCommand)
     case bye(reason: String)
     case pong
 
@@ -66,6 +99,8 @@ public enum VoiceUpFrame: Sendable, Equatable {
             object["ref"] = ref
         case let .dtmf(digit):
             object["digit"] = digit
+        case let .command(command):
+            object["kind"] = command.rawValue
         case let .bye(reason):
             object["reason"] = reason
         case .pong:
@@ -81,6 +116,7 @@ public enum VoiceUpFrame: Sendable, Equatable {
         case .gate: return "gate"
         case .played: return "played"
         case .dtmf: return "dtmf"
+        case .command: return "command"
         case .bye: return "bye"
         case .pong: return "pong"
         }

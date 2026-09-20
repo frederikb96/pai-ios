@@ -99,6 +99,16 @@ public enum Route: Hashable, Sendable {
     /// underneath it — a hardware button is a fresh start, not a detour from wherever the app
     /// was last left.
     case quickActions
+    /// The voice screen: Computer, and the Kai session a call is inside. One screen with two
+    /// faces, which the call itself decides between.
+    ///
+    /// Pushed like any other destination rather than presented as a cover, because the call
+    /// outlives it — backing out to browse notes or read a session is the point, and a cover
+    /// with its dismissal disabled is the shape of a screen that may not be left. Reached from
+    /// the launcher's Computer tile, from any composer's plus menu, and from the session a call
+    /// is currently inside; `Router.surface(_:)` is what makes all three land on the one screen
+    /// rather than stacking copies of it.
+    case computerCall
 
     /// Ignores `session`'s `messageID` — see that case's doc comment. Everything else is a plain
     /// per-case comparison, same as the synthesized version this replaces.
@@ -123,6 +133,7 @@ public enum Route: Hashable, Sendable {
         case (.schedulerList, .schedulerList): return true
         case (.schedulerTask(let a), .schedulerTask(let b)): return a == b
         case (.quickActions, .quickActions): return true
+        case (.computerCall, .computerCall): return true
         default: return false
         }
     }
@@ -179,6 +190,8 @@ public enum Route: Hashable, Sendable {
             hasher.combine(id)
         case .quickActions:
             hasher.combine(19)
+        case .computerCall:
+            hasher.combine(20)
         }
     }
 }
@@ -194,7 +207,7 @@ extension Route {
     public static let namedScreens: [String] = [
         "session", "terminal", "settings", "createSession", "subagents", "notes", "note", "noteContainers",
         "notePreview", "notifications", "recordings", "arcSpec", "apps", "arcSpecList", "arcReport", "arcOverview",
-        "schedulerList", "schedulerTask", "quickActions",
+        "schedulerList", "schedulerTask", "quickActions", "computerCall",
     ]
 
     /// Every spec-scoped fixture route answers under, regardless of which uuid the request
@@ -239,6 +252,7 @@ extension Route {
         case "schedulerList": return .schedulerList
         case "schedulerTask": return .schedulerTask(id: nil)
         case "quickActions": return .quickActions
+        case "computerCall": return .computerCall
         default: return nil
         }
     }
@@ -372,6 +386,20 @@ public final class Router {
         path.removeSubrange(index...)
     }
 
+    /// Bring `route` to the top of the path: popping back to it when it is already there,
+    /// pushing it when it is not.
+    ///
+    /// What every door onto a single long-lived screen uses. Pushing unconditionally would
+    /// stack a second copy of it under the first, so backing out of one would land on the other
+    /// — which reads as a back gesture that did nothing.
+    public func surface(_ route: Route) {
+        guard let index = path.firstIndex(of: route) else {
+            push(route)
+            return
+        }
+        path.removeSubrange(path.index(after: index)...)
+    }
+
     /// Replace the whole path, for a deep link or a restored session.
     public func replace(with routes: [Route]) {
         path = routes
@@ -388,7 +416,7 @@ public final class Router {
             case .terminal(let sessionID): return sessionID
             case .settings, .createSession, .subagents, .notes, .note, .noteContainers, .notePreview,
                 .notifications, .recordings, .arcSpec, .apps, .arcSpecList, .arcReport, .arcOverview,
-                .schedulerList, .schedulerTask, .quickActions:
+                .schedulerList, .schedulerTask, .quickActions, .computerCall:
                 continue
             }
         }
@@ -403,7 +431,7 @@ public final class Router {
             case .note(let id), .notePreview(let id): return id
             case .session, .terminal, .settings, .createSession, .subagents, .notes, .noteContainers,
                 .notifications, .recordings, .arcSpec, .apps, .arcSpecList, .arcReport, .arcOverview,
-                .schedulerList, .schedulerTask, .quickActions:
+                .schedulerList, .schedulerTask, .quickActions, .computerCall:
                 continue
             }
         }

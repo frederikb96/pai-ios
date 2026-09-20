@@ -128,6 +128,53 @@ final class ComputerCallSessionTests: XCTestCase {
         _ = await startTask.value
     }
 
+    /// A control tapped on the call face has to reach the backend as the frame its own protocol
+    /// names — this is the seam where a wrong key or a wrong `type` would simply be ignored
+    /// server-side, with the button looking like it worked.
+    func testACommandIsSentAsTheProtocolsOwnFrame() async throws {
+        let transport = FakeComputerCallTransport()
+        let session = makeSession(transport: transport)
+
+        let startTask = Task { await session.start() }
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .call, resumed: false, sessionId: "s-1")))
+        await waitUntil { session.connectionState == .active }
+
+        await session.send(command: .send)
+        await waitUntil { await transport.sentFrames.contains(.command(.send)) }
+
+        // Decoded rather than string-compared: `JSONSerialization` does not promise key order,
+        // and the backend reads fields by name.
+        let encoded = try XCTUnwrap(VoiceUpFrame.command(.send).encoded().data(using: .utf8))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: String])
+        XCTAssertEqual(object, ["type": "command", "kind": "send"])
+
+        await session.end()
+        _ = await startTask.value
+    }
+
+    /// Computer's own engine acts on none of these, so a frame sent while it owns the bus is one
+    /// the backend reads and discards. Dropping it here is what keeps "the screen offers a
+    /// control" and "the control does something" the same claim.
+    func testACommandIsNotSentWhileComputerOwnsTheBus() async {
+        let transport = FakeComputerCallTransport()
+        let session = makeSession(transport: transport)
+
+        let startTask = Task { await session.start() }
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
+        await waitUntil { session.connectionState == .active }
+        let before = await transport.sentFrames.count
+
+        await session.send(command: .skip)
+
+        let after = await transport.sentFrames.count
+        XCTAssertEqual(before, after)
+
+        await session.end()
+        _ = await startTask.value
+    }
+
     /// A `state` frame updates the published phase/owner/session — what the view renders,
     /// including the switchboard moving this bus into a Kai session's own call mode.
     func testStateFrameUpdatesPhaseOwnerAndSession() async {

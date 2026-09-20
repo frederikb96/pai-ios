@@ -16,6 +16,17 @@ struct ComposerActionMenu: View {
     /// exist and still have nothing to grant against (sandboxed, no live conversation), and
     /// re-deriving that predicate here would drift from what the grant route itself checks.
     var canGrantSecretAccess: Bool
+    /// Whether this menu is one of the three doors onto the voice screen. The new-session
+    /// composer is not: a session does not exist yet for a call to be in, and navigating away
+    /// mid-creation would abandon the message being written.
+    var offersComputer: Bool = false
+    /// Whether the live call is inside *this* session. The composer of the session a call is
+    /// actually in is where Freddy is most likely to be looking when he wants to get back to it,
+    /// so that entry says so rather than reading like an offer to start a second call.
+    var isOnTheCall: Bool = false
+    /// Whether a call is running at all, anywhere.
+    var isCallLive: Bool = false
+    var onComputer: () -> Void = {}
     var onPastRecordings: () -> Void
     var onAddPhoto: () -> Void
     var onAddFile: () -> Void
@@ -23,6 +34,11 @@ struct ComposerActionMenu: View {
     var onSecretGrant: () -> Void
     var onCancel: () -> Void
     var onStartCallAfterSend: () -> Void = {}
+
+    private var computerLabel: String {
+        if isOnTheCall { return "Back to the call in this session" }
+        return isCallLive ? "Back to the call" : "Talk to Computer"
+    }
 
     var body: some View {
         Menu {
@@ -33,6 +49,15 @@ struct ComposerActionMenu: View {
                     Label("Dictate Hands-Free", systemImage: "mic.fill")
                 }
                 .accessibilityIdentifier("composer-menu-start-call-after-send")
+                Divider()
+            }
+            if offersComputer {
+                Button {
+                    onComputer()
+                } label: {
+                    Label(computerLabel, systemImage: isCallLive ? "waveform" : "waveform.circle")
+                }
+                .accessibilityIdentifier("composer-menu-computer")
                 Divider()
             }
             Button {
