@@ -316,6 +316,21 @@ reason now arrives on this event and the phone is the only client dropping it. T
 prompted it: a fast session that could not launch, showing as an ordinary idle session for minutes
 with nothing anywhere saying why.
 
+### Verify: a live Computer call actually sounds right on a real phone — pai-cloud anchor: `pai_cloud.computer.engine.ComputerEngine`
+Needs `PAI/` because: `ComputerAudioIO` runs the microphone and Computer's own downlink speech
+through one `AVAudioEngine` in `.voiceChat` mode for the platform's own echo cancellation — a
+simulator has no real speaker-to-microphone acoustic path, so nothing short of a device can show
+whether Computer's own voice leaks back into the uplink, whether a barge-in (`clear`) actually
+cuts audio the instant Freddy starts talking over it, or whether `.defaultToSpeaker` plus
+`.allowBluetooth` route correctly to a paired headset. The socket, gate and reconnect logic
+(`ComputerCallSession`) is unit-tested against a fake transport; none of that proves the audio
+itself is intelligible or free of feedback.
+
+Also unverified: an `AVAudioSession` route change (plugging in headphones, a Bluetooth device
+connecting) mid-call — `ComputerAudioIO`'s configuration-change handler rebuilds the engine from
+scratch, reasoned to be safe the same way a fresh call's own setup is, but never watched happen on
+a real device while a call is live.
+
 ## A search hit inside an expanded Thinking card does not scroll to the hit
 
 Needs a device or a Mac run to fix and to verify, which is why it is here.
