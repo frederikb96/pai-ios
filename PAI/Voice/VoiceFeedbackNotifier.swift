@@ -14,21 +14,33 @@ import UserNotifications
 /// prompt; this silently no-ops when notifications were never authorized.
 @MainActor
 final class VoiceFeedbackNotifier {
+    /// What the thing being reported on is, for the handful of bodies whose claim differs.
+    /// A dictation take keeps capturing through a drop and backfills the gap afterwards, so
+    /// "recording continues" is true there; a call has no such buffer — `ComputerCallSession`
+    /// drops every chunk it cannot send — so the same words would promise something no part of
+    /// the app does.
+    enum Subject {
+        case dictation
+        case call
+    }
+
     private var policy = FeedbackPolicy()
     private let earcons: EarconPlayer
     /// Every request this take posts is scoped under this id, so a fresh take never collides
     /// with — or accidentally updates — a notification left over from the previous one.
     private var takeId: String = "voice"
+    private var subject: Subject = .dictation
 
     init(earcons: EarconPlayer) {
         self.earcons = earcons
     }
 
-    /// Call once per take, before its first event — resets the episode and per-cause dedup state
-    /// a stale `FeedbackPolicy` would otherwise carry over from whatever take came before it.
-    func beginTake(id: String) {
+    /// Call once per take or call, before its first event — resets the episode and per-cause
+    /// dedup state a stale `FeedbackPolicy` would otherwise carry over from whatever came before.
+    func beginTake(id: String, subject: Subject = .dictation) {
         takeId = id
         policy = FeedbackPolicy()
+        self.subject = subject
     }
 
     /// The shape `VoiceRecordingDependencies.feedback: (FeedbackEvent) -> Void` wants — a plain,
@@ -112,16 +124,25 @@ final class VoiceFeedbackNotifier {
         }
     }
 
+    /// What is still happening while the connection is down — the half of a drop's wording that
+    /// is a promise rather than a report.
+    private var continues: String {
+        switch subject {
+        case .dictation: "recording continues"
+        case .call: "reconnecting"
+        }
+    }
+
     private func body(for notify: FeedbackAction.Notify) -> String {
         switch notify.event {
         case .connectionDropped, .captureRestarted:
             return notify.episodeDropCount > 1
-                ? "Connection lost \(notify.episodeDropCount) times so far — recording continues."
-                : "Connection lost — recording continues."
+                ? "Connection lost \(notify.episodeDropCount) times so far — \(continues)."
+                : "Connection lost — \(continues)."
         case .serverNotice(let reason):
-            return "Connection lost (\(reason)) — recording continues."
+            return "Connection lost (\(reason)) — \(continues)."
         case .mintFailed:
-            return "Server unreachable — recording continues."
+            return "Server unreachable — \(continues)."
         case .reconnected:
             return notify.episodeDropCount > 0
                 ? "Reconnected after \(notify.episodeDropCount) drop\(notify.episodeDropCount == 1 ? "" : "s")."

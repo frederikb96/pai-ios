@@ -59,6 +59,27 @@ private actor FakeComputerCallTransport: VoiceSocketTransportProtocol {
     }
 }
 
+/// Collects what the call reports, so a test can assert on the sequence rather than on whether
+/// a closure happened to be called. `@unchecked Sendable` for the same reason the fake transport
+/// is an actor: the feedback closure is `@Sendable` and fires from whichever context the
+/// session's own tasks run on.
+private final class FeedbackCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [FeedbackEvent] = []
+
+    var events: [FeedbackEvent] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func record(_ event: FeedbackEvent) {
+        lock.lock()
+        storage.append(event)
+        lock.unlock()
+    }
+}
+
 @MainActor
 final class ComputerCallSessionTests: XCTestCase {
 
@@ -69,13 +90,86 @@ final class ComputerCallSessionTests: XCTestCase {
         }
     }
 
-    private func makeSession(transport: FakeComputerCallTransport) -> ComputerCallSession {
+    private func makeSession(
+        transport: FakeComputerCallTransport, feedback: FeedbackCollector? = nil
+    ) -> ComputerCallSession {
         ComputerCallSession(
             dependencies: ComputerCallDependencies(
                 makeTransport: { transport },
                 socketURL: { URL(string: "wss://pai.example.com/api/voice/socket")! },
-                authToken: { "token" }
+                authToken: { "token" },
+                // Short, never zero: a no-op `sleep` turns the liveness watchdog's own loop into
+                // a hot spin that starves the cooperative pool, and the suite then hangs rather
+                // than failing. This collapses the reconnect backoff to something a test can
+                // wait through while leaving every loop genuinely suspending.
+                sleep: { _ in try? await Task.sleep(for: .milliseconds(5)) },
+                feedback: { event in feedback?.record(event) }
             ))
+    }
+
+    /// A call runs with the phone in a pocket, so a drop and its recovery have to reach Freddy
+    /// as a cue and a notification — the same channel a dictation take already reports on. This
+    /// asserts the pair and their order: a recovery announced with no drop before it would be a
+    /// banner about nothing.
+    func testADropAndItsRecoveryAreBothReported() async {
+        let transport = FakeComputerCallTransport()
+        let feedback = FeedbackCollector()
+        let session = makeSession(transport: transport, feedback: feedback)
+
+        let startTask = Task { await session.start() }
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
+        await waitUntil { session.connectionState == .active }
+
+        await transport.failReceives(detail: "dropped")
+        await waitUntil { session.connectionState == .reconnecting }
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r2", busOwner: .computer, resumed: true, sessionId: nil)))
+        await waitUntil { feedback.events.contains(.reconnected) }
+
+        XCTAssertEqual(
+            feedback.events, [.connectionDropped(reason: "dropped"), .reconnected],
+            "expected exactly one drop and one recovery, in that order")
+
+        await session.end()
+        _ = await startTask.value
+    }
+
+    /// The call ending while nobody is looking is the case this whole channel exists for — and
+    /// it is the one a screen cannot cover, because by then there may be no screen.
+    func testTheBackendHangingUpIsReported() async {
+        let transport = FakeComputerCallTransport()
+        let feedback = FeedbackCollector()
+        let session = makeSession(transport: transport, feedback: feedback)
+
+        let startTask = Task { await session.start() }
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
+        await waitUntil { session.connectionState == .active }
+
+        await transport.failReceives(detail: "close 1000 computer quit the call")
+        await waitUntil { session.connectionState == .idle }
+
+        XCTAssertEqual(feedback.events, [.callEndedUnexpectedly(hadUnsentText: false)])
+
+        _ = await startTask.value
+    }
+
+    /// Ending it himself is not an event to be told about — he is holding the phone.
+    func testEndingTheCallFromHereReportsNothing() async {
+        let transport = FakeComputerCallTransport()
+        let feedback = FeedbackCollector()
+        let session = makeSession(transport: transport, feedback: feedback)
+
+        let startTask = Task { await session.start() }
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
+        await waitUntil { session.connectionState == .active }
+
+        await session.end()
+        _ = await startTask.value
+
+        XCTAssertTrue(feedback.events.isEmpty)
     }
 
     /// `hello` must name no draft — that absence, plus an audio downlink, is what the backend's

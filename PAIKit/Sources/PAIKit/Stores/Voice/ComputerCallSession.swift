@@ -10,19 +10,25 @@ public struct ComputerCallDependencies: Sendable {
     public var authToken: @Sendable () -> String?
     public var now: @Sendable () -> Date
     public var sleep: @Sendable (Duration) async -> Void
+    /// Where a drop, a recovery and an ending go — the same channel a dictation take reports on
+    /// (`VoiceUplinkDependencies.feedback`), and for the same reason: a call is run with the
+    /// phone in a pocket, so anything worth knowing has to reach Freddy without a screen.
+    public var feedback: @Sendable (FeedbackEvent) -> Void
 
     public init(
         makeTransport: @escaping @Sendable () -> any VoiceSocketTransportProtocol,
         socketURL: @escaping @Sendable () throws -> URL,
         authToken: @escaping @Sendable () -> String?,
         now: @escaping @Sendable () -> Date = Date.init,
-        sleep: @escaping @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) }
+        sleep: @escaping @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) },
+        feedback: @escaping @Sendable (FeedbackEvent) -> Void = { _ in }
     ) {
         self.makeTransport = makeTransport
         self.socketURL = socketURL
         self.authToken = authToken
         self.now = now
         self.sleep = sleep
+        self.feedback = feedback
     }
 }
 
@@ -141,6 +147,11 @@ public final class ComputerCallSession {
     private var hasOpenedGate = false
     private var lastReceiveAt: Date?
     private var isStopping = false
+    /// Whether the `ready` about to arrive is closing a drop rather than opening a fresh call —
+    /// read once and cleared, so a reconnect that itself drops again announces each recovery
+    /// exactly once. `connectionState` cannot answer this: `ready` sets it to `.active` before
+    /// anything downstream could read what it was.
+    private var wasReconnecting = false
 
     public init(dependencies: ComputerCallDependencies) {
         self.dependencies = dependencies
@@ -162,6 +173,7 @@ public final class ComputerCallSession {
         hasOpenedGate = false
         reconnectAttempt = 0
         isStopping = false
+        wasReconnecting = false
         busOwner = .computer
         phase = "listening"
         sessionId = nil
@@ -251,6 +263,10 @@ public final class ComputerCallSession {
                 hasOpenedGate = true
                 try? await transport?.send(.gate(open: true, reason: "button"))
             }
+            if wasReconnecting {
+                wasReconnecting = false
+                dependencies.feedback(.reconnected)
+            }
         case .ack:
             // Computer's own delivery has no draft region to gate on — nothing here reads an
             // ack watermark, unlike `VoiceUplinkSession`.
@@ -265,7 +281,10 @@ public final class ComputerCallSession {
             lastNotice = (severity, code, text)
             if code == VoiceNoticeCode.authExpired {
                 lastDisconnectDetail = text
+                dependencies.feedback(.callEndedUnexpectedly(hadUnsentText: false))
                 await stopInternal(reason: .authExpired)
+            } else if severity == "warning" || severity == "error" {
+                dependencies.feedback(.serverNotice(text))
             }
         case .ping:
             try? await transport?.send(.pong)
@@ -288,10 +307,18 @@ public final class ComputerCallSession {
         // `closeDescription` is the only place that distinction survives once `receive()` has
         // already thrown; an ordinary network drop never carries a close code at all.
         if let detail, detail.hasPrefix("close 1000") {
+            // Ending a call from this side never reaches here — `stopInternal` sets `isStopping`
+            // first and this method returns on it — so a clean close arriving here is always one
+            // Freddy did not ask for, and the one he is least likely to be looking at the screen
+            // for. `hadUnsentText` is false because nothing here can know: a call's dictation
+            // lives in the session's own draft, which this type has no view of.
+            dependencies.feedback(.callEndedUnexpectedly(hadUnsentText: false))
             await stopInternal(reason: .serverClosed)
             return
         }
         connectionState = .reconnecting
+        wasReconnecting = true
+        dependencies.feedback(.connectionDropped(reason: detail))
         await scheduleReconnect(reason: detail ?? "connection lost")
     }
 

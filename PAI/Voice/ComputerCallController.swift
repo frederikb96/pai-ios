@@ -30,6 +30,7 @@ final class ComputerCallController {
     private var pendingPlaybackChunks = 0
 
     private let audioIO = ComputerAudioIO()
+    private let feedbackNotifier: VoiceFeedbackNotifier
     private let toasts: ToastCenter
     private let audioSession = AVAudioSession.sharedInstance()
     /// `nonisolated(unsafe)` so `deinit` — which is nonisolated — can unregister it, same
@@ -50,11 +51,18 @@ final class ComputerCallController {
 
     init(requestFactory: PaiRequestFactory, authToken: @escaping @Sendable () -> String?, toasts: ToastCenter) {
         self.toasts = toasts
+        // Its own notifier over its own audio engine, not `VoiceRecorderController`'s: only one
+        // of the two engines is ever running, and a cue rendered through the idle one is a cue
+        // nobody hears. The `FeedbackPolicy` inside is what keeps a bad patch of signal to a
+        // handful of sounds rather than one per flap.
+        let notifier = VoiceFeedbackNotifier(earcons: EarconPlayer(audioIO: audioIO))
+        feedbackNotifier = notifier
         session = ComputerCallSession(
             dependencies: ComputerCallDependencies(
                 makeTransport: { URLSessionVoiceSocketTransport() },
                 socketURL: { try requestFactory.voiceSocketURL() },
-                authToken: authToken
+                authToken: authToken,
+                feedback: { event in MainActor.assumeIsolated { notifier.handle(event) } }
             ))
 
         let (chunkStream, continuation) = AsyncStream<[Int16]>.makeStream()
@@ -89,6 +97,9 @@ final class ComputerCallController {
 
     func start() async {
         setupFailure = nil
+        // One episode per call, so a drop announced during the last one cannot be updated in
+        // place by this one — and so the per-cause dedup starts clean.
+        feedbackNotifier.beginTake(id: "call-\(Int(Date().timeIntervalSince1970 * 1000))", subject: .call)
         guard await requestMicrophonePermission() else {
             setupFailure = "Microphone access is off — enable it in Settings to talk to Computer."
             return
