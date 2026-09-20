@@ -6,7 +6,8 @@ import Observation
 /// here, next to the protocol it satisfies, not inside `PaiApiClient.swift` itself.
 public protocol SessionListApiClient: Sendable {
     func getSessions(
-        since: String?, limit: Int?, cursor: String?, agent: String?, kind: SessionKindFilter?, parent: String?, q: String?
+        since: String?, limit: Int?, cursor: String?, agent: String?, kind: SessionKindFilter?, parent: String?,
+        q: String?
     ) async throws -> SessionsPage
     func searchSessions(
         q: String, mode: SessionSearchMode?, agent: String?, limit: Int?

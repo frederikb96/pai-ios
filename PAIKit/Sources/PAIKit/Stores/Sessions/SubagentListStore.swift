@@ -6,7 +6,8 @@ import Observation
 /// here, next to the protocol it satisfies.
 public protocol SubagentListApiClient: Sendable {
     func getSessions(
-        since: String?, limit: Int?, cursor: String?, agent: String?, kind: SessionKindFilter?, parent: String?, q: String?
+        since: String?, limit: Int?, cursor: String?, agent: String?, kind: SessionKindFilter?, parent: String?,
+        q: String?
     ) async throws -> SessionsPage
 }
 

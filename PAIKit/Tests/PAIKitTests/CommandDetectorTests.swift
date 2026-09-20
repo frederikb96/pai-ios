@@ -202,7 +202,8 @@ final class CommandDetectorTests: XCTestCase {
 
     func testEndACallIsRecognizedAsEnd() {
         var detector = CommandDetector(phraseSet: .defaults, sampleRate: rate)
-        let observation = CommandObservation(text: "computer quit a call", isFinal: true, wordTimes: nil, atOffset: 1000)
+        let observation = CommandObservation(
+            text: "computer quit a call", isFinal: true, wordTimes: nil, atOffset: 1000)
         XCTAssertEqual(onlyAccepted(detector.detect(observation))?.kind, .end)
     }
 
