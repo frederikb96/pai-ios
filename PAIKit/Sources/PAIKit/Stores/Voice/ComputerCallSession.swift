@@ -159,10 +159,20 @@ public final class ComputerCallSession {
 
     public var canStart: Bool { connectionState == .idle }
 
+    /// The Kai session this call was connected straight into, if any — `nil` for an ordinary
+    /// call that reached Computer first.
+    ///
+    /// 🚨 A bus that reached call mode this way never had Computer attached at all, so there is
+    /// nothing to go back to: the backend answers "computer listen" there by closing the
+    /// connection. That is why the screen asks this before offering the control
+    /// (`ComputerCallPresentation.make(canReturnToComputer:)`) rather than offering it always.
+    public private(set) var directSessionId: String?
+
     // MARK: - Start
 
-    public func start() async {
+    public func start(connectSession: String? = nil) async {
         guard connectionState == .idle else { return }
+        directSessionId = connectSession
         lastStartFailure = nil
         lastEndReason = nil
         lastDisconnectDetail = nil
@@ -207,7 +217,8 @@ public final class ComputerCallSession {
                     caps: VoiceSocketCapabilities(audioDownlink: true, dtmf: false),
                     auth: token,
                     resumeToken: resumeToken,
-                    draftKey: nil
+                    draftKey: nil,
+                    connectSession: directSessionId
                 )
             )
         } catch {

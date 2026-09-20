@@ -15,15 +15,15 @@ final class SessionTimelineTests: XCTestCase {
         XCTAssertEqual(range, 48000..<56000)
     }
 
-    /// The scenario the design exists for: a withheld silence-gate stretch never reached the
-    /// socket at all, so the take offset jumps ahead of what the connection's own sample count
-    /// would suggest — this is exactly what per-chunk bookkeeping (rather than a single linear
-    /// offset) is for.
-    func testATakeOffsetGapFromAWithheldGateStretchIsPreserved() {
+    /// The scenario the design exists for: a withheld stretch — a muted microphone, say — never
+    /// reached the socket at all, so the take offset jumps ahead of what the connection's own
+    /// sample count would suggest. This is exactly what per-chunk bookkeeping (rather than a
+    /// single linear offset) is for.
+    func testATakeOffsetGapFromAWithheldStretchIsPreserved() {
         var timeline = SessionTimeline()
         timeline.recordTransmittedChunk(sessionSampleStart: 0, takeOffset: 0, sampleCount: 8000)
-        // A silence gate withheld 32000 take samples that never reached the socket at all — the
-        // next transmitted chunk's own session-relative start continues from 8000, but its take
+        // 32000 take samples were withheld and never reached the socket at all — the next
+        // transmitted chunk's own session-relative start continues from 8000, but its take
         // offset jumps to 40000.
         timeline.recordTransmittedChunk(sessionSampleStart: 8000, takeOffset: 40000, sampleCount: 8000)
 

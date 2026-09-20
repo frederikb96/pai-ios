@@ -182,13 +182,43 @@ final class ComputerCallSessionTests: XCTestCase {
         await waitUntil { await !transport.sentFrames.isEmpty }
 
         let frames = await transport.sentFrames
-        guard case let .hello(transportName, caps, _, resumeToken, draftKey) = frames.first else {
+        guard
+            case let .hello(transportName, caps, _, resumeToken, draftKey, connectSession) =
+                frames.first
+        else {
             return XCTFail("expected a hello frame, got \(String(describing: frames.first))")
         }
         XCTAssertEqual(transportName, "ios")
         XCTAssertTrue(caps.audioDownlink)
         XCTAssertNil(resumeToken)
         XCTAssertNil(draftKey)
+        // An ordinary call reaches Computer first — only the launcher's call tiles and a
+        // composer's "Call this session" name a session here.
+        XCTAssertNil(connectSession)
+
+        await session.end()
+        _ = await startTask.value
+    }
+
+    /// The launcher's call tiles and a composer's "Call this session" ask for a Kai session's
+    /// call mode directly, skipping Computer and the spoken round trip. The backend reads this on
+    /// a FRESH bus only, so it is carried on the session rather than on one connect.
+    func testConnectingIntoASessionNamesItInHello() async {
+        let transport = FakeComputerCallTransport()
+        let session = makeSession(transport: transport)
+
+        let startTask = Task { await session.start(connectSession: "s-42") }
+        await waitUntil { await !transport.sentFrames.isEmpty }
+
+        let frames = await transport.sentFrames
+        guard case let .hello(_, _, _, _, draftKey, connectSession) = frames.first else {
+            return XCTFail("expected a hello frame, got \(String(describing: frames.first))")
+        }
+        XCTAssertEqual(connectSession, "s-42")
+        // Still no draft key: this bus is a call, not a dictation sink, and `_build_engine`
+        // checks the draft key first.
+        XCTAssertNil(draftKey)
+        XCTAssertEqual(session.directSessionId, "s-42")
 
         await session.end()
         _ = await startTask.value

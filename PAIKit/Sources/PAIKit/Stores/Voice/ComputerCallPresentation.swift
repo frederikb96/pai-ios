@@ -45,13 +45,19 @@ public struct ComputerCallPresentation: Equatable, Sendable {
     /// `sessionName` is looked up by the caller from `session_id`, since only the client has it.
     /// `isSpeaking` is the client's own observation that downlink audio is rendering — Computer
     /// announces `listening` once at attach and never says "speaking" itself.
+    ///
+    /// `canReturnToComputer` is false for a call connected straight into a session
+    /// (`hello.connect_session`): no Computer was ever attached to that bus, and the backend
+    /// answers "computer listen" there by closing the connection. Offering a control that ends
+    /// the call while labelled "Back to Computer" is worse than not offering it.
     public static func make(
         connectionState: ComputerCallConnectionState,
         busOwner: VoiceBusOwner,
         phase: String,
         sessionId: String?,
         sessionName: String?,
-        isSpeaking: Bool
+        isSpeaking: Bool,
+        canReturnToComputer: Bool = true
     ) -> ComputerCallPresentation {
         let face: ComputerCallFace =
             if busOwner == .call, let sessionId {
@@ -82,9 +88,11 @@ public struct ComputerCallPresentation: Equatable, Sendable {
                 enabledCommands: []
             )
         case .call:
+            var enabled = commands(inPhase: phase)
+            if !canReturnToComputer { enabled.remove(.listen) }
             return ComputerCallPresentation(
                 face: face, status: callStatus(phase: phase, isSpeaking: isSpeaking),
-                enabledCommands: commands(inPhase: phase)
+                enabledCommands: enabled
             )
         }
     }

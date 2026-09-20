@@ -67,7 +67,15 @@ public enum VoiceCallCommand: String, Sendable, Equatable, CaseIterable {
 // MARK: - Up frames: client -> backend
 
 public enum VoiceUpFrame: Sendable, Equatable {
-    case hello(transport: String, caps: VoiceSocketCapabilities, auth: String, resumeToken: String?, draftKey: String?)
+    /// `connectSession` asks the backend to attach this socket straight to that Kai session's
+    /// call mode, skipping Computer and the spoken "connect me to…" round trip — what the
+    /// launcher's own call tiles and a composer's "Call this session" send. Only ever read on a
+    /// FRESH bus: a reconnect keeps whatever engine it already had, so sending it again on every
+    /// hello costs nothing and keeps it a property of the session rather than of one connect.
+    case hello(
+        transport: String, caps: VoiceSocketCapabilities, auth: String, resumeToken: String?,
+        draftKey: String?, connectSession: String? = nil
+    )
     /// `takeId` is the client-minted identity of the take this `open: true` starts — present only
     /// for a take dictating into a draft (`docs/VOICE_PROTOCOL.md` "Addressing a take"), carried
     /// through unchanged so a later backfill, or a `PUT /api/drafts/{key}/takes/{take_id}`
@@ -85,12 +93,13 @@ public enum VoiceUpFrame: Sendable, Equatable {
     func encoded() throws -> String {
         var object: [String: Any] = ["type": type]
         switch self {
-        case let .hello(transport, caps, auth, resumeToken, draftKey):
+        case let .hello(transport, caps, auth, resumeToken, draftKey, connectSession):
             object["transport"] = transport
             object["caps"] = caps.jsonObject
             object["auth"] = auth
             if let resumeToken { object["resume_token"] = resumeToken }
             if let draftKey { object["draft_key"] = draftKey }
+            if let connectSession { object["connect_session"] = connectSession }
         case let .gate(open, reason, takeId):
             object["open"] = open
             object["reason"] = reason

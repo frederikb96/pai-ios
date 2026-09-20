@@ -12,6 +12,7 @@ struct SessionListView: View {
     @Environment(SessionListStore.self) private var sessions
     @Environment(MachineStore.self) private var machines
     @Environment(NotificationCenterStore.self) private var notifications
+    @Environment(ToastCenter.self) private var toasts
 
     /// The synced list (source A) has no loading state of its own in the store — it starts life
     /// already loaded via `loadInitialSessions()`. This tracks the one gap that leaves: the
@@ -190,6 +191,22 @@ struct SessionListView: View {
                         Label("Spec", systemImage: "shippingbox")
                     }
                     .tint(PaiPalette.Semantic.warningText)
+                }
+                // Closing from the other edge, on the same terms the trailing set keeps: the
+                // swipe reveals a button rather than firing on its own (`allowsFullSwipe: false`),
+                // because a full swipe is what a thumb produces by accident while scrolling, and
+                // closing a session kills its process. A session already closed offers nothing.
+                .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                    if row.session.state != .closed {
+                        Button {
+                            sessions.closeSession(id: row.id) { message in
+                                toasts.show(message, kind: .error)
+                            }
+                        } label: {
+                            Label("Close", systemImage: "stop.circle")
+                        }
+                        .tint(PaiPalette.Semantic.errorText)
+                    }
                 }
                 // `.highPriorityGesture`, not `.onLongPressGesture`: the row is a `Button`, and a
                 // bare gesture modifier competes with the button's own tap recognition rather than

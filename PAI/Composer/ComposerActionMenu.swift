@@ -27,7 +27,12 @@ struct ComposerActionMenu: View {
     /// Whether a call is running at all, anywhere.
     var isCallLive: Bool = false
     var onComputer: () -> Void = {}
+    /// Opens a call inside THIS session, rather than reaching Computer and asking it to connect
+    /// one. Offered only while no call is running: the phone has one call, so a second door into
+    /// a different destination while one is live would promise something it cannot do.
+    var onCallThisSession: () -> Void = {}
     var onPastRecordings: () -> Void
+    var onPastMessages: () -> Void
     var onAddPhoto: () -> Void
     var onAddFile: () -> Void
     var onTemporaryNote: () -> Void
@@ -58,12 +63,25 @@ struct ComposerActionMenu: View {
                     Label(computerLabel, systemImage: isCallLive ? "waveform" : "waveform.circle")
                 }
                 .accessibilityIdentifier("composer-menu-computer")
+                if !isCallLive {
+                    Button {
+                        onCallThisSession()
+                    } label: {
+                        Label("Call this session", systemImage: "phone.arrow.up.right")
+                    }
+                    .accessibilityIdentifier("composer-menu-call-this-session")
+                }
                 Divider()
             }
             Button {
                 onPastRecordings()
             } label: {
                 Label("Past Recordings", systemImage: "waveform")
+            }
+            Button {
+                onPastMessages()
+            } label: {
+                Label("Past Messages", systemImage: "text.bubble")
             }
             Button {
                 onAddPhoto()

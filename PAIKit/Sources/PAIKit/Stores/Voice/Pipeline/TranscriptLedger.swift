@@ -151,7 +151,7 @@ public struct TranscriptLedger: Codable, Sendable, Equatable {
     public let delivered: Bool
     /// Sample ranges the durable pipeline treats as accounted for and never a gap: audio sent on
     /// a connection that later received any commit message (an acknowledgement that everything
-    /// sent before it landed), and audio the silence gate deliberately withheld. Word extents are
+    /// sent before it landed), and audio deliberately withheld rather than lost. Word extents are
     /// not this measure — an ordinary pause between sentences is silence inside an acknowledged
     /// stretch, not a hole in it. Optional so a ledger written before this field existed still
     /// decodes; read as empty, which means "nothing acknowledged yet" rather than "everything

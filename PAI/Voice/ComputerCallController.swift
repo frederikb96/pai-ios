@@ -95,7 +95,10 @@ final class ComputerCallController {
         micChunkConsumerTask?.cancel()
     }
 
-    func start() async {
+    /// `connectSession` connects straight into that Kai session's call mode rather than
+    /// reaching Computer first — what the launcher's call tiles and a composer's own
+    /// "Call this session" ask for.
+    func start(connectSession: String? = nil) async {
         setupFailure = nil
         // One episode per call, so a drop announced during the last one cannot be updated in
         // place by this one — and so the per-cause dedup starts clean.
@@ -110,7 +113,7 @@ final class ComputerCallController {
             setupFailure = "Couldn't start the microphone. Try again."
             return
         }
-        await session.start()
+        await session.start(connectSession: connectSession)
         if let failure = session.lastStartFailure {
             setupFailure = failure.userMessage
             audioIO.stop()

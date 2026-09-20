@@ -49,6 +49,7 @@ struct CreateSessionView: View {
     @State private var showingFilePicker = false
     @State private var showingTemporaryNote = false
     @State private var showingRecordingsSheet = false
+    @State private var showingSentMessagesSheet = false
     /// Whether the session this screen is about to create should become a call as soon as it
     /// exists. Set from the launcher's call tiles and from the plus menu below; read once, in
     /// `send(_:)`.
@@ -234,6 +235,9 @@ struct CreateSessionView: View {
                     onInsertTranscript: { prefixed in appendTranscript(prefixed) },
                     onAttach: { files in stageAttachments(files) }
                 )
+            }
+            .sheet(isPresented: $showingSentMessagesSheet) {
+                SentMessagesSheet(settings: settings)
             }
         } else {
             ProgressView()
@@ -449,6 +453,7 @@ struct CreateSessionView: View {
                     offersStartCallAfterSend: !startsCallOnSend,
                     canGrantSecretAccess: false,
                     onPastRecordings: { showingRecordingsSheet = true },
+                    onPastMessages: { showingSentMessagesSheet = true },
                     onAddPhoto: { showingPhotoPicker = true },
                     onAddFile: { showingFilePicker = true },
                     onTemporaryNote: { showingTemporaryNote = true },

@@ -22,10 +22,10 @@ private struct QuickActionShortcut: Equatable {
 /// list, each laid out so a tile's position is learnable and stays put. Nothing here loads, so
 /// there is no state in which the grid is not yet tappable.
 ///
-/// 🚨 Row height is computed by dividing by `rowCount`, not by a fixed third of the screen — the
-/// bug this screen shipped with (each tile roughly a third of the screen, so barely two and a
-/// half rows fit and the last one is cut off mid-label) was exactly this number being wrong for
-/// how many rows the screen actually holds, not a sizing constant to retune.
+/// 🚨 Row height is divided out of the measured screen by `rowCount`, then held between a floor
+/// and a ceiling. The floor keeps a target big enough to hit without looking on a small phone;
+/// the ceiling keeps a large one from stretching every tile to fill space it does not need, which
+/// reads as a screen of six enormous buttons rather than a glanceable grid.
 struct QuickActionsScreen: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(NotesStore.self) private var notes
@@ -41,6 +41,12 @@ struct QuickActionsScreen: View {
     private let padding: CGFloat = 16
     /// Computer (full-width), Home/Fast typed, Home/Fast call, notes, shortcuts.
     private let rowCount: CGFloat = 5
+    /// Big enough to hit without looking, on the smallest phone this runs on.
+    private let minRowHeight: CGFloat = 88
+    private let maxRowHeight: CGFloat = 104
+    /// The Computer tile is full width, so it needs less height than a half-width tile to carry
+    /// the same label — and it is the one tile whose position is never in doubt.
+    private let computerHeightFactor: CGFloat = 0.8
 
     @AppStorage("quickActionShortcut1Name") private var shortcut1Name = ""
     @AppStorage("quickActionShortcut1URL") private var shortcut1URLString = ""
@@ -69,7 +75,7 @@ struct QuickActionsScreen: View {
         // against scrolls a few points rather than hard-clipping the bottom row again.
         GeometryReader { proxy in
             ScrollView {
-                grid(rowHeight: max(88, (proxy.size.height - padding * 2 - spacing * (rowCount - 1)) / rowCount))
+                grid(rowHeight: rowHeight(in: proxy.size.height))
                     .frame(minHeight: proxy.size.height, alignment: .top)
             }
         }
@@ -87,7 +93,7 @@ struct QuickActionsScreen: View {
 
     private func grid(rowHeight: CGFloat) -> some View {
         VStack(spacing: spacing) {
-            computerTile(height: rowHeight)
+            computerTile(height: rowHeight * computerHeightFactor)
             HStack(spacing: spacing) {
                 tile(
                     title: "Home", subtitle: "Type", systemImage: "house.fill",
@@ -141,6 +147,13 @@ struct QuickActionsScreen: View {
 
     /// The always-reachable voice agent — full-width, since it is the one tile meant to be found
     /// without even glancing at the grid's own two-column rhythm.
+    /// Divided out of the measured height, then clamped. `GeometryReader` is what makes the grid
+    /// fit a screen it was never tuned against; the clamp is what stops it stretching to fill one.
+    private func rowHeight(in availableHeight: CGFloat) -> CGFloat {
+        let divided = (availableHeight - padding * 2 - spacing * (rowCount - 1)) / rowCount
+        return min(maxRowHeight, max(minRowHeight, divided))
+    }
+
     private func computerTile(height: CGFloat) -> some View {
         Button {
             ComputerCallEntry.open(environment)
@@ -229,7 +242,7 @@ struct QuickActionsScreen: View {
                     .font(PaiTypography.panelTitle.font)
                     .foregroundStyle(PaiPalette.Semantic.textPrimary)
                     .lineLimit(1)
-                Text(shortcut.isConfigured ? "Todoist" : "Long-press to configure")
+                Text(shortcut.isConfigured ? "Todoist" : "Tap to set up")
                     .font(PaiTypography.caption.font)
                     .foregroundStyle(PaiPalette.Semantic.textMuted)
                     .lineLimit(1)
@@ -244,8 +257,12 @@ struct QuickActionsScreen: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier(identifier)
         .accessibilityLabel(shortcut.isConfigured ? shortcut.name : "Configure shortcut")
-        .onLongPressGesture {
-            editingShortcutSlot = slot
+        // A `contextMenu` rather than `onLongPressGesture`: this tile IS a button, and a button's
+        // own gesture recogniser wins that contest often enough that the long press reads as
+        // broken. The context menu is the long press SwiftUI hands to a button on purpose, and it
+        // shows what it offers rather than firing invisibly.
+        .contextMenu {
+            Button("Edit shortcut", systemImage: "pencil") { editingShortcutSlot = slot }
         }
     }
 

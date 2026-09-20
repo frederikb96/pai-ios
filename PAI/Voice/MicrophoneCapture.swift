@@ -203,9 +203,9 @@ final class MicrophoneCapture: @unchecked Sendable {
         return Array(UnsafeBufferPointer(start: channelData[0], count: frameLength))
     }
 
-    /// Root-mean-square over the buffer's first channel, normalised to `0...1` the way
-    /// `SilenceDetector` expects — matching the web's `calculateRms` reading time-domain samples
-    /// as a plain magnitude rather than decibels.
+    /// Root-mean-square over the buffer's first channel, normalised to `0...1` — what the level
+    /// meter draws, and matching the web's `calculateRms` in reading time-domain samples as a
+    /// plain magnitude rather than decibels.
     private static func rms(of buffer: AVAudioPCMBuffer) -> Double {
         guard let channelData = buffer.floatChannelData else { return 0 }
         let frameLength = Int(buffer.frameLength)

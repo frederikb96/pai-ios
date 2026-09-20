@@ -51,6 +51,7 @@ struct ComposerBar: View {
     /// makes re-entering the session present an unanswered prompt again.
     @State private var dismissedSecretPromptAt: String?
     @State private var showingRecordingsSheet = false
+    @State private var showingSentMessagesSheet = false
 
     init(sessionID: String) {
         self.sessionID = sessionID
@@ -111,16 +112,15 @@ struct ComposerBar: View {
         }
         .onAppear {
             presentSecretPromptIfNeeded()
-            // A session created by one of the launcher's call tiles, or by the new-session
-            // screen's own "Dictate Hands-Free": the first turn was just spoken and sent, and the
-            // point of the tile was never touching the phone again — so dictation resumes here,
-            // into this session's own draft, from the screen the send landed on rather than from
-            // the sheet that was dismissing when the session came into being (the same ordering
-            // reason `CallModeLaunchRequest.openCall(forSession:)`'s own doc comment gives).
-            if CallModeLaunchRequest.shared.consumeOpenCall(forSession: sessionID),
-                let voiceController = environment.connection?.voice
-            {
-                Task { await voiceController.start(draftKey: sessionID, preText: "") }
+            // A session created by one of the launcher's call tiles: the first turn was just
+            // spoken and sent, and the point of the tile was never touching the phone again — so
+            // the call opens here, straight inside this session, from the screen the send landed
+            // on rather than from the sheet that was dismissing when the session came into being
+            // (the same ordering reason `CallModeLaunchRequest.openCall(forSession:)`'s own doc
+            // comment gives). A call rather than plain dictation, because a call is what the tile
+            // said: the wake word, spoken replies, and no screen to hold.
+            if CallModeLaunchRequest.shared.consumeOpenCall(forSession: sessionID) {
+                ComputerCallEntry.open(environment, connectSession: sessionID)
             }
         }
         .onChange(of: currentSecretPrompt) { _, _ in presentSecretPromptIfNeeded() }
@@ -202,7 +202,11 @@ struct ComposerBar: View {
                     isOnTheCall: callIsInThisSession,
                     isCallLive: environment.connection?.computerCall.isLive ?? false,
                     onComputer: { ComputerCallEntry.open(environment) },
+                    onCallThisSession: {
+                        ComputerCallEntry.open(environment, connectSession: sessionID)
+                    },
                     onPastRecordings: { showingRecordingsSheet = true },
+                    onPastMessages: { showingSentMessagesSheet = true },
                     onAddPhoto: { showingPhotoPicker = true },
                     onAddFile: { showingFilePicker = true },
                     onTemporaryNote: { showingTemporaryNote = true },
@@ -270,6 +274,9 @@ struct ComposerBar: View {
                 onInsertTranscript: { prefixed in appendTranscript(prefixed, draftStore: draftStore) },
                 onAttach: { files in stageAttachments(files) }
             )
+        }
+        .sheet(isPresented: $showingSentMessagesSheet) {
+            SentMessagesSheet(settings: settings)
         }
         .accessibilityIdentifier("composer-bar")
     }

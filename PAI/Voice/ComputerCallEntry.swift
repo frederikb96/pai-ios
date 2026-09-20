@@ -11,7 +11,14 @@ import PAIKit
 /// to the same call, whichever face it is currently showing.
 @MainActor
 enum ComputerCallEntry {
-    static func open(_ environment: AppEnvironment) {
+    /// `connectSession` opens the call straight inside that Kai session rather than with
+    /// Computer — the launcher's call tiles and a composer's "Call this session".
+    ///
+    /// A call already running is joined as it is, whatever was asked for: the phone has one
+    /// microphone and one call, so a second request cannot open a second one, and silently
+    /// hanging the first up to honour the new destination would take a live conversation away
+    /// without being asked.
+    static func open(_ environment: AppEnvironment, connectSession: String? = nil) {
         guard let connection = environment.connection else { return }
         environment.router.surface(.computerCall)
         Task {
@@ -19,7 +26,7 @@ enum ComputerCallEntry {
                 await connection.voice.stop()
             }
             guard connection.computerCall.session.canStart else { return }
-            await connection.computerCall.start()
+            await connection.computerCall.start(connectSession: connectSession)
         }
     }
 }

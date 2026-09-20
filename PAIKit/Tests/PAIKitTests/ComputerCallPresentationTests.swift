@@ -111,3 +111,26 @@ final class ComputerCallPresentationTests: XCTestCase {
         }
     }
 }
+
+/// A call connected straight into a session (`hello.connect_session`) never had Computer on its
+/// bus at all — the backend answers "computer listen" there by closing the connection.
+extension ComputerCallPresentationTests {
+    func testACallWithNoComputerBehindItDoesNotOfferToGoBackToOne() {
+        let direct = ComputerCallPresentation.make(
+            connectionState: .active, busOwner: .call, phase: "wake", sessionId: "s-1",
+            sessionName: "Deploy", isSpeaking: false, canReturnToComputer: false)
+
+        XCTAssertFalse(direct.enabledCommands.contains(.listen))
+        // Everything else is untouched: the take controls are about the take, not about how the
+        // call was reached.
+        XCTAssertTrue(direct.enabledCommands.isSuperset(of: [.skip, .start]))
+    }
+
+    func testACallThatReachedComputerFirstStillOffersTheWayBack() {
+        let viaComputer = ComputerCallPresentation.make(
+            connectionState: .active, busOwner: .call, phase: "wake", sessionId: "s-1",
+            sessionName: "Deploy", isSpeaking: false, canReturnToComputer: true)
+
+        XCTAssertTrue(viaComputer.enabledCommands.contains(.listen))
+    }
+}
