@@ -345,7 +345,8 @@ final class VoiceRecorderController {
 
         let timestampMs = Date().timeIntervalSince1970 * 1000
         takeTimestampMs = timestampMs
-        feedbackNotifier.beginTake(id: RecordingMeta.id(forTimestampMs: timestampMs))
+        let takeId = RecordingMeta.id(forTimestampMs: timestampMs)
+        feedbackNotifier.beginTake(id: takeId)
         AppVoiceDiagnosticsLog.shared.log(.info, .mode, "microphone take started")
         let hardwareRate = capture.hardwareSampleRate
         let transportRate = VoiceAudioRatePolicy.transportRate(hardwareRate: hardwareRate)
@@ -360,11 +361,10 @@ final class VoiceRecorderController {
         }
         currentTransportRateHz = transportRate
         currentNarrowband = VoiceAudioRatePolicy.isNarrowband(rate: transportRate)
-        openStreamingFiles(
-            id: RecordingMeta.id(forTimestampMs: timestampMs), sentRate: transportRate, rawRate: hardwareRate)
+        openStreamingFiles(id: takeId, sentRate: transportRate, rawRate: hardwareRate)
         wireCaptureCallbacks()
 
-        let startTask = Task { await voiceSession.start(draftKey: draftKey) }
+        let startTask = Task { await voiceSession.start(draftKey: draftKey, takeId: takeId) }
         // `VoiceUplinkSession.start()` flips `state` to `.connecting` synchronously, before its
         // first `await` — waiting for that to become observable (rather than a fixed delay) is
         // what lets capture begin the moment the session can accept chunks, so nothing captured
@@ -381,7 +381,6 @@ final class VoiceRecorderController {
             beginCaptureWatchdog()
             sessionWatcherTask?.cancel()
             sessionWatcherTask = Task { [weak self] in await self?.watchForSessionEndingOnItsOwn() }
-            let takeId = RecordingMeta.id(forTimestampMs: timestampMs)
             activeLedger = TranscriptLedger(
                 takeId: takeId, mode: .microphone, sampleRate: transportRate, draftKey: draftKey, preText: preText)
             ledgerTask?.cancel()

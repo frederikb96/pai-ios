@@ -36,7 +36,12 @@ public struct VoiceSocketCapabilities: Sendable, Equatable {
 
 public enum VoiceUpFrame: Sendable, Equatable {
     case hello(transport: String, caps: VoiceSocketCapabilities, auth: String, resumeToken: String?, draftKey: String?)
-    case gate(open: Bool, reason: String)
+    /// `takeId` is the client-minted identity of the take this `open: true` starts — present only
+    /// for a take dictating into a draft (`docs/VOICE_PROTOCOL.md` "Addressing a take"), carried
+    /// through unchanged so a later backfill, or a `PUT /api/drafts/{key}/takes/{take_id}`
+    /// recovering a long outage, addresses the exact same draft region rather than opening a new
+    /// one. `nil` on `open: false` and on any gate this take's own identity does not apply to.
+    case gate(open: Bool, reason: String, takeId: String? = nil)
     case played(ref: Int)
     case dtmf(digit: String)
     case bye(reason: String)
@@ -53,9 +58,10 @@ public enum VoiceUpFrame: Sendable, Equatable {
             object["auth"] = auth
             if let resumeToken { object["resume_token"] = resumeToken }
             if let draftKey { object["draft_key"] = draftKey }
-        case let .gate(open, reason):
+        case let .gate(open, reason, takeId):
             object["open"] = open
             object["reason"] = reason
+            if let takeId { object["take_id"] = takeId }
         case let .played(ref):
             object["ref"] = ref
         case let .dtmf(digit):

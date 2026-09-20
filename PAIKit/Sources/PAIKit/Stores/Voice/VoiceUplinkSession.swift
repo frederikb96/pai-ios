@@ -134,6 +134,15 @@ public final class VoiceUplinkSession {
     /// run). See this type's own doc comment.
     private var sentResumeToken: String?
     private var currentDraftKey: String?
+    /// This take's own client-minted identity, carried on `gate open` so the backend's
+    /// `start_take(take_id:)` addresses the same draft region on every reconnect within this
+    /// take, and a long-outage recovery can still reach it by name once the bus itself is gone
+    /// (`docs/VOICE_PROTOCOL.md` "Addressing a take"). `nil` for a caller not dictating into a
+    /// draft at all.
+    private var currentTakeId: String?
+    /// Whether this take's own `take_id` has already ridden a `gate open` once — see the `.ready`
+    /// handler's own comment for why only the FIRST one carries it.
+    private var hasOpenedGateForCurrentTake = false
     private var recordingStart: Date?
     private var mutedMs = 0
     private var lastMuteToggle: Date?
@@ -165,7 +174,7 @@ public final class VoiceUplinkSession {
 
     // MARK: - Start
 
-    public func start(draftKey: String?) async {
+    public func start(draftKey: String?, takeId: String? = nil) async {
         guard state == .idle else { return }
         lastStartFailure = nil
         lastDisconnectDetail = nil
@@ -179,6 +188,8 @@ public final class VoiceUplinkSession {
         resumeToken = nil
         sentResumeToken = nil
         currentDraftKey = draftKey
+        currentTakeId = takeId
+        hasOpenedGateForCurrentTake = false
         recordingStart = dependencies.now()
         reconnectAttempt = 0
         isStopping = false
@@ -265,16 +276,30 @@ public final class VoiceUplinkSession {
             dependencies.connectionEvent(.mintSucceeded)
             let wasReconnecting = state == .reconnecting
             state = isStopping ? state : .recording
-            if isFreshBus, capturedUpTo > 0 {
-                // The grace window lapsed (or this is the very first connect) — the take must be
-                // (re)opened server-side, or every word transcribed from here is silently dropped
-                // (`DraftRegionSink.deliver` no-ops with no `start_take()` behind it). A fresh
-                // bus also means the ack watermark reset to nothing on the server's side; resume
-                // sending from wherever local delivery is actually confirmed, so nothing already
-                // acked is resent, but nothing captured since is skipped either.
+            if isFreshBus {
+                // Every fresh bus needs this, including the very first connect of a brand-new
+                // take: the take must be (re)opened server-side, or every word transcribed from
+                // here is silently dropped (`DraftRegionSink.deliver` no-ops with no
+                // `start_take()` behind it). A fresh bus also means the ack watermark reset to
+                // nothing on the server's side; resume sending from wherever local delivery is
+                // actually confirmed, so nothing already acked is resent, but nothing captured
+                // since is skipped either.
                 nextSeq = 0
                 ackedUpTo = 0
-                try? await transport?.send(.gate(open: true, reason: "button"))
+                // `takeId` rides only on the FIRST open of this take, deliberately not on a later
+                // reopen. The backend mints a fresh region for a take_id it has never seen, which
+                // is safe by construction (`write_draft_region`'s stale-seq guard only ever
+                // compares against a row that already exists) — but re-sending the SAME take_id
+                // on a reconnect that reopens a take which already delivered live text would hand
+                // the fresh engine's own reset `seq` (0, 1, 2, …) to a region whose stored `seq`
+                // is already higher, and every further word would silently no-op against that
+                // guard rather than actually reaching the draft. Until that interaction is
+                // confirmed safe server-side, a reconnect past the resume grace window keeps the
+                // pre-existing behavior: a fresh region for the recovered continuation, which is
+                // a real, accepted, previously-reported limitation — not a regression from this.
+                let takeId = hasOpenedGateForCurrentTake ? nil : currentTakeId
+                hasOpenedGateForCurrentTake = true
+                try? await transport?.send(.gate(open: true, reason: "button", takeId: takeId))
             }
             if wasReconnecting {
                 dependencies.feedback(.reconnected)
