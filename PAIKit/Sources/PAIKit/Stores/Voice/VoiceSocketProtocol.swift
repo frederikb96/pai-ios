@@ -95,7 +95,12 @@ public enum VoiceBusOwner: String, Sendable, Equatable {
 }
 
 public enum VoiceDownFrame: Sendable, Equatable {
-    case ready(resumeToken: String, busOwner: VoiceBusOwner, sessionId: String?)
+    /// `resumed` is `true` when this answers a `hello` that reattached to a bus already in
+    /// progress (a reconnect within the grace window, or a takeover), `false` for a genuinely
+    /// fresh bus — independent of the socket's own `seq`, which restarts at 0 on every `hello`
+    /// regardless of `resumed` (protocol doc, "Framing": "`seq` always restarts at 0 on the
+    /// reconnected socket, even when `ready.resumed` is `true`").
+    case ready(resumeToken: String, busOwner: VoiceBusOwner, resumed: Bool, sessionId: String?)
     case clear
     case ack(throughSeq: Int)
     case state(busOwner: VoiceBusOwner, phase: String, sessionId: String?, checkpoint: String?)
@@ -114,7 +119,12 @@ public enum VoiceDownFrame: Sendable, Equatable {
         case "ready":
             guard let resumeToken = raw["resume_token"] as? String else { return nil }
             let owner = VoiceBusOwner(rawValue: raw["bus_owner"] as? String ?? "") ?? .unrecognized
-            return .ready(resumeToken: resumeToken, busOwner: owner, sessionId: raw["session_id"] as? String)
+            // Missing (a backend older than this field) reads as `false` — the safe fallback,
+            // since a client that wrongly believes a fresh bus is resumed skips reopening state
+            // the backend never actually kept.
+            let resumed = raw["resumed"] as? Bool ?? false
+            return .ready(
+                resumeToken: resumeToken, busOwner: owner, resumed: resumed, sessionId: raw["session_id"] as? String)
         case "clear":
             return .clear
         case "ack":
