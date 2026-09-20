@@ -52,25 +52,27 @@ private struct StagedAttachmentChip: View {
     let attachment: StagedAttachment
     let onRemove: () -> Void
 
+    /// A failed upload is not a lost file — the bytes are still here and the send carries them
+    /// inline. Said out loud anyway, because "this one is only on this phone" is the difference
+    /// between a message another device can finish and one it cannot.
+    private var uploadNote: (text: String, isProblem: Bool)? {
+        switch attachment.uploadState {
+        case .uploading: return ("Uploading…", false)
+        case .failed: return ("Only on this device", true)
+        case .uploaded, .none: return nil
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             ZStack(alignment: .topTrailing) {
                 thumbnail
                 removeButton
             }
-            if attachment.uploadState == .uploading {
-                Text("Uploading…")
+            if let note = uploadNote {
+                Text(note.text)
                     .font(PaiTypography.caption.font)
-                    .foregroundStyle(PaiPalette.Semantic.textMuted)
-                    .lineLimit(1)
-            }
-            if attachment.uploadState == .failed {
-                // Not a lost file: the bytes are still here and the send carries them inline.
-                // Said out loud anyway, because "it is only on this phone" is the difference
-                // between a message his laptop can finish and one it cannot.
-                Text("Only on this device")
-                    .font(PaiTypography.caption.font)
-                    .foregroundStyle(PaiPalette.Semantic.errorText)
+                    .foregroundStyle(note.isProblem ? PaiPalette.Semantic.errorText : PaiPalette.Semantic.textMuted)
                     .lineLimit(1)
             }
             if attachment.wasCompressed {
