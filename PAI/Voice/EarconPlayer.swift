@@ -1,3 +1,4 @@
+import Foundation
 import PAIKit
 
 /// Turns an `EarconKind` into audio (`Earcon.samples`, PAIKit — pure synthesis) and hands the

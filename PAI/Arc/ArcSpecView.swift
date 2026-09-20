@@ -189,7 +189,8 @@ struct ArcSpecView: View {
             do {
                 let target = try await ArcSubagentLookup.findBoundSubagent(agentName: name) { cursor in
                     try await client.getSessions(
-                        since: nil, limit: nil, cursor: cursor, agent: nil, kind: .subagent, parent: boundSessionId,
+                        since: nil, limit: nil, cursor: cursor, agent: nil, kind: .exactly(.subagent),
+                        parent: boundSessionId,
                         q: nil)
                 }
                 guard let target else {
