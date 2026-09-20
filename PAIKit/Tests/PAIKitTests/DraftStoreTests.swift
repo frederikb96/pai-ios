@@ -766,3 +766,49 @@ final class DraftStoreTests: XCTestCase {
         XCTAssertEqual(store.draft(for: "s1").attachments, [attachment])
     }
 }
+
+// MARK: - What a closed dictation take must stop contributing
+
+/// Closing a region folds its words into `text` server-side and leaves the region row standing.
+/// A renderer that still counts that region draws the same take twice — the defect behind the
+/// composer filling with repeated copies of one sentence. These pin the rule rather than the
+/// wording: flip the filter back to "every region" and both go red.
+final class DraftEntryDisplayTextTests: XCTestCase {
+
+    private func region(_ takeId: String, _ text: String, _ state: String) -> DraftRegion {
+        DraftRegion(takeId: takeId, text: text, state: state, seq: 1, updatedAt: "2026-01-01T00:00:00Z")
+    }
+
+    func testAClosedTakeIsNotRenderedAgainBesideTheTextItWasFoldedInto() {
+        // Exactly what the server holds the instant a take closes: its words are in `text`, and
+        // its region row is still there with the same words in it.
+        let entry = DraftEntry(
+            text: "hello there", sessionType: nil, workingDir: nil, remoteUpdatedAt: nil,
+            regions: [region("t1", "hello there", "final")]
+        )
+
+        XCTAssertEqual(entry.displayText, "hello there")
+    }
+
+    func testAnOpenTakeStillRendersSoDictationIsVisibleWhileItIsHappening() {
+        let entry = DraftEntry(
+            text: "typed", sessionType: nil, workingDir: nil, remoteUpdatedAt: nil,
+            regions: [region("t1", "spoken", "open")]
+        )
+
+        XCTAssertEqual(entry.displayText, "typed \(VoiceRecordingResult.sttPrefix)spoken")
+    }
+
+    func testOnlyTheStillOpenTakeOfSeveralContributes() {
+        let entry = DraftEntry(
+            text: "one two", sessionType: nil, workingDir: nil, remoteUpdatedAt: nil,
+            regions: [
+                region("t1", "one", "final"),
+                region("t2", "two", "final"),
+                region("t3", "three", "open"),
+            ]
+        )
+
+        XCTAssertEqual(entry.displayText, "one two \(VoiceRecordingResult.sttPrefix)three")
+    }
+}

@@ -62,6 +62,15 @@ public final class DraftStore {
     private var inFlightDelete: [String: Task<Void, Never>] = [:]
     /// `inFlightDelete`'s own cleanup guard, the same shape as `flushSequence`.
     private var deleteSequence: [String: Int] = [:]
+    /// The currently in-flight flatten per key — what `flush()` waits out before writing `text`.
+    ///
+    /// A flatten folds every open region INTO the server's `text`, so it and a write of `text`
+    /// are two edits to one field, and the server applies whichever arrives second. The write is
+    /// debounced and the flatten is not, so the order is whatever the network chooses. Landing
+    /// flatten-last is how "select all, delete" put every dictated word straight back: the empty
+    /// text arrived, then the fold rewrote the field from the regions. Waiting here makes the
+    /// pair ordered — the same reasoning, and the same shape, as `inFlightDelete` above.
+    private var inFlightFlatten: [String: Task<Void, Never>] = [:]
     /// Recently discarded keys, so a sync already in flight cannot resurrect one. Pruned in
     /// `syncFromServer` once an entry's grace window has passed — left unpruned this is the one
     /// unbounded map in an otherwise careful type, one `Date` held for the process lifetime per
@@ -119,18 +128,21 @@ public final class DraftStore {
         scheduleFlush(key)
     }
 
-    /// Fires the server-side flatten and forgets it — this device's own fold above is what makes
-    /// the field usable immediately; the round trip only needs to happen at all so another device
-    /// reading this draft afterward sees the same flattened `text` rather than a region this
-    /// device has stopped believing exists.
+    /// Starts the server-side flatten and records it, so the write that follows this same edit
+    /// cannot overtake it — see `inFlightFlatten`. This device's own fold above is what makes the
+    /// field usable immediately; the round trip needs to happen at all so another device reading
+    /// this draft afterward sees the same flattened `text` rather than a region this device has
+    /// stopped believing exists.
     private func flattenOpenRegions(key: String, entry: DraftEntry) {
         let openTakeIds = entry.regions.filter { $0.state == "open" }.map(\.takeId)
         guard !openTakeIds.isEmpty else { return }
         let api = self.api
         let baseUpdatedAt = entry.remoteUpdatedAt
-        Task {
+        let flatten = Task { [weak self] in
             _ = try? await api.flattenDraft(key: key, takeIds: openTakeIds, baseUpdatedAt: baseUpdatedAt)
+            self?.inFlightFlatten[key] = nil
         }
+        inFlightFlatten[key] = flatten
     }
 
     /// Launch choices for the next session, held in the `new` draft only.
@@ -268,6 +280,12 @@ public final class DraftStore {
             diagnosticsLog?.log(.info, .drafts, "flush key=\(key) waiting for in-flight delete")
         }
         await inFlightDelete[key]?.value
+        // And a flatten started by the very edit this write is carrying: it rewrites `text` from
+        // the regions, so landing after this PUT would undo it. See `inFlightFlatten`.
+        if inFlightFlatten[key] != nil {
+            diagnosticsLog?.log(.info, .drafts, "flush key=\(key) waiting for in-flight flatten")
+        }
+        await inFlightFlatten[key]?.value
         guard let entry = drafts[key] else { return }
 
         flushSequence[key, default: 0] += 1
@@ -353,7 +371,11 @@ public final class DraftStore {
             // delete still in the air counts too: while one is racing, the server's answer for
             // that key is not evidence about anything, and a write waiting behind it sits with
             // neither a pending nor an in-flight flush recorded.
+            // A flatten counts for the same reason a delete does: it is about to rewrite `text`
+            // from the regions, so the row this response carries describes neither the before
+            // nor the after.
             if inFlightFlush[row.key] != nil || inFlightDelete[row.key] != nil
+                || inFlightFlatten[row.key] != nil
                 || localRevision[row.key] != revisionsAtRequest[row.key]
             {
                 continue

@@ -48,12 +48,19 @@ public struct DraftEntry: Equatable, Sendable {
 
     public static let empty = DraftEntry(text: "", sessionType: nil, workingDir: nil, remoteUpdatedAt: nil)
 
-    /// What every client renders: `text` followed by every region's own text, in the order their
-    /// takes were opened — plain concatenation, never an offset into either string, matching the
-    /// backend's own `compose_draft_text` (`pai-cloud/backend/src/pai_cloud/repository.py`). A
-    /// region in ANY state (`open`, `final`, `overflow`) still contributes: none of those states
-    /// ever discard the text already accepted into it, only close it to further writes — see
-    /// `DraftStore`'s own doc comment on why editing this string first flattens.
+    /// What every client renders: `text` followed by each **still-open** region's own text, in
+    /// the order their takes were opened — plain concatenation, never an offset into either
+    /// string, matching the backend's own `compose_draft_text`
+    /// (`pai-cloud/backend/src/pai_cloud/repository.py`) and the web's own renderer
+    /// (`pai-cloud/web/src/stores/drafts.ts`).
+    ///
+    /// 🚨 **A closed region must not contribute, and rendering one is not a harmless extra.**
+    /// Closing a region folds its text into `text` server-side, in the same transaction, and
+    /// leaves the region row standing with its words still in it — so a renderer that counts
+    /// closed regions draws every finished dictation take twice, once from `text` and once from
+    /// the region it was folded out of. Freddy hit exactly that: each take doubled, and a delete
+    /// racing a fold then grew it a copy at a time until the composer was a wall of the same
+    /// sentence.
     ///
     /// Each region's own contribution carries the `stt-rec: ` marker once, at its own start — the
     /// backend writes a region's raw transcribed text with no prefix at all (`DraftRegionSink`
@@ -61,7 +68,9 @@ public struct DraftEntry: Equatable, Sendable {
     /// per-take granularity the ElevenLabs-era pipeline always prefixed at.
     public var displayText: String {
         let parts =
-            [text] + regions.filter { !$0.text.isEmpty }.map { "\(VoiceRecordingResult.sttPrefix)\($0.text)" }
+            [text]
+            + regions.filter { $0.state == "open" && !$0.text.isEmpty }
+            .map { "\(VoiceRecordingResult.sttPrefix)\($0.text)" }
         return parts.filter { !$0.isEmpty }.joined(separator: " ")
     }
 
