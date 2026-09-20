@@ -11,10 +11,13 @@ struct RecordingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(SettingsStore.self) private var settings
     let controller: VoiceRecorderController
-    /// Inserts `stt-rec: <text>` into the composer and closes the sheet.
-    var onInsertTranscript: (String) -> Void
+    /// Inserts `stt-rec: <text>` into the composer and closes the sheet. `nil` when this sheet
+    /// is opened from Settings rather than from a composer: there is nothing to insert into, and
+    /// a control that silently does nothing is worse than one that is not there.
+    var onInsertTranscript: ((String) -> Void)?
     /// Stages one to three files (raw/sent WAV, or a single combined WAV, plus a JSON report).
-    var onAttach: ([StagedAttachment]) -> Void
+    /// `nil` on the same terms as `onInsertTranscript`.
+    var onAttach: (([StagedAttachment]) -> Void)?
 
     @State private var transcribingID: String?
     @State private var errorMessage: String?
@@ -52,9 +55,9 @@ struct RecordingsSheet: View {
                             RecordingRow(
                                 meta: meta, isTranscribing: transcribingID == meta.id,
                                 onTapRetranscribe: { Task { await retranscribe(meta) } },
-                                onInsert: { insert(meta) },
+                                onInsert: onInsertTranscript == nil ? nil : { insert(meta) },
                                 onTranscribeRemaining: { controller.transcribeRemainingGaps(id: meta.id) },
-                                onAttach: { attach(meta) }
+                                onAttach: onAttach == nil ? nil : { attach(meta) }
                             )
                             .swipeActions(edge: .trailing) {
                                 Button(role: .destructive) {
@@ -89,14 +92,16 @@ struct RecordingsSheet: View {
                 // Reachable here rather than only from Settings, because this sheet already has a
                 // session's composer to attach into — Settings' own "Share Voice Log" has no
                 // session to hand the file to, so it goes through the iOS share sheet instead.
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        attachVoiceLog()
-                    } label: {
-                        Label("Attach Voice Log", systemImage: "doc.text")
+                if onAttach != nil {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            attachVoiceLog()
+                        } label: {
+                            Label("Attach Voice Log", systemImage: "doc.text")
+                        }
+                        .disabled(AppVoiceDiagnosticsLog.shared.totalSizeBytes() == 0)
+                        .accessibilityIdentifier("attach-voice-log")
                     }
-                    .disabled(AppVoiceDiagnosticsLog.shared.totalSizeBytes() == 0)
-                    .accessibilityIdentifier("attach-voice-log")
                 }
             }
             .alert("New Recording", isPresented: $showingNewRecordingPrompt) {
@@ -177,7 +182,7 @@ struct RecordingsSheet: View {
                 errorMessage = "No speech detected in recording."
                 return
             }
-            onInsertTranscript("\(VoiceRecordingResult.sttPrefix)\(text)")
+            onInsertTranscript?("\(VoiceRecordingResult.sttPrefix)\(text)")
             dismiss()
         } catch {
             errorMessage = (error as? PaiError)?.userMessage ?? "\(error)"
@@ -192,7 +197,7 @@ struct RecordingsSheet: View {
             errorMessage = "No transcript to insert yet."
             return
         }
-        onInsertTranscript("\(VoiceRecordingResult.sttPrefix)\(text)")
+        onInsertTranscript?("\(VoiceRecordingResult.sttPrefix)\(text)")
         dismiss()
     }
 
@@ -218,12 +223,12 @@ struct RecordingsSheet: View {
             files.append(makeAttachment(data: reportData, name: "recording-\(iso).json", mime: "application/json"))
         }
 
-        onAttach(files)
+        onAttach?(files)
         dismiss()
     }
 
     private func attachVoiceLog() {
-        onAttach([AppVoiceDiagnosticsLog.makeAttachment()])
+        onAttach?([AppVoiceDiagnosticsLog.makeAttachment()])
         dismiss()
     }
 
@@ -244,9 +249,9 @@ private struct RecordingRow: View {
     let meta: RecordingMeta
     let isTranscribing: Bool
     var onTapRetranscribe: () -> Void
-    var onInsert: () -> Void
+    var onInsert: (() -> Void)?
     var onTranscribeRemaining: () -> Void
-    var onAttach: () -> Void
+    var onAttach: (() -> Void)?
 
     var body: some View {
         HStack {
@@ -291,16 +296,18 @@ private struct RecordingRow: View {
                         }
                         .accessibilityLabel("Transcribe remaining audio")
                     }
-                    if meta.transcript?.isEmpty == false {
+                    if let onInsert, meta.transcript?.isEmpty == false {
                         Button(action: onInsert) {
                             Image(systemName: "text.insert")
                         }
                         .accessibilityLabel("Insert transcript")
                     }
-                    Button(action: onAttach) {
-                        Image(systemName: "paperclip")
+                    if let onAttach {
+                        Button(action: onAttach) {
+                            Image(systemName: "paperclip")
+                        }
+                        .accessibilityLabel("Attach recording")
                     }
-                    .accessibilityLabel("Attach recording")
                 }
                 .buttonStyle(.borderless)
             }

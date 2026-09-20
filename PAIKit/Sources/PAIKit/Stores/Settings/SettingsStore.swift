@@ -24,8 +24,9 @@ public enum SttLanguage: String, Codable, Sendable, CaseIterable {
 ///   step, same as the web's `localStorage` + immediate apply.
 /// - **server-persisted, draft-and-save** — `smtp`, a whole sub-store, because Save/dirty
 ///   tracking/validation is real state, not a detail this store should flatten away.
-/// - **write-only secret** — `elevenLabsKey` (and `smtp.password`): presence is fetched, the
-///   value is only ever sent, never read back. See `WriteOnlySecretField`.
+/// - **write-only secret** — `elevenLabsKey`, `homeAssistantToken`, `todoistToken` (and
+///   `smtp.password`): presence is fetched, the value is only ever sent, never read back. See
+///   `WriteOnlySecretField`.
 @MainActor
 @Observable
 public final class SettingsStore {
@@ -60,7 +61,12 @@ public final class SettingsStore {
     public private(set) var noteToolbarLayout: [NoteToolbarActionId]
 
     public let elevenLabsKey: WriteOnlySecretField
+    /// The two third-party credentials Computer presents itself. Set here rather than deployed
+    /// with the pod, so changing either needs no release.
+    public let homeAssistantToken: WriteOnlySecretField
+    public let todoistToken: WriteOnlySecretField
     public let smtp: SmtpSettingsStore
+    public let voices: SpokenVoiceSettingsStore
 
     /// Called for a recording evicted by the 10-entry cap, so whichever store holds the actual
     /// audio (a voice-capture concern, not this one's) can delete it — the same seam the web's
@@ -77,7 +83,11 @@ public final class SettingsStore {
         self.apiClient = apiClient
         self.storage = storage
         self.elevenLabsKey = WriteOnlySecretField(name: .elevenlabs, apiClient: apiClient)
+        self.homeAssistantToken = WriteOnlySecretField(
+            name: .homeAssistantToken, apiClient: apiClient)
+        self.todoistToken = WriteOnlySecretField(name: .todoistToken, apiClient: apiClient)
         self.smtp = SmtpSettingsStore(apiClient: apiClient)
+        self.voices = SpokenVoiceSettingsStore(apiClient: apiClient)
 
         sttLanguage = storage.value(forKey: Keys.sttLanguage) ?? .auto
         micDeviceId = storage.value(forKey: Keys.micDeviceId) ?? ""
@@ -189,7 +199,7 @@ public final class SettingsStore {
 
     // MARK: - Secret presence (fetch before Settings is ever opened)
 
-    /// Populates `elevenLabsKey.status` and `smtp.password.status` from one presence fetch.
+    /// Populates every `WriteOnlySecretField`'s status from one presence fetch.
     ///
     /// 🚨 **The app target must call this once at launch**, before Settings has ever been
     /// opened — not on first navigation into the Settings screen. `SecretStatus` starts `nil`
@@ -200,8 +210,9 @@ public final class SettingsStore {
     public func refreshSecretPresence() async {
         do {
             let statuses = try await apiClient.getSecretStatuses()
-            elevenLabsKey.applyStatus(statuses.elevenlabs)
-            smtp.password.applyStatus(statuses.smtpPassword)
+            for field in [elevenLabsKey, homeAssistantToken, todoistToken, smtp.password] {
+                field.applyStatus(statuses.status(for: field.name))
+            }
         } catch {
             // Presence stays `nil` (unknown) rather than being guessed at — a gate reading
             // `nil` the same as "not set" degrades to the safe, if unhelpful, state rather than

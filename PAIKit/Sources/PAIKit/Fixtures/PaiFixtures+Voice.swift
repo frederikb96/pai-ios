@@ -71,11 +71,21 @@ extension PaiFixtures {
         }
         """#
 
-    /// `GET /api/settings/secrets` — `elevenlabs` set, `smtp_password` absent entirely
+    /// `GET /api/settings/secrets` — `elevenlabs` set, every other name absent entirely
     /// (`SecretStatusMap` is a `Partial<Record<...>>`, so a missing key means "never configured",
     /// distinct from `{"set": false, ...}`).
     public static let secretStatuses: String = #"""
         { "elevenlabs": { "set": true, "updated_at": "2026-07-02T11:00:00Z" } }
+        """#
+
+    /// `GET /api/settings/voice` — nothing configured, which is the state a fresh install is in
+    /// and the one every fallback has to work from.
+    public static let spokenVoiceSettings: String = #"""
+        {
+          "computer_voice": null, "computer_delivery": null,
+          "call_voice_id": null, "call_speed": 1.0,
+          "updated_at": "2026-09-20T12:00:00Z"
+        }
         """#
 
     // MARK: - Claude sign-in on the VM (`GET /api/auth/claude`)

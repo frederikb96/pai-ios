@@ -24,9 +24,13 @@ struct SettingsScreen: View {
 
             VoiceSection(settings: settings)
 
+            ComputerSection(settings: settings)
+
             NotificationsSection()
 
-            DiagnosticsSection(settings: settings)
+            HistorySection(settings: settings)
+
+            LastCrashSection()
 
             if !hidesSignOut {
                 Section {

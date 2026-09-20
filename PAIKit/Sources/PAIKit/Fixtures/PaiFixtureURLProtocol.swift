@@ -162,6 +162,7 @@
             exact("GET", "/api/usage") { PaiFixtures.usage },
             exact("GET", "/api/settings/secrets") { PaiFixtures.secretStatuses },
             exact("GET", "/api/settings/smtp") { PaiFixtures.smtpSettings },
+            exact("GET", "/api/settings/voice") { PaiFixtures.spokenVoiceSettings },
             exact("GET", "/api/auth/claude") { claudeAuthFixtureBody() },
             exact("GET", "/api/browse") { PaiFixtures.browseResult },
             exact("GET", "/api/favorites") { PaiFixtures.folderFavorites },

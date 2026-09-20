@@ -69,11 +69,11 @@ public struct LevelStats: Codable, Sendable, Equatable {
     }
 }
 
-/// Silence detection as it stood for one recording, and what it did. Port of
-/// `stores/settings.ts`'s `SilenceMeta` — detected silence gates the audio off rather than
-/// ending the take, so `triggered` no longer implies `endedBy == .silence` on the enclosing
-/// `RecordingMeta`: a take can be gated, resume once speech returns, and still end by any other
-/// reason.
+/// Silence detection as it stood for one recording, and what it did.
+///
+/// 🚨 Decoded only: nothing on this client produces one. Client-side silence gating is not part
+/// of the voice protocol, so a `RecordingMeta` carrying this is one whose audio was captured by
+/// a build that gated locally, and the row renders what it says rather than dropping it.
 public struct SilenceMeta: Codable, Sendable, Equatable {
     public let enabled: Bool
     public let threshold: Double

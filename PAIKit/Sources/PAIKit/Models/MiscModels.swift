@@ -612,10 +612,14 @@ public struct ResumeResponse: Codable, Sendable, Equatable {
 // A secret's value never appears in any of these — every shape here is presence and a
 // timestamp, or a short-lived third-party token, never the stored value itself.
 
-/// Every allowlisted secret name the backend currently recognizes.
+/// Every allowlisted secret name a client can set. The backend's own allowlist
+/// (`secrets_store.ALLOWED_SECRET_NAMES`) holds more — `vapid` and `apns_auth_key` are managed
+/// by their own flows, never typed into a field.
 public enum SecretName: String, Sendable, Equatable {
     case elevenlabs
     case smtpPassword = "smtp_password"
+    case homeAssistantToken = "home_assistant_token"
+    case todoistToken = "todoist_token"
 }
 
 public struct SecretStatus: Codable, Sendable, Equatable {
@@ -634,7 +638,7 @@ public struct SecretStatus: Codable, Sendable, Equatable {
 }
 
 /// `types.ts` types this as `Partial<Record<SecretName, SecretStatus>>` — an object keyed by
-/// whichever of the two allowlisted names the backend chose to report, both optional. A plain
+/// whichever allowlisted names the backend chose to report, each optional. A plain
 /// `[String: SecretStatus]` would decode a JSON *array* of alternating keys and values rather
 /// than the object the backend actually sends (`Dictionary`'s synthesized `Decodable` only takes
 /// the keyed-object path for `String`/`Int` keys via a raw string fast path, which a
@@ -642,15 +646,103 @@ public struct SecretStatus: Codable, Sendable, Equatable {
 public struct SecretStatusMap: Codable, Sendable, Equatable {
     public let elevenlabs: SecretStatus?
     public let smtpPassword: SecretStatus?
+    public let homeAssistantToken: SecretStatus?
+    public let todoistToken: SecretStatus?
 
     enum CodingKeys: String, CodingKey {
         case elevenlabs
         case smtpPassword = "smtp_password"
+        case homeAssistantToken = "home_assistant_token"
+        case todoistToken = "todoist_token"
     }
 
-    public init(elevenlabs: SecretStatus?, smtpPassword: SecretStatus?) {
+    public init(
+        elevenlabs: SecretStatus?,
+        smtpPassword: SecretStatus?,
+        homeAssistantToken: SecretStatus? = nil,
+        todoistToken: SecretStatus? = nil
+    ) {
         self.elevenlabs = elevenlabs
         self.smtpPassword = smtpPassword
+        self.homeAssistantToken = homeAssistantToken
+        self.todoistToken = todoistToken
+    }
+
+    /// The status for one name, so a view drawing a field per name does not need a switch
+    /// per call site — one place that knows which stored property each name maps to.
+    public func status(for name: SecretName) -> SecretStatus? {
+        switch name {
+        case .elevenlabs: elevenlabs
+        case .smtpPassword: smtpPassword
+        case .homeAssistantToken: homeAssistantToken
+        case .todoistToken: todoistToken
+        }
+    }
+}
+
+// MARK: - Voice settings
+//
+// How the two spoken voices sound. Computer speaks through OpenAI Realtime, which names a voice
+// and has no speed parameter — delivery there is shaped by telling the model how to speak. A
+// session's call-mode replies go through ElevenLabs, which takes a voice id and a speed and no
+// instructions. A `nil` means unset: whatever speaks picks its own.
+
+/// What the number input offers. The backend validates the real bound
+/// (`models.CALL_SPEED_MIN`/`MAX`) and answers 400 outside it; this project has no OpenAPI
+/// schema to share one constant from, the same duplication `SmtpSecurity`'s own value list
+/// already carries for the same reason.
+public let callSpeedRange: ClosedRange<Double> = 0.5...2.0
+
+public struct SpokenVoiceSettings: Codable, Sendable, Equatable {
+    public let computerVoice: String?
+    public let computerDelivery: String?
+    public let callVoiceId: String?
+    public let callSpeed: Double
+    public let updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case computerVoice = "computer_voice"
+        case computerDelivery = "computer_delivery"
+        case callVoiceId = "call_voice_id"
+        case callSpeed = "call_speed"
+        case updatedAt = "updated_at"
+    }
+
+    public init(
+        computerVoice: String?, computerDelivery: String?, callVoiceId: String?,
+        callSpeed: Double, updatedAt: String
+    ) {
+        self.computerVoice = computerVoice
+        self.computerDelivery = computerDelivery
+        self.callVoiceId = callVoiceId
+        self.callSpeed = callSpeed
+        self.updatedAt = updatedAt
+    }
+}
+
+/// Every field every time, the same whole-draft PUT `SmtpSettingsUpdate` sends and for the same
+/// reason: a `nil` here has to reach the server as JSON `null` to clear a field, which a
+/// selective patch cannot express.
+public struct SpokenVoiceSettingsUpdate: Encodable, Sendable, Equatable {
+    public var computerVoice: String?
+    public var computerDelivery: String?
+    public var callVoiceId: String?
+    public var callSpeed: Double
+
+    enum CodingKeys: String, CodingKey {
+        case computerVoice = "computer_voice"
+        case computerDelivery = "computer_delivery"
+        case callVoiceId = "call_voice_id"
+        case callSpeed = "call_speed"
+    }
+
+    public init(
+        computerVoice: String?, computerDelivery: String?, callVoiceId: String?, callSpeed: Double
+    ) {
+        self.computerVoice = computerVoice
+        self.computerDelivery = computerDelivery
+        self.callVoiceId = callVoiceId
+        self.callSpeed = callSpeed
     }
 }
 

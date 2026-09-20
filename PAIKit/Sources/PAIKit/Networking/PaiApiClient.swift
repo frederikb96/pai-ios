@@ -1117,6 +1117,16 @@ public struct PaiApiClient: Sendable {
         try await send(path: "/api/settings/smtp/test", method: "POST", body: nil, contentType: nil)
     }
 
+    // MARK: Voice settings — how the two spoken voices sound
+
+    public func getVoiceSettings() async throws -> SpokenVoiceSettings {
+        try await send(path: "/api/settings/voice")
+    }
+
+    public func updateVoiceSettings(_ update: SpokenVoiceSettingsUpdate) async throws -> SpokenVoiceSettings {
+        try await send(path: "/api/settings/voice", method: "PUT", body: try Self.jsonBody(update))
+    }
+
     // MARK: Voice takes — the live socket's own region write, and offline/backfill batch STT
 
     /// Writes one take's own region of a draft — never `text`, which only typing writes. The
