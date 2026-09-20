@@ -66,10 +66,11 @@ public final class DraftStore {
     ///
     /// A flatten folds every open region INTO the server's `text`, so it and a write of `text`
     /// are two edits to one field, and the server applies whichever arrives second. The write is
-    /// debounced and the flatten is not, so the order is whatever the network chooses. Landing
-    /// flatten-last is how "select all, delete" put every dictated word straight back: the empty
-    /// text arrived, then the fold rewrote the field from the regions. Waiting here makes the
-    /// pair ordered — the same reasoning, and the same shape, as `inFlightDelete` above.
+    /// debounced and the flatten is not, so without this the order is whatever the network
+    /// chooses. Flatten landing last puts every dictated word straight back: the empty text
+    /// arrives, then the fold rewrites the field from the regions, which reads as a deletion the
+    /// composer refused. Waiting here makes the pair ordered — the same reasoning, and the same
+    /// shape, as `inFlightDelete` above.
     private var inFlightFlatten: [String: Task<Void, Never>] = [:]
     /// Recently discarded keys, so a sync already in flight cannot resurrect one. Pruned in
     /// `syncFromServer` once an entry's grace window has passed — left unpruned this is the one

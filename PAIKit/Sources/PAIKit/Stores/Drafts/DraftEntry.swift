@@ -58,9 +58,8 @@ public struct DraftEntry: Equatable, Sendable {
     /// Closing a region folds its text into `text` server-side, in the same transaction, and
     /// leaves the region row standing with its words still in it — so a renderer that counts
     /// closed regions draws every finished dictation take twice, once from `text` and once from
-    /// the region it was folded out of. Freddy hit exactly that: each take doubled, and a delete
-    /// racing a fold then grew it a copy at a time until the composer was a wall of the same
-    /// sentence.
+    /// the region it was folded out of. Each further fold adds another copy, so the composer
+    /// fills with the same sentence repeated rather than showing one obvious duplicate.
     ///
     /// Each region's own contribution carries the `stt-rec: ` marker once, at its own start — the
     /// backend writes a region's raw transcribed text with no prefix at all (`DraftRegionSink`
