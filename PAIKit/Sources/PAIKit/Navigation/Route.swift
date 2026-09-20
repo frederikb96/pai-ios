@@ -92,7 +92,7 @@ public enum Route: Hashable, Sendable {
     /// one. Mirrors the web's `SchedulerApp.tsx`, whose three routes (list/new/id) are the same
     /// shape with `nil` standing in for its `new` segment.
     case schedulerTask(id: String?)
-    /// The six-tile launcher the hardware Action Button lands on.
+    /// The tile launcher the hardware Action Button lands on, and the first entry under Apps.
     ///
     /// Pushed rather than presented, and always as the whole path (`DeepLink.quickActions`), so
     /// that whatever the app happened to be showing when the button was pressed is not left

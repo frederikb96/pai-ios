@@ -1,7 +1,7 @@
 import PAIKit
 import SwiftUI
 
-/// One of the two bottom-row shortcuts — a link Freddy configures himself by long-pressing the
+/// One of the bottom row's three shortcuts — a link Freddy configures himself by long-pressing the
 /// tile, since Todoist's own view/filter URLs are his to find and paste rather than something
 /// this app can construct (a saved-filter URL in particular names an id only his account has).
 /// Persisted locally, never synced: this is a per-device convenience, not app state PAI Cloud
@@ -15,7 +15,9 @@ private struct QuickActionShortcut: Equatable {
 }
 
 /// Where the hardware Action Button lands: five rows, reachable without the last being cut off —
-/// the layout Freddy actually reaches for, not a uniform grid that happens to hold six things.
+/// the layout Freddy actually reaches for, not a uniform grid that happens to hold every tile at
+/// one size. The row widths differ on purpose: one full-width tile, three two-up rows, and a
+/// three-up row of shortcuts, each of which he configures himself.
 ///
 /// The button is pressed without looking — walking, in a coat pocket, mid-sentence — so the whole
 /// screen is one glance and one thumb. That is what sets the shape: large targets rather than a
@@ -39,7 +41,7 @@ struct QuickActionsScreen: View {
 
     private let spacing: CGFloat = 12
     private let padding: CGFloat = 16
-    /// Computer (full-width), Home/Fast typed, Home/Fast call, notes, shortcuts.
+    /// Computer (full-width), Home/Fast typed, Home/Fast call, notes, and a three-up shortcut row.
     private let rowCount: CGFloat = 5
     /// Big enough to hit without looking, on the smallest phone this runs on.
     private let minRowHeight: CGFloat = 88
@@ -52,6 +54,8 @@ struct QuickActionsScreen: View {
     @AppStorage("quickActionShortcut1URL") private var shortcut1URLString = ""
     @AppStorage("quickActionShortcut2Name") private var shortcut2Name = ""
     @AppStorage("quickActionShortcut2URL") private var shortcut2URLString = ""
+    @AppStorage("quickActionShortcut3Name") private var shortcut3Name = ""
+    @AppStorage("quickActionShortcut3URL") private var shortcut3URLString = ""
     @State private var editingShortcutSlot: Int?
 
     private var shortcut1: QuickActionShortcut {
@@ -59,6 +63,25 @@ struct QuickActionsScreen: View {
     }
     private var shortcut2: QuickActionShortcut {
         QuickActionShortcut(name: shortcut2Name, urlString: shortcut2URLString)
+    }
+    private var shortcut3: QuickActionShortcut {
+        QuickActionShortcut(name: shortcut3Name, urlString: shortcut3URLString)
+    }
+
+    private func shortcutNameBinding(slot: Int) -> Binding<String> {
+        switch slot {
+        case 1: $shortcut1Name
+        case 2: $shortcut2Name
+        default: $shortcut3Name
+        }
+    }
+
+    private func shortcutURLBinding(slot: Int) -> Binding<String> {
+        switch slot {
+        case 1: $shortcut1URLString
+        case 2: $shortcut2URLString
+        default: $shortcut3URLString
+        }
     }
 
     var body: some View {
@@ -85,8 +108,8 @@ struct QuickActionsScreen: View {
         .accessibilityIdentifier("quick-actions-screen")
         .sheet(item: $editingShortcutSlot.map { slot in EditingSlot(slot: slot) }) { editing in
             ShortcutEditSheet(
-                name: editing.slot == 1 ? $shortcut1Name : $shortcut2Name,
-                urlString: editing.slot == 1 ? $shortcut1URLString : $shortcut2URLString
+                name: shortcutNameBinding(slot: editing.slot),
+                urlString: shortcutURLBinding(slot: editing.slot)
             )
         }
     }
@@ -140,6 +163,7 @@ struct QuickActionsScreen: View {
             HStack(spacing: spacing) {
                 shortcutTile(shortcut1, slot: 1, height: rowHeight, identifier: "quick-shortcut-1")
                 shortcutTile(shortcut2, slot: 2, height: rowHeight, identifier: "quick-shortcut-2")
+                shortcutTile(shortcut3, slot: 3, height: rowHeight, identifier: "quick-shortcut-3")
             }
         }
         .padding(padding)
@@ -242,7 +266,7 @@ struct QuickActionsScreen: View {
                     .font(PaiTypography.panelTitle.font)
                     .foregroundStyle(PaiPalette.Semantic.textPrimary)
                     .lineLimit(1)
-                Text(shortcut.isConfigured ? "Todoist" : "Tap to set up")
+                Text(shortcut.isConfigured ? "Todoist" : "Tap to add")
                     .font(PaiTypography.caption.font)
                     .foregroundStyle(PaiPalette.Semantic.textMuted)
                     .lineLimit(1)

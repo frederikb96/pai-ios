@@ -1,7 +1,8 @@
 import PAIKit
 import SwiftUI
 
-/// Where the top bar's "Apps" button leads — a small picker over Arc, Notes and the Scheduler.
+/// Where the top bar's "Apps" button leads — a small picker over Quick Actions, Arc, Notes and
+/// the Scheduler.
 /// Mirrors the web's own `AppsFlyout`/`AppsHome` pairing (a modal listing every registered app),
 /// minus Memory and Notifications: PAI Cloud's Memory app is notes plus projects/phases/search,
 /// and this repo never built a separate Memory screen — the note index (`.notes`) is the one
@@ -15,6 +16,13 @@ struct AppsHomeSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                // First, because it is the only entry here that is also a whole screen of its own
+                // shortcuts — the hardware Action Button is its other door, and a phone without
+                // that button (or a hand already on the screen) has no other way in.
+                Button(action: openQuickActions) {
+                    Label("Quick Actions", systemImage: "square.grid.2x2")
+                }
+                .accessibilityIdentifier("apps-open-quick-actions")
                 Button(action: openArc) {
                     Label("Arc", systemImage: "shippingbox")
                 }
@@ -46,6 +54,11 @@ struct AppsHomeSheet: View {
     // dropped often enough to be a known iOS trap, and the failure is silent. Reversing the order
     // would leave Freddy looking at the session list with the Apps sheet merely closed, having to
     // tap the destination a second time.
+    private func openQuickActions() {
+        environment.router.push(.quickActions)
+        dismiss()
+    }
+
     private func openArc() {
         environment.router.push(.arcSpecList)
         dismiss()
