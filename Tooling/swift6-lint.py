@@ -43,6 +43,14 @@ STATIC_ANY_COLLECTION_TYPE = re.compile(r":\s*\[[^\]\n]*\bAny\b[^\]\n]*\]")
 #: A Foundation formatter initializer — none of these three are `Sendable` either, and a
 #: `static let formatter = DateFormatter()` is the single most common shape this takes here.
 STATIC_FORMATTER_INIT = re.compile(r"\b(?:ISO8601DateFormatter|DateFormatter|NumberFormatter)\(\)")
+#: An import declaration, whatever attribute precedes it (`@preconcurrency`, `@_exported`).
+IMPORT_LINE = re.compile(r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*import\s+(?P<module>[A-Za-z_]\w*)")
+#: Foundation types common enough here to be worth naming, and unambiguous enough that a match
+#: is one: a constructor call or a declared type, never a bare word that could be a local name.
+FOUNDATION_TYPE_USE = re.compile(
+    r"\b(?:Data|Date|URL|UUID|JSONDecoder|JSONEncoder|DateFormatter|NotificationCenter)\s*\("
+    r"|:\s*(?:Data|Date|URL|UUID|TimeInterval)\b"
+)
 SHADOWED_WRAPPER = re.compile(r"^\s*(?:public |internal |private |fileprivate )?(?:enum|struct|class|actor) (State|Binding|Environment|Namespace|Observable)\s*[:{]")
 AMBIGUOUS_PAIR = re.compile(r"(?:width|x|dx): \.[A-Za-z]\w*, (?:height|y|dy): \.[A-Za-z]\w*")
 ISOLATED_STATIC = re.compile(r"^\s*(?:public |internal |private |fileprivate )?static (?:let|var) ([A-Za-z_]\w*)\b")
@@ -430,10 +438,41 @@ def private_type_used_too_widely(lines: list[str]) -> list[tuple[int, str, str]]
     return findings
 
 
+def foundation_type_without_an_import(lines: list[str]) -> list[tuple[int, str, str]]:
+    """A Foundation type in a file that imports nothing which could supply it.
+
+    ``import PAIKit`` does not carry Foundation into the importing file — the package's own
+    modules import it for themselves, and Swift re-exports nothing unless asked. So a file whose
+    every import is PAIKit sees no ``Data``, no ``Date``, no ``URL``, and fails with the
+    ``cannot find 'X' in scope`` that reads like a missing type rather than a missing import.
+
+    Deliberately narrow: any system framework at all is treated as possibly supplying Foundation
+    (UIKit, SwiftUI, AVFoundation and UserNotifications all do), so only a file importing
+    PAIKit alone is judged.
+    """
+    imports = [line.strip() for line in lines if IMPORT_LINE.match(line)]
+    if any(IMPORT_LINE.match(line).group("module") != "PAIKit" for line in imports):
+        return []
+
+    findings: list[tuple[int, str, str]] = []
+    for index, line in enumerate(lines):
+        if line.lstrip().startswith("//"):
+            continue
+        match = FOUNDATION_TYPE_USE.search(line)
+        if match:
+            findings.append((
+                index + 1, line.strip(),
+                f"'{match.group(0)}' is Foundation's, and this file imports only PAIKit, which "
+                f"does not re-export it — add 'import Foundation'",
+            ))
+    return findings
+
+
 def check(path: Path) -> list[tuple[int, str, str]]:
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     isolated = main_actor_line_numbers(lines)
     findings: list[tuple[int, str, str]] = detached_reads_of_isolated_statics(lines, isolated)
+    findings.extend(foundation_type_without_an_import(lines))
     findings.extend(nonisolated_uikit_access(lines))
     findings.extend(switch_after_guard_missing_return(lines))
     findings.extend(unmarked_observer_token_read_in_deinit(lines, isolated))
