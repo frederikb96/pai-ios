@@ -9,7 +9,7 @@ import Foundation
 /// found mid-sentence), and the **pause** gate (nothing spoken with no real gap right before it —
 /// a full phrase like "computer send the message" is specific enough that no pause is needed to
 /// tell a deliberate command from a mention *most* of the time, but "the problem is that when I
-/// say computer end the call" ends its own sentence on the phrase too, with nothing after it, so
+/// say computer quit the call" ends its own sentence on the phrase too, with nothing after it, so
 /// the position gate alone lets it through). A fourth rule is per-command rather than a gate:
 /// every command but `skip` waits for a **final** result, since a false stop or send is far more
 /// disruptive than a half-second of extra latency; `skip` accepts a volatile (still-settling)
@@ -102,7 +102,7 @@ public struct CommandDetector: Sendable {
     /// because there is no data here to check — both are treated the same: never reject for lack
     /// of information. Otherwise `true` only when real word timing shows at least
     /// `pauseGateSeconds` of silence before it; a phrase butting straight up against the words
-    /// before it, with real timing to prove it, is what "I say computer end the call" looks like.
+    /// before it, with real timing to prove it, is what "I say computer quit the call" looks like.
     private func passesPauseGate(_ match: CommandGrammar.Match, observation: CommandObservation, wordCount: Int) -> Bool
     {
         guard match.range.lowerBound > 0 else { return true }

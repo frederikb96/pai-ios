@@ -76,7 +76,7 @@ public enum CommandRejectReason: String, Sendable, Equatable {
     case position = "not at the end of the utterance"
     /// Neither preceded by a real gap nor opening the observation — words butt straight up
     /// against the phrase, the shape of a sentence that merely ends on the phrase ("I say
-    /// computer end the call") rather than a deliberate command.
+    /// computer quit the call") rather than a deliberate command.
     case pause = "no pause before the phrase"
     case notFinal = "still volatile"
 }

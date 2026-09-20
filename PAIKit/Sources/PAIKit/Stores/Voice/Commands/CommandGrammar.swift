@@ -23,20 +23,23 @@ public struct CommandPhraseSet: Sendable, Equatable {
         .stop: "computer stop the message",
         .send: "computer send the message",
         .skip: "computer skip the message",
-        .end: "computer end the call",
+        // "quit", not "end": a transcriber hears "end" as "and" often enough that the phrase
+        // Freddy uses to hang up was the least reliable one in the family. His own choice,
+        // mirrored from the backend's own `command_grammar.py`.
+        .end: "computer quit the call",
         .interruptOn: "computer interrupt on",
         .interruptOff: "computer interrupt off",
     ])
 
-    /// Verb inflections tolerated for the "start"/"stop"/"send"/"skip" family, alongside each
-    /// kind's own base verb — dictation rarely comes back in the exact base form every time
-    /// ("sent the message" for a "send" spoken a beat late is ordinary, not a misfire), and
-    /// tolerating it here is far cheaper than training around it.
-    private static let messageVerbInflections: [CommandKind: [String]] = [
+    /// Verb inflections tolerated alongside each kind's own base verb — dictation rarely comes
+    /// back in the exact base form every time ("sent the message" for a "send" spoken a beat late
+    /// is ordinary, not a misfire), and tolerating it here is far cheaper than training around it.
+    private static let verbInflections: [CommandKind: [String]] = [
         .start: ["started"],
         .stop: ["stopped"],
         .send: ["sent", "sends"],
         .skip: ["skipped"],
+        .end: ["quits"],
     ]
     /// `nil` stands for no article at all — "computer send message" is as natural as "computer
     /// send the message".
@@ -49,18 +52,18 @@ public struct CommandPhraseSet: Sendable, Equatable {
     /// base form itself — a harmless duplicate of `basePhrase`, never a second distinct match.
     private static func messageCommandVariants(for kind: CommandKind, basePhrase: String) -> [String] {
         guard let base = basePhrase.split(separator: " ").dropFirst().first else { return [] }
-        let verbs = [String(base)] + (messageVerbInflections[kind] ?? [])
+        let verbs = [String(base)] + (verbInflections[kind] ?? [])
         return verbs.flatMap { verb in
             articles.map { article in ["computer", verb, article, "message"].compactMap { $0 }.joined(separator: " ") }
         }
     }
 
-    /// Every "computer <verb> <article> <call/message>" combination "end" accepts — "ended",
-    /// "the"/"a"/no article, and either object, since Freddy says both. The verb itself is
-    /// likewise derived from `basePhrase`'s own second word.
+    /// Every "computer <verb> <article> <call/message>" combination "end" accepts — its own
+    /// inflections, "the"/"a"/no article, and either object, since Freddy says both. The verb
+    /// itself is likewise derived from `basePhrase`'s own second word.
     private static func endVariants(basePhrase: String) -> [String] {
         guard let base = basePhrase.split(separator: " ").dropFirst().first else { return [] }
-        let verbs = [String(base), "\(base)ed"]
+        let verbs = [String(base)] + (verbInflections[.end] ?? [])
         let objects = ["call", "message"]
         return verbs.flatMap { verb in
             objects.flatMap { object in

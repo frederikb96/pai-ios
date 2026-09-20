@@ -111,7 +111,7 @@ final class CommandDetectorTests: XCTestCase {
     func testASentenceEndingOnThePhraseWithNoRealPauseIsRejected() {
         var detector = CommandDetector(phraseSet: .defaults, sampleRate: rate)
         let observation = CommandObservation(
-            text: "the problem is that when I say computer end the call", isFinal: true,
+            text: "the problem is that when I say computer quit the call", isFinal: true,
             wordTimes: wordTimes(count: 11, gapSeconds: 0, sampleRate: rate), atOffset: 1000)
         XCTAssertEqual(detector.detect(observation), [.rejected(kind: .end, reason: .pause)])
     }
@@ -202,7 +202,7 @@ final class CommandDetectorTests: XCTestCase {
 
     func testEndACallIsRecognizedAsEnd() {
         var detector = CommandDetector(phraseSet: .defaults, sampleRate: rate)
-        let observation = CommandObservation(text: "computer end a call", isFinal: true, wordTimes: nil, atOffset: 1000)
+        let observation = CommandObservation(text: "computer quit a call", isFinal: true, wordTimes: nil, atOffset: 1000)
         XCTAssertEqual(onlyAccepted(detector.detect(observation))?.kind, .end)
     }
 
@@ -214,7 +214,7 @@ final class CommandDetectorTests: XCTestCase {
         var detector = CommandDetector(phraseSet: CommandPhraseSet(phrases: phrases), sampleRate: rate)
 
         let old = detector.detect(
-            CommandObservation(text: "computer end the call", isFinal: true, wordTimes: nil, atOffset: 1000))
+            CommandObservation(text: "computer quit the call", isFinal: true, wordTimes: nil, atOffset: 1000))
         XCTAssertEqual(old, [], "the default phrase should not match once the phrase set overrides it")
 
         let new = detector.detect(

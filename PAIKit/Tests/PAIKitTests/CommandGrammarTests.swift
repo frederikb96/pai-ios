@@ -46,7 +46,7 @@ final class CommandGrammarTests: XCTestCase {
     }
 
     func testMatchesFindsTheEndVariant() {
-        let matches = CommandGrammar.matches(in: "computer end the message", phraseSet: .defaults)
+        let matches = CommandGrammar.matches(in: "computer quit the message", phraseSet: .defaults)
         XCTAssertEqual(matches.map(\.kind), [.end])
     }
 
