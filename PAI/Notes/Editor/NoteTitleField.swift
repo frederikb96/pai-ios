@@ -12,6 +12,8 @@ import UIKit
 /// Left-aligned, single line, never wrapping: unfocused, `UITextField` truncates overflow with an
 /// ellipsis on its own; focused, it scrolls horizontally to keep the caret visible — both the
 /// system's own default behaviour for a text field wider than its content, needing no code here.
+/// "Wider than its content" is the part that does need code, once this stopped being a toolbar
+/// item — see `sizeThatFits` below.
 struct NoteTitleField: UIViewRepresentable {
     let text: String
     let isFocused: Bool
@@ -42,8 +44,28 @@ struct NoteTitleField: UIViewRepresentable {
         field.autocorrectionType = .no
         field.clearButtonMode = .whileEditing
         field.adjustsFontForContentSizeCategory = true
+        // Compressed rather than allowed to push its own frame wider: as a toolbar item this
+        // never mattered, since the bar always imposed a width cap regardless of what the field
+        // reported. Moved into an ordinary row, nothing did — a title past a couple of words
+        // reported its own full unwrapped width as "ideal", and every ancestor up to the screen's
+        // own root widened to fit it, shifting the whole page sideways rather than truncating.
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         field.addTarget(context.coordinator, action: #selector(Coordinator.changed), for: .editingChanged)
         return field
+    }
+
+    /// Reports the width SwiftUI actually offered, never the text's own natural width — the other
+    /// half of the fix above. Left to the default `UIViewRepresentable` sizing, this asks the
+    /// field's `intrinsicContentSize` regardless of the proposal, which is exactly as wide as an
+    /// unwrapped, untruncated rendering of the whole string; a long title then makes this view's
+    /// reported "ideal" size wider than the screen, and everything containing it grows to match.
+    /// Capping it here is what makes truncation possible at all: a field narrower than its text is
+    /// the only shape `UITextField` clips or scrolls instead of overflowing.
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextField, context: Context) -> CGSize? {
+        let intrinsic = uiView.intrinsicContentSize
+        return CGSize(
+            width: proposal.width ?? intrinsic.width,
+            height: proposal.height ?? intrinsic.height)
     }
 
     func updateUIView(_ field: UITextField, context: Context) {
