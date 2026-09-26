@@ -39,6 +39,14 @@ struct NoteEditorScreen: View {
     /// with the caret after its placeholder name on that first focus, and an ordinary tap to fix
     /// a typo later never moves the caret out from under the reader.
     @State private var placesCaretAtEndOnFocus = false
+    /// The title row's own height — fixed rather than left to the wrapped `UITextField`'s
+    /// default sizing, which this screen used to lean on only by accident: as a toolbar item, the
+    /// system always constrained it to the bar's own compact height regardless of what it
+    /// reported; moved into an ordinary row, nothing constrains it any more, and it claimed
+    /// several hundred points instead of one line's worth. Scales with the same `.headline` style
+    /// the field itself uses, so Dynamic Type still grows it, just never past this screen's
+    /// control.
+    @ScaledMetric(relativeTo: .headline) private var titleRowHeight: CGFloat = 44
 
     init(noteID: String, startsInPreview: Bool = false) {
         self.noteID = noteID
@@ -58,11 +66,13 @@ struct NoteEditorScreen: View {
         .paiNotesBackground()
         // Kept alongside the full-width title row above rather than replaced by it: this is
         // still what names the back button on whatever screen gets pushed from here, and what
-        // VoiceOver announces — the empty `.principal` toolbar item below only stops the system
-        // from also drawing it in the navigation bar, where a floating back button and toolbar
-        // icons would cover most of a long one.
+        // VoiceOver announces. An empty `.principal` toolbar item does NOT stop the system
+        // drawing this same string a second time next to the back chevron — `.toolbar(removing:
+        // .title)` is the part that actually removes the bar's own title item, leaving only the
+        // full-width row below as a visible copy.
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(removing: .title)
         .toolbar { toolbar }
         .task { await notes.loadNote(id: noteID) }
         .onAppear {
@@ -160,21 +170,15 @@ struct NoteEditorScreen: View {
             },
             onCommit: { Task { await commitTitle() } }
         )
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: titleRowHeight, maxHeight: titleRowHeight, alignment: .leading)
         .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, 8)
+        .padding(.vertical, 8)
         .accessibilityLabel("Note title")
         .accessibilityIdentifier("note-title-field")
     }
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        // Empty rather than omitted — see ``body``'s own comment on why this stays here even
-        // though nothing in it draws.
-        ToolbarItem(placement: .principal) {
-            EmptyView()
-        }
         ToolbarItem(placement: .topBarTrailing) {
             NoteSaveStateBadge(state: notes.saveState(for: noteID))
         }

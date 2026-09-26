@@ -6,7 +6,9 @@ import Foundation
 /// The body is deliberately not a tidy paragraph. Every construct in it is one the note screens
 /// get wrong in a different way — a heading the outline has to find, a nested list, a code line far
 /// wider than a phone, a table, a wikilink that resolves and an embed that does not — so a
-/// screenshot of this one note is a check on all of them at once.
+/// screenshot of this one note is a check on all of them at once. The name is deliberately long
+/// too, well past what an iPhone-width title row can show on one line, so the same screenshot also
+/// exercises truncation.
 extension PaiFixtures {
 
     /// A note whose id every note-scoped fixture route answers under, matching
@@ -15,7 +17,7 @@ extension PaiFixtures {
 
     public static let notesIndex = #"""
         {"notes":[
-          {"id":"6a0b5f2e-9d47-4c1a-8f30-2b7e5c918d64","name":"Engram","summary":"How the memory tree is laid out, and what reads it.","container_id":"c1","favourite":true,"tags":["pai","memory"],"updated_at_ms":1756598400000,"pending_delete":false},
+          {"id":"6a0b5f2e-9d47-4c1a-8f30-2b7e5c918d64","name":"Engram: how the memory tree is laid out, what reads it back, and why notes are the part written on purpose","summary":"How the memory tree is laid out, and what reads it.","container_id":"c1","favourite":true,"tags":["pai","memory"],"updated_at_ms":1756598400000,"pending_delete":false},
           {"id":"9f31c2aa-0000-4c1a-8f30-2b7e5c918d11","name":"Wikilink","summary":"The note the sample links to.","container_id":"c1","favourite":false,"tags":["pai"],"updated_at_ms":1756512000000,"pending_delete":false},
           {"id":"3b77de40-1111-4c1a-8f30-2b7e5c918d22","name":"Groceries","summary":null,"container_id":"c1","favourite":false,"tags":["home"],"updated_at_ms":1756425600000,"pending_delete":false}
         ]}
@@ -24,7 +26,7 @@ extension PaiFixtures {
     public static let noteDetail = #"""
         {
           "id":"6a0b5f2e-9d47-4c1a-8f30-2b7e5c918d64",
-          "name":"Engram",
+          "name":"Engram: how the memory tree is laid out, what reads it back, and why notes are the part written on purpose",
           "summary":"How the memory tree is laid out, and what reads it.",
           "container_id":"c1",
           "favourite":true,
