@@ -35,10 +35,10 @@ struct NoteEditorScreen: View {
     @State private var titleText = ""
     @State private var isTitleFocused = false
     /// One-shot: true only for the very next time the title becomes focused, then reset the
-    /// moment that happens (see the `onFocus` callback below) — so a freshly created note's
-    /// placeholder is selected on that first focus, and an ordinary tap to fix a typo later
-    /// never replaces the whole title out from under the reader.
-    @State private var selectsTitleOnFocus = false
+    /// moment that happens (see the `onFocus` callback below) — so a freshly created note opens
+    /// with the caret after its placeholder name on that first focus, and an ordinary tap to fix
+    /// a typo later never moves the caret out from under the reader.
+    @State private var placesCaretAtEndOnFocus = false
 
     init(noteID: String, startsInPreview: Bool = false) {
         self.noteID = noteID
@@ -52,12 +52,15 @@ struct NoteEditorScreen: View {
             if case .conflict(let conflict) = notes.saveState(for: noteID) {
                 NoteConflictBanner(noteID: noteID, conflict: conflict)
             }
+            titleRow
             content
         }
         .paiNotesBackground()
-        // Kept alongside the tappable title below rather than replaced by it: this is still
-        // what names the back button on whatever screen gets pushed from here, and what
-        // VoiceOver announces — the `.principal` toolbar item only replaces what is drawn.
+        // Kept alongside the full-width title row above rather than replaced by it: this is
+        // still what names the back button on whatever screen gets pushed from here, and what
+        // VoiceOver announces — the empty `.principal` toolbar item below only stops the system
+        // from also drawing it in the navigation bar, where a floating back button and toolbar
+        // icons would cover most of a long one.
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbar }
@@ -66,7 +69,7 @@ struct NoteEditorScreen: View {
             if titleText.isEmpty { titleText = title }
             if NoteCreationFocus.shared.consume(id: noteID) {
                 isTitleFocused = true
-                selectsTitleOnFocus = true
+                placesCaretAtEndOnFocus = true
                 // A note that did not exist a moment ago has nothing to read, so the stored
                 // reading preference is the wrong answer for it whatever it says: landing in
                 // preview shows an empty page with no visible way to type into it. Creating is
@@ -140,25 +143,37 @@ struct NoteEditorScreen: View {
         }
     }
 
+    /// The note's name, alone in its own row above the body — never sharing horizontal space with
+    /// a button, icon or floating overlay the way the navigation bar's leading and trailing items
+    /// would. See ``NoteTitleField`` for the single-line, truncate-or-scroll behaviour.
+    private var titleRow: some View {
+        NoteTitleField(
+            text: titleText, isFocused: isTitleFocused,
+            isInvalid: NoteNaming.collides(
+                name: titleText, containerId: notes.detail(for: noteID)?.containerId, excluding: noteID,
+                among: notes.notes),
+            placesCaretAtEndOnFocus: placesCaretAtEndOnFocus,
+            onChange: { titleText = $0 },
+            onFocus: {
+                isTitleFocused = true
+                placesCaretAtEndOnFocus = false
+            },
+            onCommit: { Task { await commitTitle() } }
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
+        .accessibilityLabel("Note title")
+        .accessibilityIdentifier("note-title-field")
+    }
+
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
+        // Empty rather than omitted — see ``body``'s own comment on why this stays here even
+        // though nothing in it draws.
         ToolbarItem(placement: .principal) {
-            NoteTitleField(
-                text: titleText, isFocused: isTitleFocused,
-                isInvalid: NoteNaming.collides(
-                    name: titleText, containerId: notes.detail(for: noteID)?.containerId, excluding: noteID,
-                    among: notes.notes),
-                selectsAllOnFocus: selectsTitleOnFocus,
-                onChange: { titleText = $0 },
-                onFocus: {
-                    isTitleFocused = true
-                    selectsTitleOnFocus = false
-                },
-                onCommit: { Task { await commitTitle() } }
-            )
-            .frame(minWidth: 140, maxWidth: 240)
-            .accessibilityLabel("Note title")
-            .accessibilityIdentifier("note-title-field")
+            EmptyView()
         }
         ToolbarItem(placement: .topBarTrailing) {
             NoteSaveStateBadge(state: notes.saveState(for: noteID))

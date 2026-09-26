@@ -22,8 +22,8 @@ struct OpenNotesIntent: AppIntent {
 /// Creates through a standalone client rather than waiting for the app's own `NotesStore`, the
 /// same reason ``NewSessionLaunchChoice`` does: a shortcut runs before anything holding a live
 /// store necessarily exists. Free-names the note the same way ``NotesStore/createNote(name:
-/// containerId:)`` does, reading the index once to avoid landing on a second "Untitled" a
-/// shortcut fired twice in a row would otherwise produce.
+/// containerId:)`` does, reading the index once to avoid landing on a second copy of today's date
+/// a shortcut fired twice in a row would otherwise produce.
 struct CreateNoteIntent: AppIntent {
     static var title: LocalizedStringResource { "New Note" }
     static var description: IntentDescription { IntentDescription("Create a new note in PAI.") }
@@ -37,13 +37,13 @@ struct CreateNoteIntent: AppIntent {
             throw CreateNoteIntentError.notSignedIn
         }
         let taken = (try? await client.getNotes())?.filter { $0.containerId == nil }.map(\.name) ?? []
-        let name = NoteNaming.freeName(base: NoteNaming.untitled, taken: taken)
+        let name = NoteNaming.freeName(base: NoteNaming.todayName(), taken: taken)
         guard let created = try? await client.createNote(name: name) else {
             throw CreateNoteIntentError.createFailed
         }
         // Same one-shot signal the note list's own "+" button sends — see
         // `NoteCreationFocus`'s doc comment. A note created by a shortcut deserves the same
-        // focused, fully-selected title as one created by tapping the button in-app.
+        // focused title, caret at the end, as one created by tapping the button in-app.
         NoteCreationFocus.shared.markCreated(id: created.id)
         DeepLinkInbox.shared.receive(.note(id: created.id))
         return .result()

@@ -33,6 +33,21 @@ final class NoteNamingTests: XCTestCase {
         XCTAssertEqual(NoteNaming.freeName(base: "   ", taken: []), "Untitled")
     }
 
+    // MARK: Today's date
+
+    /// Fixed instants either side of the day boundary, both read in Freddy's own zone rather
+    /// than UTC — the whole point of the function is getting this backwards for two hours a day.
+    func testTodayNameUsesTheBerlinDateNotUTC() {
+        // 2026-03-15T23:30:00Z is already 2026-03-16 00:30 in Berlin (CET, +1 in March).
+        let lateUTC = Date(timeIntervalSince1970: 1_773_617_400)
+        XCTAssertEqual(NoteNaming.todayName(now: lateUTC), "2026-03-16")
+    }
+
+    func testTodayNameIsZeroPadded() {
+        let earlyMonthDay = Date(timeIntervalSince1970: 1_767_312_000)  // 2026-01-02T00:00:00Z
+        XCTAssertEqual(NoteNaming.todayName(now: earlyMonthDay), "2026-01-02")
+    }
+
     // MARK: Local duplicate preview
 
     private func note(

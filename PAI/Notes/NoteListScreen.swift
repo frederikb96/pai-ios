@@ -197,12 +197,12 @@ struct NoteListScreen: View {
     }
 
     private func createNote() async {
-        guard let created = await notes.createNote(name: "Untitled") else {
+        guard let created = await notes.createNote(name: NoteNaming.todayName()) else {
             toasts.show(notes.loadError ?? "Could not create the note", kind: .error)
             return
         }
         // Consumed by `NoteEditorScreen.onAppear` the moment the push below lands, so the
-        // freshly created note opens with its title focused and selected — see
+        // freshly created note opens with its title focused, caret at the end — see
         // `NoteCreationFocus`'s own doc comment for why this is a one-shot side channel rather
         // than something `Route` itself carries.
         NoteCreationFocus.shared.markCreated(id: created.id)

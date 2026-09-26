@@ -2,13 +2,16 @@ import PAIKit
 import SwiftUI
 import UIKit
 
-/// A note's name, shown as the navigation bar's `.principal` item so it can be tapped and edited
-/// in place.
+/// A note's name, shown as its own full-width row above the body so nothing — a back button, a
+/// toolbar icon — is ever drawn over it, and edited in place.
 ///
 /// A `UITextField` wrapper rather than a plain SwiftUI `TextField`: a freshly created note has to
-/// open with its placeholder name fully selected, so typing replaces it, and that needs
-/// `UITextField.selectAll(_:)` — SwiftUI's own field has no reliable way to ask for the same
-/// thing on the exact frame it becomes first responder.
+/// open with the caret already after its placeholder name, so the first keystroke appends rather
+/// than replaces, and that needs `UITextField.selectedTextRange` set on the exact frame the field
+/// becomes first responder — SwiftUI's own field has no reliable way to ask for the same thing.
+/// Left-aligned, single line, never wrapping: unfocused, `UITextField` truncates overflow with an
+/// ellipsis on its own; focused, it scrolls horizontally to keep the caret visible — both the
+/// system's own default behaviour for a text field wider than its content, needing no code here.
 struct NoteTitleField: UIViewRepresentable {
     let text: String
     let isFocused: Bool
@@ -16,9 +19,10 @@ struct NoteTitleField: UIViewRepresentable {
     /// Painted the same red the rest of the app uses for an invalid field; purely a preview, so
     /// it never blocks committing — the server is still the one that decides.
     let isInvalid: Bool
-    /// Selects the whole field the moment it becomes first responder — for a freshly created
-    /// note, whose placeholder name should be replaced by typing, not appended to.
-    let selectsAllOnFocus: Bool
+    /// Places the caret after the last character, with nothing selected, the moment the field
+    /// becomes first responder — for a freshly created note, whose placeholder name should be
+    /// appended to by typing, not replaced.
+    let placesCaretAtEndOnFocus: Bool
     let onChange: (String) -> Void
     /// Fired the moment the field becomes first responder from an ordinary tap — the field is
     /// always natively tappable, so `isFocused` has to be told about that itself; without it the
@@ -33,7 +37,7 @@ struct NoteTitleField: UIViewRepresentable {
         let field = UITextField()
         field.delegate = context.coordinator
         field.font = .preferredFont(forTextStyle: .headline)
-        field.textAlignment = .center
+        field.textAlignment = .left
         field.returnKeyType = .done
         field.autocorrectionType = .no
         field.clearButtonMode = .whileEditing
@@ -50,10 +54,13 @@ struct NoteTitleField: UIViewRepresentable {
         if isFocused {
             if !field.isFirstResponder {
                 field.becomeFirstResponder()
-                if selectsAllOnFocus {
+                if placesCaretAtEndOnFocus {
                     // Deferred: `becomeFirstResponder()` has not finished installing a selection
                     // yet on the same run loop turn it is called from.
-                    DispatchQueue.main.async { field.selectAll(nil) }
+                    DispatchQueue.main.async {
+                        let end = field.endOfDocument
+                        field.selectedTextRange = field.textRange(from: end, to: end)
+                    }
                 }
             }
         } else if field.isFirstResponder {

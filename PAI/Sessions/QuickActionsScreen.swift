@@ -311,7 +311,7 @@ struct QuickActionsScreen: View {
     }
 
     private func createNote() async {
-        guard let created = await notes.createNote(name: NoteNaming.untitled) else {
+        guard let created = await notes.createNote(name: NoteNaming.todayName()) else {
             toasts.show(notes.loadError ?? "Could not create the note")
             return
         }

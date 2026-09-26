@@ -5,6 +5,20 @@ public enum NoteNaming {
     /// What a note is called when nobody has named it.
     public static let untitled = "Untitled"
 
+    /// What a freshly created note is called — today's date, so it can be typed straight into
+    /// rather than replaced first. Freddy's own day, not the server's: computed in Europe/Berlin
+    /// so a note started near midnight lands on the day it felt like being written, not on
+    /// whatever day UTC happens to be. The web client names a note created the same day
+    /// identically, so both must compute this the same way.
+    public static func todayName(now: Date = Date()) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Europe/Berlin") ?? .current
+        let components = calendar.dateComponents([.year, .month, .day], from: now)
+        guard let year = components.year, let month = components.month, let day = components.day
+        else { return untitled }
+        return String(format: "%04d-%02d-%02d", year, month, day)
+    }
+
     /// `base`, or `base 2`, `base 3`… — the first spelling no existing note is using.
     ///
     /// A note's name is a filename in a synced folder, so the backend refuses a duplicate. That is
