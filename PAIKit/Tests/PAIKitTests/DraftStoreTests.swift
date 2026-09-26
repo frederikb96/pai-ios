@@ -819,6 +819,40 @@ final class DraftStoreTests: XCTestCase {
         XCTAssertEqual(store.draft(for: "s1").remoteUpdatedAt, "server-hello world")
     }
 
+    /// The row being gone says nothing about text typed AFTER this write left. Dropping the whole
+    /// local copy on that answer destroys exactly the edit a conditional write exists to protect —
+    /// `web/src/stores/drafts.ts` guards the same branch with "nothing typed since this flush
+    /// started" for this reason.
+    func testAGoneElsewhereConflictKeepsTextTypedWhileTheWriteWasInFlight() async {
+        let fake = FakeDraftsFetching()
+        fake.enforcesVersionCheck = true
+        let store = DraftStore(api: fake, scheduler: NeverFlushDraftScheduler())
+
+        store.setDraftText(key: "s1", text: "hello")
+        await store.flush(key: "s1")
+        XCTAssertEqual(store.draft(for: "s1").remoteUpdatedAt, "server-hello")
+
+        // Another device sends the message: the row is gone. This device does not know yet.
+        fake.serverUpdatedAt["s1"] = .some(nil)
+
+        let gate = Gate()
+        fake.putGate = gate
+        var entry = store.draft(for: "s1")
+        entry.text = "hello world"
+        store.drafts["s1"] = entry
+        let flush = Task { await store.flush(key: "s1") }
+        await waitUntil { fake.callLog.contains("putDraft:start:s1") }
+
+        // Freddy keeps typing while that write sits on a bad connection.
+        store.setDraftText(key: "s1", text: "hello world and a whole paragraph more")
+        await gate.open()
+        await flush.value
+
+        XCTAssertEqual(
+            store.draft(for: "s1").text, "hello world and a whole paragraph more",
+            "text typed after the write left is newer than any answer about the row it was based on")
+    }
+
     /// A conflict whose row carries `updated_at: null` means the draft is gone from the server
     /// entirely — another device already sent or discarded it. Retrying would resurrect text
     /// nobody is waiting on, so the local copy is dropped instead of rewritten back onto a row
@@ -828,7 +862,12 @@ final class DraftStoreTests: XCTestCase {
         fake.enforcesVersionCheck = true
         let store = DraftStore(api: fake, scheduler: NeverFlushDraftScheduler())
 
-        store.setDraftText(key: "s1", text: "hello")
+        // Seeded directly rather than through `setDraftText`, which would leave a debounce this
+        // scheduler never fires — a permanent local claim on the key, and the drop below is only
+        // correct for a key with none.
+        var seeded = DraftEntry.empty
+        seeded.text = "hello"
+        store.drafts["s1"] = seeded
         await store.flush(key: "s1")
         XCTAssertEqual(store.draft(for: "s1").remoteUpdatedAt, "server-hello")
 
