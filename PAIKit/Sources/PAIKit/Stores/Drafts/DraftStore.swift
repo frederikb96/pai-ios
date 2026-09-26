@@ -312,6 +312,10 @@ public final class DraftStore {
         }
         await inFlightFlush[key]?.value
         guard let entry = drafts[key] else { return }
+        // What "nothing has been typed here since this write left" means for the one answer below
+        // that would otherwise throw local text away — the same test `syncFromServer` makes before
+        // dropping a key the server no longer lists.
+        let revisionAtFlushStart = localRevision[key]
 
         flushSequence[key, default: 0] += 1
         let mySequence = flushSequence[key]!
@@ -348,16 +352,27 @@ public final class DraftStore {
                         self.drafts[key] = current
                         log?.log(.warning, .drafts, "flush key=\(key) conflict, retrying with fresh version")
                         self.scheduleRetry(key)
-                    } else {
+                    } else if self.pendingFlush[key] == nil, self.localRevision[key] == revisionAtFlushStart {
                         // `updated_at: null` means the row is gone — another device already sent
-                        // or discarded this draft. Retrying would resurrect text nobody is
-                        // waiting on, so the local copy is dropped rather than rewritten back
-                        // onto a row that no longer exists.
+                        // or discarded this draft. With no local claim on the key, retrying would
+                        // resurrect text nobody is waiting on, so the local copy is dropped
+                        // rather than rewritten back onto a row that no longer exists.
                         self.pendingFlush[key]?.cancel()
                         self.pendingFlush[key] = nil
                         self.drafts[key] = nil
                         log?.log(
                             .warning, .drafts, "flush key=\(key) conflict — gone elsewhere, dropping local copy")
+                    } else {
+                        // Typed here while this write was on the wire, so it is newer than any
+                        // answer about the row the write was based on. Forget that version instead
+                        // of the text: the edit's own write then creates the row afresh rather
+                        // than conflicting against a row that no longer exists for ever.
+                        guard var current = self.drafts[key] else { return }
+                        current.remoteUpdatedAt = nil
+                        self.drafts[key] = current
+                        log?.log(
+                            .warning, .drafts,
+                            "flush key=\(key) conflict — gone elsewhere, keeping a newer local edit")
                     }
                 }
             } catch {
