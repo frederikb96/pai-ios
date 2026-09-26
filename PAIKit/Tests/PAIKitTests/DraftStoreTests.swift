@@ -70,19 +70,22 @@ private final class RecordingDraftScheduler: DraftScheduler, @unchecked Sendable
 
 /// A rendezvous a test can use to make one call wait for an explicit signal, so an ordering
 /// assertion is exact rather than inferred from a delay.
+/// Holds every waiter, so a test proving a race can park two callers on one gate and have both
+/// resume — a single-slot version drops the earlier waiter and hangs it forever instead.
 private actor Gate {
-    private var continuation: CheckedContinuation<Void, Never>?
+    private var continuations: [CheckedContinuation<Void, Never>] = []
     private var opened = false
 
     func wait() async {
         if opened { return }
-        await withCheckedContinuation { self.continuation = $0 }
+        await withCheckedContinuation { continuations.append($0) }
     }
 
     func open() {
         opened = true
-        continuation?.resume()
-        continuation = nil
+        let waiting = continuations
+        continuations = []
+        for continuation in waiting { continuation.resume() }
     }
 }
 
