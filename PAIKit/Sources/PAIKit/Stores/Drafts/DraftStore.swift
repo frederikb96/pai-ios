@@ -12,12 +12,16 @@ import Observation
 /// attachment, only uploaded or not), and `syncFromServer` folds in whatever another device
 /// added, which is the whole point: composing one message from several devices at once.
 ///
-/// **Local persistence across a relaunch is deliberately not built in.** The web mirrors to
-/// `localStorage` as a convenience only — its own comment: "the server copy is still
-/// authoritative" — and swallows a write failure outright. Correctness here never depends on it,
-/// so it did not seem worth the risk of a Linux-vs-Apple `UserDefaults` behaviour gap for a pure
-/// durability nicety; if it is wanted, it is a thin wrapper the app target can add outside this
-/// type without touching the reconciliation logic below.
+/// **A relaunch restores `drafts` from `localPersistence`, mirroring the web's own
+/// `localStorage`/`loadStored()` contract.** Restoring is never a local claim on anything it
+/// names — it populates `drafts` alone, with no pending write and no revision bump — so the very
+/// first ``syncFromServer()`` afterwards adopts the server's row whenever it differs and drops
+/// this one if the server no longer has the key, exactly as any other unclaimed key would be
+/// treated. Doing it any other way (as a pending write, say) would let a stale draft from before
+/// the relaunch overwrite something fresher already on the server, which is the regression this
+/// store exists to prevent. This is the one place a version of Freddy's text exists nowhere but
+/// here — nowhere else in this file needs to survive a relaunch, since every other write is
+/// either already on the server or about to be retried onto it.
 ///
 /// `@MainActor`, matching `TranscriptStore` — every realistic caller is UI-driven.
 @MainActor
@@ -29,11 +33,17 @@ public final class DraftStore {
     public static let flushDebounceSeconds: TimeInterval = 0.7
     public static let clearedGraceSeconds: TimeInterval = 5
 
-    public internal(set) var drafts: [String: DraftEntry] = [:]
+    public internal(set) var drafts: [String: DraftEntry] = [:] {
+        didSet { localPersistence?.setValue(drafts, forKey: Keys.localDrafts) }
+    }
     /// One-shot signal: bumped whenever a New Session launch choice is made by tapping something
     /// that would otherwise steal focus from the composer, so a view can reclaim it. Never reset
     /// — a consumer reacts to the bump itself, not to a boolean.
     public internal(set) var composerFocusNonce = 0
+
+    private enum Keys {
+        static let localDrafts = "drafts.local"
+    }
 
     private let api: any DraftsFetching
     private let clock: WallClock
@@ -43,6 +53,9 @@ public final class DraftStore {
     /// dropping a key), never every edit: a live take writes this store many times a second, and a
     /// line per keystroke would flood the very log meant to make a loss like this one legible.
     private let diagnosticsLog: VoiceDiagnosticsLog?
+    /// `nil` in every test that does not care, exactly like `diagnosticsLog` — the app wires its
+    /// own `UserDefaults` in. See ``drafts`` for what is restored from it and why.
+    private let localPersistence: SettingsKeyValueStore?
 
     /// Keys with a local edit not yet written to the server — including one waiting out a retry
     /// backoff after a failed write, which schedules into this same slot (`scheduleRetry`).
@@ -88,12 +101,15 @@ public final class DraftStore {
     public init(
         api: some DraftsFetching, clock: WallClock = SystemWallClock(),
         scheduler: DraftScheduler = RealDraftScheduler(),
-        diagnosticsLog: VoiceDiagnosticsLog? = nil
+        diagnosticsLog: VoiceDiagnosticsLog? = nil,
+        localPersistence: SettingsKeyValueStore? = nil
     ) {
         self.api = api
         self.clock = clock
         self.scheduler = scheduler
         self.diagnosticsLog = diagnosticsLog
+        self.localPersistence = localPersistence
+        drafts = localPersistence?.value(forKey: Keys.localDrafts) ?? [:]
     }
 
     /// The draft for a key, or an empty one — callers never handle a missing entry themselves.
@@ -287,6 +303,14 @@ public final class DraftStore {
             diagnosticsLog?.log(.info, .drafts, "flush key=\(key) waiting for in-flight flatten")
         }
         await inFlightFlatten[key]?.value
+        // And any write already on the wire for this key: reading `entry` only after it settles
+        // is what makes THIS write's base version, and its text, the freshest one there is — two
+        // writes queued back to back for one key can never race into a spurious conflict, because
+        // the second one never even starts building its request until the first has an answer.
+        if inFlightFlush[key] != nil {
+            diagnosticsLog?.log(.info, .drafts, "flush key=\(key) waiting for in-flight flush")
+        }
+        await inFlightFlush[key]?.value
         guard let entry = drafts[key] else { return }
 
         flushSequence[key, default: 0] += 1
@@ -298,19 +322,44 @@ public final class DraftStore {
             do {
                 let result = try await api.putDraft(
                     key: key, text: entry.text, sessionType: entry.sessionType, workingDir: entry.workingDir,
-                    model: entry.model, thinking: entry.thinking
+                    model: entry.model, thinking: entry.thinking, baseUpdatedAt: entry.remoteUpdatedAt
                 )
-                let updatedAt: String? = {
-                    switch result {
-                    case .saved(let draft): return draft.updatedAt
-                    case .deleted: return nil
+                switch result {
+                case .saved(let draft):
+                    guard var current = self.drafts[key] else { return }
+                    current.remoteUpdatedAt = draft.updatedAt
+                    self.drafts[key] = current
+                    self.retryAttempt[key] = nil
+                    log?.log(.info, .drafts, "flush key=\(key) chars=\(entry.text.count) done")
+                case .deleted:
+                    guard var current = self.drafts[key] else { return }
+                    current.remoteUpdatedAt = nil
+                    self.drafts[key] = current
+                    self.retryAttempt[key] = nil
+                    log?.log(.info, .drafts, "flush key=\(key) chars=\(entry.text.count) done")
+                case .conflict(let draft):
+                    // The server's own row is adopted in exactly one place — `syncFromServer`,
+                    // and only for a key with no local claim. A conflict here is neither: it may
+                    // move the version stamp the next write is based on, never the on-screen
+                    // text, which this device's own composer still owns.
+                    if let updatedAt = draft.updatedAt {
+                        guard var current = self.drafts[key] else { return }
+                        current.remoteUpdatedAt = updatedAt
+                        self.drafts[key] = current
+                        log?.log(.warning, .drafts, "flush key=\(key) conflict, retrying with fresh version")
+                        self.scheduleRetry(key)
+                    } else {
+                        // `updated_at: null` means the row is gone — another device already sent
+                        // or discarded this draft. Retrying would resurrect text nobody is
+                        // waiting on, so the local copy is dropped rather than rewritten back
+                        // onto a row that no longer exists.
+                        self.pendingFlush[key]?.cancel()
+                        self.pendingFlush[key] = nil
+                        self.drafts[key] = nil
+                        log?.log(
+                            .warning, .drafts, "flush key=\(key) conflict — gone elsewhere, dropping local copy")
                     }
-                }()
-                guard var current = self.drafts[key] else { return }
-                current.remoteUpdatedAt = updatedAt
-                self.drafts[key] = current
-                self.retryAttempt[key] = nil
-                log?.log(.info, .drafts, "flush key=\(key) chars=\(entry.text.count) done")
+                }
             } catch {
                 // Keep the local copy and retry — scheduled into `pendingFlush`, the same slot a
                 // fresh edit's own debounce uses, so `syncFromServer` treats a write still

@@ -182,7 +182,8 @@ final class AppEnvironment {
                 }
             }
         #endif
-        let draftStore = DraftStore(api: client, diagnosticsLog: AppVoiceDiagnosticsLog.shared)
+        let draftStore = DraftStore(
+            api: client, diagnosticsLog: AppVoiceDiagnosticsLog.shared, localPersistence: defaults)
         let toasts = ToastCenter()
         let transcript = TranscriptStore()
         let voice = VoiceRecorderController(

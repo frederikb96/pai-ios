@@ -42,6 +42,12 @@ public struct PaiFileUpload: Sendable, Equatable {
 public enum PutDraftResult: Sendable, Equatable {
     case saved(Draft)
     case deleted(key: String)
+    /// 409 — `baseUpdatedAt` no longer matches the server's row. Carries the row as it actually
+    /// stands, `updatedAt: nil` when another device's write emptied it out from under this one
+    /// entirely (`Draft` decodes that shape the same as any other). A passthrough case rather
+    /// than a thrown `PaiError`, the same reasoning `DraftRegionWriteResult` documents for its
+    /// own 410/413: the caller has to read the row, not just show a message.
+    case conflict(Draft)
 }
 
 extension PutDraftResult: Decodable {
@@ -654,7 +660,8 @@ public struct PaiApiClient: Sendable {
         sessionType: String? = nil,
         workingDir: String? = nil,
         model: String? = nil,
-        thinking: String? = nil
+        thinking: String? = nil,
+        baseUpdatedAt: String? = nil
     ) async throws -> PutDraftResult {
         struct Body: Encodable {
             let text: String
@@ -662,19 +669,32 @@ public struct PaiApiClient: Sendable {
             let workingDir: String?
             let model: String?
             let thinking: String?
+            let baseUpdatedAt: String?
             enum CodingKeys: String, CodingKey {
                 case text, thinking
                 case sessionType = "session_type"
                 case workingDir = "working_dir"
                 case model
+                case baseUpdatedAt = "base_updated_at"
             }
         }
-        return try await send(
+        let (statusCode, data) = try await sendPassingThrough(
             path: "/api/drafts/\(Self.encodeDraftKey(key))",
             method: "PUT",
             body: try Self.jsonBody(
-                Body(text: text, sessionType: sessionType, workingDir: workingDir, model: model, thinking: thinking))
+                Body(
+                    text: text, sessionType: sessionType, workingDir: workingDir, model: model, thinking: thinking,
+                    baseUpdatedAt: baseUpdatedAt)),
+            passthrough: [409]
         )
+        do {
+            if statusCode == 409 {
+                return .conflict(try JSONDecoder().decode(Draft.self, from: data))
+            }
+            return try JSONDecoder().decode(PutDraftResult.self, from: data)
+        } catch {
+            throw PaiError.decoding("\(error)")
+        }
     }
 
     /// Folds the named open regions into `text` and closes them — what a client calls before

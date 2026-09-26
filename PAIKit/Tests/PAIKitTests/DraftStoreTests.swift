@@ -115,6 +115,27 @@ private final class FakeDraftsFetching: DraftsFetching, @unchecked Sendable {
         }
     }
 
+    /// The server's own version stamp per key — what makes this fake able to enforce
+    /// `baseUpdatedAt` the way the real backend does, rather than accepting every write. A fake
+    /// that accepts every write cannot express a client racing itself, or another device having
+    /// already moved a row out from under this one.
+    private var _serverUpdatedAt: [String: String?] = [:]
+    var serverUpdatedAt: [String: String?] {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _serverUpdatedAt
+        }
+        set {
+            lock.lock()
+            _serverUpdatedAt = newValue
+            lock.unlock()
+        }
+    }
+    /// Off by default so every test above, none of which pass `baseUpdatedAt`, keeps working
+    /// unmodified — only a test that means to exercise the conflict path turns this on.
+    var enforcesVersionCheck = false
+
     func getDrafts() async throws -> [Draft] {
         record("getDrafts")
         let snapshot = remoteDrafts
@@ -127,7 +148,8 @@ private final class FakeDraftsFetching: DraftsFetching, @unchecked Sendable {
     private struct SimulatedFailure: Error {}
 
     func putDraft(
-        key: String, text: String, sessionType: String?, workingDir: String?, model: String?, thinking: String?
+        key: String, text: String, sessionType: String?, workingDir: String?, model: String?, thinking: String?,
+        baseUpdatedAt: String?
     ) async throws -> PutDraftResult {
         record("putDraft:start:\(key)")
         if let putGate {
@@ -139,13 +161,29 @@ private final class FakeDraftsFetching: DraftsFetching, @unchecked Sendable {
             record("putDraft:failed:\(key)")
             throw SimulatedFailure()
         }
+        // Mirrors `repository.upsert_draft`: a `nil` base skips the check entirely (an
+        // unconditional write, exactly like a brand new draft this device has never reconciled),
+        // and a non-`nil` base that disagrees with what the server actually holds is a conflict.
+        if enforcesVersionCheck, let baseUpdatedAt, serverUpdatedAt[key, default: nil] != baseUpdatedAt {
+            record("putDraft:conflict:\(key)")
+            guard let currentVersion = serverUpdatedAt[key, default: nil] else {
+                return .conflict(Draft(key: key, text: "", sessionType: nil, workingDir: nil, updatedAt: nil))
+            }
+            return .conflict(
+                Draft(
+                    key: key, text: "server text for \(key)", sessionType: nil, workingDir: nil,
+                    updatedAt: currentVersion))
+        }
         if text.isEmpty && sessionType == nil && workingDir == nil && model == nil && thinking == nil {
+            serverUpdatedAt[key] = .some(nil)
             return .deleted(key: key)
         }
+        let newVersion = "server-\(text)"
+        serverUpdatedAt[key] = newVersion
         return .saved(
             Draft(
                 key: key, text: text, sessionType: sessionType, workingDir: workingDir, model: model,
-                thinking: thinking, updatedAt: "server-\(text)")
+                thinking: thinking, updatedAt: newVersion)
         )
     }
 
@@ -697,6 +735,172 @@ final class DraftStoreTests: XCTestCase {
         await store.syncFromServer()
 
         XCTAssertEqual(store.draft(for: "s1").text, "never yet flushed")
+    }
+
+    // MARK: - Versioned writes, serialized against themselves and against a genuine conflict
+
+    /// Two writes for the same key, queued back to back, must never produce a conflict against a
+    /// fake that actually enforces the version check — the second write starts building its
+    /// request only after the first has an answer, so it always carries the freshest base.
+    func testTwoWritesQueuedBackToBackAgainstAVersionEnforcingFakeProduceNoConflict() async {
+        let fake = FakeDraftsFetching()
+        fake.enforcesVersionCheck = true
+        let gate = Gate()
+        fake.putGate = gate
+        // A scheduler that never fires the debounce: both writes below are driven by the explicit
+        // `flush(key:)` calls the composer itself makes, not by `setDraftText`'s own debounce.
+        let store = DraftStore(api: fake, scheduler: NeverFlushDraftScheduler())
+
+        store.setDraftText(key: "s1", text: "first")
+        let firstFlush = Task { await store.flush(key: "s1") }
+        await waitUntil { fake.callLog.contains("putDraft:start:s1") }
+
+        // The second edit happens while the first write is still gated shut on the wire.
+        var entry = store.draft(for: "s1")
+        entry.text = "first and more"
+        store.drafts["s1"] = entry
+        let secondFlush = Task { await store.flush(key: "s1") }
+        // Give the second flush every chance to (wrongly) race ahead before the gate opens.
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(
+            fake.callLog.filter { $0.hasPrefix("putDraft:start") }.count, 1,
+            "the second flush must wait for the first before even building its own request")
+
+        await gate.open()
+        await firstFlush.value
+        await secondFlush.value
+
+        XCTAssertFalse(fake.callLog.contains { $0.hasPrefix("putDraft:conflict") })
+        XCTAssertEqual(store.draft(for: "s1").text, "first and more")
+        XCTAssertEqual(store.draft(for: "s1").remoteUpdatedAt, "server-first and more")
+    }
+
+    /// A genuinely stale write — this device's own base having fallen behind because another
+    /// device wrote the same key in between — must never let the conflict response's row replace
+    /// what is on screen. Only the version stamp may move; the retry that follows, once it fires
+    /// with the fresh base, is what actually lands this device's own text.
+    func testAConflictingWriteNeverOverwritesOnScreenTextAndTheRetryThenWins() async {
+        let fake = FakeDraftsFetching()
+        fake.enforcesVersionCheck = true
+        // Nothing here relies on the debounce or on `scheduleRetry`'s own timer firing — every
+        // flush below is driven explicitly, so a scheduler that never resolves keeps both inert
+        // and lets the test control exactly when each write happens.
+        let store = DraftStore(api: fake, scheduler: NeverFlushDraftScheduler())
+
+        store.setDraftText(key: "s1", text: "hello")
+        await store.flush(key: "s1")
+        XCTAssertEqual(store.draft(for: "s1").remoteUpdatedAt, "server-hello")
+
+        // Another device writes the same key without this one knowing.
+        fake.serverUpdatedAt["s1"] = "server-otherdevice"
+
+        // This device edits again, still carrying the base it last saw — now stale.
+        var entry = store.draft(for: "s1")
+        entry.text = "hello world"
+        store.drafts["s1"] = entry
+        await store.flush(key: "s1")
+
+        XCTAssertTrue(fake.callLog.contains("putDraft:conflict:s1"))
+        XCTAssertEqual(
+            store.draft(for: "s1").text, "hello world",
+            "a conflict response must never have replaced the text on screen")
+        XCTAssertEqual(
+            store.draft(for: "s1").remoteUpdatedAt, "server-otherdevice",
+            "only the version stamp may move on a conflict")
+
+        // The retry, driven explicitly here rather than by `scheduleRetry`'s own timer, now
+        // carries the fresh base and must actually win.
+        await store.flush(key: "s1")
+
+        XCTAssertEqual(store.draft(for: "s1").text, "hello world")
+        XCTAssertEqual(store.draft(for: "s1").remoteUpdatedAt, "server-hello world")
+    }
+
+    /// A conflict whose row carries `updated_at: null` means the draft is gone from the server
+    /// entirely — another device already sent or discarded it. Retrying would resurrect text
+    /// nobody is waiting on, so the local copy is dropped instead of rewritten back onto a row
+    /// that no longer exists.
+    func testAConflictWhereTheDraftIsGoneElsewhereDropsTheLocalCopyRatherThanResurrectingIt() async {
+        let fake = FakeDraftsFetching()
+        fake.enforcesVersionCheck = true
+        let store = DraftStore(api: fake, scheduler: NeverFlushDraftScheduler())
+
+        store.setDraftText(key: "s1", text: "hello")
+        await store.flush(key: "s1")
+        XCTAssertEqual(store.draft(for: "s1").remoteUpdatedAt, "server-hello")
+
+        // Another device sent the message (or discarded the draft) — the row is gone.
+        fake.serverUpdatedAt["s1"] = .some(nil)
+
+        var entry = store.draft(for: "s1")
+        entry.text = "hello world"
+        store.drafts["s1"] = entry
+        await store.flush(key: "s1")
+
+        XCTAssertTrue(fake.callLog.contains("putDraft:conflict:s1"))
+        XCTAssertEqual(
+            store.draft(for: "s1"), .empty,
+            "a conflict over a row that is gone elsewhere must drop the local copy, not resurrect it")
+    }
+
+    // MARK: - Surviving a relaunch
+
+    /// A draft typed and never sent is still there after the app is relaunched — the one place a
+    /// version of Freddy's text would otherwise exist nowhere but in memory.
+    func testADraftSurvivesBeingConstructedAgainstTheSamePersistedStorage() async {
+        let storage = SettingsInMemoryKeyValueStore()
+        let fake = FakeDraftsFetching()
+        let firstLaunch = DraftStore(api: fake, scheduler: InstantDraftScheduler(), localPersistence: storage)
+        firstLaunch.setDraftText(key: "s1", text: "typed before closing the app")
+
+        let secondLaunch = DraftStore(
+            api: FakeDraftsFetching(), scheduler: InstantDraftScheduler(), localPersistence: storage)
+
+        XCTAssertEqual(secondLaunch.draft(for: "s1").text, "typed before closing the app")
+    }
+
+    /// Restoring is never itself a claim: a stale restored draft must never win against a fresher
+    /// row already on the server by the time the app reopens — the very next sync has to adopt
+    /// the server's copy, exactly as it would for any other key with no local claim.
+    func testARestoredDraftNeverOverwritesAFresherRowAlreadyOnTheServer() async {
+        let storage = SettingsInMemoryKeyValueStore()
+        let beforeClosing = DraftStore(
+            api: FakeDraftsFetching(), scheduler: InstantDraftScheduler(), localPersistence: storage)
+        beforeClosing.drafts["s1"] = DraftEntry(
+            text: "stale, from before closing", sessionType: nil, workingDir: nil, remoteUpdatedAt: "t-old")
+
+        let fake = FakeDraftsFetching()
+        fake.remoteDrafts = [
+            Draft(
+                key: "s1", text: "sent from another device meanwhile", sessionType: nil, workingDir: nil,
+                updatedAt: "t-new")
+        ]
+        let afterRelaunch = DraftStore(api: fake, scheduler: InstantDraftScheduler(), localPersistence: storage)
+        XCTAssertEqual(
+            afterRelaunch.draft(for: "s1").text, "stale, from before closing",
+            "restoring must populate `drafts` alone — no claim that would make the store hold onto this")
+
+        await afterRelaunch.syncFromServer()
+
+        XCTAssertEqual(afterRelaunch.draft(for: "s1").text, "sent from another device meanwhile")
+    }
+
+    /// Restoring must equally never itself hold a key the server has since dropped — that is
+    /// `syncFromServer`'s job, unchanged, once restoring has made no claim for it to override.
+    func testARestoredDraftIsDroppedOnTheFirstSyncIfTheServerNoLongerHasIt() async {
+        let storage = SettingsInMemoryKeyValueStore()
+        let beforeClosing = DraftStore(
+            api: FakeDraftsFetching(), scheduler: InstantDraftScheduler(), localPersistence: storage)
+        beforeClosing.drafts["s1"] = DraftEntry(
+            text: "already sent before the relaunch", sessionType: nil, workingDir: nil, remoteUpdatedAt: "t-old")
+
+        let fake = FakeDraftsFetching()
+        fake.remoteDrafts = []
+        let afterRelaunch = DraftStore(api: fake, scheduler: InstantDraftScheduler(), localPersistence: storage)
+
+        await afterRelaunch.syncFromServer()
+
+        XCTAssertEqual(afterRelaunch.draft(for: "s1"), .empty)
     }
 
     // MARK: - Attachments

@@ -8,7 +8,11 @@ public enum DraftKey {
 
 /// Composer text that has not been sent, plus the launch choices that only mean anything for
 /// ``DraftKey/newSession``. Swift port of `pai-cloud/web/src/stores/drafts.ts`'s `DraftEntry`.
-public struct DraftEntry: Equatable, Sendable {
+///
+/// `Codable` for `DraftStore`'s own local persistence, not for the wire — nothing here decodes a
+/// server response into this type directly, so there is no shape to keep in step with `Draft`'s
+/// own `CodingKeys` and no reason to give this one any.
+public struct DraftEntry: Equatable, Sendable, Codable {
     public var text: String
     public var sessionType: String?
     public var workingDir: String?
