@@ -99,50 +99,56 @@ struct NoteEditorSurface: View {
     }
 
     var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 0) {
-                // The gutter is an ordinary sibling here, not a synced overlay — see
-                // `NoteLineNumberGutter`'s own doc comment for why that is enough to keep it in
-                // lockstep with the text view as this whole page scrolls, with no offset
-                // observation of its own.
-                HStack(alignment: .top, spacing: 0) {
-                    if settings.showsNoteLineNumbers {
-                        NoteLineNumberGutter(metrics: lineMetrics)
+        GeometryReader { geometry in
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 0) {
+                    // The gutter is an ordinary sibling here, not a synced overlay — see
+                    // `NoteLineNumberGutter`'s own doc comment for why that is enough to keep it
+                    // in lockstep with the text view as this whole page scrolls, with no offset
+                    // observation of its own.
+                    HStack(alignment: .top, spacing: 0) {
+                        if settings.showsNoteLineNumbers {
+                            NoteLineNumberGutter(metrics: lineMetrics)
+                        }
+                        MarkdownSourceTextView(
+                            text: text, isFocused: isFocused && !isCovered, caret: caret, highlight: highlight,
+                            toolbarLayout: settings.noteToolbarLayout,
+                            onChange: { edited($0) },
+                            onFocus: { isFocused = true },
+                            onAttach: { offset in beginAttachment(at: offset) },
+                            onPasteImages: { offset, images in pasteImages(images, at: offset) },
+                            onLineMetrics: settings.showsNoteLineNumbers ? { lineMetrics = $0 } : nil
+                        )
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    MarkdownSourceTextView(
-                        text: text, isFocused: isFocused && !isCovered, caret: caret, highlight: highlight,
-                        toolbarLayout: settings.noteToolbarLayout,
-                        onChange: { edited($0) },
-                        onFocus: { isFocused = true },
-                        onAttach: { offset in beginAttachment(at: offset) },
-                        onPasteImages: { offset, images in pasteImages(images, at: offset) },
-                        onLineMetrics: settings.showsNoteLineNumbers ? { lineMetrics = $0 } : nil
-                    )
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // Tapping under the note puts the caret at its end, which is what a page of
+                    // text does. Stretched to fill whatever the page's own `minHeight` below
+                    // leaves over, rather than a fixed band: a short note in a tall window would
+                    // otherwise leave genuine dead space under that band that this same tap does
+                    // nothing for.
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .frame(minHeight: 140, maxHeight: .infinity)
+                        .onTapGesture { focusAtEnd() }
                 }
-                // Tapping under the note puts the caret at its end, which is what a page of text
-                // does. Sized rather than painted behind the stack: a background is exactly as
-                // tall as the content, so the empty space this exists to catch is the one place
-                // it would not be.
-                Color.clear
-                    .contentShape(Rectangle())
-                    .frame(height: 140)
-                    .onTapGesture { focusAtEnd() }
+                // At least the visible height, so the catch area above can actually reach the
+                // bottom of the screen instead of only the bottom of a short note's content.
+                .frame(minHeight: geometry.size.height, alignment: .top)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-        }
-        .scrollPosition($scrollPosition)
-        .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.y }) { _, newValue in
-            lastOffsetY = newValue
-        }
-        .background(PaiPalette.Notes.background)
-        .overlay(alignment: .top) {
-            if isUploading {
-                ProgressView("Uploading…")
-                    .padding(10)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-                    .padding(.top, 8)
+            .scrollPosition($scrollPosition)
+            .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.y }) { _, newValue in
+                lastOffsetY = newValue
+            }
+            .background(PaiPalette.Notes.background)
+            .overlay(alignment: .top) {
+                if isUploading {
+                    ProgressView("Uploading…")
+                        .padding(10)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                        .padding(.top, 8)
+                }
             }
         }
         // Restores the position this note was left at, across being covered by a pushed screen
