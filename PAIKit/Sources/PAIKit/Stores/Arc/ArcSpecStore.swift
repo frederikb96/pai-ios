@@ -25,7 +25,7 @@ public final class ArcSpecStore {
 
     public private(set) var name: String?
     public private(set) var overview: String?
-    public private(set) var phase: String?
+    public private(set) var mode: String?
     public private(set) var timeline: ArcTimeline?
     public private(set) var isLoading = false
     public private(set) var errorMessage: String?
@@ -90,7 +90,7 @@ public final class ArcSpecStore {
     private func apply(_ payload: ArcRecoverPayload) {
         name = payload.name
         overview = payload.overview
-        phase = payload.phase
+        mode = payload.mode
         timeline = ArcTimelineBuilder.build(
             rows: Array(payload.rows.values), busyAgents: Set(payload.activeSegment.busyAgents)
         )

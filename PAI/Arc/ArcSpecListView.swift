@@ -95,7 +95,7 @@ struct ArcSpecListView: View {
                     .foregroundStyle(PaiPalette.Semantic.textPrimary)
                     .lineLimit(1)
                 HStack(spacing: 6) {
-                    Text(spec.phase)
+                    Text(spec.mode ?? "")
                     if let activity = SessionTimeFormat.text(for: spec.updatedAt) {
                         Text(activity)
                     }

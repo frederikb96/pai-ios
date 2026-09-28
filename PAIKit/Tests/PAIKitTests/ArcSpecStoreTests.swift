@@ -36,13 +36,13 @@ private actor FakeArcSpecApi: ArcSpecApiClient {
 
 private func makeSpec(sessions: [String]) -> ArcSpec {
     ArcSpec(
-        uuid: "spec-1", name: "Demo", phase: "Build", effort: 1, projectId: nil, sessions: sessions,
+        uuid: "spec-1", name: "Demo", mode: "Build", effort: 1, projectId: nil, sessions: sessions,
         overview: nil, createdAt: "2026-09-01T00:00:00.000000+00:00", updatedAt: "2026-09-01T00:00:00.000000+00:00")
 }
 
 private func makeRecover(name: String = "Demo") -> ArcRecoverPayload {
     ArcRecoverPayload(
-        spec: "spec-1", name: name, overview: "An overview", phase: "Build",
+        spec: "spec-1", name: name, overview: "An overview", mode: "Build",
         activeSegment: ArcActiveSegment(index: 0, blocks: [], loose: [], busyAgents: []), rows: [:])
 }
 

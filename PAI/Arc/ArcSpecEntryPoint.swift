@@ -86,7 +86,7 @@ struct ArcSpecPickerSheet: View {
                     Text(spec.name)
                         .font(PaiTypography.bodyEmphasized.font)
                         .foregroundStyle(PaiPalette.Semantic.textPrimary)
-                    Text(spec.phase)
+                    Text(spec.mode ?? "")
                         .font(PaiTypography.caption.font)
                         .foregroundStyle(PaiPalette.Semantic.textMuted)
                 }

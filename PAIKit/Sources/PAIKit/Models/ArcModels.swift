@@ -151,7 +151,9 @@ public struct ArcSpec: Codable, Sendable, Equatable, Identifiable {
     public var id: String { uuid }
     public let uuid: String
     public let name: String
-    public let phase: String
+    /// Free-text line saying how this run is being worked — no fixed vocabulary, `nil` for a
+    /// spec that never named one.
+    public let mode: String?
     public let effort: Int
     public let projectId: String?
     /// Conversation uuids (the `CLAUDE_CODE_SESSION_ID` value) this spec is bound to — what a
@@ -163,7 +165,7 @@ public struct ArcSpec: Codable, Sendable, Equatable, Identifiable {
     public let rowCount: Int?
 
     enum CodingKeys: String, CodingKey {
-        case uuid, name, phase, effort
+        case uuid, name, mode, effort
         case projectId = "project_id"
         case sessions, overview
         case createdAt = "created_at"
@@ -172,12 +174,12 @@ public struct ArcSpec: Codable, Sendable, Equatable, Identifiable {
     }
 
     public init(
-        uuid: String, name: String, phase: String, effort: Int, projectId: String?, sessions: [String],
+        uuid: String, name: String, mode: String?, effort: Int, projectId: String?, sessions: [String],
         overview: String?, createdAt: String, updatedAt: String, rowCount: Int? = nil
     ) {
         self.uuid = uuid
         self.name = name
-        self.phase = phase
+        self.mode = mode
         self.effort = effort
         self.projectId = projectId
         self.sessions = sessions
@@ -258,26 +260,26 @@ public struct ArcRecoverPayload: Codable, Sendable, Equatable {
     public let spec: String
     public let name: String
     public let overview: String?
-    public let phase: String
+    public let mode: String?
     public let activeSegment: ArcActiveSegment
     /// Keyed by the row's `id` as a string — the wire's own shape, a dict rather than an array
     /// so a client can look a row up by id without building an index first.
     public let rows: [String: ArcRow]
 
     enum CodingKeys: String, CodingKey {
-        case spec, name, overview, phase
+        case spec, name, overview, mode
         case activeSegment = "active_segment"
         case rows
     }
 
     public init(
-        spec: String, name: String, overview: String?, phase: String, activeSegment: ArcActiveSegment,
+        spec: String, name: String, overview: String?, mode: String?, activeSegment: ArcActiveSegment,
         rows: [String: ArcRow]
     ) {
         self.spec = spec
         self.name = name
         self.overview = overview
-        self.phase = phase
+        self.mode = mode
         self.activeSegment = activeSegment
         self.rows = rows
     }

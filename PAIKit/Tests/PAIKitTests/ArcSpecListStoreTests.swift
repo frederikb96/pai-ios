@@ -27,7 +27,7 @@ private actor FakeArcSpecListApi: ArcSpecListApiClient {
 
 private func makeSpec(_ uuid: String) -> ArcSpec {
     ArcSpec(
-        uuid: uuid, name: "Spec \(uuid)", phase: "Build", effort: 2, projectId: nil, sessions: [],
+        uuid: uuid, name: "Spec \(uuid)", mode: "Build", effort: 2, projectId: nil, sessions: [],
         overview: nil, createdAt: "2026-09-01T00:00:00.000000+00:00",
         updatedAt: "2026-09-01T00:00:00.000000+00:00", rowCount: nil)
 }
