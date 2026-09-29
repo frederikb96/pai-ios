@@ -468,7 +468,85 @@ def foundation_type_without_an_import(lines: list[str]) -> list[tuple[int, str, 
     return findings
 
 
-def check(path: Path) -> list[tuple[int, str, str]]:
+#: A type declaration with an inheritance clause, whatever it promises — `conforms` captures the
+#: clause so a caller can ask whether it reaches `Sendable` directly or through a protocol.
+TYPE_WITH_CONFORMANCES = re.compile(
+    r"^\s*(?:public\s+|internal\s+|open\s+|private\s+|fileprivate\s+)*"
+    r"(?:final\s+)?(?:class|struct|enum)\s+[A-Za-z_]\w*\s*(?:<[^>]*>)?\s*:\s*(?P<conforms>[^{]+)"
+)
+#: A protocol declaration that itself refines something — the indirection that makes a plain
+#: search for the word `Sendable` in a conformance list miss most real cases.
+PROTOCOL_WITH_CONFORMANCES = re.compile(
+    r"^\s*(?:public\s+|internal\s+|open\s+|private\s+|fileprivate\s+)*"
+    r"protocol\s+(?P<name>[A-Za-z_]\w*)\s*:\s*(?P<conforms>[^{]+)"
+)
+#: Foundation classes that are not `Sendable` on Apple's SDK. Deliberately short: a false
+#: positive here costs more than a miss, because it trains the reader to skip the whole check.
+NON_SENDABLE_FOUNDATION = {
+    "FileManager",
+    "DateFormatter",
+    "NumberFormatter",
+    "DateComponentsFormatter",
+    "ByteCountFormatter",
+    "DateIntervalFormatter",
+}
+
+
+def non_sendable_stored_property(
+    lines: list[str], sendable_names: frozenset[str]
+) -> list[tuple[int, str, str]]:
+    """A stored property of a non-`Sendable` Foundation class inside a `Sendable` type.
+
+    Linux Foundation and Apple's Foundation disagree about which of these conform, so the package
+    builds and its whole suite passes here while the same file is a hard error on a Mac — the one
+    class of mistake that survives every free check and is only ever found by a metered run. A
+    `FileManager` held as a stored property to allow injection, when every call site passed
+    `.default` anyway, is the shape that reaches CI.
+
+    The fix is almost always to drop the stored property for a computed `{ .default }`, or to make
+    the type an actor when the instance genuinely has to be shared. `@unchecked Sendable` is
+    excluded from this check: writing it is a claim the author has thought about it.
+
+    A type rarely writes `Sendable` in its own conformance list; far more often it adopts a
+    protocol that refines it, so `sendable_names` is built across every file first — the same
+    whole-repo pass the memberwise check needs, for the same reason.
+
+    Indentation-scoped like the rest of this file, so a nested type inside a `Sendable` one is
+    read as still in scope — the same narrowing every other check here accepts to stay a regex.
+    """
+    findings: list[tuple[int, str, str]] = []
+    for index, line in enumerate(lines):
+        declaration = TYPE_WITH_CONFORMANCES.match(line)
+        if not declaration or "@unchecked" in line:
+            continue
+        conforms = {name.strip() for name in declaration.group("conforms").split(",")}
+        if not conforms & sendable_names:
+            continue
+        indent = len(line) - len(line.lstrip())
+        opening = index
+        while opening < len(lines) and "{" not in lines[opening]:
+            opening += 1
+            if opening - index > 8:
+                opening = index
+                break
+        for cursor in range(opening + 1, len(lines)):
+            body = lines[cursor]
+            if body.strip() and (len(body) - len(body.lstrip())) <= indent:
+                break
+            match = PROPERTY_DECLARATION.match(body)
+            if not match or match.group("type") not in NON_SENDABLE_FOUNDATION:
+                continue
+            if "{" in body.split(":", 1)[-1]:
+                continue
+            findings.append((
+                cursor + 1, body.strip(),
+                f"stored '{match.group('type')}' makes this Sendable type unsendable on Apple's "
+                "SDK while compiling clean here — use a computed property, or an actor",
+            ))
+    return findings
+
+
+def check(path: Path, sendable_names: frozenset[str] = frozenset({"Sendable"})) -> list[tuple[int, str, str]]:
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     isolated = main_actor_line_numbers(lines)
     findings: list[tuple[int, str, str]] = detached_reads_of_isolated_statics(lines, isolated)
@@ -478,6 +556,7 @@ def check(path: Path) -> list[tuple[int, str, str]]:
     findings.extend(unmarked_observer_token_read_in_deinit(lines, isolated))
     findings.extend(stored_static_in_generic_type(lines))
     findings.extend(private_type_used_too_widely(lines))
+    findings.extend(non_sendable_stored_property(lines, sendable_names))
 
     for index, line in enumerate(lines):
         if STORED_STATIC_VAR.match(line) and index not in isolated and "nonisolated(unsafe)" not in line:
@@ -676,6 +755,28 @@ def check_memberwise_call_order(path: Path, declarations: dict[str, list[str]]) 
     return findings
 
 
+def _sendable_protocols(files: list[Path]) -> frozenset[str]:
+    """Every protocol name that reaches `Sendable`, directly or through another protocol.
+
+    Resolved to a fixed point rather than one level, because a refinement chain is ordinary and a
+    single pass would miss its far end.
+    """
+    refines: dict[str, set[str]] = {}
+    for path in files:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            match = PROTOCOL_WITH_CONFORMANCES.match(line)
+            if match:
+                refines[match.group("name")] = {
+                    name.strip() for name in match.group("conforms").split(",")
+                }
+    names = {"Sendable"}
+    while True:
+        grown = {name for name, parents in refines.items() if parents & names}
+        if grown <= names:
+            return frozenset(names)
+        names |= grown
+
+
 def main() -> int:
     targets = [Path(arg) for arg in sys.argv[1:]] or [ROOT / "PAI", ROOT / "PAIKit/Sources"]
     files = sorted(f for target in targets for f in target.rglob("*.swift"))
@@ -686,10 +787,13 @@ def main() -> int:
     # Built across every file first: a view is declared in one and constructed in another, so
     # this is the one check here that cannot be answered a file at a time.
     declarations = _memberwise_structs(files)
+    sendable_names = _sendable_protocols(files)
 
     total = 0
     for path in files:
-        for line_number, source, message in check(path) + check_memberwise_call_order(path, declarations):
+        for line_number, source, message in check(path, sendable_names) + check_memberwise_call_order(
+            path, declarations
+        ):
             total += 1
             print(f"::error file={path},line={line_number}::{message}")
             print(f"  {path}:{line_number}: {source}")
