@@ -72,6 +72,42 @@ public enum ClaudeAuthPredicates {
         let days = Int((Double(hours) / 24).rounded())
         return "\(days) days"
     }
+
+    /// The agent kills an unanswered attempt after this long — mirrors `LOGIN_TIMEOUT_MS` in
+    /// `agent/src/auth.ts`. Used only to tell a genuine timeout apart from a login disappearing
+    /// for any other reason (a success, a deliberate cancel, a stale poll racing the one that
+    /// just created it) — all of those land well under this mark.
+    public static let loginTimeoutMs: Double = 15 * 60 * 1000
+    private static let loginTimeoutSlackMs: Double = 5_000
+
+    /// Whether a login that just disappeared — present a moment ago, `nil` now — disappeared
+    /// because the agent's own deadline killed it, judged purely by how long it had been open
+    /// rather than a flag set at every place a login can legitimately end instead.
+    public static func loginLikelyExpired(previous: ClaudeLogin, now: Double) -> Bool {
+        now - previous.startedAt >= loginTimeoutMs - loginTimeoutSlackMs
+    }
+
+    /// What the shared sign-in action block should show, driven by `auth.login` and nothing
+    /// else — the same one block regardless of why the banner is up. Kept here rather than in the
+    /// view so the join between "what a snapshot means" and "what renders" is proven on Linux
+    /// like every other predicate in this type: the bug this replaces was exactly this decision
+    /// living inside only one severity's view code, unreachable from the other.
+    public enum ActionState: Equatable {
+        /// No attempt yet, and nothing in flight — show the button. `linkExpired` says whether a
+        /// previous attempt's own timeout is why we're here.
+        case signIn(linkExpired: Bool)
+        /// A start is in flight for this device.
+        case starting
+        /// A link exists — the open/copy/code/cancel controls, regardless of severity.
+        case controls(login: ClaudeLogin, verifying: Bool, busy: Bool)
+    }
+
+    public static func actionState(auth: ClaudeAuth, busy: Bool, linkExpired: Bool) -> ActionState {
+        guard let login = auth.login else {
+            return busy ? .starting : .signIn(linkExpired: linkExpired)
+        }
+        return .controls(login: login, verifying: login.state == .verifying, busy: busy)
+    }
 }
 
 /// Swift port of `claudeAuth.ts`'s store half: the VM's one Claude credential, polled at a

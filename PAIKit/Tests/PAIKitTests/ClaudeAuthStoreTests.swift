@@ -75,6 +75,60 @@ final class ClaudeAuthPredicatesTests: XCTestCase {
         XCTAssertEqual(ClaudeAuthPredicates.formatTimeUntil(2 * 3_600_000), "2 hours")
         XCTAssertEqual(ClaudeAuthPredicates.formatTimeUntil(48 * 3_600_000), "2 days")
     }
+
+    /// The bug this guards: the button lived only in the expiring severity's view code, and the
+    /// link + code field it produces lived only in the signed-out severity's — mutually exclusive,
+    /// so a real sign-in ran on the VM with no way to ever show it. `actionState` is what a view
+    /// now reads instead of re-deriving this itself, under every severity alike.
+    func testActionStateShowsControlsOnceALoginExistsRegardlessOfSeverity() {
+        let login = ClaudeLogin(id: "l1", url: "https://claude.ai/oauth/authorize", state: .awaitingCode, startedAt: 0)
+        let auth = ClaudeAuth(
+            known: true, loggedIn: true, subscription: nil, accessExpiresAt: nil,
+            refreshExpiresAt: nil, login: login, lastError: nil, reportedAt: nil
+        )
+
+        let state = ClaudeAuthPredicates.actionState(auth: auth, busy: false, linkExpired: false)
+
+        guard case .controls(let shown, let verifying, let busy) = state else {
+            return XCTFail("expected .controls, got \(state)")
+        }
+        XCTAssertEqual(shown.url, "https://claude.ai/oauth/authorize")
+        XCTAssertFalse(verifying)
+        XCTAssertFalse(busy)
+    }
+
+    func testActionStateShowsTheButtonWithNoLoginAndNotBusy() {
+        let auth = ClaudeAuth(
+            known: true, loggedIn: true, subscription: nil, accessExpiresAt: nil,
+            refreshExpiresAt: nil, login: nil, lastError: nil, reportedAt: nil
+        )
+        XCTAssertEqual(
+            ClaudeAuthPredicates.actionState(auth: auth, busy: false, linkExpired: false),
+            .signIn(linkExpired: false))
+        XCTAssertEqual(
+            ClaudeAuthPredicates.actionState(auth: auth, busy: false, linkExpired: true),
+            .signIn(linkExpired: true))
+    }
+
+    func testActionStateShowsStartingWhileBusyWithNoLoginYet() {
+        let auth = ClaudeAuth(
+            known: true, loggedIn: true, subscription: nil, accessExpiresAt: nil,
+            refreshExpiresAt: nil, login: nil, lastError: nil, reportedAt: nil
+        )
+        XCTAssertEqual(ClaudeAuthPredicates.actionState(auth: auth, busy: true, linkExpired: false), .starting)
+    }
+
+    /// The other half of the fix: a login attempt disappearing must not read as a timeout unless
+    /// it has actually run out the clock — a success, a deliberate cancel, or a stale poll racing
+    /// the one that just created it all end well under the deadline.
+    func testLoginLikelyExpiredOnlyOnceTheDeadlineHasActuallyPassed() {
+        let started = ClaudeLogin(id: "l1", url: "https://example.com", state: .awaitingCode, startedAt: 1_000_000)
+        XCTAssertFalse(
+            ClaudeAuthPredicates.loginLikelyExpired(previous: started, now: 1_000_000 + 5_000))
+        XCTAssertTrue(
+            ClaudeAuthPredicates.loginLikelyExpired(
+                previous: started, now: 1_000_000 + ClaudeAuthPredicates.loginTimeoutMs))
+    }
 }
 
 @MainActor
