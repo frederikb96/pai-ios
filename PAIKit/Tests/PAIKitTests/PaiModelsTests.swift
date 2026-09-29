@@ -444,31 +444,33 @@ final class PaiModelsTests: XCTestCase {
         XCTAssertNil(map.smtpPassword, "absent from the response, must not default to some placeholder")
     }
 
-    // MARK: - PutDraftResult
+    // MARK: - DraftWriteResult
 
-    /// The two branches of this union are told apart by a `deleted` flag that is *absent*, not
-    /// *false*, on a normal save — a refactor that changes the discriminator to "is `deleted`
-    /// present and truthy" vs. "is `deleted` present at all" would misroute a save that happens
-    /// to omit the field differently. Both branches are exercised so either mistake shows up.
-    func testPutDraftResultDiscriminatesSavedFromDeleted() throws {
-        let saved = try JSONDecoder().decode(
-            PutDraftResult.self,
+    /// `PUT`/`DELETE /api/drafts/{key}` are unconditional now — no CAS, no conflict, no discovery
+    /// of which of several shapes the body is. The whole answer is a key and the version the
+    /// server bumped to.
+    func testDraftWriteResultDecodesKeyAndVersion() throws {
+        let result = try JSONDecoder().decode(
+            DraftWriteResult.self, from: Data(#"{"key":"new","version":7}"#.utf8))
+        XCTAssertEqual(result.key, "new")
+        XCTAssertEqual(result.version, 7)
+    }
+
+    /// A draft row decodes its version and device id, and has no `regions` field at all —
+    /// dictation regions are gone from the wire entirely.
+    func testDraftDecodesVersionAndDeviceId() throws {
+        let draft = try JSONDecoder().decode(
+            Draft.self,
             from: Data(
                 #"""
                 {"key":"new","text":"hi","session_type":null,"working_dir":null,"updated_at":null,
-                 "regions":[],"attachments":[]}
+                 "version":3,"device_id":"laptop-abc","attachments":[]}
                 """#.utf8
             )
         )
-        guard case let .saved(draft) = saved else { return XCTFail("Expected .saved") }
         XCTAssertEqual(draft.text, "hi")
-
-        let deleted = try JSONDecoder().decode(
-            PutDraftResult.self,
-            from: Data(#"{"key":"new","deleted":true}"#.utf8)
-        )
-        guard case let .deleted(key) = deleted else { return XCTFail("Expected .deleted") }
-        XCTAssertEqual(key, "new")
+        XCTAssertEqual(draft.version, 3)
+        XCTAssertEqual(draft.deviceId, "laptop-abc")
     }
 
     // MARK: - ClaudeAuth

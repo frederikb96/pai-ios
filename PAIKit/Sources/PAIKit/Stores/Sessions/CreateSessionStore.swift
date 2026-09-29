@@ -1,14 +1,11 @@
 import Foundation
 import Observation
 
-/// The narrow slice of `PaiApiClient` this store needs.
+/// The narrow slice of `PaiApiClient` this store needs — sending the first message itself goes
+/// through ``OutboxStore`` now, not a direct call here, so this no longer needs `postMessage`.
 public protocol CreateSessionApiClient: Sendable {
     func getSessionTypes() async throws -> [SessionType]
     func getSessionModels() async throws -> SessionModelsResponse
-    func postMessage(
-        sessionId: String?, message: String, files: [PaiFileUpload], sessionType: String?, workingDir: String?,
-        agent: String?, model: String?, thinking: String?, clientMode: String?
-    ) async throws -> PostMessageResponse
 }
 
 extension PaiApiClient: CreateSessionApiClient {}
@@ -229,7 +226,19 @@ public final class CreateSessionStore {
     /// real value arrives on the next poll). The caller — not this store — is responsible for
     /// inserting it (`SessionListStore.prependOptimisticSession(_:)`), tracking the first message
     /// bubble, and navigating to the resulting chat: none of those are session-creation state.
-    public func create(message: String, files: [PaiFileUpload] = []) async -> CreateSessionResult {
+    ///
+    /// The send itself goes through `outbox` — durable before this call ever touches the network,
+    /// retried with backoff underneath, and idempotent under the `clientMessageId` the entry
+    /// mints once. This method awaits that entry reaching a terminal state so the caller's own
+    /// "await, then navigate or show an error" flow is unchanged; the durability is what changed,
+    /// not the shape a caller sees on a healthy connection. Left genuinely offline, this awaits
+    /// until connectivity returns and the entry's own worker finally lands it — exactly the "sent
+    /// exactly once when the connection returns" contract, at the cost of no visible "queued"
+    /// affordance on this screen while it waits (a real gap relative to the full design; see this
+    /// run's own report).
+    public func create(
+        message: String, files: [PaiFileUpload] = [], draftAttachmentIds: [String] = [], outbox: OutboxStore
+    ) async -> CreateSessionResult {
         isCreating = true
         defer { isCreating = false }
         let type = selectedSessionTypeId
@@ -237,48 +246,67 @@ public final class CreateSessionStore {
         let machine = selectedMachine
         let model = selectedModel
         let thinking = selectedThinking
-        do {
-            let result = try await api.postMessage(
-                sessionId: nil, message: message, files: files, sessionType: type, workingDir: dir, agent: machine,
-                model: model, thinking: thinking, clientMode: nil
-            )
-            let now = ISO8601DateFormatter().string(from: Date())
-            let optimistic = Session(
-                id: result.sessionId,
-                sessionType: type ?? globalSessionTypes.first?.id ?? "default",
-                model: model,
-                thinking: thinking,
-                status: .pending,
-                state: .starting,
-                blocker: nil,
-                displayState: .starting,
-                title: nil,
-                titleLocked: nil,
-                initialMessage: message,
-                sessionTokens: 0,
-                claudeSessionId: nil,
-                idleTimeoutMinutes: nil,
-                effectiveIdleTimeoutMinutes: nil,
-                cseId: nil,
-                createdAt: now,
-                updatedAt: now,
-                lastActivityAt: now,
-                workingDir: dir,
-                agent: machine,
-                kind: .conversation,
-                parentSessionId: nil,
-                subagentName: nil,
-                subagentType: nil,
-                subagentDescription: nil,
-                remoteControl: true,
-                discovered: nil,
-                projectId: nil,
-                phaseId: nil,
-                projectName: nil
-            )
-            return .created(optimistic)
-        } catch {
-            return .failed((error as? PaiError)?.userMessage ?? "Failed to create session")
+
+        let inlineFiles = files.map { file in
+            OutboxInlineFile(localId: UUID().uuidString, filename: file.filename, mimeType: file.mimeType)
+        }
+        let inlineFileData = Dictionary(
+            uniqueKeysWithValues: zip(inlineFiles.map(\.localId), files.map(\.data)))
+        let entry = OutboxEntry(
+            target: .newSession(agent: machine, sessionType: type, workingDir: dir, model: model, thinking: thinking),
+            text: message, draftAttachmentIds: draftAttachmentIds, inlineFiles: inlineFiles
+        )
+        outbox.enqueue(entry, inlineFileData: inlineFileData)
+
+        while true {
+            guard let current = outbox.entries.first(where: { $0.id == entry.id }) else {
+                return .failed("The send was removed before it completed.")
+            }
+            switch current.state {
+            case .sent:
+                guard let result = current.result else {
+                    return .failed("The send completed with no session to open.")
+                }
+                let now = ISO8601DateFormatter().string(from: Date())
+                let optimistic = Session(
+                    id: result.sessionId,
+                    sessionType: type ?? globalSessionTypes.first?.id ?? "default",
+                    model: model,
+                    thinking: thinking,
+                    status: .pending,
+                    state: .starting,
+                    blocker: nil,
+                    displayState: .starting,
+                    title: nil,
+                    titleLocked: nil,
+                    initialMessage: message,
+                    sessionTokens: 0,
+                    claudeSessionId: nil,
+                    idleTimeoutMinutes: nil,
+                    effectiveIdleTimeoutMinutes: nil,
+                    cseId: nil,
+                    createdAt: now,
+                    updatedAt: now,
+                    lastActivityAt: now,
+                    workingDir: dir,
+                    agent: machine,
+                    kind: .conversation,
+                    parentSessionId: nil,
+                    subagentName: nil,
+                    subagentType: nil,
+                    subagentDescription: nil,
+                    remoteControl: true,
+                    discovered: nil,
+                    projectId: nil,
+                    phaseId: nil,
+                    projectName: nil
+                )
+                return .created(optimistic)
+            case .failed:
+                return .failed(current.lastError ?? "Failed to create session")
+            case .queued, .sending:
+                try? await Task.sleep(for: .milliseconds(200))
+            }
         }
     }
 }
