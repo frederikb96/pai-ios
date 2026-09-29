@@ -6,6 +6,17 @@ import Foundation
 /// Exists only to cover the round trip: the moment a status event lists the send, the server's
 /// own list draws it instead, and this is dropped. So a local bubble is never the thing that
 /// decides whether a message arrived — see ``TranscriptStore/trackSend(sessionId:text:send:)``.
+///
+/// **Nothing in the app populates this any more.** `ComposerBar`'s own send renders from
+/// `OutboxStore.entries` directly (`OutboxBubbleStack`), which is what actually satisfies "queued,
+/// sending and failed read as themselves, and survive a reload" — a `PendingMessage` is in-memory
+/// only and does neither. This type is kept for the OTHER half `trackSend` was built for: a send
+/// this device tracked by awaiting a request handle rather than an outbox entry, if one is ever
+/// added back. Safe to delete, along with `trackSend`/`reconcilePending` and their tests, once
+/// nothing calls `trackSend` (true today, and true for as long as every send goes through the
+/// outbox) AND no such caller is expected — at that point `pendingBubbleTexts` collapses to just
+/// the server-reported `delivery(for:).pendingSends` half, which is the part still load-bearing
+/// (another device's own pending sends).
 public struct PendingMessage: Equatable, Sendable {
     /// Identifies the bubble before the send request has answered with a row id.
     public let localId: Int
@@ -77,6 +88,9 @@ extension TranscriptStore {
     /// confirming it, not by the server's list, not by leaving the session — and the only way to
     /// produce one was a caller that forgot a second call. There is no second call here: this
     /// method awaits `send` itself.
+    ///
+    /// No caller left — see ``PendingMessage``'s own doc comment for why this is kept anyway and
+    /// what would make deleting it safe.
     public func trackSend(sessionId: String, text: String, send: Task<PostMessageResponse, Error>) {
         localBubbleCounter += 1
         let localId = localBubbleCounter
