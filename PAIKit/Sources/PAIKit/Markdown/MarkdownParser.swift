@@ -218,9 +218,11 @@ public enum MarkdownParser {
                 runs.append(InlineRun(text: shown, style: style, destination: destination ?? image.source))
 
             case is SoftBreak:
-                // A newline inside a paragraph is a space, as in the web client — neither
-                // enables the `breaks` behaviour that would turn it into a line break.
-                runs.append(InlineRun(text: " ", style: style, destination: destination))
+                // A newline inside a paragraph is a line break, as in the web client — both
+                // sides enable the `breaks` behaviour a plain CommonMark parse leaves off, since
+                // a person or a model writing one item per line means a line break, not a
+                // run-on sentence.
+                runs.append(InlineRun(text: "\n", style: style, destination: destination))
 
             case is LineBreak:
                 runs.append(InlineRun(text: "\n", style: style, destination: destination))

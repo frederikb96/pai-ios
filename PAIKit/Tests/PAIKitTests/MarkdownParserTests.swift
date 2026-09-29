@@ -162,10 +162,10 @@ final class MarkdownParserTests: XCTestCase {
     }
 
     /// Both break kinds are one `SoftBreak`/`LineBreak` apart in the parse tree and trivially
-    /// confused. Treating a soft break as a newline would change the measured height of most
-    /// paragraphs in the transcript; the two assertions together pin which is which.
-    func testSoftBreakIsASpaceAndHardBreakIsANewline() {
-        XCTAssertEqual(MarkdownParser.parse("one\ntwo").plainText, "one two")
+    /// confused. Both now produce a newline — matching the web client's `remark-breaks` plugin —
+    /// so the two assertions together pin that neither kind was left behind by the other.
+    func testSoftBreakAndHardBreakAreBothNewlines() {
+        XCTAssertEqual(MarkdownParser.parse("one\ntwo").plainText, "one\ntwo")
         XCTAssertEqual(MarkdownParser.parse("one  \ntwo").plainText, "one\ntwo")
     }
 
