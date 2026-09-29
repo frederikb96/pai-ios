@@ -27,6 +27,13 @@ extension PaiFixtures {
         ]
         """#
 
+    /// `PUT /api/drafts/{key}` and `DELETE /api/drafts/{key}` — what a composer's own debounced
+    /// write and its clear-after-send get back. The version is ahead of every row above, so a
+    /// write's answer is never read as older than what the poll already delivered.
+    public static let draftWritten: String = #"""
+        { "key": "new", "version": 9, "previous_text": null }
+        """#
+
     // MARK: - Plan usage
 
     /// `GET /api/usage` — both rolling windows plus a per-model weekly cap, matching Claude

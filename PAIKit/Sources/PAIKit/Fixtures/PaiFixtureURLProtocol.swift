@@ -159,6 +159,15 @@
             exact("GET", "/api/sessions/search") { PaiFixtures.sessionSearchResults },
             sessionScoped("GET", suffix: "/secret-requests") { PaiFixtures.secretRequests },
             exact("GET", "/api/drafts") { PaiFixtures.drafts },
+            // A composer that is typed into writes its draft and clears it after a send. Without
+            // these the table answers 404, which `DraftStore` reads as a failed flush and retries
+            // with backoff — a loop running underneath every screenshot that types anything.
+            FixtureRoute(method: "PUT", matches: { $0.hasPrefix("/api/drafts/") }) {
+                PaiFixtures.data(PaiFixtures.draftWritten)
+            },
+            FixtureRoute(method: "DELETE", matches: { $0.hasPrefix("/api/drafts/") }) {
+                PaiFixtures.data(PaiFixtures.draftWritten)
+            },
             exact("GET", "/api/usage") { PaiFixtures.usage },
             exact("GET", "/api/settings/secrets") { PaiFixtures.secretStatuses },
             exact("GET", "/api/settings/smtp") { PaiFixtures.smtpSettings },
