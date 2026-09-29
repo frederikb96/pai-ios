@@ -136,6 +136,19 @@ public final class DraftStore {
         setDraftText(key: key, text: previous)
     }
 
+    /// A discard is fire-and-forget, so its answer can land after a write this device made since —
+    /// in which case it describes an older state of the row and must not move the restore target
+    /// backwards onto the discarded text. `version == nil` means there was no row at all to
+    /// discard: nothing was destroyed and there is no version to record.
+    private func applyDiscardResult(key: String, result: PaiDraftDeleteResult) {
+        guard let version = result.version else { return }
+        guard var current = drafts[key] else { return }
+        if (current.knownVersion ?? -1) > version { return }
+        current.knownVersion = version
+        current.previousText = result.previousText
+        drafts[key] = current
+    }
+
     /// Launch choices for the next session, held in the `new` draft only.
     public func selectSessionType(_ id: String?) {
         var entry = draft(for: DraftKey.newSession)
@@ -289,14 +302,7 @@ public final class DraftStore {
                 await self.performWrite(key: key, log: log)
             case .delete:
                 if let result = try? await self.api.deleteDraft(key: key) {
-                    if var current = self.drafts[key] {
-                        // `version == nil` means there was no row at all to discard — nothing to
-                        // record, and definitely not a reason to erase whatever version this
-                        // device already knew.
-                        if let version = result.version { current.knownVersion = version }
-                        current.previousText = result.previousText
-                        self.drafts[key] = current
-                    }
+                    self.applyDiscardResult(key: key, result: result)
                     log?.log(.info, .drafts, "delete key=\(key) version=\(String(describing: result.version)) done")
                 }
             }

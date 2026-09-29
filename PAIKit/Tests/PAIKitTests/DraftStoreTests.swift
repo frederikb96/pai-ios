@@ -172,12 +172,22 @@ private final class FakeDraftsFetching: DraftsFetching, @unchecked Sendable {
         return DraftWriteResult(key: key, version: newVersion, previousText: previous)
     }
 
+    /// Set to answer the next `deleteDraft` call with an exact response rather than one derived
+    /// from `bumpServerVersion` — what lets a test hand back a response that is stale by
+    /// construction (an older version than the entry already carries), the way a real one could
+    /// arrive after network reordering.
+    var forcedDeleteResult: PaiDraftDeleteResult?
+
     func deleteDraft(key: String) async throws -> PaiDraftDeleteResult {
         record("deleteDraft:start:\(key)")
         if let deleteGate {
             await deleteGate.wait()
         }
         record("deleteDraft:done:\(key)")
+        if let forced = forcedDeleteResult {
+            forcedDeleteResult = nil
+            return forced
+        }
         let (newVersion, previous) = bumpServerVersion(key: key, deviceId: nil, newText: "")
         return PaiDraftDeleteResult(key: key, version: newVersion, previousText: previous)
     }
@@ -344,6 +354,30 @@ final class DraftStoreTests: XCTestCase {
         XCTAssertEqual(
             store.draft(for: "s1").text, "",
             "a stale pre-discard row must never resurrect text the discard already removed")
+    }
+
+    /// A discard is fire-and-forget, so its own answer can arrive describing an older state of the
+    /// row than something else already told this device — a full-row poll adoption is the only
+    /// path that can move `knownVersion` while this store's own delete/write coalescing keeps a
+    /// same-key write from racing a delete the way the web client's does. Whatever the cause, an
+    /// answer older than what is already known must never move the restore target backwards.
+    func testADiscardAnswerOlderThanWhatIsAlreadyKnownIsIgnored() async {
+        let fake = FakeDraftsFetching()
+        let store = DraftStore(api: fake, scheduler: InstantDraftScheduler())
+        store.drafts["s1"] = DraftEntry(
+            text: "on screen", sessionType: nil, workingDir: nil, knownVersion: 9, previousText: "the newer thing")
+
+        // The discard's own answer, once it lands, describes a state from before that — exactly
+        // what a response delayed by network reordering would carry.
+        fake.forcedDeleteResult = PaiDraftDeleteResult(key: "s1", version: 5, previousText: "should never surface")
+        store.clearDraft(key: "s1")
+        await waitUntil { fake.callLog.contains("deleteDraft:done:s1") }
+        await Task.yield()
+
+        let entry = store.draft(for: "s1")
+        XCTAssertEqual(entry.knownVersion, 9, "an older discard answer must not move the version backwards")
+        XCTAssertEqual(
+            entry.previousText, "the newer thing", "nor overwrite what was already known with a stale value")
     }
 
     // MARK: - Debounced flush
