@@ -41,19 +41,33 @@ public struct PaiFileUpload: Sendable, Equatable {
 
 /// `PUT /api/drafts/{key}`'s unconditional answer — no CAS, no conflict, ever. The server always
 /// accepts the write and hands back the version it bumped to; every ordering question is decided
-/// client-side by comparing this against `DraftEntry.knownVersion`.
+/// client-side by comparing this against `DraftEntry.knownVersion`. `previousText` is what the row
+/// held immediately before this write — the one-level undo `DraftStore` records alongside the new
+/// version.
 public struct DraftWriteResult: Codable, Sendable, Equatable {
     public let key: String
     public let version: Int
+    public let previousText: String?
+
+    enum CodingKeys: String, CodingKey {
+        case key, version
+        case previousText = "previous_text"
+    }
 }
 
-/// `DELETE /api/drafts/{key}`'s answer — a plain acknowledgement, not the version the discard
-/// bumped to. `DraftStore` never reads a version out of it: the discard clears the local entry
-/// itself, and the next `syncFromServer()` adopts whatever version the server settled on like any
-/// other row.
+/// `DELETE /api/drafts/{key}`'s answer — the version the discard bumped to, and what the row held
+/// immediately before it, same as `DraftWriteResult`'s own fields. `version` is `nil` only when
+/// there was no row at all to discard; `DraftStore` treats that as "nothing to update", never as
+/// "the row is gone" (there was never a version to lose in the first place).
 public struct PaiDraftDeleteResult: Codable, Sendable, Equatable {
     public let key: String
-    public let deleted: Bool
+    public let version: Int?
+    public let previousText: String?
+
+    enum CodingKeys: String, CodingKey {
+        case key, version
+        case previousText = "previous_text"
+    }
 }
 
 public struct PaiFavoriteRemovalResult: Codable, Sendable, Equatable {

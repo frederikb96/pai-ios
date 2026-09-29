@@ -30,6 +30,13 @@ public struct DraftEntry: Equatable, Sendable, Codable {
     /// whose `version` is not strictly greater than this is never adopted, however different its
     /// text.
     public var knownVersion: Int?
+    /// What the row held immediately before the most recent write or discard this device knows
+    /// about — the one-level undo the composer's plus menu offers as "Restore earlier version",
+    /// shown only when this is non-empty and differs from `text`. Adopted from any row, write or
+    /// discard response whose version is not older than `knownVersion`, independent of whether
+    /// `text` itself is dirty — it is informational, like `attachments`, never something a local
+    /// edit needs to protect.
+    public var previousText: String?
     /// Files uploaded onto this draft — by this device or another one, indistinguishably: the
     /// point of uploading on stage rather than at send is composing one message from several
     /// devices at once, so a phone must see what a laptop just added before either sends.
@@ -37,7 +44,7 @@ public struct DraftEntry: Equatable, Sendable, Codable {
 
     public init(
         text: String, sessionType: String?, workingDir: String?, model: String? = nil, thinking: String? = nil,
-        knownVersion: Int? = nil, attachments: [DraftAttachment] = []
+        knownVersion: Int? = nil, previousText: String? = nil, attachments: [DraftAttachment] = []
     ) {
         self.text = text
         self.sessionType = sessionType
@@ -45,6 +52,7 @@ public struct DraftEntry: Equatable, Sendable, Codable {
         self.model = model
         self.thinking = thinking
         self.knownVersion = knownVersion
+        self.previousText = previousText
         self.attachments = attachments
     }
 

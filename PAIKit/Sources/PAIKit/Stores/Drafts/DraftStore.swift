@@ -126,6 +126,16 @@ public final class DraftStore {
         scheduleFlush(key)
     }
 
+    /// The composer's "Restore earlier version" action — writes `previousText` back as the
+    /// current text through the ordinary setter, exactly as if it had been typed. The plus menu
+    /// only ever offers this when `previousText` is non-empty and differs from `text`; this method
+    /// itself stays defensive about that so a stale menu tap can never write an empty string over
+    /// something real.
+    public func restorePreviousText(key: String) {
+        guard let previous = draft(for: key).previousText, !previous.isEmpty else { return }
+        setDraftText(key: key, text: previous)
+    }
+
     /// Launch choices for the next session, held in the `new` draft only.
     public func selectSessionType(_ id: String?) {
         var entry = draft(for: DraftKey.newSession)
@@ -194,6 +204,13 @@ public final class DraftStore {
     /// touching this key exactly like any other op (``requestOp(_:_:)``), so a write already in
     /// flight for older text cannot land after this discard and put it back.
     ///
+    /// **The entry itself is kept, only emptied — never set to `nil`.** Dropping it entirely would
+    /// drop `knownVersion` with it, and a poll response that predates the discard (still reporting
+    /// the pre-discard row) would then read as newer than nothing and put the discarded text
+    /// straight back. `performOp`'s own `.delete` case updates `knownVersion` again once the
+    /// discard's own response names the version it actually produced, closing the gap for the
+    /// interval before that response lands too.
+    ///
     /// **When a caller should call this:** after its own send request resolves successfully —
     /// never optimistically, and never gated on the transcript confirming the send. A failed send
     /// must leave the draft in place so nothing typed is lost, which is why this is a call the
@@ -201,7 +218,10 @@ public final class DraftStore {
     public func clearDraft(key: String) {
         pendingDebounce[key]?.cancel()
         pendingDebounce[key] = nil
-        drafts[key] = nil
+        var entry = draft(for: key)
+        entry.text = ""
+        entry.attachments = []
+        drafts[key] = entry
         localRevision[key, default: 0] += 1
         retryAttempt[key] = nil
         diagnosticsLog?.log(.info, .drafts, "clear key=\(key)")
@@ -268,8 +288,17 @@ public final class DraftStore {
             case .write:
                 await self.performWrite(key: key, log: log)
             case .delete:
-                _ = try? await self.api.deleteDraft(key: key)
-                log?.log(.info, .drafts, "delete key=\(key) done")
+                if let result = try? await self.api.deleteDraft(key: key) {
+                    if var current = self.drafts[key] {
+                        // `version == nil` means there was no row at all to discard — nothing to
+                        // record, and definitely not a reason to erase whatever version this
+                        // device already knew.
+                        if let version = result.version { current.knownVersion = version }
+                        current.previousText = result.previousText
+                        self.drafts[key] = current
+                    }
+                    log?.log(.info, .drafts, "delete key=\(key) version=\(String(describing: result.version)) done")
+                }
             }
             self.currentOp[key] = nil
             if let next = self.queuedOp[key] {
@@ -290,6 +319,7 @@ public final class DraftStore {
             )
             guard var current = drafts[key] else { return }
             current.knownVersion = result.version
+            current.previousText = result.previousText
             drafts[key] = current
             retryAttempt[key] = nil
             log?.log(.info, .drafts, "flush key=\(key) chars=\(entry.text.count) version=\(result.version) done")
@@ -364,6 +394,16 @@ public final class DraftStore {
             // while this device's own text edit is still in flight.
             if entry.attachments != row.attachments {
                 entry.attachments = row.attachments
+                changed = true
+            }
+            // `previousText` is informational, like attachments — adopted whenever the row is not
+            // older than what this device knows, independent of whether the text itself is dirty.
+            // A dirty entry's `knownVersion` is exactly "the version this device last reconciled
+            // with", so a row from another device sitting ahead of that is still newer information
+            // about what to offer as "Restore earlier version", even while this device's own edit
+            // is what is actually on screen.
+            if row.version >= (entry.knownVersion ?? -1), entry.previousText != row.previousText {
+                entry.previousText = row.previousText
                 changed = true
             }
             if changed {

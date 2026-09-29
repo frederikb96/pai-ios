@@ -139,6 +139,9 @@ private final class FakeDraftsFetching: DraftsFetching, @unchecked Sendable {
         defer { lock.unlock() }
         return _lastDeviceId
     }
+    /// What the server currently holds for each key — read before a write or delete overwrites it,
+    /// so both can hand back the real `previous_text` the actual backend would.
+    private var _serverText: [String: String] = [:]
 
     func getDrafts() async throws -> [Draft] {
         record("getDrafts")
@@ -165,8 +168,8 @@ private final class FakeDraftsFetching: DraftsFetching, @unchecked Sendable {
             record("putDraft:failed:\(key)")
             throw SimulatedFailure()
         }
-        let newVersion = bumpServerVersion(key: key, deviceId: deviceId)
-        return DraftWriteResult(key: key, version: newVersion)
+        let (newVersion, previous) = bumpServerVersion(key: key, deviceId: deviceId, newText: text)
+        return DraftWriteResult(key: key, version: newVersion, previousText: previous)
     }
 
     func deleteDraft(key: String) async throws -> PaiDraftDeleteResult {
@@ -175,24 +178,26 @@ private final class FakeDraftsFetching: DraftsFetching, @unchecked Sendable {
             await deleteGate.wait()
         }
         record("deleteDraft:done:\(key)")
-        // The real backend bumps the version on a discard too, even though the response itself
-        // (`{key, deleted}`) never surfaces it — mirrored here so a `putDraft` right after a
-        // `deleteDraft` in a test still gets the version the real server would hand it.
-        _ = bumpServerVersion(key: key, deviceId: nil)
-        return PaiDraftDeleteResult(key: key, deleted: true)
+        let (newVersion, previous) = bumpServerVersion(key: key, deviceId: nil, newText: "")
+        return PaiDraftDeleteResult(key: key, version: newVersion, previousText: previous)
     }
 
     /// Plain, non-`async` on purpose — `NSLock.lock()`/`unlock()` are unavailable to call directly
-    /// from an `async` context, matching `record(_:)`'s own identical shape just below.
-    private func bumpServerVersion(key: String, deviceId: String?) -> Int {
+    /// from an `async` context, matching `record(_:)`'s own identical shape just below. Returns
+    /// the version this write/delete produced and what the row held immediately before it, the
+    /// same two things `DraftWriteResult`/`PaiDraftDeleteResult` carry on the wire.
+    private func bumpServerVersion(key: String, deviceId: String?, newText: String) -> (version: Int, previous: String)
+    {
         lock.lock()
         defer { lock.unlock() }
         if let deviceId {
             _lastDeviceId[key] = deviceId
         }
+        let previous = _serverText[key] ?? ""
+        _serverText[key] = newText
         let newVersion = (_serverVersion[key] ?? 0) + 1
         _serverVersion[key] = newVersion
-        return newVersion
+        return (newVersion, previous)
     }
 
     /// Consecutive `addDraftAttachment` calls left to fail before succeeding — mirrors
@@ -306,12 +311,39 @@ final class DraftStoreTests: XCTestCase {
         XCTAssertNil(store.draft(for: DraftKey.newSession).thinking)
     }
 
-    func testClearDraftRemovesTheLocalEntryImmediately() async {
+    func testClearDraftEmptiesTheLocalEntryImmediately() async {
         let store = DraftStore(api: FakeDraftsFetching(), scheduler: InstantDraftScheduler())
         store.setDraftText(key: "s1", text: "typing")
         store.clearDraft(key: "s1")
 
         XCTAssertEqual(store.draft(for: "s1"), .empty)
+    }
+
+    /// The whole reason a discard keeps the entry (emptied) rather than dropping it: a poll
+    /// response that predates the discard, still reporting the pre-discard row, must never read as
+    /// "newer than nothing" and put the discarded text back. Dropping `knownVersion` along with the
+    /// entry is exactly what would make that possible.
+    func testClearDraftSurvivesAStalePollThatPredatesItsOwnDelete() async {
+        let fake = FakeDraftsFetching()
+        let store = DraftStore(api: fake, scheduler: InstantDraftScheduler())
+        store.setDraftText(key: "s1", text: "hello")
+        await waitUntil { store.draft(for: "s1").knownVersion == 1 }
+
+        store.clearDraft(key: "s1")
+        await waitUntil { fake.callLog.contains("deleteDraft:done:s1") }
+        await waitUntil { store.draft(for: "s1").knownVersion == 2 }
+
+        // A poll whose request left before the discard reached the server, still reporting the
+        // pre-discard row — exactly the HTTP/2-reordering scenario the design report's own
+        // incident traced.
+        fake.remoteDrafts = [
+            Draft(key: "s1", text: "hello", sessionType: nil, workingDir: nil, updatedAt: nil, version: 1)
+        ]
+        await store.syncFromServer()
+
+        XCTAssertEqual(
+            store.draft(for: "s1").text, "",
+            "a stale pre-discard row must never resurrect text the discard already removed")
     }
 
     // MARK: - Debounced flush
@@ -757,6 +789,67 @@ final class DraftStoreTests: XCTestCase {
         await afterRelaunch.syncFromServer()
 
         XCTAssertEqual(afterRelaunch.draft(for: "s1").text, "already sent before the relaunch")
+    }
+
+    // MARK: - previousText / restorePreviousText
+
+    /// `previousText` is informational, like an attachment — adopted whenever the row is not
+    /// older than what this device knows, even while a local edit means the text itself must not
+    /// be touched.
+    func testPreviousTextIsAdoptedEvenWhileTheLocalTextEditIsUnflushed() async {
+        let fake = FakeDraftsFetching()
+        fake.remoteDrafts = [
+            Draft(
+                key: "s1", text: "server text", sessionType: nil, workingDir: nil, updatedAt: nil, version: 5,
+                previousText: "what the row held before")
+        ]
+        let store = DraftStore(api: fake, scheduler: NeverFlushDraftScheduler())
+        store.setDraftText(key: "s1", text: "still typing, unflushed")
+
+        await store.syncFromServer()
+
+        XCTAssertEqual(store.draft(for: "s1").text, "still typing, unflushed", "the dirty text must not be replaced")
+        XCTAssertEqual(store.draft(for: "s1").previousText, "what the row held before")
+    }
+
+    /// A `previousText` from a row *older* than what this device already knows must not overwrite
+    /// a fresher one this device already recorded from its own successful write.
+    func testAnOlderRowsPreviousTextDoesNotOverwriteANewerOne() async {
+        let fake = FakeDraftsFetching()
+        let store = DraftStore(api: fake, scheduler: InstantDraftScheduler())
+        store.setDraftText(key: "s1", text: "hello")
+        await waitUntil { store.draft(for: "s1").knownVersion == 1 }
+        XCTAssertEqual(store.draft(for: "s1").previousText, "")
+
+        fake.remoteDrafts = [
+            Draft(
+                key: "s1", text: "irrelevant", sessionType: nil, workingDir: nil, updatedAt: nil, version: 0,
+                previousText: "an ancient value")
+        ]
+        await store.syncFromServer()
+
+        XCTAssertEqual(store.draft(for: "s1").previousText, "", "a row older than knownVersion must be ignored")
+    }
+
+    func testRestorePreviousTextWritesItBackAsTheCurrentText() async {
+        let store = DraftStore(api: FakeDraftsFetching(), scheduler: InstantDraftScheduler())
+        store.drafts["s1"] = DraftEntry(
+            text: "current text", sessionType: nil, workingDir: nil, knownVersion: 3,
+            previousText: "the earlier version")
+
+        store.restorePreviousText(key: "s1")
+
+        XCTAssertEqual(store.draft(for: "s1").text, "the earlier version")
+    }
+
+    /// A stale menu tap (nothing to restore) must never write an empty string over real text.
+    func testRestorePreviousTextDoesNothingWhenThereIsNoPreviousText() async {
+        let store = DraftStore(api: FakeDraftsFetching(), scheduler: InstantDraftScheduler())
+        store.drafts["s1"] = DraftEntry(text: "current text", sessionType: nil, workingDir: nil, previousText: nil)
+
+        store.restorePreviousText(key: "s1")
+
+        XCTAssertEqual(store.draft(for: "s1").text, "current text")
     }
 
     // MARK: - Attachments
