@@ -24,11 +24,14 @@ public protocol OutboxStorage: Sendable {
 /// snapshot intact rather than a half-written index.
 public struct FileOutboxStorage: OutboxStorage {
     private let rootURL: URL
-    private let fileManager: FileManager
 
-    public init(rootURL: URL, fileManager: FileManager = .default) {
+    /// `FileManager` is not `Sendable` on Apple's SDK, so holding one as a stored property makes
+    /// this type unsendable there while compiling cleanly against Linux Foundation — an error
+    /// only a macOS build sees. Reach for `.default` at each call site instead.
+    private var fileManager: FileManager { .default }
+
+    public init(rootURL: URL) {
         self.rootURL = rootURL
-        self.fileManager = fileManager
         try? fileManager.createDirectory(at: filesDirectory, withIntermediateDirectories: true)
     }
 
