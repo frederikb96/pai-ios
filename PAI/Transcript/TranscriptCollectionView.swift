@@ -85,6 +85,10 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     private let store: TranscriptStore
     private let apiClient: PaiApiClient
     private let settings: SettingsStore
+    /// See ``TranscriptCollectionView/outbox``'s own doc comment — read here only to exclude an
+    /// id already drawn as its own bubble from the server-reported pending list this controller
+    /// draws inline.
+    private let outbox: OutboxStore
     /// Owns the same `Authorization` header every other transport applies, per
     /// `PaiRequestFactory`'s own doc comment. `PaiApiClient` keeps its own copy private, so the
     /// stream needs one passed in rather than reached for through the client.
@@ -245,13 +249,15 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
 
     init(
         sessionID: String, store: TranscriptStore, apiClient: PaiApiClient, settings: SettingsStore,
-        requestFactory: PaiRequestFactory, searchState: TranscriptSearchState, initialJumpMessageID: Int? = nil,
-        jumpRequests: TranscriptJumpRequests, persistedReadPosition: PersistedReadPosition? = nil
+        outbox: OutboxStore, requestFactory: PaiRequestFactory, searchState: TranscriptSearchState,
+        initialJumpMessageID: Int? = nil, jumpRequests: TranscriptJumpRequests,
+        persistedReadPosition: PersistedReadPosition? = nil
     ) {
         self.sessionID = sessionID
         self.store = store
         self.apiClient = apiClient
         self.settings = settings
+        self.outbox = outbox
         self.requestFactory = requestFactory
         self.searchState = searchState
         self.initialJumpMessageID = initialJumpMessageID
@@ -358,10 +364,14 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// Rows arrive here through this controller's own SSE handling, so a send tracked by the
     /// composer — a mutation of the same store from somewhere else entirely — would otherwise not
     /// redraw anything until the next unrelated event happened to. Same recursive re-registration
-    /// as `observeSearchState`.
+    /// as `observeSearchState`. `outbox.entries` is read inside the tracked block too — not
+    /// because this controller draws them (``OutboxBubbleStack`` does, outside this list
+    /// entirely), but because a send of this device's own reaching `.sent` changes
+    /// ``pendingBubbleTexts(sessionId:excludingOutboxIds:)``'s own exclusion set, and this is the
+    /// only way that change reaches this controller's observation at all.
     private func observePendingBubbles() {
         withObservationTracking {
-            _ = store.pendingBubbleTexts(sessionId: sessionID)
+            _ = store.pendingBubbleTexts(sessionId: sessionID, excludingOutboxIds: excludedOutboxIds())
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
@@ -369,6 +379,15 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                 self.observePendingBubbles()
             }
         }
+    }
+
+    /// The server-assigned ids of this device's own outbox entries for this session — what keeps
+    /// the server's own pending-sends list from drawing a second bubble for a send
+    /// ``OutboxBubbleStack`` already draws with retry/put-back/discard, once a status event
+    /// catches up and reports it too. An entry with no id yet (queued, sending) is not in this
+    /// set at all, which is correct: the server cannot report a send it has never seen.
+    private func excludedOutboxIds() -> Set<Int> {
+        Set(outbox.entries(for: sessionID).compactMap(\.result?.messageId))
     }
 
     /// A tapped push notification for this exact session, arriving while this controller is
@@ -780,7 +799,8 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         // rather than a row kind of their own.
         let displayMessages =
             TranscriptStore.displayMessages(store.messages[sessionID] ?? [])
-            + store.pendingBubbleTexts(sessionId: sessionID).enumerated().map { index, text in
+            + store.pendingBubbleTexts(sessionId: sessionID, excludingOutboxIds: excludedOutboxIds()).enumerated().map {
+                index, text in
                 Message.pendingBubble(sessionId: sessionID, index: index, text: text)
             }
         let width = measurementWidth()
@@ -1861,6 +1881,11 @@ struct TranscriptCollectionView: UIViewControllerRepresentable {
     let store: TranscriptStore
     let apiClient: PaiApiClient
     let settings: SettingsStore
+    /// This device's own outbox — read only to exclude an entry already drawn as an
+    /// ``OutboxBubbleStack`` bubble from the server-reported pending list this controller still
+    /// draws inline, so a send this device made is never shown twice once a status event catches
+    /// up and reports it too.
+    let outbox: OutboxStore
     let requestFactory: PaiRequestFactory
     let searchState: TranscriptSearchState
     /// Where to jump once the transcript is open — row 5.28. `nil` for an ordinary open.
@@ -1874,7 +1899,7 @@ struct TranscriptCollectionView: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> TranscriptCollectionViewController {
         TranscriptCollectionViewController(
-            sessionID: sessionID, store: store, apiClient: apiClient, settings: settings,
+            sessionID: sessionID, store: store, apiClient: apiClient, settings: settings, outbox: outbox,
             requestFactory: requestFactory, searchState: searchState, initialJumpMessageID: initialJumpMessageID,
             jumpRequests: jumpRequests, persistedReadPosition: persistedReadPosition
         )

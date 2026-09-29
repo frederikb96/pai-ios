@@ -44,6 +44,33 @@ private actor FakeVoiceSocketTransport: VoiceSocketTransportProtocol {
     }
 }
 
+/// A clock that advances itself by exactly what it is asked to sleep for, rather than actually
+/// waiting — what lets a test exercise `VoiceUplinkSession.finishingDeadlineSeconds` without
+/// costing eight real seconds of wall clock.
+private final class FakeClockAndSleep: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current = Date(timeIntervalSince1970: 0)
+
+    func now() -> Date {
+        lock.lock()
+        defer { lock.unlock() }
+        return current
+    }
+
+    func sleep(_ duration: Duration) async {
+        let seconds = Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
+        advance(by: seconds)
+    }
+
+    /// Plain, non-`async` — `NSLock.lock()`/`unlock()` are unavailable to call directly from an
+    /// `async` context.
+    private func advance(by seconds: TimeInterval) {
+        lock.lock()
+        defer { lock.unlock() }
+        current = current.addingTimeInterval(seconds)
+    }
+}
+
 @MainActor
 final class VoiceUplinkSessionTests: XCTestCase {
 
@@ -53,6 +80,18 @@ final class VoiceUplinkSessionTests: XCTestCase {
         while await !condition(), Date() < deadline {
             await Task.yield()
         }
+    }
+
+    /// A test that calls `session.stop()` purely as cleanup, with no interest in the wait itself,
+    /// should enqueue a `take_done` for the current take right before it — resolving the wait via
+    /// the real receipt path rather than needing the whole `finishingDeadlineSeconds` to pass (or
+    /// a fake clock fast enough to reach it, which would just as fast-forward the watchdog and
+    /// reconnect backoff every other test here relies on running at real speed).
+    private func stopAfterTakeDone(_ session: VoiceUplinkSession, transport: FakeVoiceSocketTransport, takeId: String)
+        async
+    {
+        await transport.enqueue(.control(.takeDone(takeId: takeId, finalSeq: 0, ended: "committed")))
+        await session.stop()
     }
 
     private func makeSession(transport: FakeVoiceSocketTransport) -> VoiceUplinkSession {
@@ -86,17 +125,16 @@ final class VoiceUplinkSessionTests: XCTestCase {
         XCTAssertEqual(reason, "button")
         XCTAssertEqual(takeId, "take-1", "the take's own id must ride the very first gate open")
 
-        await session.stop()
+        await stopAfterTakeDone(session, transport: transport, takeId: "take-1")
         _ = await startTask.value
     }
 
     /// A resend of `gate open` past the resume grace window (a fresh bus mid-take, `ready.resumed
-    /// == false`) must NOT carry the same `take_id` a second time — `write_draft_region`'s
-    /// stale-`seq` guard would silently drop every word this reconnected engine delivers, since
-    /// its own `seq` resets to 0 while the region this `take_id` already named may hold a higher
-    /// one. See this file's own commit for the full reasoning; a fresh, server-minted id is the
-    /// safe fallback until that interaction is confirmed to be handled server-side.
-    func testASecondGateOpenWithinTheSameTakeDoesNotRepeatTheTakeId() async {
+    /// == false`) MUST carry the same `take_id` again — drafts v2 writes no server-side region for
+    /// a dictating client to collide with, so re-sending the id is what keeps the take
+    /// addressable across the reconnect at all (wire contract §3, R4). Verified safe against the
+    /// backend's own test before this changed; see the design report this run followed.
+    func testASecondGateOpenWithinTheSameTakeRepeatsTheTakeId() async {
         let transport = FakeVoiceSocketTransport()
         let session = makeSession(transport: transport)
 
@@ -115,10 +153,232 @@ final class VoiceUplinkSessionTests: XCTestCase {
         guard case .gate(_, _, let secondTakeId) = frames.last else {
             return XCTFail("expected a second gate frame, got \(String(describing: frames.last))")
         }
-        XCTAssertNil(secondTakeId, "a reopen within the same take must not repeat the first gate's take_id")
+        XCTAssertEqual(secondTakeId, "take-1", "a reopen within the same take must still carry its own id")
+
+        await stopAfterTakeDone(session, transport: transport, takeId: "take-1")
+        _ = await startTask.value
+    }
+
+    // MARK: - Live transcript assembly
+
+    /// A partial replaces whatever partial preceded it; a committed segment appends and clears
+    /// the partial — the "revisions included" behaviour the wire contract describes.
+    func testPartialReplacesAndCommitAppendsAndClearsIt() async {
+        let transport = FakeVoiceSocketTransport()
+        let session = makeSession(transport: transport)
+        let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil)))
+        await waitUntil { await transport.sentFrames.count >= 2 }
+
+        await transport.enqueue(
+            .control(.transcript(takeId: "take-1", seq: 0, isFinal: false, text: "hello wor", endSample: nil)))
+        await waitUntil { await session.currentPartial == "hello wor" }
+
+        await transport.enqueue(
+            .control(.transcript(takeId: "take-1", seq: 1, isFinal: false, text: "hello world", endSample: nil)))
+        await waitUntil { await session.currentPartial == "hello world" }
+        XCTAssertEqual(session.committedText, "", "a partial must never be committed on its own")
+
+        await transport.enqueue(
+            .control(
+                .transcript(takeId: "take-1", seq: 2, isFinal: true, text: "hello world", endSample: 16000)))
+        await waitUntil { await session.committedText == "hello world" }
+        XCTAssertEqual(session.currentPartial, "", "the partial clears the instant its words are committed")
+        XCTAssertEqual(session.composedText, "hello world")
+
+        await stopAfterTakeDone(session, transport: transport, takeId: "take-1")
+        _ = await startTask.value
+    }
+
+    /// `end_sample` restarts near zero on every fresh bus, the same way `seq` does (see
+    /// `testASecondGateOpenWithinTheSameTakeRepeatsTheTakeId`'s sibling `testSeqRestartsAtZero…`
+    /// above) — so a reconnect must offset it by a gate base before comparing it to anything
+    /// committed on the bus before it, or a batch recovered after the reconnect sorts ahead of
+    /// speech that came first. Two frames delivered out of arrival order, after the offset, must
+    /// still assemble in spoken order.
+    func testEndSampleIsOffsetByTheGateBaseAcrossAReconnectSoSegmentsSortInSpokenOrder() async {
+        let transport = FakeVoiceSocketTransport()
+        let session = makeSession(transport: transport)
+        let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil)))
+        await waitUntil { await transport.sentFrames.count >= 2 }
+
+        await transport.enqueue(
+            .control(.transcript(takeId: "take-1", seq: 0, isFinal: true, text: "hello", endSample: 16_000)))
+        await waitUntil { await session.committedText == "hello" }
+
+        // A fresh bus past the resume grace window: `resumed: false` again, and its own
+        // `end_sample` numbering starts back near zero.
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r2", busOwner: .transcription, resumed: false, sessionId: nil)))
+        await waitUntil { await transport.sentFrames.count >= 3 }
+
+        // Delivered out of temporal order: "world" (the later utterance, the larger end_sample on
+        // the new bus) arrives before "there" (the earlier one) sends its own frame.
+        await transport.enqueue(
+            .control(.transcript(takeId: "take-1", seq: 0, isFinal: true, text: "world", endSample: 16_000)))
+        await waitUntil { await session.committedText == "hello world" }
+
+        await transport.enqueue(
+            .control(.transcript(takeId: "take-1", seq: 1, isFinal: true, text: "there", endSample: 8_000)))
+        await waitUntil { await session.committedText == "hello there world" }
+
+        await stopAfterTakeDone(session, transport: transport, takeId: "take-1")
+        _ = await startTask.value
+    }
+
+    /// A frame for a take this client has already sealed (Send/Skip during Finishing) must never
+    /// land — the composed text is frozen at whatever it showed the moment it was sealed.
+    func testAFrameForASealedTakeIsDroppedOnArrival() async {
+        let transport = FakeVoiceSocketTransport()
+        let session = makeSession(transport: transport)
+        let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil)))
+        await waitUntil { await transport.sentFrames.count >= 2 }
+        await transport.enqueue(
+            .control(.transcript(takeId: "take-1", seq: 0, isFinal: true, text: "before sealing", endSample: 1000)))
+        await waitUntil { await session.committedText == "before sealing" }
+
+        session.sealTake("take-1")
+        await transport.enqueue(
+            .control(
+                .transcript(takeId: "take-1", seq: 1, isFinal: true, text: "arrived after sealing", endSample: 2000)))
+        for _ in 0..<20 { await Task.yield() }
+
+        XCTAssertEqual(session.committedText, "before sealing", "a frame arriving after sealing must be dropped")
+
+        // Cleanup via `abandon()`, matching real usage: a sealed take is always followed by an
+        // abandon, never an ordinary `stop()` — which would otherwise wait out the deadline here,
+        // since a `take_done` for an already-sealed take is dropped like any other frame for it.
+        await session.abandon()
+        _ = await startTask.value
+    }
+
+    // MARK: - Stop sequence (R1–R5)
+
+    /// The ordinary stop waits for `take_done` before tearing the socket down — `bye` must not go
+    /// out before the receipt arrives.
+    func testStopWaitsForTakeDoneBeforeClosing() async {
+        let transport = FakeVoiceSocketTransport()
+        let session = makeSession(transport: transport)
+        let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil)))
+        await waitUntil { await transport.sentFrames.count >= 2 }
+
+        let stopTask = Task { await session.stop() }
+        await waitUntil {
+            await transport.sentFrames.contains { if case .gate(false, _, _) = $0 { true } else { false } }
+        }
+        // Give the stop every chance to (wrongly) race ahead to `bye` before the receipt arrives.
+        for _ in 0..<20 { await Task.yield() }
+        var frames = await transport.sentFrames
+        XCTAssertFalse(
+            frames.contains { if case .bye = $0 { true } else { false } }, "bye sent before take_done arrived")
+
+        await transport.enqueue(.control(.takeDone(takeId: "take-1", finalSeq: 0, ended: "committed")))
+        await stopTask.value
+        _ = await startTask.value
+
+        frames = await transport.sentFrames
+        XCTAssertTrue(frames.contains { if case .bye = $0 { true } else { false } }, "bye must follow the receipt")
+    }
+
+    /// The deadline is what ends the wait when no `take_done` ever arrives — proved against a
+    /// fake clock that advances by exactly what each sleep asked for, never by waiting out real
+    /// seconds.
+    func testStopGivesUpAfterTheDeadlineWithNoTakeDone() async {
+        let transport = FakeVoiceSocketTransport()
+        let clock = FakeClockAndSleep()
+        let session = VoiceUplinkSession(
+            dependencies: VoiceUplinkDependencies(
+                makeTransport: { transport },
+                socketURL: { URL(string: "wss://pai.example.com/api/voice/socket")! },
+                authToken: { "token" },
+                now: { clock.now() },
+                sleep: { await clock.sleep($0) }
+            ))
+        let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil)))
+        await waitUntil { await transport.sentFrames.count >= 2 }
 
         await session.stop()
         _ = await startTask.value
+
+        let frames = await transport.sentFrames
+        XCTAssertTrue(frames.contains { if case .bye = $0 { true } else { false } })
+    }
+
+    /// Abandon skips the wait entirely and sends the `abandon` reason — a send pressed during
+    /// Finishing must not sit through the deadline the ordinary stop would.
+    func testAbandonSkipsTheWaitAndSendsTheAbandonReason() async {
+        let transport = FakeVoiceSocketTransport()
+        let session = makeSession(transport: transport)
+        let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil)))
+        await waitUntil { await transport.sentFrames.count >= 2 }
+
+        session.sealTake("take-1")
+        await session.abandon()
+        _ = await startTask.value
+
+        let frames = await transport.sentFrames
+        let closeGates = frames.compactMap { frame -> String? in
+            guard case let .gate(open, reason, _) = frame, !open else { return nil }
+            return reason
+        }
+        XCTAssertEqual(closeGates, ["abandon"])
+        XCTAssertTrue(frames.contains { if case .bye = $0 { true } else { false } })
+    }
+
+    /// Sending during Finishing calls this while an ordinary `stop()` is already mid-wait — it
+    /// must short-circuit that SAME wait (never start a second teardown), and the gate frame it
+    /// sends must carry the abandon reason even though the ordinary close (reason `button`) has
+    /// already gone out.
+    func testRequestAbandonWhileFinishingShortCircuitsAnInFlightStop() async {
+        let transport = FakeVoiceSocketTransport()
+        let session = makeSession(transport: transport)
+        let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil)))
+        await waitUntil { await transport.sentFrames.count >= 2 }
+
+        let stopTask = Task { await session.stop() }
+        await waitUntil { await session.state == .stopping }
+        await waitUntil {
+            await transport.sentFrames.contains { if case .gate(false, "button", _) = $0 { true } else { false } }
+        }
+
+        await session.requestAbandonWhileFinishing()
+        await stopTask.value
+        _ = await startTask.value
+
+        XCTAssertEqual(session.state, .idle)
+        let closeGates = await transport.sentFrames.compactMap { frame -> String? in
+            guard case let .gate(open, reason, _) = frame, !open else { return nil }
+            return reason
+        }
+        XCTAssertEqual(closeGates, ["button", "abandon"], "the abandon gate must follow the ordinary close")
+    }
+
+    /// Stopping when there was never a live connection (still `.connecting`, nothing acked yet)
+    /// must not hang waiting for a receipt nothing will ever send.
+    func testStopWithNoLiveConnectionExitsImmediately() async {
+        let transport = FakeVoiceSocketTransport()
+        let session = makeSession(transport: transport)
+        let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
+        // Never enqueue a `ready` — the session stays `.connecting` the whole time.
+        await waitUntil { await session.state == .connecting }
+
+        await session.stop()
+        _ = await startTask.value
+
+        XCTAssertEqual(session.state, .idle)
     }
 
     /// `ready.resumed == true` must NOT resend `gate open` — the bus/engine never detached, so
@@ -141,7 +401,7 @@ final class VoiceUplinkSessionTests: XCTestCase {
         let frames = await transport.sentFrames
         XCTAssertEqual(frames.count, 2, "a resumed ready must not send a second gate frame")
 
-        await session.stop()
+        await stopAfterTakeDone(session, transport: transport, takeId: "take-1")
         _ = await startTask.value
     }
 
@@ -177,7 +437,7 @@ final class VoiceUplinkSessionTests: XCTestCase {
             sentAudio.last, expected,
             "seq must restart at 0 on the new socket even though the bus resumed")
 
-        await session.stop()
+        await stopAfterTakeDone(session, transport: transport, takeId: "take-1")
         _ = await startTask.value
     }
 }

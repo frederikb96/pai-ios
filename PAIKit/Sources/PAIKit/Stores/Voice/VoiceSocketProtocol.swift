@@ -151,7 +151,18 @@ public enum VoiceDownFrame: Sendable, Equatable {
     case state(busOwner: VoiceBusOwner, phase: String, sessionId: String?, checkpoint: String?)
     case notice(severity: String, code: String, text: String)
     case ping
-    case transcript(text: String, isFinal: Bool, seq: Int)
+    /// `endSample` is present on a committed segment (`isFinal == true`) — the engine's own
+    /// `covered_to`, used to place this segment after whatever came before it. Absent on a
+    /// partial, which always replaces whatever partial preceded it rather than being placed.
+    case transcript(takeId: String?, seq: Int, isFinal: Bool, text: String, endSample: Int?)
+    /// Sent strictly after the last `transcript` frame for `takeId` has been handed to the
+    /// transport — frame order on this one ordered stream is what makes it a receipt rather than
+    /// a promise that a client waiting on it can trust. `finalSeq` is the `seq` of that last
+    /// frame, or `-1` when the take never had one; a client holding a lower highest-applied `seq`
+    /// lost a frame across a reconnect and should run its own backfill rather than wait further.
+    /// `ended` is one of `committed`, `recovered`, `empty`, `abandoned`, `unavailable` — the stop
+    /// UX's own exit branches on this, never on inferring an outcome from a partial going quiet.
+    case takeDone(takeId: String, finalSeq: Int, ended: String)
     /// A `type` this build does not recognize — logged and otherwise ignored, matching the
     /// protocol doc: "a client that does not recognise a code falls back to showing `text`
     /// plainly", generalized here to the whole frame so a backend release ahead of this app never
@@ -193,7 +204,14 @@ public enum VoiceDownFrame: Sendable, Equatable {
             guard let text = raw["text"] as? String, let isFinal = raw["is_final"] as? Bool,
                 let seq = raw["seq"] as? Int
             else { return nil }
-            return .transcript(text: text, isFinal: isFinal, seq: seq)
+            return .transcript(
+                takeId: raw["take_id"] as? String, seq: seq, isFinal: isFinal, text: text,
+                endSample: raw["end_sample"] as? Int)
+        case "take_done":
+            guard let takeId = raw["take_id"] as? String, let finalSeq = raw["final_seq"] as? Int,
+                let ended = raw["ended"] as? String
+            else { return nil }
+            return .takeDone(takeId: takeId, finalSeq: finalSeq, ended: ended)
         default:
             return .unrecognized(type: type)
         }
@@ -206,6 +224,16 @@ public enum VoiceDownFrame: Sendable, Equatable {
         else { return nil }
         return decode(object)
     }
+}
+
+/// `take_done.ended` values — see `docs/VOICE_PROTOCOL.md`. Drives the stop UX's exit wording
+/// directly; never inferred from anything else.
+public enum VoiceTakeEndedReason {
+    public static let committed = "committed"
+    public static let recovered = "recovered"
+    public static let empty = "empty"
+    public static let abandoned = "abandoned"
+    public static let unavailable = "unavailable"
 }
 
 /// `notice.code` values this backend currently emits — see `docs/VOICE_PROTOCOL.md`. A client

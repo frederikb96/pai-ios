@@ -13,6 +13,7 @@ struct SessionDetailView: View {
     @Environment(SessionListStore.self) private var sessions
     @Environment(TranscriptStore.self) private var transcript
     @Environment(SettingsStore.self) private var settings
+    @Environment(OutboxStore.self) private var outbox
     @State private var searchState = TranscriptSearchState()
     @State private var isPresentingActionsSheet = false
     @State private var isPresentingArcMenu = false
@@ -53,7 +54,7 @@ struct SessionDetailView: View {
                     headerStrip
                     TranscriptCollectionView(
                         sessionID: sessionID, store: transcript, apiClient: connection.apiClient, settings: settings,
-                        requestFactory: connection.requestFactory, searchState: searchState,
+                        outbox: outbox, requestFactory: connection.requestFactory, searchState: searchState,
                         initialJumpMessageID: initialJumpMessageID, jumpRequests: connection.transcriptJumps,
                         persistedReadPosition: currentSession.map {
                             PersistedReadPosition(
@@ -64,6 +65,7 @@ struct SessionDetailView: View {
                     .overlay { TranscriptLoadState(sessionID: sessionID) }
                     .overlay(alignment: .top) { TranscriptOlderPageState(sessionID: sessionID) }
                     .overlay(alignment: .bottom) { TranscriptStreamStallBanner(sessionID: sessionID) }
+                    OutboxBubbleStack(sessionID: sessionID)
                     Divider()
                     if searchState.isActive {
                         TranscriptSearchBar(state: searchState)

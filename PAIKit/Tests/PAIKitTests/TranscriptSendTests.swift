@@ -154,4 +154,15 @@ final class TranscriptSendTests: XCTestCase {
 
         XCTAssertEqual(store.pendingBubbleTexts(sessionId: "s1"), [])
     }
+
+    /// `excludingOutboxIds` is what lets a caller draw its own send as an outbox bubble (with
+    /// retry, put-back and discard) without the server's own list drawing a second, plainer one
+    /// for the same message once a status event catches up and reports it.
+    func testPendingBubbleTextsExcludesIdsACallerAlreadyDrawsItself() {
+        let store = TranscriptStore()
+        store.delivery["s1"] = TranscriptDelivery(
+            pendingSends: [PendingSend(id: 8, text: "drawn by my own outbox bubble")], lastError: nil)
+
+        XCTAssertEqual(store.pendingBubbleTexts(sessionId: "s1", excludingOutboxIds: [8]), [])
+    }
 }

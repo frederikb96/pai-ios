@@ -216,15 +216,24 @@ final class SessionStoreCreateSessionTests: XCTestCase {
 
     // MARK: - create()
 
+    /// `create()` now hands the send to an `OutboxStore` rather than calling `postMessage`
+    /// directly — this is what makes it durable before the network is ever touched. Every test
+    /// below builds a fresh one against an in-memory backing store, matching how the app wires the
+    /// real disk-backed one.
+    private func makeOutbox(_ api: FakeOutboxSending) -> OutboxStore {
+        OutboxStore(api: api, storage: OutboxInMemoryStorage())
+    }
+
     func testCreateSendsTheSelectedMachineTypeAndDirectory() async {
         let api = FakeCreateSessionApi()
+        let sending = FakeOutboxSending()
         let store = CreateSessionStore(machines: MachineStore(api: FakeMachineDirectoryApi()), api: api)
         store.selectMachine("laptop")
         store.selectWorkingDir("/home/frederik/pai-cloud")
 
-        _ = await store.create(message: "hello")
+        _ = await store.create(message: "hello", outbox: makeOutbox(sending))
 
-        let calls = await api.postMessageCalls
+        let calls = await sending.postMessageCalls
         XCTAssertEqual(calls.count, 1)
         XCTAssertEqual(calls[0].agent, "laptop")
         XCTAssertEqual(calls[0].sessionType, "custom")
@@ -234,12 +243,13 @@ final class SessionStoreCreateSessionTests: XCTestCase {
 
     func testCreateReturnsAnOptimisticSessionMatchingWhatWasSent() async {
         let api = FakeCreateSessionApi()
-        await api.setPostMessageResult(.success(PostMessageResponse(sessionId: "new-id", messageId: 1)))
+        let sending = FakeOutboxSending()
+        await sending.setPostMessageResult(.success(PostMessageResponse(sessionId: "new-id", messageId: 1)))
         let store = CreateSessionStore(machines: MachineStore(api: FakeMachineDirectoryApi()), api: api)
         store.selectMachine("vm")
         store.selectSessionType("fast")
 
-        let result = await store.create(message: "hello there")
+        let result = await store.create(message: "hello there", outbox: makeOutbox(sending))
 
         guard case let .created(session) = result else { return XCTFail("expected .created, got \(result)") }
         XCTAssertEqual(session.id, "new-id")
@@ -251,39 +261,45 @@ final class SessionStoreCreateSessionTests: XCTestCase {
         XCTAssertEqual(session.kind, .conversation)
     }
 
+    /// A non-retryable failure (anything but a transport error, a 5xx, or 429) must surface as
+    /// `.failed` rather than hang forever — the outbox only retries the classes of error that a
+    /// later attempt could plausibly fix.
     func testCreateFailureSurfacesTheServerDetailAndLeavesChoicesIntact() async {
         let api = FakeCreateSessionApi()
-        await api.setPostMessageResult(
-            .failure(.detail("Maximum concurrent sessions on 'vm' (50) reached.", statusCode: 429)))
+        let sending = FakeOutboxSending()
+        await sending.setPostMessageResult(
+            .failure(.detail("Session name already taken.", statusCode: 400)))
         let store = CreateSessionStore(machines: MachineStore(api: FakeMachineDirectoryApi()), api: api)
         store.selectWorkingDir("/home/frederik/pai-cloud")
 
-        let result = await store.create(message: "hello")
+        let result = await store.create(message: "hello", outbox: makeOutbox(sending))
 
         guard case let .failed(message) = result else { return XCTFail("expected .failed, got \(result)") }
-        XCTAssertEqual(message, "Maximum concurrent sessions on 'vm' (50) reached.")
+        XCTAssertEqual(message, "Session name already taken.")
         // The screen stays put on failure — nothing about the in-progress choice is cleared.
         XCTAssertEqual(store.workingDir, "/home/frederik/pai-cloud")
     }
 
     func testCreateSendsTheSelectedModel() async {
         let api = FakeCreateSessionApi()
+        let sending = FakeOutboxSending()
         let store = CreateSessionStore(machines: MachineStore(api: FakeMachineDirectoryApi()), api: api)
         store.selectModel("opus")
 
-        _ = await store.create(message: "hello")
+        _ = await store.create(message: "hello", outbox: makeOutbox(sending))
 
-        let calls = await api.postMessageCalls
+        let calls = await sending.postMessageCalls
         XCTAssertEqual(calls[0].model, "opus")
     }
 
     func testCreateOmitsTheModelWhenNoneWasChosen() async {
         let api = FakeCreateSessionApi()
+        let sending = FakeOutboxSending()
         let store = CreateSessionStore(machines: MachineStore(api: FakeMachineDirectoryApi()), api: api)
 
-        _ = await store.create(message: "hello")
+        _ = await store.create(message: "hello", outbox: makeOutbox(sending))
 
-        let calls = await api.postMessageCalls
+        let calls = await sending.postMessageCalls
         XCTAssertNil(calls[0].model)
     }
 
@@ -291,13 +307,14 @@ final class SessionStoreCreateSessionTests: XCTestCase {
 
     func testCreateSendsTheSelectedThinkingLevel() async {
         let api = FakeCreateSessionApi()
+        let sending = FakeOutboxSending()
         let store = CreateSessionStore(machines: MachineStore(api: FakeMachineDirectoryApi()), api: api)
         store.selectModel("opus")
         store.selectThinking("high")
 
-        _ = await store.create(message: "hello")
+        _ = await store.create(message: "hello", outbox: makeOutbox(sending))
 
-        let calls = await api.postMessageCalls
+        let calls = await sending.postMessageCalls
         XCTAssertEqual(calls[0].thinking, "high")
     }
 
@@ -355,14 +372,15 @@ final class SessionStoreCreateSessionTests: XCTestCase {
 
     func testAnExplicitChoiceOnAFastSessionOverridesTheDefaultAndIsWhatGetsSent() async {
         let api = FakeCreateSessionApi()
+        let sending = FakeOutboxSending()
         let store = CreateSessionStore(machines: MachineStore(api: FakeMachineDirectoryApi()), api: api)
         store.selectSessionType("fast")
         store.selectModel("opus")
 
         XCTAssertEqual(store.resolvedModel, "opus")
-        _ = await store.create(message: "hello")
+        _ = await store.create(message: "hello", outbox: makeOutbox(sending))
 
-        let calls = await api.postMessageCalls
+        let calls = await sending.postMessageCalls
         XCTAssertEqual(calls[0].model, "opus")
     }
 
@@ -385,20 +403,23 @@ final class SessionStoreCreateSessionTests: XCTestCase {
 
     func testIsCreatingIsTrueOnlyWhileTheRequestIsInFlight() async {
         let api = FakeCreateSessionApi()
+        let sending = FakeOutboxSending()
         let store = CreateSessionStore(machines: MachineStore(api: FakeMachineDirectoryApi()), api: api)
         XCTAssertFalse(store.isCreating)
 
-        _ = await store.create(message: "hello")
+        _ = await store.create(message: "hello", outbox: makeOutbox(sending))
 
         XCTAssertFalse(store.isCreating)
     }
 }
 
-extension FakeCreateSessionApi {
+extension FakeOutboxSending {
     func setPostMessageResult(_ result: Result<PostMessageResponse, PaiError>) {
         postMessageResult = result
     }
+}
 
+extension FakeCreateSessionApi {
     func setSessionModelsResult(
         _ result: Result<[SessionModelInfo], PaiError>,
         fastDefaultModel: String = "sonnet", fastDefaultThinking: String = "low"

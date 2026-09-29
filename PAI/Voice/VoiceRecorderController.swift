@@ -385,6 +385,12 @@ final class VoiceRecorderController {
                 takeId: takeId, mode: .microphone, sampleRate: transportRate, draftKey: draftKey, preText: preText)
             ledgerTask?.cancel()
             ledgerTask = Task { [weak self] in await self?.runLedgerLoop(takeId: takeId) }
+            liveTextTask?.cancel()
+            if let draftKey {
+                liveTextTask = Task { [weak self] in await self?.runLiveTextLoop(takeId: takeId, draftKey: draftKey) }
+            } else {
+                liveTextTask = nil
+            }
         } catch {
             // `openStreamingFiles` above already opened this take's files — without persisting
             // (which cleans up on a zero-duration take, same as any other empty take), the open
@@ -457,16 +463,16 @@ final class VoiceRecorderController {
 
     /// The one place a finished take's local state is torn down, called from `persistRecording()`
     /// because that is the single funnel every ending goes through — the user's tap, a lost
-    /// connection, an interruption nothing could resume. **Writes nothing into the draft.**
+    /// connection, an interruption nothing could resume.
     ///
-    /// Unlike the ElevenLabs-era pipeline, this app never composes the dictated text itself: the
-    /// backend's `DraftRegionSink` writes every committed word straight into the session's draft
-    /// region as it is transcribed (`docs/VOICE_PROTOCOL.md`), server-side, over a plain
-    /// repository call rather than back down this socket — a live take's own text was already in
-    /// the draft, on every device, before this ever runs. What is left here is releasing the
-    /// recorder's claim on `activeDraftKey`, and folding the take's own ack watermark into the
-    /// ledger one last time so `mayBeDeleted`/backfill scheduling read the take's true final
-    /// state rather than whatever the periodic ledger loop's last tick happened to catch.
+    /// This app composes the dictated text itself now: the backend writes no draft for dictation
+    /// at all, only `transcript` frames down the socket, which `voiceSession` assembles into
+    /// `composedText` and ``runLiveTextLoop(takeId:draftKey:)`` writes into `DraftStore` as they
+    /// arrive. One last write here catches whatever landed in the gap between that loop's final
+    /// tick and the take actually ending, the same reasoning `runLedgerLoop`'s own trailing write
+    /// already relies on. What is otherwise left here is releasing the recorder's claim on
+    /// `activeDraftKey`, and folding the take's own ack watermark into the ledger one last time so
+    /// `mayBeDeleted`/backfill scheduling read the take's true final state.
     private func finishLiveText() {
         chunkConsumerTask?.cancel()
         chunkConsumerTask = nil
@@ -474,6 +480,11 @@ final class VoiceRecorderController {
         chunkContinuation = nil
         ledgerTask?.cancel()
         ledgerTask = nil
+        liveTextTask?.cancel()
+        liveTextTask = nil
+        if let takeId = currentTakeId, let draftKey = activeDraftKey {
+            applyLiveTakeText(takeId: takeId, draftKey: draftKey, newText: voiceSession.composedText)
+        }
         if let takeId = currentTakeId, let base = activeLedger, base.takeId == takeId {
             var folded = Self.foldAckedRange(
                 into: base, ackedUpTo: voiceSession.ackedUpTo, capturedUpTo: voiceSession.capturedUpTo)
@@ -485,6 +496,70 @@ final class VoiceRecorderController {
         }
         activeDraftKey = nil
         preVoiceText = ""
+    }
+
+    /// Watches `voiceSession.composedText` and writes it into the draft as it grows — polling
+    /// rather than reacting to `@Observable` directly, matching every other loop in this file that
+    /// watches this session from outside a SwiftUI view body. 150ms is comfortably faster than
+    /// ElevenLabs' own partial cadence (100-300ms), so a burst of partials never visibly lags.
+    private func runLiveTextLoop(takeId: String, draftKey: String) async {
+        var lastComposed = ""
+        while !Task.isCancelled, voiceSession.state != .idle {
+            let composed = voiceSession.composedText
+            if composed != lastComposed {
+                lastComposed = composed
+                applyLiveTakeText(takeId: takeId, draftKey: draftKey, newText: composed)
+            }
+            try? await Task.sleep(for: .milliseconds(150))
+        }
+    }
+
+    /// What every take's own text last written into a draft looked like — `DraftHeal`'s own
+    /// `previousInsertedText`, so the next write can find and replace it in place rather than
+    /// appending a duplicate. Keyed by take id; a handful of entries at most; not pruned, since a
+    /// session's whole lifetime of takes is small enough that this costs nothing to keep around.
+    private var lastWrittenTakeText: [String: String] = [:]
+
+    /// Live assembly's own append-or-heal rule: on this take's first write **in this process**,
+    /// appends after `preVoiceText`; every write after that heals the previous insertion in place.
+    /// Never used for backfill (`healBackfilledTakeText(takeId:draftKey:newText:)`), which cannot
+    /// assume an empty `lastWrittenTakeText` means "nothing is there yet" — a crash-recovered take
+    /// can hold live-written text from a process that no longer exists, and appending blindly
+    /// there would duplicate it.
+    private func applyLiveTakeText(takeId: String, draftKey: String, newText: String) {
+        guard !newText.isEmpty else { return }
+        let prefixed = "\(VoiceRecordingResult.sttPrefix)\(newText)"
+        guard let previous = lastWrittenTakeText[takeId], !previous.isEmpty else {
+            let combined = preVoiceText.isEmpty ? prefixed : "\(preVoiceText) \(prefixed)"
+            drafts.setDraftText(key: draftKey, text: combined)
+            lastWrittenTakeText[takeId] = prefixed
+            return
+        }
+        if case let .replaced(updated) = DraftHeal.heal(
+            currentDraftText: drafts.draft(for: draftKey).text, previousInsertedText: previous, healedText: prefixed)
+        {
+            drafts.setDraftText(key: draftKey, text: updated)
+        }
+        // Edited or sent since (`.notFound`): the take's own text is gone from the draft, and
+        // nothing here may resurrect it — but the take keeps dictating, so its NEXT write should
+        // still be judged against what THIS write would have looked like, not against nothing.
+        lastWrittenTakeText[takeId] = prefixed
+    }
+
+    /// Backfill's own rule: never appends, whatever `lastWrittenTakeText` holds. Only ever
+    /// replaces a previous insertion this process itself made, or does nothing — the accepted
+    /// limitation for a take recovered at launch (see this run's own report).
+    private func healBackfilledTakeText(takeId: String, draftKey: String, newText: String) {
+        guard !newText.isEmpty else { return }
+        let prefixed = "\(VoiceRecordingResult.sttPrefix)\(newText)"
+        let previous = lastWrittenTakeText[takeId] ?? ""
+        defer { lastWrittenTakeText[takeId] = prefixed }
+        guard
+            case let .replaced(updated) = DraftHeal.heal(
+                currentDraftText: drafts.draft(for: draftKey).text, previousInsertedText: previous, healedText: prefixed
+            )
+        else { return }
+        drafts.setDraftText(key: draftKey, text: updated)
     }
 
     /// Gives up the take without touching the draft — for the failures that happen before any
@@ -658,30 +733,17 @@ final class VoiceRecorderController {
         }
     }
 
-    /// One client-minted take id per source take, for the region a backfill's own recovered text
-    /// lands in — stable across every pass so a second pass rewrites the same region rather than
-    /// minting a new one (`write_draft_region`'s own `seq` guard needs a consistent identity to
-    /// guard). Never the SAME id the live socket's own `DraftRegionSink` used server-side: this
-    /// app is never told that one (`docs/VOICE_PROTOCOL.md`'s framing section carries no take id
-    /// at all on the live socket), so a long-outage recovery lands as its own region, in whatever
-    /// position among the draft's regions it happens to be written — after, not necessarily
-    /// exactly where, the words it recovers were actually spoken. A real but accepted limitation;
-    /// see this run's own report.
-    private var backfillRegionIds: [String: String] = [:]
-    private var backfillRegionSeq: [String: Int] = [:]
-
     /// Applies one backfill pass against the ledger's *current* state
     /// (`TranscriptLedger.applyingBackfill` — never the snapshot `runBackfillLoop` started
     /// reading from, which its own network round trips can leave stale), updates the take's
-    /// `RecordingMeta` coverage, and — once every gap this take had is closed — writes whatever
-    /// text this pass recovered into the take's own backfill region.
+    /// `RecordingMeta` coverage, and — for a take that has already ended — heals the take's own
+    /// reassembled text (live segments, batch segments and any still-open gap marker, in order)
+    /// into the draft via `healBackfilledTakeText(takeId:draftKey:newText:)`.
     ///
-    /// A take still actively recording never reaches the write below: the live socket is already
-    /// delivering everything it can, and a batch pass only ever fires for a gap the live path
-    /// missed (a drop longer than the bus's own reconnect grace window) — see
-    /// `VoiceUplinkSession`'s own doc comment. `newSegments` carries only what THIS pass
-    /// recovered; the region write below sends every `.batch` segment the ledger has accumulated
-    /// so far, matching `DraftRegionSink`'s own "always the take's full text so far" contract.
+    /// A take still actively recording never reaches the heal below: `applyLiveTakeText` already
+    /// writes it on every tick, and a batch pass only ever fires for a gap the live path missed (a
+    /// drop longer than the bus's own reconnect grace window) — see `VoiceUplinkSession`'s own doc
+    /// comment.
     private func applyBackfillOutcome(
         takeId: String, newSegments: [Segment], resolved: [SampleRange], failed: [(range: SampleRange, error: String)]
     ) async {
@@ -691,26 +753,10 @@ final class VoiceRecorderController {
         if takeId == currentTakeId {
             activeLedger = final
         } else if final.mode == .microphone, !newSegments.isEmpty, let draftKey = final.draftKey {
-            let recoveredText = final.segments.filter { $0.source == .batch }
-                .sorted { $0.range.lowerBound < $1.range.lowerBound }
-                .map(\.text).filter { !$0.isEmpty }.joined(separator: " ")
-            if !recoveredText.isEmpty {
-                let regionId =
-                    backfillRegionIds[takeId]
-                    ?? {
-                        let fresh = "backfill-\(takeId)"
-                        backfillRegionIds[takeId] = fresh
-                        return fresh
-                    }()
-                let seq = (backfillRegionSeq[takeId] ?? 0) + 1
-                backfillRegionSeq[takeId] = seq
-                let prefixedText = "\(VoiceRecordingResult.sttPrefix)\(recoveredText)"
-                if let result = try? await apiClient.putDraftRegion(
-                    key: draftKey, takeId: regionId, text: prefixedText,
-                    state: final.gaps.isEmpty ? "final" : "open", seq: seq
-                ), case .written = result {
-                    if final.gaps.isEmpty { final = Self.markingDelivered(final) }
-                }
+            let assembled = VoiceTextAssembly.assembledText(from: final)
+            if !assembled.isEmpty {
+                healBackfilledTakeText(takeId: takeId, draftKey: draftKey, newText: assembled)
+                if final.gaps.isEmpty { final = Self.markingDelivered(final) }
             }
         }
         try? LedgerFile.write(final, to: audioStorage.ledgerURL(id: takeId))
@@ -824,6 +870,15 @@ final class VoiceRecorderController {
         voiceSession.toggleMute()
     }
 
+    /// Sending during Finishing: an ordinary `stop()` (from the earlier tap that entered it) is
+    /// already mid-wait on `voiceSession`'s own side — this does not start a second teardown, it
+    /// seals the take and tells that already-running wait to give up immediately rather than sit
+    /// out the deadline. The composer reads the (now frozen) draft text right after this returns;
+    /// it does not need to wait for `stop()`'s own background task to finish tearing capture down.
+    func abandonCurrentTake() async {
+        await voiceSession.requestAbandonWhileFinishing()
+    }
+
     /// Re-transcribes a whole past recording through the same backend route the durable
     /// pipeline's own backfill uses — no token to mint, the backend holds the ElevenLabs key.
     func transcribe(wav: Data, language: VoiceSettings.Language) async throws -> String {
@@ -861,6 +916,27 @@ final class VoiceRecorderController {
 
         await persistRecording()
         AppVoiceDiagnosticsLog.shared.log(.info, .mode, wasOffline ? "offline take stopped" : "microphone take stopped")
+    }
+
+    /// The "computer send the message" path — `SpokenSendCommand`'s own doc comment explains why
+    /// this abandons rather than gracefully stops: the phrase is detected from the take's own live
+    /// text, which is still arriving; a graceful stop leaves `runLiveTextLoop` running through the
+    /// whole Finishing wait, and it would heal the composer's freshly-stripped text right back to
+    /// the take's raw (unstripped) transcript on its very next tick. Sealing FIRST, before doing
+    /// anything else, is what closes that window — once sealed, no further frame changes
+    /// `composedText`, so the strip the caller is about to make actually sticks.
+    func abandonAndStop() async {
+        guard isCapturing || voiceSession.state != .idle else { return }
+        if let takeId = currentTakeId {
+            voiceSession.sealTake(takeId)
+        }
+        capture.stop()
+        isCapturing = false
+        endCaptureWatchdog()
+        await voiceSession.abandon()
+        try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+        await persistRecording()
+        AppVoiceDiagnosticsLog.shared.log(.info, .mode, "microphone take abandoned (spoken send)")
     }
 
     // MARK: - Permission

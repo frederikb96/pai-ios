@@ -8,36 +8,6 @@ import Foundation
 
 // MARK: - Drafts
 
-/// One take's own dictated text, held apart from `Draft.text` so a machine's writes and a
-/// human's typing never collide. What every client renders is `text` followed by every open
-/// region in the order they were opened (the array's own order) — plain concatenation, never an
-/// offset into either string.
-///
-/// `state` becomes `overflow` when a write could not be kept (the draft's character ceiling) —
-/// a fact recorded on the row rather than a client retrying forever in silence.
-public struct DraftRegion: Codable, Sendable, Equatable, Identifiable {
-    public var id: String { takeId }
-    public let takeId: String
-    public let text: String
-    public let state: String
-    public let seq: Int
-    public let updatedAt: String
-
-    enum CodingKeys: String, CodingKey {
-        case takeId = "take_id"
-        case text, state, seq
-        case updatedAt = "updated_at"
-    }
-
-    public init(takeId: String, text: String, state: String, seq: Int, updatedAt: String) {
-        self.takeId = takeId
-        self.text = text
-        self.state = state
-        self.seq = seq
-        self.updatedAt = updatedAt
-    }
-}
-
 /// One file added to a draft, uploaded to the server immediately rather than held on the device
 /// that picked it — so a message can be composed from several devices at once.
 ///
@@ -82,6 +52,11 @@ public struct DraftAttachment: Codable, Sendable, Equatable, Identifiable {
 /// half-written message. `key` is a session id, or `"new"` for the not-yet-created session the
 /// New Session screen composes — only that draft carries `sessionType`/`workingDir`, its launch
 /// choices.
+///
+/// **No CAS, no conflict.** `version` is the only thing a client orders by (`DraftStore`'s own
+/// adoption rule: strictly greater than what this device last recorded, and only into a clean
+/// entry) — `updatedAt` stays for display only and must never be compared for ordering, which is
+/// exactly the bug this version field replaces.
 public struct Draft: Codable, Sendable, Equatable, Identifiable {
     public var id: String { key }
     public let key: String
@@ -96,7 +71,15 @@ public struct Draft: Codable, Sendable, Equatable, Identifiable {
     /// scoping as `model` above. `nil` lets Claude Code pick the plan's own default.
     public let thinking: String?
     public let updatedAt: String?
-    public let regions: [DraftRegion]
+    /// Server-assigned, `+1` on every write to the row, including a clear. The only field a
+    /// client may order by.
+    public let version: Int
+    /// The writer's own device id — diagnostics and a "recording on <device>" hint only, never
+    /// consulted for an ownership decision on this device.
+    public let deviceId: String?
+    /// What the row held immediately before this write — a one-level undo a composer can offer
+    /// as "Restore earlier version". `nil`/empty means there is nothing to restore.
+    public let previousText: String?
     public let attachments: [DraftAttachment]
 
     enum CodingKeys: String, CodingKey {
@@ -105,13 +88,16 @@ public struct Draft: Codable, Sendable, Equatable, Identifiable {
         case workingDir = "working_dir"
         case model, thinking
         case updatedAt = "updated_at"
-        case regions, attachments
+        case version
+        case deviceId = "device_id"
+        case previousText = "previous_text"
+        case attachments
     }
 
     public init(
         key: String, text: String, sessionType: String?, workingDir: String?, model: String? = nil,
-        thinking: String? = nil, updatedAt: String?,
-        regions: [DraftRegion] = [], attachments: [DraftAttachment] = []
+        thinking: String? = nil, updatedAt: String?, version: Int = 0, deviceId: String? = nil,
+        previousText: String? = nil, attachments: [DraftAttachment] = []
     ) {
         self.key = key
         self.text = text
@@ -120,7 +106,9 @@ public struct Draft: Codable, Sendable, Equatable, Identifiable {
         self.model = model
         self.thinking = thinking
         self.updatedAt = updatedAt
-        self.regions = regions
+        self.version = version
+        self.deviceId = deviceId
+        self.previousText = previousText
         self.attachments = attachments
     }
 }
@@ -514,15 +502,37 @@ public struct MeResponse: Codable, Sendable, Equatable {
 public struct PostMessageResponse: Codable, Sendable, Equatable {
     public let sessionId: String
     public let messageId: Int
+    /// `true` when this answer came from a `client_message_id` already on record rather than a
+    /// fresh insert — the idempotent replay path. A caller has nothing further to do either way:
+    /// the message was accepted exactly once.
+    public let duplicate: Bool
+    /// The version of the draft this send consumed and cleared, so the sender's own next poll is
+    /// a no-op and another device's composer reads empty without anyone issuing a delete.
+    public let draftVersion: Int?
 
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
         case messageId = "message_id"
+        case duplicate
+        case draftVersion = "draft_version"
     }
 
-    public init(sessionId: String, messageId: Int) {
+    public init(sessionId: String, messageId: Int, duplicate: Bool = false, draftVersion: Int? = nil) {
         self.sessionId = sessionId
         self.messageId = messageId
+        self.duplicate = duplicate
+        self.draftVersion = draftVersion
+    }
+
+    /// A hand-written `init` rather than the synthesized one: `duplicate` defaults to `false`
+    /// when the key is absent, so a fixture or test response written before this field existed
+    /// still decodes rather than failing every send in the corpus at once.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sessionId = try container.decode(String.self, forKey: .sessionId)
+        messageId = try container.decode(Int.self, forKey: .messageId)
+        duplicate = try container.decodeIfPresent(Bool.self, forKey: .duplicate) ?? false
+        draftVersion = try container.decodeIfPresent(Int.self, forKey: .draftVersion)
     }
 }
 

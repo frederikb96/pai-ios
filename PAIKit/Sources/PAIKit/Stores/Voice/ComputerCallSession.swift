@@ -299,9 +299,9 @@ public final class ComputerCallSession {
             }
         case .ping:
             try? await transport?.send(.pong)
-        case .transcript:
-            // This session always declares an audio downlink — a `transcript` frame is never
-            // sent to a transport that did.
+        case .transcript, .takeDone:
+            // This session always declares an audio downlink — neither frame is ever sent to a
+            // transport that did; a call has no draft to dictate into.
             break
         case .unrecognized:
             break

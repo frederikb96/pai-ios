@@ -39,33 +39,35 @@ public struct PaiFileUpload: Sendable, Equatable {
     }
 }
 
-public enum PutDraftResult: Sendable, Equatable {
-    case saved(Draft)
-    case deleted(key: String)
-    /// 409 — `baseUpdatedAt` no longer matches the server's row. Carries the row as it actually
-    /// stands, `updatedAt: nil` when another device's write emptied it out from under this one
-    /// entirely (`Draft` decodes that shape the same as any other). A passthrough case rather
-    /// than a thrown `PaiError`, the same reasoning `DraftRegionWriteResult` documents for its
-    /// own 410/413: the caller has to read the row, not just show a message.
-    case conflict(Draft)
-}
+/// `PUT /api/drafts/{key}`'s unconditional answer — no CAS, no conflict, ever. The server always
+/// accepts the write and hands back the version it bumped to; every ordering question is decided
+/// client-side by comparing this against `DraftEntry.knownVersion`. `previousText` is what the row
+/// held immediately before this write — the one-level undo `DraftStore` records alongside the new
+/// version.
+public struct DraftWriteResult: Codable, Sendable, Equatable {
+    public let key: String
+    public let version: Int
+    public let previousText: String?
 
-extension PutDraftResult: Decodable {
-    private enum CodingKeys: String, CodingKey { case key, deleted }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        if try container.decodeIfPresent(Bool.self, forKey: .deleted) == true {
-            self = .deleted(key: try container.decode(String.self, forKey: .key))
-        } else {
-            self = .saved(try Draft(from: decoder))
-        }
+    enum CodingKeys: String, CodingKey {
+        case key, version
+        case previousText = "previous_text"
     }
 }
 
+/// `DELETE /api/drafts/{key}`'s answer — the version the discard bumped to, and what the row held
+/// immediately before it, same as `DraftWriteResult`'s own fields. `version` is `nil` only when
+/// there was no row at all to discard; `DraftStore` treats that as "nothing to update", never as
+/// "the row is gone" (there was never a version to lose in the first place).
 public struct PaiDraftDeleteResult: Codable, Sendable, Equatable {
     public let key: String
-    public let deleted: Bool
+    public let version: Int?
+    public let previousText: String?
+
+    enum CodingKeys: String, CodingKey {
+        case key, version
+        case previousText = "previous_text"
+    }
 }
 
 public struct PaiFavoriteRemovalResult: Codable, Sendable, Equatable {
@@ -107,22 +109,6 @@ struct ArcSpecsPage: Codable, Sendable, Equatable {
 /// `client.ts`'s `searchSessions` inlines this union rather than naming it in `types.ts`.
 public enum SessionSearchMode: String, Sendable, Equatable {
     case fuzzy, semantic
-}
-
-/// One take's own dictated region write — `PUT /api/drafts/{key}/takes/{take_id}`'s outcomes.
-/// A plain 200 decodes as `.written`; 410 (the take's region already closed — a flatten, or the
-/// character ceiling) and 413 (this very write would cross it) carry structured bodies the caller
-/// must read, not just a status to show, so both are passthrough cases here rather than a thrown
-/// `PaiError` — the same reasoning `SecretGrantResult` documents for its own 409/422/429.
-public enum DraftRegionWriteResult: Sendable, Equatable {
-    case written(DraftRegion)
-    /// 410 — this take's region is no longer open (flattened, or already overflowed). The
-    /// backend's own signal that a still-running backfill should fall back to text-search
-    /// healing against the current `text` instead of writing this region again.
-    case closed(DraftRegion)
-    /// 413 — accepting this write would push the draft over its character ceiling; the existing
-    /// region (if any) is closed as `overflow` server-side as part of the refusal.
-    case overflow(total: Int, limit: Int, region: DraftRegion?)
 }
 
 /// Raw bytes plus the server-assigned filename — a download, not a JSON response.
@@ -487,10 +473,23 @@ public struct PaiApiClient: Sendable {
 
     /// Send a message. Omitting `sessionId` **creates** the session — one path serves both the
     /// New Session screen and an existing chat (`client.ts:81-104`).
+    ///
+    /// `clientMessageId` is required — a uuid v4 minted once when Send is pressed and never
+    /// re-minted for a retry (the outbox's own retry loop resends the identical id). The server
+    /// looks it up before doing anything else: found, it answers the existing result with
+    /// `duplicate: true`; a racing duplicate insert is caught and answered the same way. This is
+    /// what makes a retried POST — after a timeout, after a reload, after an app kill — safe to
+    /// resend rather than something that must first prove the earlier attempt failed.
+    ///
+    /// `draftAttachmentIds` claims exactly those ids and nothing else — the old behaviour of
+    /// letting the server claim "whatever is on the draft" is what let a photo staged for the
+    /// *next* message get swept into a queued earlier one.
     public func postMessage(
         sessionId: String? = nil,
         message: String,
+        clientMessageId: String = UUID().uuidString,
         files: [PaiFileUpload] = [],
+        draftAttachmentIds: [String] = [],
         sessionType: String? = nil,
         workingDir: String? = nil,
         agent: String? = nil,
@@ -501,8 +500,12 @@ public struct PaiApiClient: Sendable {
         let boundary = "PAIKit-\(UUID().uuidString)"
         var body = Data()
         Self.appendFormField(&body, boundary: boundary, name: "message", value: message)
+        Self.appendFormField(&body, boundary: boundary, name: "client_message_id", value: clientMessageId)
         for file in files {
             Self.appendFormFile(&body, boundary: boundary, name: "files", file: file)
+        }
+        for attachmentId in draftAttachmentIds {
+            Self.appendFormField(&body, boundary: boundary, name: "draft_attachment_ids", value: attachmentId)
         }
         if let sessionId { Self.appendFormField(&body, boundary: boundary, name: "session_id", value: sessionId) }
         if let sessionType {
@@ -654,64 +657,45 @@ public struct PaiApiClient: Sendable {
         try await send(path: "/api/drafts")
     }
 
+    /// Unconditional — no `base_updated_at`, no CAS, no 409. An empty `text` writes an empty row
+    /// with a version bump; it does not delete the row.
     public func putDraft(
         key: String,
         text: String,
+        deviceId: String? = nil,
         sessionType: String? = nil,
         workingDir: String? = nil,
         model: String? = nil,
-        thinking: String? = nil,
-        baseUpdatedAt: String? = nil
-    ) async throws -> PutDraftResult {
+        thinking: String? = nil
+    ) async throws -> DraftWriteResult {
         struct Body: Encodable {
             let text: String
+            let deviceId: String?
             let sessionType: String?
             let workingDir: String?
             let model: String?
             let thinking: String?
-            let baseUpdatedAt: String?
             enum CodingKeys: String, CodingKey {
                 case text, thinking
+                case deviceId = "device_id"
                 case sessionType = "session_type"
                 case workingDir = "working_dir"
                 case model
-                case baseUpdatedAt = "base_updated_at"
             }
         }
-        let (statusCode, data) = try await sendPassingThrough(
+        return try await send(
             path: "/api/drafts/\(Self.encodeDraftKey(key))",
             method: "PUT",
             body: try Self.jsonBody(
                 Body(
-                    text: text, sessionType: sessionType, workingDir: workingDir, model: model, thinking: thinking,
-                    baseUpdatedAt: baseUpdatedAt)),
-            passthrough: [409]
-        )
-        do {
-            if statusCode == 409 {
-                return .conflict(try JSONDecoder().decode(Draft.self, from: data))
-            }
-            return try JSONDecoder().decode(PutDraftResult.self, from: data)
-        } catch {
-            throw PaiError.decoding("\(error)")
-        }
-    }
-
-    /// Folds the named open regions into `text` and closes them — what a client calls before
-    /// editing dictated text itself, since editing is a write to machine-owned text otherwise.
-    /// `baseUpdatedAt` makes the write conditional, same as `putDraft`'s own.
-    public func flattenDraft(key: String, takeIds: [String], baseUpdatedAt: String?) async throws -> PutDraftResult {
-        struct Body: Encodable {
-            let takeIds: [String]; let baseUpdatedAt: String?
-            enum CodingKeys: String, CodingKey { case takeIds = "take_ids"; case baseUpdatedAt = "base_updated_at" }
-        }
-        return try await send(
-            path: "/api/drafts/\(Self.encodeDraftKey(key))/flatten",
-            method: "POST",
-            body: try Self.jsonBody(Body(takeIds: takeIds, baseUpdatedAt: baseUpdatedAt))
+                    text: text, deviceId: deviceId, sessionType: sessionType, workingDir: workingDir, model: model,
+                    thinking: thinking))
         )
     }
 
+    /// Explicit user discard — clears text, tombstones attachments, removes the VM `drafts/<key>/`
+    /// directory — but never removes the row itself, implemented as a text-and-version write like
+    /// any other.
     public func deleteDraft(key: String) async throws -> PaiDraftDeleteResult {
         try await send(
             path: "/api/drafts/\(Self.encodeDraftKey(key))",
@@ -1147,45 +1131,7 @@ public struct PaiApiClient: Sendable {
         try await send(path: "/api/settings/voice", method: "PUT", body: try Self.jsonBody(update))
     }
 
-    // MARK: Voice takes — the live socket's own region write, and offline/backfill batch STT
-
-    /// Writes one take's own region of a draft — never `text`, which only typing writes. The
-    /// live dictation path never calls this itself (the backend's `DraftRegionSink` writes
-    /// straight through its own repository call, no HTTP round trip); this is what a client-side
-    /// backfill (recovering a stretch the live socket never delivered) or an offline recording's
-    /// later transcription uses to land its own text.
-    public func putDraftRegion(
-        key: String, takeId: String, text: String, state: String, seq: Int
-    ) async throws -> DraftRegionWriteResult {
-        struct Body: Encodable { let text: String; let state: String; let seq: Int }
-        let (statusCode, data) = try await sendPassingThrough(
-            path: "/api/drafts/\(Self.encodeDraftKey(key))/takes/\(takeId)",
-            method: "PUT",
-            body: try Self.jsonBody(Body(text: text, state: state, seq: seq)),
-            passthrough: [410, 413]
-        )
-        switch statusCode {
-        case 410:
-            return .closed(try JSONDecoder().decode(DraftRegion.self, from: data))
-        case 413:
-            struct OverflowBody: Decodable { let total: Int; let limit: Int; let region: DraftRegion? }
-            let body = try JSONDecoder().decode(OverflowBody.self, from: data)
-            return .overflow(total: body.total, limit: body.limit, region: body.region)
-        default:
-            return .written(try JSONDecoder().decode(DraftRegion.self, from: data))
-        }
-    }
-
-    /// Abandons a take's region outright — a hard delete, never a tombstone (only the client that
-    /// owns a take could ever try to remove it).
-    public func deleteDraftRegion(key: String, takeId: String) async throws {
-        try await sendDiscardingResponse(
-            path: "/api/drafts/\(Self.encodeDraftKey(key))/takes/\(takeId)",
-            method: "DELETE",
-            body: nil,
-            contentType: nil
-        )
-    }
+    // MARK: Voice takes — offline/backfill batch STT
 
     /// Re-transcribes a stretch of audio in batch through the backend, which holds the
     /// ElevenLabs key server-side — the app never talks to ElevenLabs directly. `takeId` is
@@ -1193,7 +1139,8 @@ public struct PaiApiClient: Sendable {
     /// `resumeToken`/sample range lets the backend merge the result into that bus's own
     /// in-progress take, but this session has no bus to resume by the time it needs this call
     /// (see `VoiceUplinkSession`'s own doc comment on the long-reconnect gap), so those three are
-    /// always omitted here and the caller writes the returned text into a draft region itself.
+    /// always omitted here and the caller heals the returned text into the draft's own `text`
+    /// itself (`DraftHeal`).
     public func transcribeVoiceTake(takeId: String, wav: Data, languageCode: String?) async throws -> String {
         let boundary = "PAIKit-\(UUID().uuidString)"
         // The WAV needs its own file part with a content type — `appendFormFile`'s shape, but for

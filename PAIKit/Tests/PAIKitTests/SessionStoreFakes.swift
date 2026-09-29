@@ -234,17 +234,9 @@ actor FakeSubagentListApi: SubagentListApiClient {
 // MARK: - CreateSessionApiClient
 
 actor FakeCreateSessionApi: CreateSessionApiClient {
-    private(set) var postMessageCalls:
-        [(
-            sessionId: String?, message: String, sessionType: String?, workingDir: String?, agent: String?,
-            model: String?, thinking: String?
-        )] = []
     var sessionTypesResult: Result<[SessionType], PaiError> = .success([])
     var sessionModelsResult: Result<SessionModelsResponse, PaiError> = .success(
         SessionModelsResponse(models: [], fastDefaultModel: "sonnet", fastDefaultThinking: "low")
-    )
-    var postMessageResult: Result<PostMessageResponse, PaiError> = .success(
-        PostMessageResponse(sessionId: "new-session-id", messageId: 1)
     )
 
     func getSessionTypes() async throws -> [SessionType] {
@@ -260,15 +252,29 @@ actor FakeCreateSessionApi: CreateSessionApiClient {
         case let .failure(error): throw error
         }
     }
+}
+
+// MARK: - OutboxSending — what `CreateSessionStore.create()` now sends through
+
+actor FakeOutboxSending: OutboxSending {
+    private(set) var postMessageCalls:
+        [(
+            sessionId: String?, message: String, clientMessageId: String, sessionType: String?, workingDir: String?,
+            agent: String?, model: String?, thinking: String?
+        )] = []
+    var postMessageResult: Result<PostMessageResponse, PaiError> = .success(
+        PostMessageResponse(sessionId: "new-session-id", messageId: 1)
+    )
 
     func postMessage(
-        sessionId: String?, message: String, files: [PaiFileUpload], sessionType: String?, workingDir: String?,
-        agent: String?, model: String?, thinking: String?, clientMode: String?
+        sessionId: String?, message: String, clientMessageId: String, files: [PaiFileUpload],
+        draftAttachmentIds: [String], sessionType: String?, workingDir: String?, agent: String?, model: String?,
+        thinking: String?, clientMode: String?
     ) async throws -> PostMessageResponse {
         postMessageCalls.append(
             (
-                sessionId: sessionId, message: message, sessionType: sessionType, workingDir: workingDir,
-                agent: agent, model: model, thinking: thinking
+                sessionId: sessionId, message: message, clientMessageId: clientMessageId, sessionType: sessionType,
+                workingDir: workingDir, agent: agent, model: model, thinking: thinking
             )
         )
         switch postMessageResult {

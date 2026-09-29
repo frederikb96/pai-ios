@@ -56,7 +56,7 @@ struct ComputerCallView: View {
             case .computer:
                 Spacer()
             case .call(let sessionId, _):
-                DictatedDraftView(text: drafts.draft(for: sessionId).displayText)
+                DictatedDraftView(text: drafts.draft(for: sessionId).text)
                     // The words a call dictates arrive only through the draft — the backend
                     // writes them into the session's own draft region, never over the voice
                     // socket (`docs/VOICE_PROTOCOL.md`, "Composer text sync … is REST + SSE, not

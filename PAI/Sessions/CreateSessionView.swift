@@ -27,6 +27,7 @@ struct CreateSessionView: View {
     @Environment(DraftStore.self) private var drafts
     @Environment(StagedAttachmentStore.self) private var staging
     @Environment(ClaudeAuthStore.self) private var claudeAuth
+    @Environment(OutboxStore.self) private var outbox
 
     @State private var createSession: CreateSessionStore?
     @State private var isPresentingDirectoryBrowser = false
@@ -424,7 +425,8 @@ struct CreateSessionView: View {
             }
 
             if !displayAttachments.isEmpty {
-                AttachmentPreviewStrip(attachments: displayAttachments, onRemove: removeAttachment)
+                AttachmentPreviewStrip(
+                    attachments: displayAttachments, onRemove: removeAttachment, onRetry: retryAttachment)
             }
 
             // Same left-to-right order as `ComposerBar`: field, plus, mic, send. Two composers
@@ -432,7 +434,8 @@ struct CreateSessionView: View {
             // arrangement on its own.
             HStack(alignment: .bottom, spacing: 8) {
                 ComposerTextEditor(
-                    text: textBinding, height: $textHeight, placeholder: "What would you like to work on?",
+                    text: textBinding(voiceController: voiceController), height: $textHeight,
+                    placeholder: "What would you like to work on?",
                     scrollToTailOnNextUpdate: $scrollToTailOnNextUpdate,
                     onPasteImages: { images in
                         stageAttachments(
@@ -452,12 +455,14 @@ struct CreateSessionView: View {
                     hasSession: false,
                     offersStartCallAfterSend: !startsCallOnSend,
                     canGrantSecretAccess: false,
+                    canRestorePreviousText: canRestorePreviousText,
                     onPastRecordings: { showingRecordingsSheet = true },
                     onPastMessages: { showingSentMessagesSheet = true },
                     onAddPhoto: { showingPhotoPicker = true },
                     onAddFile: { showingFilePicker = true },
                     onTemporaryNote: { showingTemporaryNote = true },
                     onSecretGrant: {},
+                    onRestorePreviousText: { drafts.restorePreviousText(key: DraftKey.newSession) },
                     onCancel: {},
                     onStartCallAfterSend: { startCallAfterSend(voiceController) }
                 )
@@ -469,48 +474,57 @@ struct CreateSessionView: View {
                     Task { await toggleRecording(voiceController: voiceController) }
                 }
 
-                if isRecordingHere(voiceController) {
+                // Mute holds the slot while a take is actively recording; Finishing gives it back
+                // to Send — the stop-recording design's own rule, matching `ComposerBar`.
+                if isRecordingHere(voiceController), voiceController.state != .stopping {
                     MuteButton(controller: voiceController) { voiceController.toggleMute() }
                 } else {
-                    sendButton(createSession)
+                    sendButton(createSession, voiceController)
                 }
             }
         }
-        // Nothing else on this screen re-polls `DraftStore` (it syncs once, on appear) — while
-        // dictating here the backend is writing new words into this draft's own region
-        // (`docs/VOICE_PROTOCOL.md`'s "Composer text sync ... is REST + SSE, not this socket"),
-        // so this take pulls them itself, at the same 1s cadence `ComposerBar` tightens to for its
-        // own active take. Also what keeps the editor scrolled to the tail as the field grows.
+        // Keeps the editor scrolled to the tail as a take's own live text grows — the words
+        // themselves arrive through `VoiceRecorderController` writing straight into `DraftStore`,
+        // not through any poll here.
         .task(id: isRecordingHere(voiceController)) {
             guard isRecordingHere(voiceController) else { return }
-            var lastText = drafts.draft(for: DraftKey.newSession).displayText
+            var lastText = drafts.draft(for: DraftKey.newSession).text
             while !Task.isCancelled, isRecordingHere(voiceController) {
-                await drafts.syncFromServer()
-                let currentText = drafts.draft(for: DraftKey.newSession).displayText
+                let currentText = drafts.draft(for: DraftKey.newSession).text
                 if currentText != lastText {
                     lastText = currentText
                     scrollToTailOnNextUpdate = true
-                    // "Computer send the message", spoken with the phone already pocketed — the
-                    // one command a hands-free take must still catch with no live transcript feed
-                    // to run the full detector against (see `SpokenSendCommand`'s own doc
-                    // comment). Strips the phrase, then sends exactly as tapping Send would.
+                    // "Computer send the message", spoken with the phone already pocketed — see
+                    // `VoiceRecorderController.abandonAndStop()`'s own doc comment for why this
+                    // abandons rather than gracefully stops.
                     if let stripped = SpokenSendCommand.strip(from: currentText) {
-                        drafts.setDraftText(key: DraftKey.newSession, text: stripped)
-                        send(createSession)
+                        Task {
+                            await voiceController.abandonAndStop()
+                            drafts.setDraftText(key: DraftKey.newSession, text: stripped)
+                            send(createSession, voiceController)
+                        }
                         return
                     }
                 }
-                try? await Task.sleep(for: .seconds(1))
+                try? await Task.sleep(for: .milliseconds(150))
             }
+        }
+        // Same escape as `ComposerBar`'s own: leaving mid-drain must not leave the wait running
+        // unattended behind a screen nobody is looking at.
+        .onDisappear {
+            guard isRecordingHere(voiceController), voiceController.state == .stopping else { return }
+            Task { await voiceController.abandonCurrentTake() }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.bar)
     }
 
-    private func sendButton(_ createSession: CreateSessionStore) -> some View {
+    private func sendButton(_ createSession: CreateSessionStore, _ voiceController: VoiceRecorderController)
+        -> some View
+    {
         Button {
-            send(createSession)
+            send(createSession, voiceController)
         } label: {
             if createSession.isCreating {
                 ProgressView()
@@ -532,25 +546,25 @@ struct CreateSessionView: View {
                 || !drafts.draft(for: DraftKey.newSession).attachments.isEmpty)
     }
 
-    private func send(_ createSession: CreateSessionStore) {
-        let wasRecording = environment.connection.map { isRecordingHere($0.voice) } ?? false
+    private func send(_ createSession: CreateSessionStore, _ voiceController: VoiceRecorderController) {
+        let isRecordingHereNow = isRecordingHere(voiceController)
+        // Finishing is the one case Send is reachable while a take still exists — see
+        // `ComposerBar.send(draftStore:voiceController:)`'s identical reasoning.
+        let isFinishing = isRecordingHereNow && voiceController.state == .stopping
         let attachmentsSnapshot = stagedAttachments
-        // Already-uploaded bytes ride along via the backend's own auto-claim
-        // (`_claim_draft_attachments`, keyed on the `new` draft) — only what never made it to the
-        // server needs to travel inline. See `ComposerBar.send(draftStore:)` for the identical
-        // reasoning.
+        let uploadedAttachmentIds = drafts.draft(for: DraftKey.newSession).attachments.map(\.id)
+        // Already-uploaded bytes are claimed explicitly by id — only what never made it to the
+        // server travels inline. See `ComposerBar.send(draftStore:voiceController:)` for the
+        // identical reasoning.
         let files = attachmentsSnapshot.filter { attachment in
             if case .uploaded = attachment.uploadState { return false }
             return true
         }.map { PaiFileUpload(filename: $0.filename, mimeType: $0.mimeType, data: $0.data) }
         Task {
             errorMessage = nil
-            // A still-running take is still writing into this draft's own region on the backend —
-            // sending while it is open would race that write and post a message shorter than what
-            // was actually said. Stopping first closes the region cleanly; one more sync catches
-            // whatever committed in the instant before the stop reached the backend, so the words
-            // spoken right up to "computer send the message" are never the ones left behind.
-            if wasRecording, let voiceController = environment.connection?.voice {
+            if isFinishing {
+                await voiceController.abandonCurrentTake()
+            } else if isRecordingHereNow {
                 await voiceController.stop()
                 await drafts.syncFromServer()
             }
@@ -558,11 +572,16 @@ struct CreateSessionView: View {
             if !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 settings.saveSentMessage(messageText)
             }
-            switch await createSession.create(message: messageText, files: files) {
+            // `create()` persists the send to the outbox before it ever touches the network, so
+            // durability does not depend on clearing the draft here — only whether the composer
+            // *looks* cleared does. Left in place until success (matching the pre-outbox
+            // behaviour) is what keeps the failure branch simple: there is nothing to restore,
+            // because nothing here was touched.
+            switch await createSession.create(
+                message: messageText, files: files, draftAttachmentIds: uploadedAttachmentIds, outbox: outbox
+            ) {
             case .created(let session):
                 sessionList.prependOptimisticSession(session)
-                // Same "clear only once it is truly sent" rule `ComposerBar` follows: nothing
-                // here undoes this on failure, since the failure branch below never reaches it.
                 drafts.clearDraft(key: DraftKey.newSession)
                 staging.set([], for: DraftKey.newSession)
                 // Push before dismissing. A push onto the stack behind a sheet that is in the
@@ -614,6 +633,11 @@ struct CreateSessionView: View {
         }
     }
 
+    private func retryAttachment(_ attachment: ComposerAttachment) {
+        guard case .staged(let staged) = attachment else { return }
+        staging.retryUpload(id: staged.id, in: DraftKey.newSession, via: drafts)
+    }
+
     /// The one entry point every attachment source funnels through — a 50MB file discovered here
     /// fails immediately with a named reason, matching `ComposerBar`'s own guard.
     private func stageAttachments(_ staged: [StagedAttachment]) {
@@ -645,16 +669,29 @@ struct CreateSessionView: View {
     // MARK: - Text / drafts
 
     /// See `ComposerBar.textBinding`'s own doc comment for why the draft store is the field's
-    /// only storage — the same reasoning applies here.
-    private var textBinding: Binding<String> {
+    /// only storage, and for why landing in this setter at all is what makes it safe to read as
+    /// Freddy typing rather than the take's own live text arriving.
+    private func textBinding(voiceController: VoiceRecorderController) -> Binding<String> {
         Binding(
-            get: { drafts.draft(for: DraftKey.newSession).displayText },
-            set: { newValue in drafts.setDraftText(key: DraftKey.newSession, text: newValue) }
+            get: { drafts.draft(for: DraftKey.newSession).text },
+            set: { newValue in
+                drafts.setDraftText(key: DraftKey.newSession, text: newValue)
+                if isRecordingHere(voiceController), voiceController.state == .stopping {
+                    Task { await voiceController.abandonCurrentTake() }
+                }
+            }
         )
     }
 
     private var text: String {
-        drafts.draft(for: DraftKey.newSession).displayText
+        drafts.draft(for: DraftKey.newSession).text
+    }
+
+    /// See `ComposerBar.canRestorePreviousText`'s own doc comment — the same gate, same reasoning.
+    private var canRestorePreviousText: Bool {
+        let entry = drafts.draft(for: DraftKey.newSession)
+        guard let previous = entry.previousText, !previous.isEmpty else { return false }
+        return previous != entry.text
     }
 
     private var stagedAttachments: [StagedAttachment] {
@@ -677,8 +714,8 @@ struct CreateSessionView: View {
     // MARK: - Voice
 
     /// This sheet's take is the one the shared recorder is running against `DraftKey.newSession`
-    /// — the same key this screen's own composer reads, so the backend's `DraftRegionSink`
-    /// writes dictated words straight into the field this screen already shows, exactly as
+    /// — the same key this screen's own composer reads, so `VoiceRecorderController` writes
+    /// dictated words straight into the field this screen already shows, exactly as
     /// `ComposerBar`'s own take does for an existing session.
     private func isRecordingHere(_ controller: VoiceRecorderController) -> Bool {
         controller.activeDraftKey == DraftKey.newSession && controller.state != .idle
@@ -695,11 +732,13 @@ struct CreateSessionView: View {
         case .recording, .connecting, .paused, .reconnecting, .transcriptionStopped:
             // A tap always means "end the take", regardless of which of these mid-take states it
             // caught. Same rule as `ComposerBar`'s own record button: one control, one behaviour,
-            // on both screens. Nothing to apply afterward — the backend already wrote every
-            // committed word into this draft's own region as it was transcribed.
+            // on both screens. Nothing to apply afterward — every committed word is already in the
+            // draft, written there as it was transcribed.
             await voiceController.stop()
         case .stopping:
-            break
+            // Same escape `ComposerBar` gives during Finishing: stop waiting on `take_done` or the
+            // deadline instead of sitting it out. See `VoiceRecorderController.abandonCurrentTake`.
+            await voiceController.abandonCurrentTake()
         }
     }
 

@@ -22,12 +22,15 @@ enum ComposerAttachment: Identifiable {
 struct AttachmentPreviewStrip: View {
     let attachments: [ComposerAttachment]
     let onRemove: (ComposerAttachment) -> Void
+    var onRetry: (ComposerAttachment) -> Void = { _ in }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: 8) {
                 ForEach(attachments) { attachment in
-                    AttachmentChip(attachment: attachment, onRemove: { onRemove(attachment) })
+                    AttachmentChip(
+                        attachment: attachment, onRemove: { onRemove(attachment) },
+                        onRetry: { onRetry(attachment) })
                 }
             }
             .padding(.horizontal, 4)
@@ -39,10 +42,11 @@ struct AttachmentPreviewStrip: View {
 private struct AttachmentChip: View {
     let attachment: ComposerAttachment
     let onRemove: () -> Void
+    let onRetry: () -> Void
 
     var body: some View {
         switch attachment {
-        case .staged(let staged): StagedAttachmentChip(attachment: staged, onRemove: onRemove)
+        case .staged(let staged): StagedAttachmentChip(attachment: staged, onRemove: onRemove, onRetry: onRetry)
         case .remote(let remote): RemoteAttachmentChip(attachment: remote, onRemove: onRemove)
         }
     }
@@ -51,6 +55,7 @@ private struct AttachmentChip: View {
 private struct StagedAttachmentChip: View {
     let attachment: StagedAttachment
     let onRemove: () -> Void
+    let onRetry: () -> Void
 
     /// A failed upload is not a lost file — the bytes are still here and the send carries them
     /// inline. Said out loud anyway, because "this one is only on this phone" is the difference
@@ -58,22 +63,28 @@ private struct StagedAttachmentChip: View {
     private var uploadNote: (text: String, isProblem: Bool)? {
         switch attachment.uploadState {
         case .uploading: return ("Uploading…", false)
-        case .failed: return ("Only on this device", true)
+        case .failed: return ("Upload failed — sent inline otherwise", true)
         case .uploaded, .none: return nil
         }
     }
+
+    private var showsRetry: Bool { attachment.uploadState == .failed }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             ZStack(alignment: .topTrailing) {
                 thumbnail
-                removeButton
+                HStack(spacing: 4) {
+                    if showsRetry { retryButton }
+                    removeButton
+                }
+                .offset(x: 6, y: -6)
             }
             if let note = uploadNote {
                 Text(note.text)
                     .font(PaiTypography.caption.font)
                     .foregroundStyle(note.isProblem ? PaiPalette.Semantic.errorText : PaiPalette.Semantic.textMuted)
-                    .lineLimit(1)
+                    .lineLimit(2)
             }
             if attachment.wasCompressed {
                 Text("\(formatFileSize(attachment.originalSize)) → \(formatFileSize(attachment.currentSize))")
@@ -114,8 +125,16 @@ private struct StagedAttachmentChip: View {
                 .foregroundStyle(.white, .black.opacity(0.6))
                 .font(.system(size: 18))
         }
-        .offset(x: 6, y: -6)
         .accessibilityLabel("Remove file")
+    }
+
+    private var retryButton: some View {
+        Button(action: onRetry) {
+            Image(systemName: "arrow.clockwise.circle.fill")
+                .foregroundStyle(.white, PaiPalette.primary500)
+                .font(.system(size: 18))
+        }
+        .accessibilityLabel("Retry upload")
     }
 }
 

@@ -38,7 +38,11 @@ struct VoiceRecorderButton: View {
         // uplink's own attempt (`VoiceUplinkSession.stop()` guards only on `!= .idle`, so this
         // reaches it from `.connecting` too) and returns to idle, on every client. Never cancels
         // the recording itself — the recorder has no idea a connection exists at all.
-        .disabled(displayState == .stopping || !canStart && displayState == .idle)
+        //
+        // `.stopping` (Finishing) is tappable too, for the same reason: waiting out the drain
+        // used to be the only option. A tap here seals the take locally instead of waiting for
+        // `take_done` or the deadline — nothing is lost, the audio is already in Recordings.
+        .disabled(!canStart && displayState == .idle)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier("voice-recorder-button")
     }
@@ -71,7 +75,7 @@ struct VoiceRecorderButton: View {
     private var accessibilityLabel: String {
         switch displayState {
         case .connecting: "Connecting… Tap to cancel"
-        case .stopping: "Stopping…"
+        case .stopping: "Finishing… Tap to stop now"
         case .reconnecting: "Reconnecting… Tap to cancel"
         case .recording: "Stop recording"
         case .paused: "Paused — stop recording"
@@ -107,7 +111,10 @@ struct VoiceRecordingIndicator: View {
 
     private var label: String? {
         switch controller.state {
-        case .recording, .stopping: controller.isMuted ? "Muted" : "Rec"
+        case .recording: controller.isMuted ? "Muted" : "Rec"
+        // Finishing, never "Rec" — the microphone has genuinely stopped by now, and claiming
+        // otherwise is exactly the false-liveness reading `.paused`'s own case already avoids.
+        case .stopping: "Finishing…"
         case .connecting: "Connecting…"
         case .paused: "Paused"
         case .reconnecting: "Reconnecting…"
@@ -118,7 +125,7 @@ struct VoiceRecordingIndicator: View {
 
     private var color: Color {
         switch controller.state {
-        case .paused, .reconnecting, .transcriptionStopped: PaiPalette.Semantic.warningText
+        case .paused, .reconnecting, .transcriptionStopped, .stopping: PaiPalette.Semantic.warningText
         default: controller.isMuted ? PaiPalette.Semantic.warningText : PaiPalette.Semantic.errorText
         }
     }

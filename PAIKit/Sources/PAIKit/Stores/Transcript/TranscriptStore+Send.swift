@@ -6,6 +6,17 @@ import Foundation
 /// Exists only to cover the round trip: the moment a status event lists the send, the server's
 /// own list draws it instead, and this is dropped. So a local bubble is never the thing that
 /// decides whether a message arrived — see ``TranscriptStore/trackSend(sessionId:text:send:)``.
+///
+/// **Nothing in the app populates this any more.** `ComposerBar`'s own send renders from
+/// `OutboxStore.entries` directly (`OutboxBubbleStack`), which is what actually satisfies "queued,
+/// sending and failed read as themselves, and survive a reload" — a `PendingMessage` is in-memory
+/// only and does neither. This type is kept for the OTHER half `trackSend` was built for: a send
+/// this device tracked by awaiting a request handle rather than an outbox entry, if one is ever
+/// added back. Safe to delete, along with `trackSend`/`reconcilePending` and their tests, once
+/// nothing calls `trackSend` (true today, and true for as long as every send goes through the
+/// outbox) AND no such caller is expected — at that point `pendingBubbleTexts` collapses to just
+/// the server-reported `delivery(for:).pendingSends` half, which is the part still load-bearing
+/// (another device's own pending sends).
 public struct PendingMessage: Equatable, Sendable {
     /// Identifies the bubble before the send request has answered with a row id.
     public let localId: Int
@@ -77,6 +88,9 @@ extension TranscriptStore {
     /// confirming it, not by the server's list, not by leaving the session — and the only way to
     /// produce one was a caller that forgot a second call. There is no second call here: this
     /// method awaits `send` itself.
+    ///
+    /// No caller left — see ``PendingMessage``'s own doc comment for why this is kept anyway and
+    /// what would make deleting it safe.
     public func trackSend(sessionId: String, text: String, send: Task<PostMessageResponse, Error>) {
         localBubbleCounter += 1
         let localId = localBubbleCounter
@@ -134,7 +148,14 @@ extension TranscriptStore {
     /// answered yet), the server's list is held back entirely. Without that, the two would draw
     /// the same message twice for as long as the request is in flight, since a status event
     /// produced before the request answers cannot yet know about it.
-    public func pendingBubbleTexts(sessionId: String) -> [String] {
+    ///
+    /// `excludingOutboxIds` is this device's own `OutboxStore` entries that already have a
+    /// server-assigned id — a caller drawing its own outbox as bubbles of its own (with retry,
+    /// put-back and discard) passes those ids so the server's list, once it catches up and
+    /// reports the very same send, does not draw a second, plainer bubble for it. `trackSend`
+    /// no longer populates `pendingMessages` for an ordinary send, so `localPending` is normally
+    /// empty here and exists purely for a send this exact mechanism is still asked to track.
+    public func pendingBubbleTexts(sessionId: String, excludingOutboxIds: Set<Int> = []) -> [String] {
         let localPending = pendingMessages[sessionId] ?? []
         let localOutboxIds = Set(localPending.compactMap(\.outboxId))
         let confirmedOutboxIds = Set((messages[sessionId] ?? []).compactMap(\.outboxId))
@@ -144,7 +165,10 @@ extension TranscriptStore {
             bridging
             ? []
             : delivery(for: sessionId).pendingSends
-                .filter { !localOutboxIds.contains($0.id) && !confirmedOutboxIds.contains($0.id) }
+                .filter {
+                    !localOutboxIds.contains($0.id) && !confirmedOutboxIds.contains($0.id)
+                        && !excludingOutboxIds.contains($0.id)
+                }
                 .map(\.text)
 
         return serverPending + localPending.map(\.text)

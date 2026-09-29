@@ -28,6 +28,11 @@ final class AppEnvironment {
 
     private let defaults: UserDefaults
     private let tokens: KeychainTokenStore
+    /// "On path satisfied, attempt immediately" for the outbox — the same rule
+    /// `VoiceRecorderController`'s own path observer applies to a reconnect. Held here (not
+    /// stopped once started) so a genuinely offline send retries the instant the network comes
+    /// back rather than waiting out its own backoff.
+    private var outboxPathObserver: NetworkPathObserver?
 
     /// Everything that only exists once the app has somewhere to talk to.
     ///
@@ -71,6 +76,10 @@ final class AppEnvironment {
         let notesBrowse: NotesBrowseStore
         /// Photos and files picked in a composer and not yet sent — see `StagedAttachmentStore`.
         let staging: StagedAttachmentStore
+        /// The durable send queue — a message is here, and the bubble it drives exists, before
+        /// any request has left. App-wide for the same reason `drafts` is: a composer's own
+        /// lifetime must never be what a send's durability depends on.
+        let outbox: OutboxStore
         /// The microphone, and whatever take is running on it. App-wide because a recording has
         /// to outlive the screen that started it — see `VoiceRecorderController`'s doc comment.
         /// There is one microphone, so there is one of these.
@@ -184,6 +193,26 @@ final class AppEnvironment {
         #endif
         let draftStore = DraftStore(
             api: client, diagnosticsLog: AppVoiceDiagnosticsLog.shared, localPersistence: defaults)
+        let outboxRoot =
+            (try? FileManager.default.url(
+                for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+            ))?.appendingPathComponent("Outbox", isDirectory: true) ?? FileManager.default.temporaryDirectory
+        let outbox = OutboxStore(api: client, storage: FileOutboxStorage(rootURL: outboxRoot))
+        // The outbox's own job ends the moment the server has the row — the transcript's own
+        // confirmed message (or, for another device's send, `pendingBubbleTexts`' server-reported
+        // list) is what shows it from here. Removing it immediately, rather than waiting for that
+        // handover to complete, trades a brief window where nothing at all shows a message that
+        // JUST landed for never leaving a `.sent` bubble stranded in `OutboxBubbleStack` with
+        // nothing left to do with it.
+        outbox.onSent = { [weak outbox] entry in outbox?.discard(id: entry.id) }
+        outboxPathObserver?.stop()
+        let pathObserver = NetworkPathObserver()
+        pathObserver.onEvent = { event in
+            guard case .pathSatisfied(true) = event else { return }
+            Task { @MainActor [weak outbox] in outbox?.retryNow() }
+        }
+        pathObserver.start()
+        outboxPathObserver = pathObserver
         let toasts = ToastCenter()
         let transcript = TranscriptStore()
         let voice = VoiceRecorderController(
@@ -209,6 +238,7 @@ final class AppEnvironment {
             notes: NotesStore(api: client),
             notesBrowse: NotesBrowseStore(api: client, storage: defaults),
             staging: StagedAttachmentStore(),
+            outbox: outbox,
             voice: voice,
             computerCall: computerCall,
             notifications: NotificationCenterStore(api: client),

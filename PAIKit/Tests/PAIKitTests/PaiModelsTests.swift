@@ -444,31 +444,54 @@ final class PaiModelsTests: XCTestCase {
         XCTAssertNil(map.smtpPassword, "absent from the response, must not default to some placeholder")
     }
 
-    // MARK: - PutDraftResult
+    // MARK: - DraftWriteResult / PaiDraftDeleteResult
 
-    /// The two branches of this union are told apart by a `deleted` flag that is *absent*, not
-    /// *false*, on a normal save — a refactor that changes the discriminator to "is `deleted`
-    /// present and truthy" vs. "is `deleted` present at all" would misroute a save that happens
-    /// to omit the field differently. Both branches are exercised so either mistake shows up.
-    func testPutDraftResultDiscriminatesSavedFromDeleted() throws {
-        let saved = try JSONDecoder().decode(
-            PutDraftResult.self,
+    /// `PUT /api/drafts/{key}` is unconditional now — no CAS, no conflict, no discovery of which
+    /// of several shapes the body is. The answer is a key, the version the server bumped to, and
+    /// what the row held immediately before this write.
+    func testDraftWriteResultDecodesKeyVersionAndPreviousText() throws {
+        let result = try JSONDecoder().decode(
+            DraftWriteResult.self, from: Data(#"{"key":"new","version":7,"previous_text":"hello"}"#.utf8))
+        XCTAssertEqual(result.key, "new")
+        XCTAssertEqual(result.version, 7)
+        XCTAssertEqual(result.previousText, "hello")
+    }
+
+    /// `DELETE /api/drafts/{key}` answers with the same two fields as `PUT` — never a bare
+    /// acknowledgement — so the discard can protect its own version memory exactly like a write.
+    func testDraftDeleteResultDecodesKeyVersionAndPreviousText() throws {
+        let result = try JSONDecoder().decode(
+            PaiDraftDeleteResult.self, from: Data(#"{"key":"new","version":8,"previous_text":"hello world"}"#.utf8))
+        XCTAssertEqual(result.key, "new")
+        XCTAssertEqual(result.version, 8)
+        XCTAssertEqual(result.previousText, "hello world")
+    }
+
+    /// A discard of a key with no row at all answers `version: null` — nothing was ever there to
+    /// bump a version on — which `DraftStore` must read as "nothing to update", not "the row is
+    /// gone", since there was never a version to lose in the first place.
+    func testDraftDeleteResultDecodesNullVersionForANeverWrittenKey() throws {
+        let result = try JSONDecoder().decode(
+            PaiDraftDeleteResult.self, from: Data(#"{"key":"new","version":null,"previous_text":""}"#.utf8))
+        XCTAssertNil(result.version)
+        XCTAssertEqual(result.previousText, "")
+    }
+
+    /// A draft row decodes its version and device id, and has no `regions` field at all —
+    /// dictation regions are gone from the wire entirely.
+    func testDraftDecodesVersionAndDeviceId() throws {
+        let draft = try JSONDecoder().decode(
+            Draft.self,
             from: Data(
                 #"""
                 {"key":"new","text":"hi","session_type":null,"working_dir":null,"updated_at":null,
-                 "regions":[],"attachments":[]}
+                 "version":3,"device_id":"laptop-abc","attachments":[]}
                 """#.utf8
             )
         )
-        guard case let .saved(draft) = saved else { return XCTFail("Expected .saved") }
         XCTAssertEqual(draft.text, "hi")
-
-        let deleted = try JSONDecoder().decode(
-            PutDraftResult.self,
-            from: Data(#"{"key":"new","deleted":true}"#.utf8)
-        )
-        guard case let .deleted(key) = deleted else { return XCTFail("Expected .deleted") }
-        XCTAssertEqual(key, "new")
+        XCTAssertEqual(draft.version, 3)
+        XCTAssertEqual(draft.deviceId, "laptop-abc")
     }
 
     // MARK: - ClaudeAuth
