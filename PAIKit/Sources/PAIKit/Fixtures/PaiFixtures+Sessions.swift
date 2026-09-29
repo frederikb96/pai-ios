@@ -31,7 +31,10 @@ extension PaiFixtures {
               "shipped_bytes": 409991040,
               "pending_bytes": 1247872
             },
-            "capabilities": { "fast_sessions": true, "reboot": true, "shell": true },
+            "capabilities": {
+              "fast_sessions": true, "reboot": true, "shell": true,
+              "rc_local": true, "rc_route": "anthropic"
+            },
             "session_types": [
               { "id": "default", "name": "Default", "icon": "💬" },
               { "id": "fast", "name": "Fast", "icon": "⚡", "working_dir": "/home/frederik/Programming" }
@@ -43,7 +46,10 @@ extension PaiFixtures {
             "online": false,
             "last_seen_at": "2026-08-29T02:03:44Z",
             "ingest_enabled": true,
-            "capabilities": { "fast_sessions": false, "reboot": false, "shell": false },
+            "capabilities": {
+              "fast_sessions": false, "reboot": false, "shell": false,
+              "rc_local": false, "rc_route": "anthropic"
+            },
             "session_types": [
               { "id": "default", "name": "Default", "icon": "💬" }
             ]

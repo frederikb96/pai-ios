@@ -131,10 +131,21 @@ actor FakeMachineDirectoryApi: MachineDirectoryApiClient {
     private(set) var callCount = 0
     var result: Result<[Machine], PaiError> = .success([])
 
+    private(set) var rcRouteCalls: [(slug: String, route: RcRoute)] = []
+    var rcRouteResult: Result<AgentPatchResult, PaiError> = .success(AgentPatchResult(slug: "vm"))
+
     func getMachines() async throws -> [Machine] {
         callCount += 1
         switch result {
         case let .success(machines): return machines
+        case let .failure(error): throw error
+        }
+    }
+
+    func setRcRoute(machineSlug: String, route: RcRoute) async throws -> AgentPatchResult {
+        rcRouteCalls.append((slug: machineSlug, route: route))
+        switch rcRouteResult {
+        case let .success(patchResult): return patchResult
         case let .failure(error): throw error
         }
     }

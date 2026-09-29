@@ -344,7 +344,8 @@ final class PaiModelsTests: XCTestCase {
             """
             {"slug":"vm","display_name":"Cloud Kai","online":true,"last_seen_at":null,
              "ingest_enabled":true,
-             "capabilities":{"fast_sessions":true,"reboot":false,"shell":true},
+             "capabilities":{"fast_sessions":true,"reboot":false,"shell":true,
+             "rc_local":true,"rc_route":"local"},
              "session_types":[{"id":"fast","name":"Fast","icon":"bolt","working_dir":"/root"}]}
             """.utf8)
         let machine = try JSONDecoder().decode(Machine.self, from: json)
@@ -353,7 +354,25 @@ final class PaiModelsTests: XCTestCase {
         XCTAssertEqual(machine.displayName, "Cloud Kai")
         XCTAssertEqual(machine.capabilities.fastSessions, true)
         XCTAssertEqual(machine.capabilities.reboot, false)
+        XCTAssertEqual(machine.capabilities.rcLocal, true)
+        XCTAssertEqual(machine.capabilities.rcRoute, .local)
         XCTAssertEqual(machine.sessionTypes.first?.workingDir, "/root")
+    }
+
+    /// A route this build predates must decode to `.unrecognized`, not throw — the same
+    /// `SessionStatus` reasoning applies: `getMachines()` decodes the whole list in one shot.
+    func testMachineDecodesAnUnrecognizedRcRouteRatherThanThrowing() throws {
+        let json = Data(
+            """
+            {"slug":"vm","display_name":"Cloud Kai","online":true,"last_seen_at":null,
+             "ingest_enabled":true,
+             "capabilities":{"fast_sessions":true,"reboot":false,"shell":true,
+             "rc_local":true,"rc_route":"quantum"},
+             "session_types":[]}
+            """.utf8)
+        let machine = try JSONDecoder().decode(Machine.self, from: json)
+
+        XCTAssertEqual(machine.capabilities.rcRoute, .unrecognized("quantum"))
     }
 
     // MARK: - SessionSearchResult

@@ -683,6 +683,32 @@ public struct SessionModelsResponse: Codable, Sendable {
 
 // --- Machines ---
 
+/// Which controller a machine's *next* launch or resume uses. See `SessionStatus`'s doc comment
+/// for why `.unrecognized` exists rather than throwing — `getMachines()` decodes `[Machine]` in
+/// one shot, so a closed enum would blank the whole list over one machine's route.
+public enum RcRoute: Sendable, Hashable {
+    case local, anthropic
+    case unrecognized(String)
+}
+
+extension RcRoute: Codable {
+    private static let knownValues: [String: RcRoute] = ["local": .local, "anthropic": .anthropic]
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = Self.knownValues[raw] ?? .unrecognized(raw)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .local: try container.encode("local")
+        case .anthropic: try container.encode("anthropic")
+        case let .unrecognized(raw): try container.encode(raw)
+        }
+    }
+}
+
 /// A machine PAI can watch or drive — the VM, or Freddy's laptop while it is logged in. `types.ts`
 /// names this `Agent`, which this port deliberately does not: `Session.kind == .subagent` names a
 /// Claude Code sub-conversation, an entirely different thing, and keeping both called "agent" in
@@ -705,16 +731,26 @@ public struct Machine: Codable, Sendable, Equatable, Identifiable {
         public let fastSessions: Bool
         public let reboot: Bool
         public let shell: Bool
+        /// Whether this machine's own local stand-in is currently usable — a capability, not a
+        /// health signal: it can go false between one poll and the next with no session affected.
+        public let rcLocal: Bool
+        /// A running session keeps whichever route it started on; this only decides what the
+        /// NEXT launch or resume on this machine uses.
+        public let rcRoute: RcRoute
 
         enum CodingKeys: String, CodingKey {
             case fastSessions = "fast_sessions"
             case reboot, shell
+            case rcLocal = "rc_local"
+            case rcRoute = "rc_route"
         }
 
-        public init(fastSessions: Bool, reboot: Bool, shell: Bool) {
+        public init(fastSessions: Bool, reboot: Bool, shell: Bool, rcLocal: Bool, rcRoute: RcRoute) {
             self.fastSessions = fastSessions
             self.reboot = reboot
             self.shell = shell
+            self.rcLocal = rcLocal
+            self.rcRoute = rcRoute
         }
     }
 
@@ -784,5 +820,25 @@ public struct Machine: Codable, Sendable, Equatable, Identifiable {
         self.capabilities = capabilities
         self.sessionTypes = sessionTypes
         self.backfill = backfill
+    }
+}
+
+/// What `PATCH /api/agents/{slug}` answers with — only the field(s) that were actually in the
+/// request, each set to what the agent reports is now in force rather than an echo of the request.
+public struct AgentPatchResult: Codable, Sendable {
+    public let slug: String
+    public let ingestEnabled: Bool?
+    public let rcRoute: RcRoute?
+
+    enum CodingKeys: String, CodingKey {
+        case slug
+        case ingestEnabled = "ingest_enabled"
+        case rcRoute = "rc_route"
+    }
+
+    public init(slug: String, ingestEnabled: Bool? = nil, rcRoute: RcRoute? = nil) {
+        self.slug = slug
+        self.ingestEnabled = ingestEnabled
+        self.rcRoute = rcRoute
     }
 }

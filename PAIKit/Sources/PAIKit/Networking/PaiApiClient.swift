@@ -397,6 +397,22 @@ public struct PaiApiClient: Sendable {
         try await send(path: "/api/agents")
     }
 
+    /// Switch which controller a machine's *next* launch or resume uses. Answers with what the
+    /// agent reports is now in force, not an echo of `route` — an unrecognised route is refused
+    /// by the agent and leaves the stored value unchanged, and `PaiError.from(statusCode:)` is
+    /// what carries that refusal here as a thrown error.
+    public func setRcRoute(machineSlug: String, route: RcRoute) async throws -> AgentPatchResult {
+        struct Body: Encodable {
+            let rcRoute: RcRoute
+            enum CodingKeys: String, CodingKey { case rcRoute = "rc_route" }
+        }
+        return try await send(
+            path: "/api/agents/\(machineSlug)",
+            method: "PATCH",
+            body: try Self.jsonBody(Body(rcRoute: route))
+        )
+    }
+
     /// Every value this endpoint answers with — asserted rather than trusted, since this app's
     /// reverse proxy serves the SPA's `index.html` for any unmatched path on the web, and a
     /// route not yet deployed would otherwise decode a status this client cannot recognise
