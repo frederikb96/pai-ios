@@ -198,6 +198,13 @@ final class AppEnvironment {
                 for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
             ))?.appendingPathComponent("Outbox", isDirectory: true) ?? FileManager.default.temporaryDirectory
         let outbox = OutboxStore(api: client, storage: FileOutboxStorage(rootURL: outboxRoot))
+        // The outbox's own job ends the moment the server has the row — the transcript's own
+        // confirmed message (or, for another device's send, `pendingBubbleTexts`' server-reported
+        // list) is what shows it from here. Removing it immediately, rather than waiting for that
+        // handover to complete, trades a brief window where nothing at all shows a message that
+        // JUST landed for never leaving a `.sent` bubble stranded in `OutboxBubbleStack` with
+        // nothing left to do with it.
+        outbox.onSent = { [weak outbox] entry in outbox?.discard(id: entry.id) }
         outboxPathObserver?.stop()
         let pathObserver = NetworkPathObserver()
         pathObserver.onEvent = { event in

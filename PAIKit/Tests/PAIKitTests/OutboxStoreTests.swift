@@ -316,4 +316,21 @@ final class OutboxStoreTests: XCTestCase {
         await waitUntil(timeout: 5) { store.entries.first?.state == .sent }
         XCTAssertEqual(sending.calls.count, 2)
     }
+
+    // MARK: - draftKey
+
+    /// What "Put back in composer" writes onto — the session's own key for an ordinary send.
+    func testDraftKeyIsTheSessionIdForAnOrdinarySend() {
+        let entry = OutboxEntry(target: .session(sessionId: "s1"), text: "hello")
+        XCTAssertEqual(entry.draftKey, "s1")
+    }
+
+    /// A send made before the session it creates exists yet has no session id to key on — the
+    /// new-session composer's own draft key instead.
+    func testDraftKeyIsTheNewSessionKeyForAPreLaunchSend() {
+        let entry = OutboxEntry(
+            target: .newSession(agent: nil, sessionType: nil, workingDir: nil, model: nil, thinking: nil),
+            text: "hello")
+        XCTAssertEqual(entry.draftKey, DraftKey.newSession)
+    }
 }

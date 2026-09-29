@@ -134,7 +134,14 @@ extension TranscriptStore {
     /// answered yet), the server's list is held back entirely. Without that, the two would draw
     /// the same message twice for as long as the request is in flight, since a status event
     /// produced before the request answers cannot yet know about it.
-    public func pendingBubbleTexts(sessionId: String) -> [String] {
+    ///
+    /// `excludingOutboxIds` is this device's own `OutboxStore` entries that already have a
+    /// server-assigned id — a caller drawing its own outbox as bubbles of its own (with retry,
+    /// put-back and discard) passes those ids so the server's list, once it catches up and
+    /// reports the very same send, does not draw a second, plainer bubble for it. `trackSend`
+    /// no longer populates `pendingMessages` for an ordinary send, so `localPending` is normally
+    /// empty here and exists purely for a send this exact mechanism is still asked to track.
+    public func pendingBubbleTexts(sessionId: String, excludingOutboxIds: Set<Int> = []) -> [String] {
         let localPending = pendingMessages[sessionId] ?? []
         let localOutboxIds = Set(localPending.compactMap(\.outboxId))
         let confirmedOutboxIds = Set((messages[sessionId] ?? []).compactMap(\.outboxId))
@@ -144,7 +151,10 @@ extension TranscriptStore {
             bridging
             ? []
             : delivery(for: sessionId).pendingSends
-                .filter { !localOutboxIds.contains($0.id) && !confirmedOutboxIds.contains($0.id) }
+                .filter {
+                    !localOutboxIds.contains($0.id) && !confirmedOutboxIds.contains($0.id)
+                        && !excludingOutboxIds.contains($0.id)
+                }
                 .map(\.text)
 
         return serverPending + localPending.map(\.text)

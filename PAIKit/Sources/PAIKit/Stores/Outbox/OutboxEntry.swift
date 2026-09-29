@@ -92,6 +92,10 @@ public struct OutboxResult: Codable, Sendable, Equatable {
 /// re-minted for a retry, which is what makes every resend of this entry idempotent server-side.
 public struct OutboxEntry: Codable, Sendable, Equatable, Identifiable {
     public var id: String { clientMessageId }
+    /// The `DraftStore` key this send came from — `target`'s own session id, or
+    /// `DraftKey.newSession` for a not-yet-created session. What "Put back in composer" writes
+    /// the text back onto.
+    public var draftKey: String { target.sessionId ?? DraftKey.newSession }
     public let clientMessageId: String
     public var target: OutboxTarget
     public var text: String
