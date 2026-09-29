@@ -185,7 +185,8 @@ struct ComposerBar: View {
             // at the right edge.
             HStack(alignment: .bottom, spacing: 8) {
                 ComposerTextEditor(
-                    text: textBinding(draftStore: draftStore), height: $textHeight, placeholder: "Message PAI...",
+                    text: textBinding(draftStore: draftStore, voiceController: voiceController), height: $textHeight,
+                    placeholder: "Message PAI...",
                     scrollToTailOnNextUpdate: $scrollToTailOnNextUpdate,
                     onPasteImages: { images in stagePastedImages(images) }
                 )
@@ -260,6 +261,12 @@ struct ComposerBar: View {
                 try? await Task.sleep(for: .milliseconds(150))
             }
         }
+        // Leaving mid-drain must not leave the wait running unattended behind a screen nobody is
+        // looking at — the same escape a tap or typing gives Freddy while he is still looking.
+        .onDisappear {
+            guard isRecordingHere(voiceController), voiceController.state == .stopping else { return }
+            Task { await voiceController.abandonCurrentTake() }
+        }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         // A translucent system material rather than an opaque fill — the composer reads as the
@@ -314,10 +321,21 @@ struct ComposerBar: View {
     /// a failed send restoring what was typed), and the one that got missed was the voice
     /// transcript: it wrote the mirror, the sync overwrote the mirror from the store, and
     /// everything transcribed since the last pause vanished until the next word rewrote it.
-    private func textBinding(draftStore: DraftStore) -> Binding<String> {
+    private func textBinding(draftStore: DraftStore, voiceController: VoiceRecorderController) -> Binding<String> {
         Binding(
             get: { draftStore.draft(for: sessionID).text },
-            set: { newValue in draftStore.setDraftText(key: sessionID, text: newValue) }
+            set: { newValue in
+                draftStore.setDraftText(key: sessionID, text: newValue)
+                // Only `ComposerTextEditor` reaches this setter — the live take writes its own
+                // words straight through `DraftStore` without going through this binding at all —
+                // so landing here IS Freddy typing, unambiguously. Typed straight into a Finishing
+                // composer means the same thing tapping the button now does: stop waiting on it,
+                // since the next arriving segment would otherwise heal right back over what he
+                // just typed.
+                if isRecordingHere(voiceController), voiceController.state == .stopping {
+                    Task { await voiceController.abandonCurrentTake() }
+                }
+            }
         )
     }
 
@@ -392,10 +410,16 @@ struct ComposerBar: View {
 
     private func toggleRecording(draftStore: DraftStore, voiceController: VoiceRecorderController) async {
         if isRecordingHere(voiceController) {
-            // A tap always means "end the take", regardless of which mid-take state it caught —
-            // `VoiceUplinkSession.stop` accepts all of them. The text itself is already in the
-            // draft by now, on every one of the ways a take can end; nothing is applied here.
-            guard voiceController.state != .stopping else { return }
+            // A tap during Finishing means "stop waiting" rather than "start a second stop" —
+            // `stop()`'s own wait is already running by the time the button reads `.stopping`, and
+            // `abandonCurrentTake()` is what tells that wait to give up immediately instead of
+            // sitting out `take_done` or the deadline. Every other mid-take state ends through the
+            // ordinary `stop()`, which `VoiceUplinkSession.stop` accepts from all of them — the
+            // text itself is already in the draft by then either way.
+            if voiceController.state == .stopping {
+                await voiceController.abandonCurrentTake()
+                return
+            }
             await voiceController.stop()
             return
         }
@@ -467,47 +491,27 @@ struct ComposerBar: View {
                 inlineFiles: inlineFiles)
 
             // Cleared before the request even leaves — the whole point of the outbox is that the
-            // bubble it drives exists, and survives a kill, before any network call has started.
+            // bubble it drives (`OutboxBubbleStack`) exists, and survives a kill, before any
+            // network call has started. Nothing here waits on the network: the queue delivers it,
+            // exactly once, whenever the link allows, and its own state is what Freddy sees from
+            // here on — queued, sending, or failed with Retry/Put back in composer/Discard.
             draftStore.setDraftText(key: sessionID, text: "")
             staging.set([], for: sessionID)
             outbox.enqueue(entry, inlineFileData: inlineFileData)
 
+            // Best-effort only, and never blocks `isSending`: once the outbox actually lands the
+            // send, this records the exact version it consumed so this device's own next poll is
+            // a no-op. A failure here changes nothing the outbox bubble does not already show.
             let entryId = entry.id
-            let sendTask = Task<PostMessageResponse, Error> {
-                while true {
-                    guard let current = outbox.entries.first(where: { $0.id == entryId }) else {
-                        throw PaiError.transport("The send was removed before it completed.")
-                    }
-                    switch current.state {
-                    case .sent:
-                        guard let result = current.result else {
-                            throw PaiError.transport("The send completed with no result.")
-                        }
-                        draftStore.recordVersionAfterSend(key: sessionID, version: result.draftVersion)
-                        return PostMessageResponse(sessionId: result.sessionId, messageId: result.messageId)
-                    case .failed:
-                        throw PaiError.detail(current.lastError ?? "Failed to send message", statusCode: 0)
-                    case .queued, .sending:
-                        try await Task.sleep(for: .milliseconds(200))
-                    }
+            Task {
+                while let current = outbox.entries.first(where: { $0.id == entryId }),
+                    current.state == .queued || current.state == .sending
+                {
+                    try? await Task.sleep(for: .milliseconds(200))
                 }
-            }
-            if !messageText.isEmpty {
-                transcript.trackSend(sessionId: sessionID, text: messageText, send: sendTask)
-            }
-            do {
-                _ = try await sendTask.value
-            } catch {
-                // A retryable failure (offline, 5xx, 429) never reaches here — the outbox keeps
-                // retrying it on its own for as long as it takes. Only a genuinely non-retryable
-                // one (400, 413, …) does, and there is no failed-bubble UI yet to retry or discard
-                // it from (see this run's own report) — so it falls back to the same thing a
-                // failed send always did: put the text and files back so nothing typed is lost,
-                // and drop the now-dead outbox entry.
-                outbox.discard(id: entryId)
-                draftStore.setDraftText(key: sessionID, text: messageText)
-                staging.set(attachmentsSnapshot, for: sessionID)
-                sendErrorMessage = (error as? PaiError)?.userMessage ?? "Failed to send message"
+                if let result = outbox.entries.first(where: { $0.id == entryId })?.result {
+                    draftStore.recordVersionAfterSend(key: sessionID, version: result.draftVersion)
+                }
             }
             isSending = false
         }

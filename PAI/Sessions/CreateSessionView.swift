@@ -434,7 +434,8 @@ struct CreateSessionView: View {
             // arrangement on its own.
             HStack(alignment: .bottom, spacing: 8) {
                 ComposerTextEditor(
-                    text: textBinding, height: $textHeight, placeholder: "What would you like to work on?",
+                    text: textBinding(voiceController: voiceController), height: $textHeight,
+                    placeholder: "What would you like to work on?",
                     scrollToTailOnNextUpdate: $scrollToTailOnNextUpdate,
                     onPasteImages: { images in
                         stageAttachments(
@@ -507,6 +508,12 @@ struct CreateSessionView: View {
                 }
                 try? await Task.sleep(for: .milliseconds(150))
             }
+        }
+        // Same escape as `ComposerBar`'s own: leaving mid-drain must not leave the wait running
+        // unattended behind a screen nobody is looking at.
+        .onDisappear {
+            guard isRecordingHere(voiceController), voiceController.state == .stopping else { return }
+            Task { await voiceController.abandonCurrentTake() }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -662,11 +669,17 @@ struct CreateSessionView: View {
     // MARK: - Text / drafts
 
     /// See `ComposerBar.textBinding`'s own doc comment for why the draft store is the field's
-    /// only storage — the same reasoning applies here.
-    private var textBinding: Binding<String> {
+    /// only storage, and for why landing in this setter at all is what makes it safe to read as
+    /// Freddy typing rather than the take's own live text arriving.
+    private func textBinding(voiceController: VoiceRecorderController) -> Binding<String> {
         Binding(
             get: { drafts.draft(for: DraftKey.newSession).text },
-            set: { newValue in drafts.setDraftText(key: DraftKey.newSession, text: newValue) }
+            set: { newValue in
+                drafts.setDraftText(key: DraftKey.newSession, text: newValue)
+                if isRecordingHere(voiceController), voiceController.state == .stopping {
+                    Task { await voiceController.abandonCurrentTake() }
+                }
+            }
         )
     }
 
@@ -723,7 +736,9 @@ struct CreateSessionView: View {
             // draft, written there as it was transcribed.
             await voiceController.stop()
         case .stopping:
-            break
+            // Same escape `ComposerBar` gives during Finishing: stop waiting on `take_done` or the
+            // deadline instead of sitting it out. See `VoiceRecorderController.abandonCurrentTake`.
+            await voiceController.abandonCurrentTake()
         }
     }
 
