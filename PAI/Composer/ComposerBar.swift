@@ -497,22 +497,10 @@ struct ComposerBar: View {
             // here on — queued, sending, or failed with Retry/Put back in composer/Discard.
             draftStore.setDraftText(key: sessionID, text: "")
             staging.set([], for: sessionID)
+            // The draft version this send consumes is recorded by the outbox's own handover, the
+            // one place that learns a send has landed — nothing here may wait for that, since the
+            // same handover retires the entry at the moment it is sent.
             outbox.enqueue(entry, inlineFileData: inlineFileData)
-
-            // Best-effort only, and never blocks `isSending`: once the outbox actually lands the
-            // send, this records the exact version it consumed so this device's own next poll is
-            // a no-op. A failure here changes nothing the outbox bubble does not already show.
-            let entryId = entry.id
-            Task {
-                while let current = outbox.entries.first(where: { $0.id == entryId }),
-                    current.state == .queued || current.state == .sending
-                {
-                    try? await Task.sleep(for: .milliseconds(200))
-                }
-                if let result = outbox.entries.first(where: { $0.id == entryId })?.result {
-                    draftStore.recordVersionAfterSend(key: sessionID, version: result.draftVersion)
-                }
-            }
             isSending = false
         }
     }

@@ -1,20 +1,14 @@
 import Foundation
 import Observation
 
-/// The narrow slice of `PaiApiClient` this store needs — sending the first message itself goes
-/// through ``OutboxStore`` now, not a direct call here, so this no longer needs `postMessage`.
+/// The narrow slice of `PaiApiClient` this store needs. Sending the first message is not part of
+/// it: that goes through ``OutboxStore``, which owns the request.
 public protocol CreateSessionApiClient: Sendable {
     func getSessionTypes() async throws -> [SessionType]
     func getSessionModels() async throws -> SessionModelsResponse
 }
 
 extension PaiApiClient: CreateSessionApiClient {}
-
-/// The outcome of `CreateSessionStore.create(message:files:)`.
-public enum CreateSessionResult: Sendable, Equatable {
-    case created(Session)
-    case failed(String)
-}
 
 /// Swift port of the New Session screen's launch-choice state: `pai-cloud/web/src/components/
 /// NewSessionView.tsx`'s machine/session-type wiring, `SessionTypePicker.tsx`'s preselect effect,
@@ -91,7 +85,6 @@ public final class CreateSessionStore {
     /// first fetch lands.
     public private(set) var fastDefaultModel = "sonnet"
     public private(set) var fastDefaultThinking = "low"
-    public private(set) var isCreating = false
 
     /// Whether `selectedSessionTypeId` is the fast sandbox — the one type whose launch defaults
     /// to a model and thinking level of its own rather than the plan's.
@@ -220,93 +213,37 @@ public final class CreateSessionStore {
         applyPreselectionIfNeeded()
     }
 
-    /// Creates the session and returns the optimistic `Session` its row should show immediately,
-    /// mirroring `createSession`'s hand-built row in `stores/session.ts` field for field —
-    /// `remote_control: true` here is optimistic and technically premature (ported as-is; the
-    /// real value arrives on the next poll). The caller — not this store — is responsible for
-    /// inserting it (`SessionListStore.prependOptimisticSession(_:)`), tracking the first message
-    /// bubble, and navigating to the resulting chat: none of those are session-creation state.
+    /// Hands the first message to `outbox` and returns at once.
     ///
-    /// The send itself goes through `outbox` — durable before this call ever touches the network,
-    /// retried with backoff underneath, and idempotent under the `clientMessageId` the entry
-    /// mints once. This method awaits that entry reaching a terminal state so the caller's own
-    /// "await, then navigate or show an error" flow is unchanged; the durability is what changed,
-    /// not the shape a caller sees on a healthy connection. Left genuinely offline, this awaits
-    /// until connectivity returns and the entry's own worker finally lands it — exactly the "sent
-    /// exactly once when the connection returns" contract, at the cost of no visible "queued"
-    /// affordance on this screen while it waits (a real gap relative to the full design; see this
-    /// run's own report).
-    public func create(
+    /// **Nothing here waits for the network**, and that is the contract rather than an
+    /// optimisation: the entry is on disk before this returns, so the send is already durable,
+    /// and the session it creates arrives later on the outbox's own worker. What happens then —
+    /// the row, and the id reaching the screen that composed it — is
+    /// ``OutboxStore/installHandover(drafts:sessions:handoff:)``'s, which is the only place that knows a
+    /// send has landed. Mirrors `MessageInput.tsx`'s `handleSend`: enqueue, clear the composer,
+    /// and let the queue deliver it whenever the link allows.
+    ///
+    /// 🚨 **Do not make this await the entry's own terminal state.** It reads like the tidier
+    /// shape and cannot work: the handover retires an entry the instant it is sent, so a caller
+    /// polling `outbox.entries` for its own entry finds it gone rather than `.sent` — a created
+    /// session, and no caller left to open it. Offline it is worse still: an await with nothing
+    /// on screen to say the message was kept. What the reader sees while a send waits is
+    /// ``OutboxStore/newSessionEntries()``, drawn as bubbles on the screen that composed it.
+    public func enqueueSend(
         message: String, files: [PaiFileUpload] = [], draftAttachmentIds: [String] = [], outbox: OutboxStore
-    ) async -> CreateSessionResult {
-        isCreating = true
-        defer { isCreating = false }
-        let type = selectedSessionTypeId
-        let dir = workingDir
-        let machine = selectedMachine
-        let model = selectedModel
-        let thinking = selectedThinking
-
+    ) {
         let inlineFiles = files.map { file in
             OutboxInlineFile(localId: UUID().uuidString, filename: file.filename, mimeType: file.mimeType)
         }
         let inlineFileData = Dictionary(
             uniqueKeysWithValues: zip(inlineFiles.map(\.localId), files.map(\.data)))
-        let entry = OutboxEntry(
-            target: .newSession(agent: machine, sessionType: type, workingDir: dir, model: model, thinking: thinking),
-            text: message, draftAttachmentIds: draftAttachmentIds, inlineFiles: inlineFiles
-        )
-        outbox.enqueue(entry, inlineFileData: inlineFileData)
-
-        while true {
-            guard let current = outbox.entries.first(where: { $0.id == entry.id }) else {
-                return .failed("The send was removed before it completed.")
-            }
-            switch current.state {
-            case .sent:
-                guard let result = current.result else {
-                    return .failed("The send completed with no session to open.")
-                }
-                let now = ISO8601DateFormatter().string(from: Date())
-                let optimistic = Session(
-                    id: result.sessionId,
-                    sessionType: type ?? globalSessionTypes.first?.id ?? "default",
-                    model: model,
-                    thinking: thinking,
-                    status: .pending,
-                    state: .starting,
-                    blocker: nil,
-                    displayState: .starting,
-                    title: nil,
-                    titleLocked: nil,
-                    initialMessage: message,
-                    sessionTokens: 0,
-                    claudeSessionId: nil,
-                    idleTimeoutMinutes: nil,
-                    effectiveIdleTimeoutMinutes: nil,
-                    cseId: nil,
-                    createdAt: now,
-                    updatedAt: now,
-                    lastActivityAt: now,
-                    workingDir: dir,
-                    agent: machine,
-                    kind: .conversation,
-                    parentSessionId: nil,
-                    subagentName: nil,
-                    subagentType: nil,
-                    subagentDescription: nil,
-                    remoteControl: true,
-                    discovered: nil,
-                    projectId: nil,
-                    phaseId: nil,
-                    projectName: nil
-                )
-                return .created(optimistic)
-            case .failed:
-                return .failed(current.lastError ?? "Failed to create session")
-            case .queued, .sending:
-                try? await Task.sleep(for: .milliseconds(200))
-            }
-        }
+        outbox.enqueue(
+            OutboxEntry(
+                target: .newSession(
+                    agent: selectedMachine, sessionType: selectedSessionTypeId, workingDir: workingDir,
+                    model: selectedModel, thinking: selectedThinking),
+                text: message, draftAttachmentIds: draftAttachmentIds, inlineFiles: inlineFiles
+            ),
+            inlineFileData: inlineFileData)
     }
 }

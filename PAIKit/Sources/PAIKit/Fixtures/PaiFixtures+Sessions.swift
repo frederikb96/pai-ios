@@ -546,6 +546,19 @@ extension PaiFixtures {
         ]
         """#
 
+    /// `POST /api/messages` with no `session_id` — the create. Answers with the one session the
+    /// transcript corpus has, so the screen the send opens has something to draw: the whole point
+    /// of driving the real send button in fixture mode is that the push, the sheet's dismissal and
+    /// the transcript mounting underneath are all exercised together. The id is the corpus's own
+    /// (`PaiFixtureLaunch.sessionID`), written out rather than interpolated because that type is
+    /// `#if DEBUG` and this file is compiled in Release too.
+    /// `draft_version` is the version this send's own clear left the `new` draft at, so it matches
+    /// what `DELETE /api/drafts/{key}` answers (``draftWritten``) rather than standing on its own.
+    public static let postMessageCreated: String = #"""
+        { "session_id": "305df4d3-1554-4fc3-be04-39a354a9e619", "message_id": 9101,
+          "duplicate": false, "draft_version": 9 }
+        """#
+
     /// The same page, with the ready session waiting on a gated-secret grant it raised itself —
     /// `-PaiFixtureSecretPrompt`. Nothing in fixture mode has a live conversation to raise one,
     /// so a screenshot of the banner that answers it needs the state handed over like this.

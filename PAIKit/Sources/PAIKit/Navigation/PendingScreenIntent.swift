@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 /// A new session that is meant to become a call the moment it exists.
 ///
@@ -63,6 +64,82 @@ public final class CallModeLaunchRequest {
     public func cancel() {
         armed = false
         pendingCallSessionID = nil
+    }
+}
+
+/// The two moments in a new session's life that the new-session screen cannot see for itself.
+///
+/// A send from that screen does not wait for the network — it hands the message to
+/// ``OutboxStore`` and returns — so the session it creates arrives later, on the outbox's own
+/// worker, with no awaited call to return it to. ``createdSessionID`` is how that id reaches the
+/// screen. The screen is deliberately the one that opens it: a push made from anywhere else
+/// would be a push from behind a dismissing sheet, which iOS drops silently.
+///
+/// ``openedSessionID`` is the other direction. Back out of a session reached from the
+/// new-session screen belongs on that screen rather than on the list, and by the time the reader
+/// presses Back the screen that pushed it is gone — so the one thing that knows a Back means
+/// "reopen" is this.
+///
+/// One-shot throughout, for the reason ``CallModeLaunchRequest`` is: a navigation path survives
+/// a relaunch and an intent must not, or a cold launch weeks later opens a screen nobody asked
+/// for.
+@MainActor
+@Observable
+public final class NewSessionHandoff {
+    public static let shared = NewSessionHandoff()
+
+    /// The session a send composed on the new-session screen has just created, for as long as
+    /// that screen has not yet acted on it. Set unconditionally when a create lands: a screen
+    /// that is no longer on top simply never observes it, which is the same "do not yank the
+    /// reader somewhere they have moved on from" rule the web applies by only following while
+    /// its own new-session view is still showing.
+    public private(set) var createdSessionID: String?
+
+    /// The session the new-session screen navigated into, while Back out of it should return
+    /// there. Cleared the moment that Back happens, so opening the same session again later
+    /// pops to the list like any other.
+    public private(set) var openedSessionID: String?
+
+    /// Raised by an interactive pop out of ``openedSessionID``. The session list presents the
+    /// new-session screen again and clears this.
+    public private(set) var reopenRequested = false
+
+    public init() {}
+
+    public func created(sessionID: String) {
+        createdSessionID = sessionID
+    }
+
+    /// True at most once per ``created(sessionID:)``, and only for a screen that is there to take
+    /// it. Consumed either way.
+    public func consumeCreated() -> String? {
+        defer { createdSessionID = nil }
+        return createdSessionID
+    }
+
+    /// Called by the new-session screen as it pushes the session it just created.
+    public func opened(sessionID: String) {
+        openedSessionID = sessionID
+    }
+
+    public func requestReopen() {
+        openedSessionID = nil
+        reopenRequested = true
+    }
+
+    public func consumeReopen() -> Bool {
+        defer { reopenRequested = false }
+        return reopenRequested
+    }
+
+    /// Drops a created session nobody opened — the new-session screen's own teardown. Without it
+    /// a send that landed just as the screen was dismissed would fire against the next visit to
+    /// that screen instead, opening a session composed minutes ago.
+    ///
+    /// Deliberately leaves ``openedSessionID`` alone: the screen tears down immediately after
+    /// pushing the session it created, and that push is exactly what the Back it records is for.
+    public func withdrawCreated() {
+        createdSessionID = nil
     }
 }
 

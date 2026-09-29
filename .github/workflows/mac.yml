@@ -302,12 +302,12 @@ jobs:
           screenshot secret-prompt -PaiFixtureRoute session -PaiFixtureSecretPrompt
           xcrun simctl terminate "$udid" "$bundle" || true
 
-          # The exact navigation a real "New Session" send button drives — pushing the new
-          # session's transcript onto the stack while its own presenting sheet is mid-dismissal —
-          # with no device interaction to trigger the tap. `/transcript/landing` is the proof that
-          # matters here, not the screenshot: a screen stuck on whatever this race leaves behind
-          # never mounts a transcript at all, so `topVisibleRowId` would stay null forever rather
-          # than merely answering late.
+          # The real "New Session" send button, pressed with no device interaction to tap it:
+          # the outbox entry, the create response, the handover carrying the new id back to the
+          # sheet, and the push racing that sheet's own dismissal. `/transcript/landing` is the
+          # proof that matters here, not the screenshot — anything that breaks that chain leaves
+          # the screen where it was and never mounts a transcript at all, so `topVisibleRowId`
+          # stays null forever rather than merely answering late.
           screenshot new-session-landing -PaiFixtureRoute createSession -PaiFixtureAutoCreateSession
           opened=0
           for attempt in $(seq 1 10); do

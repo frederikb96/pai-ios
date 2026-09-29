@@ -159,6 +159,15 @@
             exact("GET", "/api/sessions/search") { PaiFixtures.sessionSearchResults },
             sessionScoped("GET", suffix: "/secret-requests") { PaiFixtures.secretRequests },
             exact("GET", "/api/drafts") { PaiFixtures.drafts },
+            // A composer that is typed into writes its draft and clears it after a send. Without
+            // these the table answers 404, which `DraftStore` reads as a failed flush and retries
+            // with backoff — a loop running underneath every screenshot that types anything.
+            FixtureRoute(method: "PUT", matches: { $0.hasPrefix("/api/drafts/") }) {
+                PaiFixtures.data(PaiFixtures.draftWritten)
+            },
+            FixtureRoute(method: "DELETE", matches: { $0.hasPrefix("/api/drafts/") }) {
+                PaiFixtures.data(PaiFixtures.draftWritten)
+            },
             exact("GET", "/api/usage") { PaiFixtures.usage },
             exact("GET", "/api/settings/secrets") { PaiFixtures.secretStatuses },
             exact("GET", "/api/settings/smtp") { PaiFixtures.smtpSettings },
@@ -176,6 +185,10 @@
                 matches: { $0.hasPrefix("/api/notifications/") && $0.split(separator: "/").count == 3 }
             ) { PaiFixtures.data(PaiFixtures.notificationDetail) },
             exact("POST", "/api/alerts/clear") { PaiFixtures.alertsCleared },
+            // The create. Without it `-PaiFixtureAutoCreateSession` drives a send that the
+            // table answers 404 for, which the outbox reads as a refusal it must not retry —
+            // so the screen would sit on a failed bubble and no session would ever open.
+            exact("POST", "/api/messages") { PaiFixtures.postMessageCreated },
             // `.../messages` and `.../messages/find` are answered by `route(method:path:query:)`
             // itself, ahead of this table — the only two routes whose body genuinely depends on
             // the query string. No entry for either here.

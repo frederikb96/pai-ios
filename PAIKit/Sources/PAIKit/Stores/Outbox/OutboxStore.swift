@@ -41,9 +41,9 @@ public final class OutboxStore {
     private let api: any OutboxSending
     private let storage: any OutboxStorage
     private let scheduler: DraftScheduler
-    /// Called once an entry actually reaches the server — the caller's hook to clear the draft it
-    /// came from, insert the session it created, and do nothing else: everything past "the server
-    /// has the row" belongs to the transcript's own delivery tracking.
+    /// Called once an entry actually reaches the server. The app installs
+    /// ``installHandover(drafts:sessions:handoff:)`` here; this stays a plain closure so a test can
+    /// observe the moment without one.
     public var onSent: (@MainActor (OutboxEntry) -> Void)?
 
     /// One loop per ``OutboxTarget/workerKey`` — FIFO within a target, matching the server
@@ -75,11 +75,39 @@ public final class OutboxStore {
         }
     }
 
+    /// Everything that must happen the instant an entry reaches the server, in one place.
+    ///
+    /// A send's whole outcome lives here because there is nowhere else for it to live: the screen
+    /// that composed it does not wait for the network, so by the time the server has the row
+    /// there is no awaited call to return anything to. The draft version the send consumed is
+    /// recorded, a create's row goes into the list and its id is handed to the new-session
+    /// screen, and only then is the entry retired.
+    ///
+    /// Retired immediately rather than left `.sent`: the transcript's own confirmed row — or
+    /// ``TranscriptStore``'s server-reported pending list, for a send from another device — takes
+    /// over showing it from here, and a `.sent` entry left behind is a bubble with nothing to do.
+    /// 🚨 **That retirement is why everything a landed send has to produce belongs in this
+    /// closure and nowhere else.** A `.sent` entry is never observable from outside it: anything
+    /// polling ``entries`` for one finds an empty queue instead, which reads as a send that was
+    /// removed rather than one that succeeded. A create's id reaching nobody that way is a
+    /// session sitting in the list with the reader still on the screen that made it.
+    public func installHandover(drafts: DraftStore, sessions: SessionListStore, handoff: NewSessionHandoff) {
+        onSent = { [weak self, weak drafts, weak sessions] entry in
+            drafts?.recordVersionAfterSend(key: entry.draftKey, version: entry.result?.draftVersion)
+            if let created = sessions?.adoptCreatedSession(entry) {
+                handoff.created(sessionID: created)
+            }
+            self?.discard(id: entry.id)
+        }
+    }
+
     /// The entries to show for a target, oldest first — a composer's own pending-bubble list.
     public func entries(for sessionId: String) -> [OutboxEntry] {
         entries.filter { $0.target.sessionId == sessionId }
     }
 
+    /// The sends composed before the session they will create exists — the new-session screen's
+    /// own pending-bubble list, and the only place they are visible at all.
     public func newSessionEntries() -> [OutboxEntry] {
         entries.filter { $0.target.sessionId == nil }
     }
