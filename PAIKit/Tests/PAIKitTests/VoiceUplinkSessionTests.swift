@@ -191,6 +191,44 @@ final class VoiceUplinkSessionTests: XCTestCase {
         _ = await startTask.value
     }
 
+    /// `end_sample` restarts near zero on every fresh bus, the same way `seq` does (see
+    /// `testASecondGateOpenWithinTheSameTakeRepeatsTheTakeId`'s sibling `testSeqRestartsAtZero…`
+    /// above) — so a reconnect must offset it by a gate base before comparing it to anything
+    /// committed on the bus before it, or a batch recovered after the reconnect sorts ahead of
+    /// speech that came first. Two frames delivered out of arrival order, after the offset, must
+    /// still assemble in spoken order.
+    func testEndSampleIsOffsetByTheGateBaseAcrossAReconnectSoSegmentsSortInSpokenOrder() async {
+        let transport = FakeVoiceSocketTransport()
+        let session = makeSession(transport: transport)
+        let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil)))
+        await waitUntil { await transport.sentFrames.count >= 2 }
+
+        await transport.enqueue(
+            .control(.transcript(takeId: "take-1", seq: 0, isFinal: true, text: "hello", endSample: 16_000)))
+        await waitUntil { await session.committedText == "hello" }
+
+        // A fresh bus past the resume grace window: `resumed: false` again, and its own
+        // `end_sample` numbering starts back near zero.
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r2", busOwner: .transcription, resumed: false, sessionId: nil)))
+        await waitUntil { await transport.sentFrames.count >= 3 }
+
+        // Delivered out of temporal order: "world" (the later utterance, the larger end_sample on
+        // the new bus) arrives before "there" (the earlier one) sends its own frame.
+        await transport.enqueue(
+            .control(.transcript(takeId: "take-1", seq: 0, isFinal: true, text: "world", endSample: 16_000)))
+        await waitUntil { await session.committedText == "hello world" }
+
+        await transport.enqueue(
+            .control(.transcript(takeId: "take-1", seq: 1, isFinal: true, text: "there", endSample: 8_000)))
+        await waitUntil { await session.committedText == "hello there world" }
+
+        await stopAfterTakeDone(session, transport: transport, takeId: "take-1")
+        _ = await startTask.value
+    }
+
     /// A frame for a take this client has already sealed (Send/Skip during Finishing) must never
     /// land — the composed text is frozen at whatever it showed the moment it was sealed.
     func testAFrameForASealedTakeIsDroppedOnArrival() async {

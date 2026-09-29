@@ -119,13 +119,35 @@ public final class VoiceUplinkSession {
     public private(set) var lastDisconnectDetail: String?
     public private(set) var lastNotice: (severity: String, code: String, text: String)?
 
-    /// Every committed segment for the current take, space-joined in arrival order — arrival
-    /// order rather than `end_sample` order, since a live take's frames arrive in the order the
-    /// engine committed them and reordering here would require holding every segment back until
-    /// its neighbours are known. `end_sample` still orders a late backfilled segment relative to
-    /// these, but that reconciliation is the caller's (`VoiceRecorderController`'s), not this
-    /// type's — see this run's own report on the one accepted gap that follows from it.
-    public private(set) var committedText = ""
+    /// One committed segment, addressed by its take-absolute end sample rather than by arrival
+    /// order — a batch-recovered stretch for an earlier gap can arrive after live segments that
+    /// followed it in time, and only the absolute sample position sorts them back into spoken
+    /// order.
+    private struct CommittedSegment {
+        let absoluteEndSample: Int
+        let seq: Int
+        let text: String
+    }
+    private var committedSegments: [CommittedSegment] = []
+    /// What every `end_sample` on the current gate is measured from — the engine's own numbering
+    /// restarts at (or near) zero on every fresh bus, exactly like `seq` does, so a reconnect mid-
+    /// take needs this added on top to keep segments comparable across the boundary. Bumped to the
+    /// take's own highest absolute position whenever a **fresh** bus opens after the take's first
+    /// (a genuine reconnect) — never touched on a resumed bus, which keeps the same engine and the
+    /// same numbering.
+    private var gateBaseSample = 0
+    /// Whether this take has opened a bus at all yet — the first `ready` never bumps
+    /// `gateBaseSample` (there is nothing prior to carry forward); every one after it might.
+    private var hasOpenedFirstBus = false
+
+    /// Every committed segment for the current take, joined in take-absolute order — never arrival
+    /// order, so a batch-recovered stretch for an earlier gap lands where it was actually spoken
+    /// rather than wherever it happened to arrive.
+    public var committedText: String {
+        committedSegments.sorted { ($0.absoluteEndSample, $0.seq) < ($1.absoluteEndSample, $1.seq) }
+            .map(\.text)
+            .joined(separator: " ")
+    }
     /// The current take's own live partial — replaced whole by every `is_final: false` frame,
     /// cleared the moment its words are committed. Never persisted anywhere on its own; a caller
     /// reads ``composedText`` for what to show.
@@ -229,7 +251,9 @@ public final class VoiceUplinkSession {
         socketDiedDuringStop = false
         abandonRequestedDuringWait = false
         pendingChunks = []
-        committedText = ""
+        committedSegments = []
+        gateBaseSample = 0
+        hasOpenedFirstBus = false
         currentPartial = ""
         highestAppliedSeq = -1
         lastTakeDone = nil
@@ -336,6 +360,14 @@ public final class VoiceUplinkSession {
                 // local delivery is actually confirmed, so nothing already acked is resent, but
                 // nothing captured since is skipped either.
                 ackedUpTo = 0
+                // The new engine's own `end_sample` numbering starts over too — carrying forward
+                // the take's highest absolute position (never touched on the very first bus, where
+                // there is nothing yet to carry) is what keeps every segment comparable across the
+                // reconnect rather than colliding near zero with what came before it.
+                if hasOpenedFirstBus {
+                    gateBaseSample = max(gateBaseSample, committedSegments.map(\.absoluteEndSample).max() ?? 0)
+                }
+                hasOpenedFirstBus = true
                 // `takeId` rides on EVERY open now, not only the first — there is no server-side
                 // region any more whose own stored `seq` a resent id could collide with (that
                 // hazard was specific to `DraftRegionSink`'s region model, and drafts v2 has none).
@@ -372,14 +404,15 @@ public final class VoiceUplinkSession {
             }
         case .ping:
             try? await transport?.send(.pong)
-        case let .transcript(takeId, seq, isFinal, text, _):
+        case let .transcript(takeId, seq, isFinal, text, endSample):
             // A frame naming a take this client has already sealed (Send/Skip pressed during
             // Finishing) is dropped on arrival — the composed text is frozen at what the box
             // showed the moment it was sealed, and nothing arriving after may reopen it.
             if let takeId, abandonedTakeIds.contains(takeId) { break }
             highestAppliedSeq = max(highestAppliedSeq, seq)
             if isFinal {
-                committedText = committedText.isEmpty ? text : "\(committedText) \(text)"
+                let absolute = gateBaseSample + (endSample ?? 0)
+                committedSegments.append(CommittedSegment(absoluteEndSample: absolute, seq: seq, text: text))
                 currentPartial = ""
             } else {
                 currentPartial = text
