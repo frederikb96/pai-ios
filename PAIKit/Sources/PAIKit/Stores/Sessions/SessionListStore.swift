@@ -432,12 +432,64 @@ public final class SessionListStore {
         syncedSessionsCursor = page.nextCursor
     }
 
-    /// Inserts a just-created session's optimistic row at the top of the synced list — the same
-    /// unshift the web does in `createSession` before the next poll would otherwise pick it up.
-    /// This store does not create sessions; whoever does (the create-session store) calls this
-    /// once the create request answers.
-    public func prependOptimisticSession(_ session: Session) {
-        syncedSessions.insert(session, at: 0)
+    /// Puts a session a queued send has just created at the top of the list, and answers its id.
+    ///
+    /// The send belongs to ``OutboxStore``, not to this store: a create is an ordinary queued
+    /// message that happens to name no session, so it survives a reload and cannot be sent twice.
+    /// Swift port of `session.ts`'s `adoptCreatedSession`, called from the one place that knows a
+    /// send has landed (``OutboxStore/installHandover(drafts:sessions:handoff:)``).
+    ///
+    /// `nil` for anything that is not a create that reached the server. A row the poll has
+    /// already brought in is left exactly as it is while the id is still answered — a caller's
+    /// navigation must not depend on which of the two arrived first.
+    @discardableResult
+    public func adoptCreatedSession(_ entry: OutboxEntry) -> String? {
+        guard case .newSession = entry.target, let result = entry.result else { return nil }
+        guard session(withId: result.sessionId) == nil else { return result.sessionId }
+        let now = ISO8601DateFormatter().string(from: Date())
+        syncedSessions.insert(
+            Session(
+                id: result.sessionId,
+                sessionType: entry.target.sessionType ?? "default",
+                model: entry.target.model,
+                thinking: entry.target.thinking,
+                status: .pending,
+                state: .starting,
+                blocker: nil,
+                displayState: .starting,
+                title: nil,
+                titleLocked: nil,
+                initialMessage: entry.text,
+                sessionTokens: 0,
+                claudeSessionId: nil,
+                idleTimeoutMinutes: nil,
+                effectiveIdleTimeoutMinutes: nil,
+                cseId: nil,
+                createdAt: now,
+                // No version of its own, deliberately: this row is a guess, and the server's
+                // first copy of it has to replace it whatever its own `updated_at` says. A
+                // client-minted one is compared against the server's by `isStaleVersion`, so a
+                // phone clock even slightly ahead makes the real row read as stale and the guess
+                // outlive it.
+                updatedAt: nil,
+                lastActivityAt: now,
+                workingDir: entry.target.workingDir,
+                agent: entry.target.agent,
+                kind: .conversation,
+                parentSessionId: nil,
+                subagentName: nil,
+                subagentType: nil,
+                subagentDescription: nil,
+                // Optimistic and technically premature — ported as-is from the web; the real
+                // value arrives on the next poll.
+                remoteControl: true,
+                discovered: nil,
+                projectId: nil,
+                phaseId: nil,
+                projectName: nil
+            ),
+            at: 0)
+        return result.sessionId
     }
 
     // MARK: - Delete

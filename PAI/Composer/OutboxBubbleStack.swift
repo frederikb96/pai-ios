@@ -7,17 +7,20 @@ import SwiftUI
 /// source of truth: it exists before any request leaves and survives a reload, exactly the
 /// property `ChatView.tsx`'s own `OutboxBubble` was built for.
 ///
-/// A `.sent` entry is removed the moment the request answers (`AppEnvironment`'s own
-/// `outbox.onSent` wiring) — the transcript's own confirmed row, or `TranscriptStore
-/// .pendingBubbleTexts`' server-reported list for a send from a different device, takes over
-/// showing it from there. Nothing here draws a `.sent` entry.
+/// A `.sent` entry is removed the moment the request answers (`OutboxStore.installHandover`) —
+/// the transcript's own confirmed row, or `TranscriptStore.pendingBubbleTexts`' server-reported
+/// list for a send from a different device, takes over showing it from there. Nothing here draws
+/// a `.sent` entry.
 struct OutboxBubbleStack: View {
     @Environment(OutboxStore.self) private var outbox
     @Environment(DraftStore.self) private var drafts
-    let sessionID: String
+    /// `nil` is the new-session queue — a send composed before the session it will create exists,
+    /// which has no session to be listed under and is visible on that screen alone.
+    let sessionID: String?
 
     var body: some View {
-        let visible = outbox.entries(for: sessionID).filter { $0.state != .sent }
+        let queue = sessionID.map { outbox.entries(for: $0) } ?? outbox.newSessionEntries()
+        let visible = queue.filter { $0.state != .sent }
         if !visible.isEmpty {
             VStack(alignment: .trailing, spacing: 6) {
                 ForEach(visible) { entry in

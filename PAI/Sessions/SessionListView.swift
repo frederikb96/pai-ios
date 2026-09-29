@@ -106,6 +106,16 @@ struct SessionListView: View {
         .sheet(isPresented: $isPresentingCreateSession) {
             CreateSessionView()
         }
+        // Back out of a session that was just created from the new-session screen returns to that
+        // screen: it is the step Back undoes, and the list is one screen too far. Presented from
+        // here because the screen is a sheet with nothing on the navigation path, so there is no
+        // route for `NavigationStack` to pop to — `RootView` recognises the pop and this answers
+        // it. The draft is empty by then, so what comes back up is a fresh screen ready to start
+        // another session.
+        .onChange(of: NewSessionHandoff.shared.reopenRequested) { _, requested in
+            guard requested, NewSessionHandoff.shared.consumeReopen() else { return }
+            isPresentingCreateSession = true
+        }
         .sheet(item: $actionsSheetTarget) { target in
             SessionActionsSheet(sessionId: target.id)
         }

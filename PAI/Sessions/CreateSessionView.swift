@@ -21,7 +21,6 @@ import SwiftUI
 struct CreateSessionView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppEnvironment.self) private var environment
-    @Environment(SessionListStore.self) private var sessionList
     @Environment(MachineStore.self) private var machines
     @Environment(SettingsStore.self) private var settings
     @Environment(DraftStore.self) private var drafts
@@ -82,9 +81,20 @@ struct CreateSessionView: View {
             // without depending on the 700ms window having already elapsed.
             Task { await drafts.flush(key: DraftKey.newSession) }
             // Dismissed without sending. Left armed, this would turn whichever session is
-            // created next into a call nobody asked for — `send(_:)` clears the flag itself for
-            // the case where the request is genuinely wanted.
+            // created next into a call nobody asked for — `openCreatedSession()` clears the flag
+            // itself for the case where the request is genuinely wanted.
             if startsCallOnSend { CallModeLaunchRequest.shared.cancel() }
+            // A send that lands from here on has no screen left to open it. Dropping the offer
+            // is what stops it opening against the *next* visit to this screen instead — the
+            // session is in the list either way.
+            NewSessionHandoff.shared.withdrawCreated()
+        }
+        // The session a send from this screen created, the moment the outbox lands it. A change
+        // rather than an initial read: anything already sitting here when this screen appears
+        // belongs to an earlier visit and must not open now.
+        .onChange(of: NewSessionHandoff.shared.createdSessionID) { _, created in
+            guard created != nil else { return }
+            openCreatedSession()
         }
         .task {
             guard createSession == nil, let connection = environment.connection else { return }
@@ -127,16 +137,21 @@ struct CreateSessionView: View {
         }
         #if DEBUG
             .task {
-                // `-PaiFixtureAutoCreateSession` — how the Mac workflow reproduces the push+dismiss
-                // race `send(_:)` below runs, with no device interaction to drive an actual tap.
-                // Waits for the sheet's own presentation to settle first, so this races the sheet's
-                // *exit* the same way a real send does, not its entrance.
+                // `-PaiFixtureAutoCreateSession` — how the Mac workflow presses Send with no
+                // device interaction to tap it. Drives the real button, not a shortcut past it:
+                // the outbox entry, the create response, the handover that carries the new id
+                // back here, and the push racing the sheet's own dismissal all run exactly as
+                // they do on a phone. A shortcut that pushed the route itself would photograph a
+                // working screen whatever the send path did.
                 guard PaiFixtureLaunch.isEnabled(), PaiFixtureLaunch.autoCreatesSession() else { return }
+                // Lets the sheet's presentation settle, so this races its *exit* the way a real
+                // send does rather than its entrance, and gives the screen's own `.task` time to
+                // build the store Send needs.
                 try? await Task.sleep(for: .seconds(1))
-                withTransaction(Transaction(animation: nil)) {
-                    environment.router.push(.session(id: PaiFixtureLaunch.sessionID))
-                }
-                dismiss()
+                guard let store = createSession, let voiceController = environment.connection?.voice else { return }
+                drafts.setDraftText(
+                    key: DraftKey.newSession, text: "Does Send open the session it creates?")
+                send(store, voiceController)
             }
         #endif
     }
@@ -183,6 +198,11 @@ struct CreateSessionView: View {
                     .padding(.horizontal, 20)
                     .padding(.top, 24)
                 }
+                // A send waiting on a link that is down, or one the server refused — the only
+                // place a not-yet-created session's queued message is visible at all, since it
+                // has no session to be listed under. Same bubbles, and the same Retry / Put back
+                // in composer / Discard, as a session's own composer.
+                OutboxBubbleStack(sessionID: nil)
                 if ClaudeAuthPredicates.needsSignIn(claudeAuth.auth) {
                     signInBlockedRow
                 } else {
@@ -526,26 +546,33 @@ struct CreateSessionView: View {
         Button {
             send(createSession, voiceController)
         } label: {
-            if createSession.isCreating {
-                ProgressView()
-                    .frame(width: 36, height: 36)
-            } else {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 32))
-                    .foregroundStyle(canSend(createSession) ? PaiPalette.primary500 : PaiPalette.Semantic.textFaint)
-            }
+            Image(systemName: "arrow.up.circle.fill")
+                .font(.system(size: 32))
+                .foregroundStyle(canSend ? PaiPalette.primary500 : PaiPalette.Semantic.textFaint)
         }
-        .disabled(!canSend(createSession) || createSession.isCreating)
+        .disabled(!canSend)
         .accessibilityLabel("Send")
         .accessibilityIdentifier("create-session-send")
     }
 
-    private func canSend(_ createSession: CreateSessionStore) -> Bool {
-        !createSession.isCreating
-            && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !stagedAttachments.isEmpty
-                || !drafts.draft(for: DraftKey.newSession).attachments.isEmpty)
+    /// No in-flight state of its own: a send is handed to the outbox and the composer clears in
+    /// the same breath, so there is nothing to spin on and nothing to disable against. A second
+    /// send needs something typed first, exactly as a first one does.
+    private var canSend: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !stagedAttachments.isEmpty
+            || !drafts.draft(for: DraftKey.newSession).attachments.isEmpty
     }
 
+    /// Hands the message to the outbox and clears the composer. **Nothing here waits for the
+    /// network** — the session this creates arrives later, through `NewSessionHandoff`, which
+    /// `openCreatedSession()` below acts on. A send that lands after this screen is gone simply
+    /// leaves its row in the list, which is the right outcome: a queue that waited out an hour
+    /// offline must not then yank the reader out of whatever they moved on to.
+    ///
+    /// The draft is cleared as soon as the entry is on disk, not when the request answers, so
+    /// there is no instant at which the message exists in neither place. What shows it from here
+    /// is its own bubble above the composer — queued, sending, or failed with Retry / Put back in
+    /// composer / Discard, exactly as a session's own composer shows one.
     private func send(_ createSession: CreateSessionStore, _ voiceController: VoiceRecorderController) {
         let isRecordingHereNow = isRecordingHere(voiceController)
         // Finishing is the one case Send is reachable while a take still exists — see
@@ -572,50 +599,46 @@ struct CreateSessionView: View {
             if !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 settings.saveSentMessage(messageText)
             }
-            // `create()` persists the send to the outbox before it ever touches the network, so
-            // durability does not depend on clearing the draft here — only whether the composer
-            // *looks* cleared does. Left in place until success (matching the pre-outbox
-            // behaviour) is what keeps the failure branch simple: there is nothing to restore,
-            // because nothing here was touched.
-            switch await createSession.create(
-                message: messageText, files: files, draftAttachmentIds: uploadedAttachmentIds, outbox: outbox
-            ) {
-            case .created(let session):
-                sessionList.prependOptimisticSession(session)
-                drafts.clearDraft(key: DraftKey.newSession)
-                staging.set([], for: DraftKey.newSession)
-                // Push before dismissing. A push onto the stack behind a sheet that is in the
-                // middle of dismissing is dropped often enough to be a known iOS trap, and the
-                // failure is silent: the session is created and the user stays on the list,
-                // looking at a row they have to tap again.
-                //
-                // The push's own transition animation is disabled, on top of that ordering. Left
-                // animated, it competes with the sheet's own dismissal for the same transition
-                // machinery — two transitions racing to draw over each other — and the destination
-                // has been seen to come up rendering nothing at all until the reader backs out and
-                // reopens it, rather than the push being dropped. An unanimated push has nothing of
-                // its own to race: the destination is simply already there, fully laid out, by the
-                // time the sheet finishes animating away and reveals it.
-                // Handed to the session's own composer rather than pushed from here — see
-                // `CallModeLaunchRequest.openCall(forSession:)` for why a presentation requested
-                // from behind this dismissing sheet would be dropped.
-                if startsCallOnSend {
-                    CallModeLaunchRequest.shared.openCall(forSession: session.id)
-                    // Cleared before the dismiss, because this screen's own teardown withdraws an
-                    // unused request — and after a send the request is not unused, it is on its
-                    // way to the session that was just created.
-                    startsCallOnSend = false
-                }
-                withTransaction(Transaction(animation: nil)) {
-                    environment.router.push(.session(id: session.id))
-                }
-                dismiss()
-            case .failed(let message):
-                // The draft is kept — text and attachments stay exactly where they were, matching
-                // the web: a failure here should never cost what was already staged.
-                errorMessage = message
-            }
+            createSession.enqueueSend(
+                message: messageText, files: files, draftAttachmentIds: uploadedAttachmentIds, outbox: outbox)
+            drafts.clearDraft(key: DraftKey.newSession)
+            staging.set([], for: DraftKey.newSession)
         }
+    }
+
+    /// Opens the session a send from this screen has created.
+    ///
+    /// Push before dismissing. A push onto the stack behind a sheet that is in the middle of
+    /// dismissing is dropped often enough to be a known iOS trap, and the failure is silent: the
+    /// session is created and the reader stays where they were, looking at a row they have to tap
+    /// again.
+    ///
+    /// The push's own transition animation is disabled, on top of that ordering. Left animated,
+    /// it competes with the sheet's own dismissal for the same transition machinery — two
+    /// transitions racing to draw over each other — and the destination has been seen to come up
+    /// rendering nothing at all until the reader backs out and reopens it, rather than the push
+    /// being dropped. An unanimated push has nothing of its own to race: the destination is
+    /// simply already there, fully laid out, by the time the sheet finishes animating away and
+    /// reveals it.
+    private func openCreatedSession() {
+        guard let sessionID = NewSessionHandoff.shared.consumeCreated() else { return }
+        // Handed to the session's own composer rather than pushed from here — see
+        // `CallModeLaunchRequest.openCall(forSession:)` for why a presentation requested from
+        // behind this dismissing sheet would be dropped.
+        if startsCallOnSend {
+            CallModeLaunchRequest.shared.openCall(forSession: sessionID)
+            // Cleared before the dismiss, because this screen's own teardown withdraws an unused
+            // request — and after a send the request is not unused, it is on its way to the
+            // session that was just created.
+            startsCallOnSend = false
+        }
+        // Back out of that session belongs here rather than on the list: this screen is the step
+        // Back undoes. `SessionListView` is what acts on it, since this one is gone by then.
+        NewSessionHandoff.shared.opened(sessionID: sessionID)
+        withTransaction(Transaction(animation: nil)) {
+            environment.router.push(.session(id: sessionID))
+        }
+        dismiss()
     }
 
     // MARK: - Attachments

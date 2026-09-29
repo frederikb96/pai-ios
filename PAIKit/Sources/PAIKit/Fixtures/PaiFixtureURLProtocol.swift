@@ -176,6 +176,10 @@
                 matches: { $0.hasPrefix("/api/notifications/") && $0.split(separator: "/").count == 3 }
             ) { PaiFixtures.data(PaiFixtures.notificationDetail) },
             exact("POST", "/api/alerts/clear") { PaiFixtures.alertsCleared },
+            // The create. Without it `-PaiFixtureAutoCreateSession` drives a send that the
+            // table answers 404 for, which the outbox reads as a refusal it must not retry —
+            // so the screen would sit on a failed bubble and no session would ever open.
+            exact("POST", "/api/messages") { PaiFixtures.postMessageCreated },
             // `.../messages` and `.../messages/find` are answered by `route(method:path:query:)`
             // itself, ahead of this table — the only two routes whose body genuinely depends on
             // the query string. No entry for either here.

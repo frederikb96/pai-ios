@@ -626,9 +626,9 @@ final class SessionStoreListStoreTests: XCTestCase {
         XCTAssertFalse(store.hasMoreSyncedSessions)
     }
 
-    // MARK: - prependOptimisticSession
+    // MARK: - adoptCreatedSession
 
-    func testPrependOptimisticSessionInsertsAtTheTop() async {
+    func testAdoptCreatedSessionInsertsAtTheTop() async {
         let api = FakeSessionListApi()
         await api.setGetSessionsResult { _ in
             .success(SessionsPage(sessions: [SessionFixture.make(id: "existing")], nextCursor: nil))
@@ -636,7 +636,11 @@ final class SessionStoreListStoreTests: XCTestCase {
         let store = makeStore(api: api)
         await store.loadInitialSessions()
 
-        store.prependOptimisticSession(SessionFixture.make(id: "brand-new"))
+        store.adoptCreatedSession(
+            OutboxEntry(
+                target: .newSession(agent: "vm", sessionType: "fast", workingDir: nil, model: nil, thinking: nil),
+                text: "hello", state: .sent,
+                result: OutboxResult(sessionId: "brand-new", messageId: 1, draftVersion: nil)))
 
         XCTAssertEqual(store.syncedSessions.map(\.id), ["brand-new", "existing"])
     }

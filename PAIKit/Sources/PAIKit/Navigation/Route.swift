@@ -292,6 +292,26 @@ extension Route {
         guard newPath.last != .session(id: parentID) else { return newPath }
         return newPath + [.session(id: parentID)]
     }
+
+    /// Whether an interactive pop from `oldPath` to `newPath` has left the session that was just
+    /// created from the new-session screen (`NewSessionHandoff.openedSessionID`), and so should
+    /// land back on that screen rather than on the session list.
+    ///
+    /// Back undoes the step that was taken, and the step taken was "from the new-session screen
+    /// into the session it created" — so the list is one screen too far. The screen itself is a
+    /// sheet with nothing on the path, which is why this is a predicate the list acts on rather
+    /// than a route to pop to.
+    ///
+    /// Requires the pop to have reached the root: both ways in leave a path of exactly that one
+    /// session (the sheet pushes it over an empty path; `.createSession` is taken out from under
+    /// it — see `Router.removeRoute`), so anything else is a pop within a deeper stack and not
+    /// the step this undoes.
+    public static func popLeavesJustCreatedSession(
+        from oldPath: [Route], to newPath: [Route], justCreated: String?
+    ) -> Bool {
+        guard let justCreated, newPath.isEmpty else { return false }
+        return oldPath.contains(.session(id: justCreated))
+    }
 }
 
 extension [Route] {

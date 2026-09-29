@@ -422,12 +422,20 @@ struct RootView: View {
     /// That is what makes `pathAfterLeavingSubagents` safe to apply unconditionally here: it must
     /// correct exactly the interactive case and never a deliberate `Router.replace(with:)` such
     /// as a notification's cold open, which intentionally lands somewhere `Route.subagents` knows
-    /// nothing about.
+    /// nothing about. `popLeavesJustCreatedSession` rides the same signal for the same reason:
+    /// returning to the new-session screen is what a reader's own Back means, never what a
+    /// programmatic navigation elsewhere should trigger.
     private var navigationPath: Binding<[Route]> {
         Binding(
             get: { environment.router.path },
             set: { newValue in
                 let corrected = Route.pathAfterLeavingSubagents(from: environment.router.path, to: newValue)
+                if Route.popLeavesJustCreatedSession(
+                    from: environment.router.path, to: corrected,
+                    justCreated: NewSessionHandoff.shared.openedSessionID)
+                {
+                    NewSessionHandoff.shared.requestReopen()
+                }
                 environment.router.replace(with: corrected)
             }
         )
