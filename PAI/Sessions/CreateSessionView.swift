@@ -454,12 +454,14 @@ struct CreateSessionView: View {
                     hasSession: false,
                     offersStartCallAfterSend: !startsCallOnSend,
                     canGrantSecretAccess: false,
+                    canRestorePreviousText: canRestorePreviousText,
                     onPastRecordings: { showingRecordingsSheet = true },
                     onPastMessages: { showingSentMessagesSheet = true },
                     onAddPhoto: { showingPhotoPicker = true },
                     onAddFile: { showingFilePicker = true },
                     onTemporaryNote: { showingTemporaryNote = true },
                     onSecretGrant: {},
+                    onRestorePreviousText: { drafts.restorePreviousText(key: DraftKey.newSession) },
                     onCancel: {},
                     onStartCallAfterSend: { startCallAfterSend(voiceController) }
                 )
@@ -670,6 +672,13 @@ struct CreateSessionView: View {
 
     private var text: String {
         drafts.draft(for: DraftKey.newSession).text
+    }
+
+    /// See `ComposerBar.canRestorePreviousText`'s own doc comment — the same gate, same reasoning.
+    private var canRestorePreviousText: Bool {
+        let entry = drafts.draft(for: DraftKey.newSession)
+        guard let previous = entry.previousText, !previous.isEmpty else { return false }
+        return previous != entry.text
     }
 
     private var stagedAttachments: [StagedAttachment] {

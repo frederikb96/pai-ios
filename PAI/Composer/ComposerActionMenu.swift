@@ -16,6 +16,10 @@ struct ComposerActionMenu: View {
     /// exist and still have nothing to grant against (sandboxed, no live conversation), and
     /// re-deriving that predicate here would drift from what the grant route itself checks.
     var canGrantSecretAccess: Bool
+    /// Only when the server is holding a different earlier text than what's on screen — two
+    /// devices never type at once, so the last writer wins, and this is how the loser gets its
+    /// words back. Mirrors the web's own gate in `MessageInput.tsx`.
+    var canRestorePreviousText: Bool
     /// Whether this menu is one of the three doors onto the voice screen. The new-session
     /// composer is not: a session does not exist yet for a call to be in, and navigating away
     /// mid-creation would abandon the message being written.
@@ -37,6 +41,7 @@ struct ComposerActionMenu: View {
     var onAddFile: () -> Void
     var onTemporaryNote: () -> Void
     var onSecretGrant: () -> Void
+    var onRestorePreviousText: () -> Void
     var onCancel: () -> Void
     var onStartCallAfterSend: () -> Void = {}
 
@@ -104,6 +109,14 @@ struct ComposerActionMenu: View {
                 } label: {
                     Label("Grant Secret Access", systemImage: "key")
                 }
+            }
+            if canRestorePreviousText {
+                Button {
+                    onRestorePreviousText()
+                } label: {
+                    Label("Restore earlier version", systemImage: "arrow.uturn.backward")
+                }
+                .accessibilityIdentifier("composer-menu-restore-previous-text")
             }
             if hasSession {
                 // Needs a real session id to cancel — unlike the other four entries, there is

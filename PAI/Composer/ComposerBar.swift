@@ -196,6 +196,7 @@ struct ComposerBar: View {
                 ComposerActionMenu(
                     hasSession: true,
                     canGrantSecretAccess: currentSecretGrantable ?? false,
+                    canRestorePreviousText: canRestorePreviousText(draftStore: draftStore),
                     offersComputer: true,
                     isOnTheCall: callIsInThisSession,
                     isCallLive: environment.connection?.computerCall.isLive ?? false,
@@ -209,6 +210,7 @@ struct ComposerBar: View {
                     onAddFile: { showingFilePicker = true },
                     onTemporaryNote: { showingTemporaryNote = true },
                     onSecretGrant: { secretGrantTarget = SecretGrantTarget(promptAt: currentSecretPrompt?.at) },
+                    onRestorePreviousText: { draftStore.restorePreviousText(key: sessionID) },
                     onCancel: { Task { await cancelSession() } }
                 )
 
@@ -321,6 +323,15 @@ struct ComposerBar: View {
 
     private var text: String {
         draftStore?.draft(for: sessionID).text ?? ""
+    }
+
+    /// Only when the server is holding a different earlier text than what's on screen — two
+    /// devices never type at once, so the last writer wins, and this is how the loser gets its
+    /// words back. Mirrors the web's own gate in `MessageInput.tsx`.
+    private func canRestorePreviousText(draftStore: DraftStore) -> Bool {
+        let entry = draftStore.draft(for: sessionID)
+        guard let previous = entry.previousText, !previous.isEmpty else { return false }
+        return previous != entry.text
     }
 
     private func appendTranscript(_ prefixedText: String, draftStore: DraftStore) {
