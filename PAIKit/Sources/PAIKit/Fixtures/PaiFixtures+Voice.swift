@@ -15,11 +15,18 @@ extension PaiFixtures {
     /// `GET /api/drafts` — the `new` draft (carrying the launch choices only it needs) and a
     /// draft on ``sessionReady``, whose text carries the load-bearing `stt-rec: ` prefix that
     /// marks a composer body as having come from speech.
+    ///
+    /// 🚨 **`new`'s version has to stay ahead of every version ``draftWritten`` reports.**
+    /// `DraftStore` persists `knownVersion` locally and adopts a polled row only when it is
+    /// strictly newer, and a screenshot run reuses one simulator across launches — so a launch
+    /// that presses Send records the version its own clear returned, and any later launch reading
+    /// this list is left with the emptied draft rather than the one written here. A real backend
+    /// moves its own version forward and never has the problem; a fixed corpus has to say so.
     public static let drafts: String = #"""
         [
           { "key": "new", "text": "Check whether the ", "session_type": "default",
             "working_dir": "/home/frederik/Programming/pai-cloud", "updated_at": "2026-08-29T08:55:12Z",
-            "version": 3, "device_id": "fixture-laptop", "attachments": [] },
+            "version": 12, "device_id": "fixture-laptop", "attachments": [] },
           { "key": "305df4d3-1554-4fc3-be04-39a354a9e619",
             "text": "stt-rec: also double check the terminal frame shape and the ack watermark too",
             "session_type": null, "working_dir": null, "updated_at": "2026-08-29T09:40:02Z",
@@ -28,8 +35,9 @@ extension PaiFixtures {
         """#
 
     /// `PUT /api/drafts/{key}` and `DELETE /api/drafts/{key}` — what a composer's own debounced
-    /// write and its clear-after-send get back. The version is ahead of every row above, so a
-    /// write's answer is never read as older than what the poll already delivered.
+    /// write and its clear-after-send get back. Ahead of the session row above so a write's answer
+    /// is never read as older than what the poll already delivered, and behind `new`'s for the
+    /// reason that row's own comment gives.
     public static let draftWritten: String = #"""
         { "key": "new", "version": 9, "previous_text": null }
         """#
