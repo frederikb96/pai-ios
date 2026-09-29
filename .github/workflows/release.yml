@@ -34,7 +34,10 @@ jobs:
   build:
     runs-on: macos-26
     # The 6-hour default would hold a scarce Mac runner for a whole afternoon before failing.
-    timeout-minutes: 45
+    # Sized so a slow runner still finishes: the upload is the last step and the longest, and a
+    # ceiling that lands on it reports as `cancelled`, which reads as someone having stopped the
+    # run rather than as a build that needed more time.
+    timeout-minutes: 75
 
     steps:
       - uses: actions/checkout@v6
