@@ -413,12 +413,15 @@ struct ComposerBar: View {
         isSending = true
         sendErrorMessage = nil
         let isRecordingHereNow = isRecordingHere(voiceController)
-        // Finishing (the drain between pressing stop and the take actually completing) is the one
-        // case where Send is reachable while a take still exists — the wire contract's own rule:
-        // seal it, tell the server to abandon rather than wait, and send whatever the box already
-        // shows. Still genuinely `.recording` (only reachable here via the spoken "computer send
-        // the message" command, since the button itself is Mute while actively recording) takes
-        // the graceful path instead: stop and let the take's own tail land before reading the text.
+        // Finishing (the drain between pressing stop and the take actually completing) is the
+        // ordinary way Send is reachable while a take still exists — the send button's own slot
+        // shows Mute for every other non-idle state, so this is what the button press actually
+        // hits. The wire contract's own rule: seal it, tell the server to abandon rather than
+        // wait, and send whatever the box already shows. The `else` below is a defensive fallback
+        // for any OTHER caller of this function while genuinely still `.recording` — none exists
+        // today (the spoken "computer send the message" path calls `abandonAndStop()` itself
+        // before ever reaching here) — which takes the graceful path instead: stop and let the
+        // take's own tail land before reading the text.
         let isFinishing = isRecordingHereNow && voiceController.state == .stopping
 
         Task {
