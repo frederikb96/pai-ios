@@ -212,7 +212,9 @@ final class SessionStoreRowStateTests: XCTestCase {
     private func makeMachine(slug: String, displayName: String, sessionTypes: [SessionType] = []) -> Machine {
         Machine(
             slug: slug, displayName: displayName, online: true, lastSeenAt: nil, ingestEnabled: true,
-            capabilities: Machine.Capabilities(fastSessions: false, reboot: false, shell: false),
+            capabilities: Machine.Capabilities(
+                fastSessions: false, reboot: false, shell: false, rcLocal: false, rcRoute: .anthropic,
+            ),
             sessionTypes: sessionTypes
         )
     }

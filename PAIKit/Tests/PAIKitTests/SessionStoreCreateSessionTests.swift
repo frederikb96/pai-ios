@@ -11,7 +11,8 @@ final class SessionStoreCreateSessionTests: XCTestCase {
     private func machine(slug: String, types: [SessionType]) -> Machine {
         Machine(
             slug: slug, displayName: slug, online: true, lastSeenAt: nil, ingestEnabled: true,
-            capabilities: .init(fastSessions: true, reboot: true, shell: true), sessionTypes: types
+            capabilities: .init(fastSessions: true, reboot: true, shell: true, rcLocal: true, rcRoute: .anthropic),
+            sessionTypes: types
         )
     }
 
