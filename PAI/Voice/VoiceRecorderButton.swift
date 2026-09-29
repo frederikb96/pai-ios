@@ -107,7 +107,10 @@ struct VoiceRecordingIndicator: View {
 
     private var label: String? {
         switch controller.state {
-        case .recording, .stopping: controller.isMuted ? "Muted" : "Rec"
+        case .recording: controller.isMuted ? "Muted" : "Rec"
+        // Finishing, never "Rec" — the microphone has genuinely stopped by now, and claiming
+        // otherwise is exactly the false-liveness reading `.paused`'s own case already avoids.
+        case .stopping: "Finishing…"
         case .connecting: "Connecting…"
         case .paused: "Paused"
         case .reconnecting: "Reconnecting…"
@@ -118,7 +121,7 @@ struct VoiceRecordingIndicator: View {
 
     private var color: Color {
         switch controller.state {
-        case .paused, .reconnecting, .transcriptionStopped: PaiPalette.Semantic.warningText
+        case .paused, .reconnecting, .transcriptionStopped, .stopping: PaiPalette.Semantic.warningText
         default: controller.isMuted ? PaiPalette.Semantic.warningText : PaiPalette.Semantic.errorText
         }
     }
