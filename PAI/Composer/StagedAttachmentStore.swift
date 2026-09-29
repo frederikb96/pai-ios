@@ -75,6 +75,17 @@ final class StagedAttachmentStore {
         return "\(first.filename)\(suffix) exceeds the 50MB limit and was not attached."
     }
 
+    /// Retries a staged file whose upload failed — the chip's own retry button. Only meaningful
+    /// for a `.staged` attachment still holding its bytes on this device; a `.remote` row in
+    /// `failed` state has no bytes here to retry with (the picking device is where that retry
+    /// belongs). A no-op for anything not currently `.failed`.
+    func retryUpload(id: StagedAttachment.ID, in sessionID: String, via drafts: DraftStore) {
+        guard let attachment = attachments(for: sessionID).first(where: { $0.id == id }),
+            attachment.uploadState == .failed
+        else { return }
+        upload(attachment, in: sessionID, via: drafts)
+    }
+
     /// Uploads a freshly staged file onto the draft the moment it is picked — the whole point of
     /// staging server-side rather than only at send: composing one message from several devices,
     /// seeing an image added from a laptop while still dictating on the phone. A failed upload

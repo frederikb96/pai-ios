@@ -23,8 +23,8 @@ private actor SendGate {
 
 private final class FakeOutboxApi: OutboxSending, @unchecked Sendable {
     private let lock = NSLock()
-    private var _calls: [(clientMessageId: String, sessionId: String?, message: String, draftAttachmentIds: [String])]
-        = []
+    private var _calls: [(clientMessageId: String, sessionId: String?, message: String, draftAttachmentIds: [String])] =
+        []
     var calls: [(clientMessageId: String, sessionId: String?, message: String, draftAttachmentIds: [String])] {
         lock.lock()
         defer { lock.unlock() }
@@ -60,8 +60,10 @@ private final class FakeOutboxApi: OutboxSending, @unchecked Sendable {
         thinking: String?, clientMode: String?
     ) async throws -> PostMessageResponse {
         record(
-            (clientMessageId: clientMessageId, sessionId: sessionId, message: message,
-                draftAttachmentIds: draftAttachmentIds))
+            (
+                clientMessageId: clientMessageId, sessionId: sessionId, message: message,
+                draftAttachmentIds: draftAttachmentIds
+            ))
         if let gate { await gate.wait() }
         if let error = consumeFailure() { throw error }
         return result
@@ -275,7 +277,8 @@ final class OutboxStoreTests: XCTestCase {
     /// never left stuck, since the POST it was mid-flight on is safely idempotent.
     func testAnEntryFoundSendingAtStartupIsRetried() async {
         let storage = OutboxInMemoryStorage()
-        let entry = OutboxEntry(target: .session(sessionId: "s1"), text: "mid-flight when the app died", state: .sending)
+        let entry = OutboxEntry(
+            target: .session(sessionId: "s1"), text: "mid-flight when the app died", state: .sending)
         storage.saveEntries([entry])
 
         let sending = FakeOutboxApi()

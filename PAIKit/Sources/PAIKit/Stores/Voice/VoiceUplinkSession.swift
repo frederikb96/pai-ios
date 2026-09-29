@@ -179,6 +179,10 @@ public final class VoiceUplinkSession {
     /// ``waitForTakeDone(takeId:)`` has that the socket it is waiting on is already gone. Reset on
     /// every fresh `start()`.
     private var socketDiedDuringStop = false
+    /// Set by ``requestAbandonWhileFinishing()`` — the third exit ``waitForTakeDone(takeId:)``
+    /// checks, alongside the receipt itself and the deadline, for a Send pressed while an ordinary
+    /// `stop()` call is already mid-wait. Reset on every fresh `start()`.
+    private var abandonRequestedDuringWait = false
     /// Audio captured while the socket is down or still connecting — flushed in `sampleOffset`
     /// order the moment a `ready` (fresh or resumed) arrives, so nothing captured during a brief
     /// drop is lost even though it could not be sent live.
@@ -223,6 +227,7 @@ public final class VoiceUplinkSession {
         reconnectAttempt = 0
         isStopping = false
         socketDiedDuringStop = false
+        abandonRequestedDuringWait = false
         pendingChunks = []
         committedText = ""
         currentPartial = ""
@@ -604,15 +609,29 @@ public final class VoiceUplinkSession {
 
     /// R1 ∧ R3: waits for the one positive completion signal there is — `take_done` for this
     /// exact take — never for a partial merely going quiet, which looks identical to a stalled
-    /// connection. Exits early on the deadline (R2's own budget) or on the socket dying mid-wait
-    /// (`socketDiedDuringStop`, since `handleConnectionLost` itself no-ops while stopping).
+    /// connection. Exits early on the deadline (R2's own budget), on the socket dying mid-wait
+    /// (`socketDiedDuringStop`, since `handleConnectionLost` itself no-ops while stopping), or on
+    /// an abandon requested while this exact wait is already running.
     private func waitForTakeDone(takeId: String) async {
         let deadlineAt = dependencies.now().addingTimeInterval(Self.finishingDeadlineSeconds)
         while true {
             if lastTakeDone?.takeId == takeId { return }
             if socketDiedDuringStop { return }
+            if abandonRequestedDuringWait { return }
             if dependencies.now() >= deadlineAt { return }
             await dependencies.sleep(.milliseconds(100))
         }
+    }
+
+    /// Sending during Finishing: an ordinary `stop()` is already mid-wait when this is called, so
+    /// this does not start a second `stopInternal` — it seals the take, sends the SAME wire
+    /// contract abandon gate a fresh `abandon()` would, and flags the wait already running to
+    /// return immediately rather than sitting out the rest of its deadline. A no-op outside
+    /// `.stopping`, or once the take has already been sealed.
+    public func requestAbandonWhileFinishing() async {
+        guard state == .stopping, let takeId = currentTakeId, !abandonedTakeIds.contains(takeId) else { return }
+        sealTake(takeId)
+        try? await transport?.send(.gate(open: false, reason: "abandon"))
+        abandonRequestedDuringWait = true
     }
 }

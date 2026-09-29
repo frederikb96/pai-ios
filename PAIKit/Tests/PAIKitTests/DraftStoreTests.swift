@@ -169,14 +169,17 @@ private final class FakeDraftsFetching: DraftsFetching, @unchecked Sendable {
         return DraftWriteResult(key: key, version: newVersion)
     }
 
-    func deleteDraft(key: String) async throws -> DraftWriteResult {
+    func deleteDraft(key: String) async throws -> PaiDraftDeleteResult {
         record("deleteDraft:start:\(key)")
         if let deleteGate {
             await deleteGate.wait()
         }
         record("deleteDraft:done:\(key)")
-        let newVersion = bumpServerVersion(key: key, deviceId: nil)
-        return DraftWriteResult(key: key, version: newVersion)
+        // The real backend bumps the version on a discard too, even though the response itself
+        // (`{key, deleted}`) never surfaces it — mirrored here so a `putDraft` right after a
+        // `deleteDraft` in a test still gets the version the real server would hand it.
+        _ = bumpServerVersion(key: key, deviceId: nil)
+        return PaiDraftDeleteResult(key: key, deleted: true)
     }
 
     /// Plain, non-`async` on purpose — `NSLock.lock()`/`unlock()` are unavailable to call directly
@@ -654,7 +657,9 @@ final class DraftStoreTests: XCTestCase {
     /// read "not listed" as "gone, drop the local copy".
     func testSyncNeverTouchesAKeyTheResponseSimplyDoesNotList() async {
         let fake = FakeDraftsFetching()
-        fake.remoteDrafts = [Draft(key: "s1", text: "seed", sessionType: nil, workingDir: nil, updatedAt: nil, version: 1)]
+        fake.remoteDrafts = [
+            Draft(key: "s1", text: "seed", sessionType: nil, workingDir: nil, updatedAt: nil, version: 1)
+        ]
         let store = DraftStore(api: fake, scheduler: InstantDraftScheduler())
         await store.syncFromServer()
         XCTAssertEqual(store.draft(for: "s1").text, "seed")
@@ -702,7 +707,8 @@ final class DraftStoreTests: XCTestCase {
     /// every cold start.
     func testTheDeviceIdSurvivesARelaunch() async {
         let storage = SettingsInMemoryKeyValueStore()
-        let firstLaunch = DraftStore(api: FakeDraftsFetching(), scheduler: InstantDraftScheduler(), localPersistence: storage)
+        let firstLaunch = DraftStore(
+            api: FakeDraftsFetching(), scheduler: InstantDraftScheduler(), localPersistence: storage)
         let secondLaunch = DraftStore(
             api: FakeDraftsFetching(), scheduler: InstantDraftScheduler(), localPersistence: storage)
 

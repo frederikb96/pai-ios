@@ -444,16 +444,25 @@ final class PaiModelsTests: XCTestCase {
         XCTAssertNil(map.smtpPassword, "absent from the response, must not default to some placeholder")
     }
 
-    // MARK: - DraftWriteResult
+    // MARK: - DraftWriteResult / PaiDraftDeleteResult
 
-    /// `PUT`/`DELETE /api/drafts/{key}` are unconditional now — no CAS, no conflict, no discovery
-    /// of which of several shapes the body is. The whole answer is a key and the version the
-    /// server bumped to.
+    /// `PUT /api/drafts/{key}` is unconditional now — no CAS, no conflict, no discovery of which
+    /// of several shapes the body is. The whole answer is a key and the version the server bumped
+    /// to.
     func testDraftWriteResultDecodesKeyAndVersion() throws {
         let result = try JSONDecoder().decode(
             DraftWriteResult.self, from: Data(#"{"key":"new","version":7}"#.utf8))
         XCTAssertEqual(result.key, "new")
         XCTAssertEqual(result.version, 7)
+    }
+
+    /// `DELETE /api/drafts/{key}` answers with a plain acknowledgement, not a version — a
+    /// different shape from `PUT`'s, even though both bump the row's version server-side.
+    func testDraftDeleteResultDecodesKeyAndDeleted() throws {
+        let result = try JSONDecoder().decode(
+            PaiDraftDeleteResult.self, from: Data(#"{"key":"new","deleted":true}"#.utf8))
+        XCTAssertEqual(result.key, "new")
+        XCTAssertTrue(result.deleted)
     }
 
     /// A draft row decodes its version and device id, and has no `regions` field at all —

@@ -164,7 +164,8 @@ public final class OutboxStore {
             )
             guard let current = entries.firstIndex(where: { $0.id == entry.id }) else { return }
             entries[current].state = .sent
-            entries[current].result = OutboxResult(sessionId: response.sessionId, messageId: response.messageId)
+            entries[current].result = OutboxResult(
+                sessionId: response.sessionId, messageId: response.messageId, draftVersion: response.draftVersion)
             storage.removeInlineFiles(localIds: entry.inlineFiles.map(\.localId))
             persist()
             onSent?(entries[current])

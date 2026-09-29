@@ -73,6 +73,15 @@ public enum OutboxEntryState: String, Codable, Sendable, Equatable {
 public struct OutboxResult: Codable, Sendable, Equatable {
     public let sessionId: String
     public let messageId: Int
+    /// The version of the draft this send consumed and cleared server-side — what
+    /// `DraftStore.recordVersionAfterSend` records so this device's own next poll is a no-op.
+    public let draftVersion: Int?
+
+    public init(sessionId: String, messageId: Int, draftVersion: Int? = nil) {
+        self.sessionId = sessionId
+        self.messageId = messageId
+        self.draftVersion = draftVersion
+    }
 }
 
 /// One send, persisted before the composer that produced it is ever cleared — the whole point of

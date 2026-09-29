@@ -39,12 +39,21 @@ public struct PaiFileUpload: Sendable, Equatable {
     }
 }
 
-/// `PUT`/`DELETE /api/drafts/{key}`'s unconditional answer — no CAS, no conflict, ever. The
-/// server always accepts the write and hands back the version it bumped to; every ordering
-/// question is decided client-side by comparing this against `DraftEntry.knownVersion`.
+/// `PUT /api/drafts/{key}`'s unconditional answer — no CAS, no conflict, ever. The server always
+/// accepts the write and hands back the version it bumped to; every ordering question is decided
+/// client-side by comparing this against `DraftEntry.knownVersion`.
 public struct DraftWriteResult: Codable, Sendable, Equatable {
     public let key: String
     public let version: Int
+}
+
+/// `DELETE /api/drafts/{key}`'s answer — a plain acknowledgement, not the version the discard
+/// bumped to. `DraftStore` never reads a version out of it: the discard clears the local entry
+/// itself, and the next `syncFromServer()` adopts whatever version the server settled on like any
+/// other row.
+public struct PaiDraftDeleteResult: Codable, Sendable, Equatable {
+    public let key: String
+    public let deleted: Bool
 }
 
 public struct PaiFavoriteRemovalResult: Codable, Sendable, Equatable {
@@ -673,7 +682,7 @@ public struct PaiApiClient: Sendable {
     /// Explicit user discard — clears text, tombstones attachments, removes the VM `drafts/<key>/`
     /// directory — but never removes the row itself, implemented as a text-and-version write like
     /// any other.
-    public func deleteDraft(key: String) async throws -> DraftWriteResult {
+    public func deleteDraft(key: String) async throws -> PaiDraftDeleteResult {
         try await send(
             path: "/api/drafts/\(Self.encodeDraftKey(key))",
             method: "DELETE",

@@ -232,11 +232,14 @@ final class VoiceUplinkSessionTests: XCTestCase {
         await waitUntil { await transport.sentFrames.count >= 2 }
 
         let stopTask = Task { await session.stop() }
-        await waitUntil { await transport.sentFrames.contains { if case .gate(false, _, _) = $0 { true } else { false } } }
+        await waitUntil {
+            await transport.sentFrames.contains { if case .gate(false, _, _) = $0 { true } else { false } }
+        }
         // Give the stop every chance to (wrongly) race ahead to `bye` before the receipt arrives.
         for _ in 0..<20 { await Task.yield() }
         var frames = await transport.sentFrames
-        XCTAssertFalse(frames.contains { if case .bye = $0 { true } else { false } }, "bye sent before take_done arrived")
+        XCTAssertFalse(
+            frames.contains { if case .bye = $0 { true } else { false } }, "bye sent before take_done arrived")
 
         await transport.enqueue(.control(.takeDone(takeId: "take-1", finalSeq: 0, ended: "committed")))
         await stopTask.value
@@ -293,6 +296,36 @@ final class VoiceUplinkSessionTests: XCTestCase {
         }
         XCTAssertEqual(closeGates, ["abandon"])
         XCTAssertTrue(frames.contains { if case .bye = $0 { true } else { false } })
+    }
+
+    /// Sending during Finishing calls this while an ordinary `stop()` is already mid-wait — it
+    /// must short-circuit that SAME wait (never start a second teardown), and the gate frame it
+    /// sends must carry the abandon reason even though the ordinary close (reason `button`) has
+    /// already gone out.
+    func testRequestAbandonWhileFinishingShortCircuitsAnInFlightStop() async {
+        let transport = FakeVoiceSocketTransport()
+        let session = makeSession(transport: transport)
+        let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
+        await transport.enqueue(
+            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil)))
+        await waitUntil { await transport.sentFrames.count >= 2 }
+
+        let stopTask = Task { await session.stop() }
+        await waitUntil { await session.state == .stopping }
+        await waitUntil {
+            await transport.sentFrames.contains { if case .gate(false, "button", _) = $0 { true } else { false } }
+        }
+
+        await session.requestAbandonWhileFinishing()
+        await stopTask.value
+        _ = await startTask.value
+
+        XCTAssertEqual(session.state, .idle)
+        let closeGates = await transport.sentFrames.compactMap { frame -> String? in
+            guard case let .gate(open, reason, _) = frame, !open else { return nil }
+            return reason
+        }
+        XCTAssertEqual(closeGates, ["button", "abandon"], "the abandon gate must follow the ordinary close")
     }
 
     /// Stopping when there was never a live connection (still `.connecting`, nothing acked yet)

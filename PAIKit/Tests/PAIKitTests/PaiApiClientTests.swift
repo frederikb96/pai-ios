@@ -371,7 +371,7 @@ final class PaiApiClientTests: XCTestCase {
     /// *path* character), so a slash inside a draft key was previously carried straight through
     /// into a second path segment instead of staying part of the key.
     func testDeleteDraftPercentEncodesSlashInKeyExactlyOnce() async throws {
-        stubJSON(#"{"key":"a/b","version":1}"#)
+        stubJSON(#"{"key":"a/b","deleted":true}"#)
         let client = try makeClient()
         _ = try await client.deleteDraft(key: "a/b")
 

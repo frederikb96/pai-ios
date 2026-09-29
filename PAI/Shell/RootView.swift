@@ -141,6 +141,7 @@ struct RootView: View {
                 .environment(connection.notes)
                 .environment(connection.notesBrowse)
                 .environment(connection.staging)
+                .environment(connection.outbox)
                 .environment(connection.notifications)
                 // Only settles a token the backend has not seen yet — silent, and a no-op in the
                 // common case. Asking for permission is deliberately NOT here: the system prompt
