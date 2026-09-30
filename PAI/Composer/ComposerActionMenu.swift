@@ -16,6 +16,11 @@ struct ComposerActionMenu: View {
     /// exist and still have nothing to grant against (sandboxed, no live conversation), and
     /// re-deriving that predicate here would drift from what the grant route itself checks.
     var canGrantSecretAccess: Bool
+    /// The new-session screen's grant, armed before the session exists: `nil` where it is not
+    /// offered (an existing session's composer), otherwise whether one is armed right now —
+    /// which decides whether the entry arms one or takes it back.
+    var pregrantArmed: Bool? = nil
+    var onTogglePregrant: () -> Void = {}
     /// Only when the server is holding a different earlier text than what's on screen — two
     /// devices never type at once, so the last writer wins, and this is how the loser gets its
     /// words back. Mirrors the web's own gate in `MessageInput.tsx`.
@@ -109,6 +114,18 @@ struct ComposerActionMenu: View {
                 } label: {
                     Label("Grant Secret Access", systemImage: "key")
                 }
+            }
+            if let pregrantArmed {
+                Button {
+                    onTogglePregrant()
+                } label: {
+                    if pregrantArmed {
+                        Label("Cancel Secret Grant", systemImage: "xmark.circle")
+                    } else {
+                        Label("Grant Secrets on Start", systemImage: "key")
+                    }
+                }
+                .accessibilityIdentifier("composer-menu-pregrant")
             }
             if canRestorePreviousText {
                 Button {

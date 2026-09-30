@@ -714,6 +714,33 @@ final class PaiApiClientTests: XCTestCase {
         }
     }
 
+    // MARK: - secret pregrant
+
+    func testArmSecretPregrantPutsPassphraseAndTtlInTheBodyOnly() async throws {
+        stubJSON(#"{"armed":true,"ttl_seconds":3600,"discard_at":"2026-10-01T00:00:00+00:00"}"#)
+        let client = try makeClient()
+        let status = try await client.armSecretPregrant(passphrase: "pw", ttlSeconds: 3600)
+
+        let request = PaiStubURLProtocol.capturedRequest
+        XCTAssertEqual(request?.httpMethod, "PUT")
+        XCTAssertTrue(request?.url?.path.hasSuffix("/api/secret-pregrant") ?? false)
+        XCTAssertNil(request?.url?.query)
+        let body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains(#""passphrase":"pw""#), body)
+        XCTAssertTrue(body.contains(#""ttl_seconds":3600"#), body)
+        XCTAssertEqual(
+            status, SecretPregrantStatus(armed: true, ttlSeconds: 3600, discardAt: "2026-10-01T00:00:00+00:00"))
+    }
+
+    func testAnUnarmedPregrantDecodesItsNulls() async throws {
+        stubJSON(#"{"armed":false,"ttl_seconds":null,"discard_at":null}"#)
+        let client = try makeClient()
+        let status = try await client.cancelSecretPregrant()
+
+        XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.httpMethod, "DELETE")
+        XCTAssertEqual(status, SecretPregrantStatus(armed: false, ttlSeconds: nil, discardAt: nil))
+    }
+
     // MARK: - declineSecretPrompt
 
     func testDeclineSecretPromptSendsPostToTheContractPathWithNoBody() async throws {

@@ -858,3 +858,26 @@ public struct SmtpSettingsUpdate: Encodable, Sendable, Equatable {
         self.enabled = enabled
     }
 }
+
+/// A grant of the whole gated store armed for the next session a client creates, before that
+/// session exists — `GET/PUT/DELETE /api/secret-pregrant`. One slot the backend holds in memory,
+/// shared with the web, so a client only ever reads it back rather than remembering it.
+public struct SecretPregrantStatus: Codable, Sendable, Equatable {
+    public let armed: Bool
+    /// How long the grant lasts once applied; `nil` when nothing is armed.
+    public let ttlSeconds: Int?
+    /// When an unused armed grant is dropped; `nil` when nothing is armed.
+    public let discardAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case armed
+        case ttlSeconds = "ttl_seconds"
+        case discardAt = "discard_at"
+    }
+
+    public init(armed: Bool, ttlSeconds: Int?, discardAt: String?) {
+        self.armed = armed
+        self.ttlSeconds = ttlSeconds
+        self.discardAt = discardAt
+    }
+}

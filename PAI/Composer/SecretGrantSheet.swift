@@ -48,8 +48,8 @@ struct SecretGrantSheet: View {
     @FocusState private var passphraseFocused: Bool
 
     /// 60...604800 is the contract's own bound; these are the presets worth offering rather than
-    /// a free-form stepper over that whole range.
-    private static let durationChoices: [(label: String, seconds: Int)] = [
+    /// a free-form stepper over that whole range. `SecretPregrantSheet` offers the same ones.
+    static let durationChoices: [(label: String, seconds: Int)] = [
         ("1 hour", 3600), ("4 hours", 14400), ("24 hours", 86400), ("3 days", 259200), ("7 days", 604800),
     ]
 
@@ -97,9 +97,8 @@ struct SecretGrantSheet: View {
                             Button("Cancel") { dismiss() }
                         }
                     }
-                    // Only ever the `.requested` grant — an empty request list offers no toolbar
-                    // action at all, so Return (which mirrors this button) cannot fall through to
-                    // granting everything. `.grantAllSection` is the only way there.
+                    // Only ever the `.requested` grant; with nothing requested, `.grantAllSection`
+                    // and Return both grant everything instead.
                     if isPromptPending {
                         ToolbarItem(placement: .confirmationAction) {
                             Button("Grant") { Task { await submit(scope: .requested) } }
@@ -195,10 +194,9 @@ struct SecretGrantSheet: View {
                 .autocorrectionDisabled()
                 .focused($passphraseFocused)
                 .submitLabel(.go)
-                .onSubmit {
-                    guard !names.isEmpty else { return }
-                    Task { await submit(scope: .requested) }
-                }
+                // Return grants what was asked for, or everything when nothing was — the same
+                // answer the web's Enter gives.
+                .onSubmit { Task { await submit(scope: names.isEmpty ? .all : .requested) } }
                 .accessibilityIdentifier("secret-grant-passphrase")
         } footer: {
             Text(footerText(names: names))
@@ -216,8 +214,7 @@ struct SecretGrantSheet: View {
         }
     }
 
-    /// The only path to `scope: .all` — deliberately not the toolbar's `Grant` and not wired to
-    /// Return, so nothing requested can only ever be granted by an explicit tap here.
+    /// `scope: .all` — also what Return does while nothing is requested.
     private var grantAllSection: some View {
         Section {
             Button {

@@ -1084,6 +1084,33 @@ public struct PaiApiClient: Sendable {
         }
     }
 
+    /// `GET /api/secret-pregrant` — whether a grant is armed for the next session a client creates.
+    public func getSecretPregrant() async throws -> SecretPregrantStatus {
+        try await send(path: "/api/secret-pregrant")
+    }
+
+    /// `PUT /api/secret-pregrant` — arms a grant of every gated secret for the next session a
+    /// client creates. The backend holds the passphrase in memory until that session is up, then
+    /// grants it; nothing is checked now, so a wrong passphrase surfaces later as a notification.
+    public func armSecretPregrant(passphrase: String, ttlSeconds: Int) async throws -> SecretPregrantStatus {
+        struct Body: Encodable {
+            let passphrase: String
+            let ttlSeconds: Int
+            enum CodingKeys: String, CodingKey {
+                case passphrase
+                case ttlSeconds = "ttl_seconds"
+            }
+        }
+        return try await send(
+            path: "/api/secret-pregrant", method: "PUT",
+            body: try Self.jsonBody(Body(passphrase: passphrase, ttlSeconds: ttlSeconds)))
+    }
+
+    /// `DELETE /api/secret-pregrant` — takes an armed grant back before any session used it.
+    public func cancelSecretPregrant() async throws -> SecretPregrantStatus {
+        try await send(path: "/api/secret-pregrant", method: "DELETE", body: nil, contentType: nil)
+    }
+
     /// `POST /api/session/{id}/secret-prompt/decline` — turns down the gated-secret prompt this
     /// session raised for itself. No body: unlike `grantSecretAccess`, there is no passphrase to
     /// check and no scope to choose, only which prompt to clear. Owner-only, same as every other

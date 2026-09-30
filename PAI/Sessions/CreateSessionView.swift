@@ -50,6 +50,10 @@ struct CreateSessionView: View {
     @State private var showingTemporaryNote = false
     @State private var showingRecordingsSheet = false
     @State private var showingSentMessagesSheet = false
+    @State private var showingPregrantSheet = false
+    /// Whether a secret grant is armed for the session this screen will start. One slot the
+    /// backend holds and the web shares, so it is read back on appear and after every change.
+    @State private var pregrantArmed = false
     /// Whether the session this screen is about to create should become a call as soon as it
     /// exists. Set from the launcher's call tiles and from the plus menu below; read once, in
     /// `send(_:)`.
@@ -260,9 +264,35 @@ struct CreateSessionView: View {
             .sheet(isPresented: $showingSentMessagesSheet) {
                 SentMessagesSheet(settings: settings)
             }
+            .sheet(isPresented: $showingPregrantSheet) {
+                SecretPregrantSheet { status in pregrantArmed = status.armed }
+            }
+            .task { await refreshPregrant() }
         } else {
             ProgressView()
                 .paiScreenBackground()
+        }
+    }
+
+    // MARK: - Secrets granted ahead of the session
+
+    private func refreshPregrant() async {
+        guard let client = environment.connection?.apiClient,
+            let status = try? await client.getSecretPregrant()
+        else { return }
+        pregrantArmed = status.armed
+    }
+
+    private func togglePregrant() {
+        guard pregrantArmed else {
+            showingPregrantSheet = true
+            return
+        }
+        Task {
+            guard let client = environment.connection?.apiClient,
+                let status = try? await client.cancelSecretPregrant()
+            else { return }
+            pregrantArmed = status.armed
         }
     }
 
@@ -431,7 +461,8 @@ struct CreateSessionView: View {
 
     /// The same shape `ComposerBar`'s drivable composer uses, over the same `DraftKey.newSession`
     /// draft, minus Cancel and Grant Secret Access — nothing is running yet, so neither has
-    /// anything sensible to do (`hasSession: false`, `canGrantSecretAccess: false`).
+    /// anything sensible to do (`hasSession: false`, `canGrantSecretAccess: false`). Secrets can
+    /// still be granted ahead of time: the menu arms a grant the session receives once it is up.
     private func composerBar(_ createSession: CreateSessionStore, _ voiceController: VoiceRecorderController)
         -> some View
     {
@@ -475,6 +506,8 @@ struct CreateSessionView: View {
                     hasSession: false,
                     offersStartCallAfterSend: !startsCallOnSend,
                     canGrantSecretAccess: false,
+                    pregrantArmed: pregrantArmed,
+                    onTogglePregrant: togglePregrant,
                     canRestorePreviousText: canRestorePreviousText,
                     onPastRecordings: { showingRecordingsSheet = true },
                     onPastMessages: { showingSentMessagesSheet = true },
