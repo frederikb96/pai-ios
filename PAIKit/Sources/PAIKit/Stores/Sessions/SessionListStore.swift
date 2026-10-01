@@ -749,13 +749,14 @@ public final class SessionListStore {
         lastSessionSync = cursor
     }
 
-    /// Pinned rows first, each group keeping whatever order it already had — a stable
-    /// partition, not a second sort key, so pinning never reorders within either group. Applied
-    /// only here, at the view's own read, rather than to `syncedSessions` itself: that array's
-    /// order is what the merge/staleness logic above keys on, and this grouping is a pure
-    /// presentation concern layered on top of it.
+    /// Pinned rows first, in the order they were pinned (oldest pin on top), then every other row
+    /// in whatever order it already had. Applied only here, at the view's own read, rather than to
+    /// `syncedSessions` itself: that array's order is what the merge/staleness logic above keys
+    /// on, and this grouping is a pure presentation concern layered on top of it. `pinned_at` is
+    /// compared as its ISO-8601 text, which orders correctly for the server's own uniform format.
     private static func withPinnedFirst(_ sessions: [Session]) -> [Session] {
-        sessions.filter { $0.pinnedAt != nil } + sessions.filter { $0.pinnedAt == nil }
+        let pinned = sessions.filter { $0.pinnedAt != nil }.sorted { ($0.pinnedAt ?? "") < ($1.pinnedAt ?? "") }
+        return pinned + sessions.filter { $0.pinnedAt == nil }
     }
 
     private static func makeRow(_ session: Session) -> SessionListRow {

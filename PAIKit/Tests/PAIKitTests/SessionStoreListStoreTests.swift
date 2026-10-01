@@ -1187,9 +1187,9 @@ final class SessionStoreListStoreTests: XCTestCase {
 
     // MARK: - Pinned sort
 
-    /// Pinned rows float to the top as a stable partition — each group keeps its own relative
-    /// order (here, activity order) rather than being re-sorted by anything pin-related.
-    func testRowsGroupPinnedSessionsFirstPreservingEachGroupsOrder() async {
+    /// Pinned rows float to the top in the order they were pinned — the first pin stays on top
+    /// however active the later ones are — and the unpinned rest keeps activity order.
+    func testRowsPutPinnedSessionsFirstInPinOrder() async {
         let api = FakeSessionListApi()
         await api.setGetSessionsResult { _ in
             .success(
@@ -1197,11 +1197,11 @@ final class SessionStoreListStoreTests: XCTestCase {
                     sessions: [
                         SessionFixture.make(id: "newest-unpinned", lastActivityAt: "2026-01-04T00:00:00Z"),
                         SessionFixture.make(
-                            id: "older-pinned", pinnedAt: "2026-01-03T00:00:00Z",
-                            lastActivityAt: "2026-01-02T00:00:00Z"),
-                        SessionFixture.make(
-                            id: "newer-pinned", pinnedAt: "2026-01-01T00:00:00Z",
+                            id: "pinned-second", pinnedAt: "2026-01-03T00:00:00Z",
                             lastActivityAt: "2026-01-03T00:00:00Z"),
+                        SessionFixture.make(
+                            id: "pinned-first", pinnedAt: "2026-01-01T00:00:00Z",
+                            lastActivityAt: "2026-01-02T00:00:00Z"),
                         SessionFixture.make(id: "oldest-unpinned", lastActivityAt: "2026-01-01T00:00:00Z"),
                     ],
                     nextCursor: nil))
@@ -1210,7 +1210,7 @@ final class SessionStoreListStoreTests: XCTestCase {
         await store.loadInitialSessions()
 
         XCTAssertEqual(
-            store.rows.map(\.id), ["newer-pinned", "older-pinned", "newest-unpinned", "oldest-unpinned"])
+            store.rows.map(\.id), ["pinned-first", "pinned-second", "newest-unpinned", "oldest-unpinned"])
     }
 }
 
