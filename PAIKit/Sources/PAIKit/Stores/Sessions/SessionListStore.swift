@@ -16,6 +16,8 @@ public protocol SessionListApiClient: Sendable {
     func deleteSession(sessionId: String) async throws -> DeleteResponse
     /// Only reached through `SessionListStore.closeSession(id:onFailure:)` — see its doc comment.
     func closeSession(sessionId: String) async throws -> CloseResponse
+    /// Only reached through `SessionListStore.togglePinned(id:)` — see its doc comment.
+    func setPinned(sessionId: String, pinned: Bool) async throws -> Session
 }
 
 extension PaiApiClient: SessionListApiClient {}
@@ -177,7 +179,7 @@ public final class SessionListStore {
             isIdQuery
             ? withoutSubagents.filter { SessionFilterMatch.sessionIdMatches(filterQueryText, session: $0) }
             : withoutSubagents
-        return matched.map(Self.makeRow)
+        return Self.withPinnedFirst(matched).map(Self.makeRow)
     }
 
     /// `.loadingFirstResults` only, `.noMatchingSessions`/`.noSessionsYet` otherwise — driven by
@@ -560,6 +562,28 @@ public final class SessionListStore {
         }
     }
 
+    // MARK: - Pin
+
+    /// Flips a session's pin, reordering the list at once — the toggle is what has to feel
+    /// instant, not the round trip. Same fire-and-forget-with-rollback shape as `deleteSession`,
+    /// the only other mutation here that applies locally before the server confirms it: a
+    /// re-pin keeps its original `pinned_at` server-side, so this placeholder value is only ever
+    /// shown until the response lands and replaces it with the real one.
+    public func togglePinned(id: String) {
+        guard let session = session(withId: id) else { return }
+        let pinning = session.pinnedAt == nil
+        replaceSession(session.withPinnedAt(pinning ? Self.isoNow() : nil))
+        Task { [weak self, api] in
+            do {
+                let updated = try await api.setPinned(sessionId: id, pinned: pinning)
+                self?.replaceSession(updated)
+            } catch {
+                // The request never reached the backend — put the row back exactly as it was.
+                self?.replaceSession(session)
+            }
+        }
+    }
+
     // MARK: - Sources B/C: routing, debounce, generation + cancellation
 
     private var effectiveTextQuery: String? {
@@ -723,6 +747,15 @@ public final class SessionListStore {
         }
         syncedSessions = byId.values.sorted(by: Self.byActivityDescending)
         lastSessionSync = cursor
+    }
+
+    /// Pinned rows first, each group keeping whatever order it already had — a stable
+    /// partition, not a second sort key, so pinning never reorders within either group. Applied
+    /// only here, at the view's own read, rather than to `syncedSessions` itself: that array's
+    /// order is what the merge/staleness logic above keys on, and this grouping is a pure
+    /// presentation concern layered on top of it.
+    private static func withPinnedFirst(_ sessions: [Session]) -> [Session] {
+        sessions.filter { $0.pinnedAt != nil } + sessions.filter { $0.pinnedAt == nil }
     }
 
     private static func makeRow(_ session: Session) -> SessionListRow {

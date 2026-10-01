@@ -152,6 +152,26 @@ final class SessionStoreActionsTests: XCTestCase {
 
         XCTAssertTrue(listStore.syncedSessions.isEmpty)
     }
+
+    /// `togglePinned` goes through the list store exactly the way `deleteNow()`/
+    /// `closeInBackground` do — the row belongs to `SessionListStore`, not the actions API this
+    /// store otherwise mutates through.
+    func testTogglePinnedDelegatesToTheListStoreRatherThanCallingTheApiDirectly() async {
+        let (listStore, listApi) = await makeListStore(session: SessionFixture.make(id: "s1"))
+        await listStore.loadInitialSessions()
+        let actionsApi = FakeSessionActionsApi()
+        let store = SessionActionsStore(sessionId: "s1", sessionList: listStore, api: actionsApi)
+
+        store.togglePinned()
+
+        XCTAssertNotNil(listStore.session(withId: "s1")?.pinnedAt, "must flip at once, not wait for the request")
+        let deadline = ContinuousClock().now + .seconds(5)
+        while await listApi.setPinnedCalls.isEmpty, ContinuousClock().now < deadline {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        let calls = await listApi.setPinnedCalls
+        XCTAssertEqual(calls.map(\.sessionId), ["s1"])
+    }
 }
 
 extension FakeSessionActionsApi {

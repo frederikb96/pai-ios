@@ -84,6 +84,13 @@ public final class SessionActionsStore {
         await run { try await self.api.setTitleLocked(sessionId: self.sessionId, locked: locked) }
     }
 
+    /// Flips the pin and reorders the list at once — delegates exactly as `deleteNow()` and
+    /// `closeInBackground` do, since the list owns the row this changes. See
+    /// `SessionListStore.togglePinned(id:)` for the optimistic-with-rollback shape.
+    public func togglePinned() {
+        sessionList.togglePinned(id: sessionId)
+    }
+
     /// Fires the close and returns at once — see `SessionListStore.closeSession(id:onFailure:)`'s
     /// doc comment for why. Delegates rather than duplicating, the same shape `deleteNow()`
     /// already uses for delete: the list owns the row, so it owns writing the outcome back too.

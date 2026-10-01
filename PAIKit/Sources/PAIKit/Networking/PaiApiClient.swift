@@ -611,6 +611,15 @@ public struct PaiApiClient: Sendable {
         )
     }
 
+    public func setPinned(sessionId: String, pinned: Bool) async throws -> Session {
+        struct Body: Encodable { let pinned: Bool }
+        return try await send(
+            path: "/api/session/\(sessionId)",
+            method: "PATCH",
+            body: try Self.jsonBody(Body(pinned: pinned))
+        )
+    }
+
     /// How long the session may sit idle before it is closed: `nil` to follow the deployment's
     /// default, `0` to keep it up indefinitely, or minutes.
     public func setIdleTimeout(sessionId: String, minutes: Int?) async throws -> Session {

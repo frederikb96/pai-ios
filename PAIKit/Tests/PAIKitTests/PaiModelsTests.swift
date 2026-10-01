@@ -222,7 +222,7 @@ final class PaiModelsTests: XCTestCase {
             """
             {"id":"s1","session_type":"claude","status":"active","state":"ready","blocker":null,
              "turn_state":"working","display_state":"done","title":"t","title_locked":true,
-             "initial_message":null,
+             "pinned_at":"2026-01-01T00:00:00Z","initial_message":null,
              "session_tokens":0,"claude_session_id":null,
              "idle_timeout_minutes":30,"effective_idle_timeout_minutes":30,"cse_id":null,
              "created_at":null,"updated_at":null,"last_activity_at":null,"working_dir":null,
@@ -238,6 +238,7 @@ final class PaiModelsTests: XCTestCase {
 
         XCTAssertEqual(session.turnState, .working)
         XCTAssertEqual(session.displayState, .done)
+        XCTAssertEqual(session.pinnedAt, "2026-01-01T00:00:00Z")
         XCTAssertEqual(session.idleTimeoutMinutes, 30)
         XCTAssertEqual(session.effectiveIdleTimeoutMinutes, 30)
         XCTAssertEqual(session.agent, "laptop")
@@ -277,6 +278,34 @@ final class PaiModelsTests: XCTestCase {
             """.utf8)
         let session = try JSONDecoder().decode(Session.self, from: json)
         XCTAssertNil(session.secretGrantable)
+    }
+
+    /// A backend that predates `pinned_at` omits the key entirely — must decode to `nil` rather
+    /// than throw and blank the row, matching `secret_grantable`'s own guard above.
+    func testSessionPinnedAtIsNilWhenTheKeyIsAbsent() throws {
+        let json = Data(
+            """
+            {"id":"s1","session_type":"claude","status":"active","state":null,"blocker":null,
+             "title":null,"title_locked":null,"initial_message":null,
+             "session_tokens":0,"claude_session_id":null,
+             "idle_timeout_minutes":null,"effective_idle_timeout_minutes":null,"cse_id":null,
+             "created_at":null,"updated_at":null,"last_activity_at":null,"working_dir":null,
+             "agent":null,"kind":null,"parent_session_id":null,"subagent_name":null,
+             "subagent_type":null,"subagent_description":null,"remote_control":null,
+             "discovered":null,"project_id":null,"phase_id":null,"project_name":null}
+            """.utf8)
+        let session = try JSONDecoder().decode(Session.self, from: json)
+        XCTAssertNil(session.pinnedAt)
+    }
+
+    /// `withPinnedAt` calls `Session`'s memberwise init just as `withLiveStatus` does — every
+    /// other field must survive the round trip rather than reset to its `= nil` default.
+    func testWithPinnedAtReplacesOnlyThatFieldPreservingEverythingElse() throws {
+        var session = SessionFixture.make(title: "Keep me", secretGrantable: true)
+        session = session.withPinnedAt("2026-01-01T00:00:00Z")
+        XCTAssertEqual(session.pinnedAt, "2026-01-01T00:00:00Z")
+        XCTAssertEqual(session.title, "Keep me")
+        XCTAssertEqual(session.secretGrantable, true)
     }
 
     /// `withLiveStatus` calls `Session`'s memberwise init, so any property left to its `= nil`

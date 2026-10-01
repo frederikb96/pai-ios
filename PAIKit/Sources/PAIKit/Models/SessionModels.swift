@@ -320,6 +320,12 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// session sharing the phase sees — not just this row; a session with no phase yet, or a
     /// subagent, keeps the plain per-row lock the VM's own naming respects.
     public let titleLocked: Bool?
+    /// When this session was pinned to the top of the list — `nil` when it is not pinned.
+    /// Re-pinning an already-pinned session keeps its original value server-side; a client
+    /// toggling this locally before the response lands only ever shows a placeholder until it
+    /// does (`SessionListStore.togglePinned(id:)`). Absent on a backend that predates the field,
+    /// read the same as not pinned.
+    public let pinnedAt: String?
     public let initialMessage: String?
     public let sessionTokens: Int
     /// Claude's own conversation uuid — what `claude --resume` takes.
@@ -419,6 +425,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         case turnState = "turn_state"
         case displayState = "display_state"
         case titleLocked = "title_locked"
+        case pinnedAt = "pinned_at"
         case initialMessage = "initial_message"
         case sessionTokens = "session_tokens"
         case claudeSessionId = "claude_session_id"
@@ -465,6 +472,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         displayState: DisplayState?,
         title: String?,
         titleLocked: Bool?,
+        pinnedAt: String? = nil,
         initialMessage: String?,
         sessionTokens: Int,
         claudeSessionId: String?,
@@ -510,6 +518,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.displayState = displayState
         self.title = title
         self.titleLocked = titleLocked
+        self.pinnedAt = pinnedAt
         self.initialMessage = initialMessage
         self.sessionTokens = sessionTokens
         self.claudeSessionId = claudeSessionId
@@ -562,7 +571,32 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             id: id, sessionType: sessionType, model: model, thinking: thinking, status: status, state: state,
             blocker: blocker,
             turnState: turnState, displayState: displayState,
-            title: title, titleLocked: titleLocked, initialMessage: initialMessage,
+            title: title, titleLocked: titleLocked, pinnedAt: pinnedAt, initialMessage: initialMessage,
+            sessionTokens: sessionTokens, claudeSessionId: claudeSessionId, idleTimeoutMinutes: idleTimeoutMinutes,
+            effectiveIdleTimeoutMinutes: effectiveIdleTimeoutMinutes, cseId: cseId, transcriptPath: transcriptPath,
+            createdAt: createdAt,
+            updatedAt: updatedAt, lastActivityAt: lastActivityAt, workingDir: workingDir, agent: agent, kind: kind,
+            parentSessionId: parentSessionId, subagentName: subagentName, subagentType: subagentType,
+            subagentDescription: subagentDescription, subagentModel: subagentModel,
+            readPositionMessageId: readPositionMessageId, readPositionOffsetPx: readPositionOffsetPx,
+            readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
+            sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
+            projectId: projectId, phaseId: phaseId, projectName: projectName, taskId: taskId,
+            activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt
+        )
+    }
+
+    /// A copy with just `pinnedAt` replaced — the one field a pin toggle changes, applied locally
+    /// before the server confirms it and replaced once it does
+    /// (`SessionListStore.togglePinned(id:)`). Every other parameter MUST be passed through
+    /// explicitly for the same reason `withLiveStatus` does: this calls the memberwise
+    /// initializer with `self`'s own other fields.
+    public func withPinnedAt(_ pinnedAt: String?) -> Session {
+        Session(
+            id: id, sessionType: sessionType, model: model, thinking: thinking, status: status, state: state,
+            blocker: blocker,
+            turnState: turnState, displayState: displayState,
+            title: title, titleLocked: titleLocked, pinnedAt: pinnedAt, initialMessage: initialMessage,
             sessionTokens: sessionTokens, claudeSessionId: claudeSessionId, idleTimeoutMinutes: idleTimeoutMinutes,
             effectiveIdleTimeoutMinutes: effectiveIdleTimeoutMinutes, cseId: cseId, transcriptPath: transcriptPath,
             createdAt: createdAt,

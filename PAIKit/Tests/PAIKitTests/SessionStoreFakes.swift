@@ -28,8 +28,10 @@ actor FakeSessionListApi: SessionListApiClient {
     private(set) var searchCalls: [SearchCall] = []
     private(set) var deleteSessionCalls: [String] = []
     private(set) var closeSessionCalls: [String] = []
+    private(set) var setPinnedCalls: [(sessionId: String, pinned: Bool)] = []
     var deleteSessionResult: Result<DeleteResponse, PaiError> = .success(DeleteResponse(status: .deleted))
     var closeSessionResult: Result<CloseResponse, PaiError> = .success(CloseResponse(status: .closed, detail: nil))
+    var setPinnedResult: Result<Session, PaiError> = .success(SessionFixture.make())
 
     /// FIFO per matcher: `getSessions` pulls the next queued page whose predicate matches `since`
     /// being non-nil or nil, letting incremental-poll pages and cold-load/browse pages be scripted
@@ -85,6 +87,15 @@ actor FakeSessionListApi: SessionListApiClient {
         await gate.wait(for: "close:\(sessionId)")
         switch closeSessionResult {
         case let .success(response): return response
+        case let .failure(error): throw error
+        }
+    }
+
+    func setPinned(sessionId: String, pinned: Bool) async throws -> Session {
+        setPinnedCalls.append((sessionId, pinned))
+        await gate.wait(for: "pin:\(sessionId)")
+        switch setPinnedResult {
+        case let .success(session): return session
         case let .failure(error): throw error
         }
     }
@@ -389,6 +400,7 @@ enum SessionFixture {
         turnState: TurnState? = nil,
         displayState: DisplayState? = nil,
         title: String? = nil,
+        pinnedAt: String? = nil,
         initialMessage: String? = nil,
         sessionTokens: Int = 0,
         createdAt: String? = "2026-01-01T00:00:00Z",
@@ -417,6 +429,7 @@ enum SessionFixture {
             displayState: displayState,
             title: title,
             titleLocked: nil,
+            pinnedAt: pinnedAt,
             initialMessage: initialMessage,
             sessionTokens: sessionTokens,
             claudeSessionId: claudeSessionId,

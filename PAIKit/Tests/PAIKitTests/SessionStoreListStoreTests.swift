@@ -1082,6 +1082,136 @@ final class SessionStoreListStoreTests: XCTestCase {
         XCTAssertNotNil(message)
         XCTAssertEqual(store.session(withId: "s1")?.state, .ready)
     }
+
+    // MARK: - togglePinned
+
+    /// The toggle is what has to feel instant — the row must read as pinned before the gated
+    /// request ever answers, the same shape `deleteSession` already proves for removal.
+    func testTogglePinnedSetsPinnedAtAtOnce() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1")], nextCursor: nil))
+        }
+        await api.gate.arm("pin:s1")
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        store.togglePinned(id: "s1")
+
+        XCTAssertNotNil(store.session(withId: "s1")?.pinnedAt, "must not wait for the gate to release")
+        await api.gate.release("pin:s1")
+    }
+
+    /// The counterpart: the real PATCH must actually go out, carrying `pinned: true`.
+    func testTogglePinnedFiresTheRealRequestWithoutWaiting() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1")], nextCursor: nil))
+        }
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        store.togglePinned(id: "s1")
+
+        let deadline = ContinuousClock().now + .seconds(5)
+        while await api.setPinnedCalls.isEmpty, ContinuousClock().now < deadline {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        let calls = await api.setPinnedCalls
+        XCTAssertEqual(calls.map(\.sessionId), ["s1"])
+        XCTAssertEqual(calls.map(\.pinned), [true])
+    }
+
+    /// Toggling an already-pinned row unpins it, sending `pinned: false`.
+    func testTogglePinnedOnAnAlreadyPinnedRowUnpinsItAtOnce() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(
+                SessionsPage(
+                    sessions: [SessionFixture.make(id: "s1", pinnedAt: "2026-01-01T00:00:00Z")], nextCursor: nil))
+        }
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        store.togglePinned(id: "s1")
+
+        XCTAssertNil(store.session(withId: "s1")?.pinnedAt)
+        let deadline = ContinuousClock().now + .seconds(5)
+        while await api.setPinnedCalls.isEmpty, ContinuousClock().now < deadline {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        let calls = await api.setPinnedCalls
+        XCTAssertEqual(calls.map(\.pinned), [false])
+    }
+
+    /// Once the server answers, its own `pinned_at` replaces the optimistic placeholder — a
+    /// re-pin keeps its original server-side timestamp, which is never what the client guessed.
+    func testTogglePinnedAdoptsTheServersOwnPinnedAtOnceTheRequestSucceeds() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1")], nextCursor: nil))
+        }
+        await api.setSetPinnedResult(.success(SessionFixture.make(id: "s1", pinnedAt: "2025-06-01T00:00:00Z")))
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        store.togglePinned(id: "s1")
+
+        let deadline = ContinuousClock().now + .seconds(5)
+        while store.session(withId: "s1")?.pinnedAt != "2025-06-01T00:00:00Z", ContinuousClock().now < deadline {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        XCTAssertEqual(store.session(withId: "s1")?.pinnedAt, "2025-06-01T00:00:00Z")
+    }
+
+    /// A PATCH that never reaches the backend must not leave the row lying about its pin state —
+    /// it reverts to exactly what it was, the same rollback `deleteSession` already proves.
+    func testTogglePinnedRevertsIfTheRealRequestFails() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(SessionsPage(sessions: [SessionFixture.make(id: "s1")], nextCursor: nil))
+        }
+        await api.setSetPinnedResult(.failure(.transport("offline")))
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        store.togglePinned(id: "s1")
+        XCTAssertNotNil(store.session(withId: "s1")?.pinnedAt, "must flip at once regardless of how the request ends")
+
+        let deadline = ContinuousClock().now + .seconds(5)
+        while store.session(withId: "s1")?.pinnedAt != nil, ContinuousClock().now < deadline {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        XCTAssertNil(store.session(withId: "s1")?.pinnedAt)
+    }
+
+    // MARK: - Pinned sort
+
+    /// Pinned rows float to the top as a stable partition — each group keeps its own relative
+    /// order (here, activity order) rather than being re-sorted by anything pin-related.
+    func testRowsGroupPinnedSessionsFirstPreservingEachGroupsOrder() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(
+                SessionsPage(
+                    sessions: [
+                        SessionFixture.make(id: "newest-unpinned", lastActivityAt: "2026-01-04T00:00:00Z"),
+                        SessionFixture.make(
+                            id: "older-pinned", pinnedAt: "2026-01-03T00:00:00Z",
+                            lastActivityAt: "2026-01-02T00:00:00Z"),
+                        SessionFixture.make(
+                            id: "newer-pinned", pinnedAt: "2026-01-01T00:00:00Z",
+                            lastActivityAt: "2026-01-03T00:00:00Z"),
+                        SessionFixture.make(id: "oldest-unpinned", lastActivityAt: "2026-01-01T00:00:00Z"),
+                    ],
+                    nextCursor: nil))
+        }
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        XCTAssertEqual(
+            store.rows.map(\.id), ["newer-pinned", "older-pinned", "newest-unpinned", "oldest-unpinned"])
+    }
 }
 
 /// A `String?` set from inside a `@Sendable @MainActor` callback and read back from the test's own
@@ -1108,6 +1238,10 @@ extension FakeSessionListApi {
 
     func setCloseSessionResult(_ result: Result<CloseResponse, PaiError>) {
         closeSessionResult = result
+    }
+
+    func setSetPinnedResult(_ result: Result<Session, PaiError>) {
+        setPinnedResult = result
     }
 }
 
