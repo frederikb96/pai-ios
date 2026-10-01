@@ -146,6 +146,14 @@ private struct RootActionsList: View {
                     } label: {
                         Label("Rename", systemImage: "pencil")
                     }
+
+                    Button {
+                        actions.togglePinned()
+                    } label: {
+                        Label(
+                            session.pinnedAt == nil ? "Pin to top" : "Unpin",
+                            systemImage: session.pinnedAt == nil ? "pin" : "pin.slash")
+                    }
                 }
 
                 // A subagent's own children, if any, are flattened into its top-level parent's

@@ -22,7 +22,6 @@ struct SessionListView: View {
     @State private var isPresentingCreateSession = false
     @State private var isPresentingApps = false
     @State private var actionsSheetTarget: SessionActionsTarget?
-    @State private var arcSpecTarget: ArcSpecResolution?
 
     /// How many rows before the end trigger the next page — a screen or so at this row's fixed
     /// height, never at the last row itself, per the `scrolling` skill.
@@ -119,7 +118,6 @@ struct SessionListView: View {
         .sheet(item: $actionsSheetTarget) { target in
             SessionActionsSheet(sessionId: target.id)
         }
-        .arcSpecPicker($arcSpecTarget, router: environment.router)
     }
 
     // MARK: - The list
@@ -168,39 +166,19 @@ struct SessionListView: View {
                 SessionRowButton(row: row) {
                     environment.router.push(.session(id: row.id))
                 }
-                // Swipe and long press both land on the same sheet, and neither one destroys
-                // anything by itself. A swipe is a gesture a thumb makes by accident while
-                // scrolling a list, so wiring it straight to Delete puts the one irreversible
-                // action behind the most easily-triggered gesture — Delete still lives one tap
-                // further in, inside the sheet, alongside everything else a session can do.
+                // The only two swipe actions left: pin/unpin on the trailing edge (a thumb's
+                // right-to-left swipe), close on the leading edge below. The full options menu —
+                // Subagents, Spec and everything else — moved to long-press only, so a swipe
+                // can never open it by accident.
                 .swipeActions(edge: .trailing) {
                     Button {
-                        actionsSheetTarget = SessionActionsTarget(id: row.id)
+                        sessions.togglePinned(id: row.id)
                     } label: {
-                        Label("Actions", systemImage: "ellipsis.circle")
+                        Label(
+                            row.session.pinnedAt == nil ? "Pin" : "Unpin",
+                            systemImage: row.session.pinnedAt == nil ? "pin" : "pin.slash")
                     }
                     .tint(PaiPalette.primary500)
-                    // A subagent's own children are flattened into its top-level parent — see
-                    // `RootActionsList`'s matching guard — so this swipe action has nothing to
-                    // open for one either.
-                    if row.session.kind != .subagent {
-                        Button {
-                            environment.router.push(.subagents(parentID: row.id))
-                        } label: {
-                            Label("Subagents", systemImage: "cpu")
-                        }
-                        .tint(PaiPalette.Semantic.accentText)
-                    }
-                    Button {
-                        Task {
-                            arcSpecTarget = await resolveArcSpec(
-                                claudeSessionID: row.session.claudeSessionId,
-                                api: environment.connection?.apiClient, router: environment.router)
-                        }
-                    } label: {
-                        Label("Spec", systemImage: "shippingbox")
-                    }
-                    .tint(PaiPalette.Semantic.warningText)
                 }
                 // Closing from the other edge, on the same terms the trailing set keeps: the
                 // swipe reveals a button rather than firing on its own (`allowsFullSwipe: false`),
