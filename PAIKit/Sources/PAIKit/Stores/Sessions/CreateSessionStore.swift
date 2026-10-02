@@ -39,6 +39,11 @@ public final class CreateSessionStore {
     /// `ModelPickerSheet`) that has nothing to do with what the screen shows first.
     public static let fastSessionTypeId = "fast"
 
+    /// The pod-resident worker's own id — what `isUltrafastSelected` checks against. Unlike
+    /// `fastSessionTypeId` it is never a ConfigMap entry: it is offered the same way `fast` is,
+    /// through `get_selectable_session_types`'s own built-ins, once the backend registers it.
+    public static let ultrafastSessionTypeId = "ultrafast"
+
     /// Session types built into the pod rather than the ConfigMap (see
     /// `backend/src/pai_cloud/config.py`'s `WEBSEARCH_SESSION_TYPE_ID`) sink under Custom rather
     /// than sitting at the top level next to home and fast — Freddy's own wording: the top-level
@@ -99,6 +104,11 @@ public final class CreateSessionStore {
     /// Whether `selectedSessionTypeId` is the fast sandbox — the one type whose launch defaults
     /// to a model and thinking level of its own rather than the plan's.
     public var isFastSelected: Bool { selectedSessionTypeId == Self.fastSessionTypeId }
+
+    /// Whether `selectedSessionTypeId` is the pod-resident worker — no Claude model, no Claude
+    /// credential, and no attachments, so the create screen hides all three rather than offering
+    /// controls that have nothing to act on.
+    public var isUltrafastSelected: Bool { selectedSessionTypeId == Self.ultrafastSessionTypeId }
 
     /// What will actually launch if nothing more is chosen — an explicit selection always wins;
     /// unset falls back to the fast sandbox's own default on a fast session, and to the plan's

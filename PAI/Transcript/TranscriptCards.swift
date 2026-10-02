@@ -73,6 +73,11 @@ struct TranscriptRowContent: View {
     /// Called with the index of the card the reader tapped — reveal is per segment, so opening a
     /// tool result does not also unfold the thought above it.
     let onToggleReveal: (Int) -> Void
+    /// Row 59's withdraw-pending route — offered as a context-menu action only on a pending
+    /// bubble (`message.isPendingBubble`), never on an ordinary one. One closure for the whole
+    /// row rather than per-card, since every pending card this message could ever have is the
+    /// same synthesised user bubble.
+    var onPullBackIntoComposer: () -> Void = {}
     /// The time to draw above this row, or `nil` for the rows between. Decided by the caller,
     /// which is the only place that can see the row above this one — and decided identically for
     /// the height, since a separator the height reserved and the view omitted is a gap.
@@ -113,6 +118,8 @@ struct TranscriptRowContent: View {
                             ? { onToggleReveal(cardIndex) } : nil,
                         sessionID: sessionID,
                         apiClient: apiClient,
+                        isPendingBubble: message.isPendingBubble,
+                        onPullBackIntoComposer: onPullBackIntoComposer,
                         highlightsByBlockIndex: highlightsByBlockIndex(forCardIndex: cardIndex)
                     )
                 }
@@ -188,6 +195,12 @@ struct TranscriptCardKindView: View {
     let onToggle: (() -> Void)?
     let sessionID: String
     let apiClient: PaiApiClient
+    /// Whether the message this card belongs to is a synthesised server-pending bubble rather
+    /// than a confirmed row — see `Message.isPendingBubble`. Gates the "Pull back into composer"
+    /// context action below: offering it on an ordinary message would promise something the
+    /// route cannot do, since there is nothing pending left to withdraw by the time a row is real.
+    var isPendingBubble: Bool = false
+    var onPullBackIntoComposer: () -> Void = {}
     var highlightsByBlockIndex: [Int: [TranscriptHighlightSpan]] = [:]
 
     var body: some View {
@@ -231,7 +244,8 @@ struct TranscriptCardKindView: View {
             me {
                 UserBubbleView(
                     text: text, attachmentPaths: attachmentPaths, sessionID: sessionID, apiClient: apiClient,
-                    highlights: highlightsByBlockIndex[0] ?? [])
+                    highlights: highlightsByBlockIndex[0] ?? [],
+                    pullBackAction: isPendingBubble ? onPullBackIntoComposer : nil)
             }
 
         case .relayedBubble(let text, let sender, let group):
@@ -541,8 +555,8 @@ extension View {
     /// A tool call or a thinking bubble keeps the plain `transcriptRowCopy` above: those are
     /// rarely read start to end, and the fixed monospace width `ToolBodyText` already gives them
     /// is the more useful reading shape for that content.
-    func transcriptRowCopyAndExpand(text: String) -> some View {
-        modifier(TranscriptRowExpandableCopy(text: text))
+    func transcriptRowCopyAndExpand(text: String, pullBackAction: (() -> Void)? = nil) -> some View {
+        modifier(TranscriptRowExpandableCopy(text: text, pullBackAction: pullBackAction))
     }
 }
 
@@ -551,12 +565,13 @@ extension View {
 /// on a long press over the attachment chip beside it.
 private struct OptionalCopyAndExpand: ViewModifier {
     let text: String
+    var pullBackAction: (() -> Void)? = nil
 
     func body(content: Content) -> some View {
         if text.isEmpty {
             content
         } else {
-            content.transcriptRowCopyAndExpand(text: text)
+            content.transcriptRowCopyAndExpand(text: text, pullBackAction: pullBackAction)
         }
     }
 }
@@ -565,6 +580,7 @@ private struct OptionalCopyAndExpand: ViewModifier {
 /// concrete view to live on, which a plain `View` extension method cannot hold itself.
 private struct TranscriptRowExpandableCopy: ViewModifier {
     let text: String
+    var pullBackAction: (() -> Void)? = nil
     @State private var isShowingFullScreen = false
 
     func body(content: Content) -> some View {
@@ -574,6 +590,13 @@ private struct TranscriptRowExpandableCopy: ViewModifier {
                     UIPasteboard.general.string = text
                 } label: {
                     Label("Copy", systemImage: "doc.on.doc")
+                }
+                if let pullBackAction {
+                    Button {
+                        pullBackAction()
+                    } label: {
+                        Label("Pull back into composer", systemImage: "arrow.uturn.backward")
+                    }
                 }
                 Button {
                     isShowingFullScreen = true
@@ -865,6 +888,10 @@ struct UserBubbleView: View {
     let sessionID: String
     let apiClient: PaiApiClient
     var highlights: [TranscriptHighlightSpan] = []
+    /// Set only when this bubble is a synthesised server-pending row — adds "Pull back into
+    /// composer" to the ordinary copy/expand context menu below. `nil` for every ordinary
+    /// message, where there is nothing pending left to withdraw.
+    var pullBackAction: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .trailing, spacing: TranscriptRowMetrics.attachmentChipSpacing) {
@@ -886,7 +913,7 @@ struct UserBubbleView: View {
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.leading, TranscriptRowMetrics.bubbleGutter)
-        .modifier(OptionalCopyAndExpand(text: text))
+        .modifier(OptionalCopyAndExpand(text: text, pullBackAction: pullBackAction))
     }
 }
 

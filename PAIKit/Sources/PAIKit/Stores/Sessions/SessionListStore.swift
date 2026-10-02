@@ -271,18 +271,20 @@ public final class SessionListStore {
     public func applyLiveStatus(
         sessionId: String, state: SessionState?, blocker: Blocker?, turnState: TurnState?,
         displayState: DisplayState?, activityCounts: ActivityCounts?, secretGrantable: Bool?,
-        secretPrompt: SecretPrompt?
+        secretPrompt: SecretPrompt?, liveModel: String?
     ) {
         if let index = syncedSessions.firstIndex(where: { $0.id == sessionId }) {
             syncedSessions[index] = syncedSessions[index].withLiveStatus(
                 state: state, blocker: blocker, turnState: turnState, displayState: displayState,
-                activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt
+                activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
+                liveModel: liveModel
             )
         }
         if let index = serverFilteredResults.firstIndex(where: { $0.session.id == sessionId }) {
             let updated = serverFilteredResults[index].session.withLiveStatus(
                 state: state, blocker: blocker, turnState: turnState, displayState: displayState,
-                activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt
+                activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
+                liveModel: liveModel
             )
             serverFilteredResults[index] = SessionSearchResult(
                 session: updated, score: serverFilteredResults[index].score
@@ -549,7 +551,8 @@ public final class SessionListStore {
                                 // for a closed session, unconditionally.
                                 state: .closed, blocker: nil, turnState: session.turnState,
                                 displayState: .closed, activityCounts: session.activityCounts,
-                                secretGrantable: session.secretGrantable, secretPrompt: session.secretPrompt
+                                secretGrantable: session.secretGrantable, secretPrompt: session.secretPrompt,
+                                liveModel: session.liveModel
                             )
                         )
                     }

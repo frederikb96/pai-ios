@@ -189,7 +189,7 @@ struct CreateSessionView: View {
                             sunkTypeRow(sunkType)
                         }
 
-                        if !createSession.availableSessionTypes.isEmpty {
+                        if !createSession.availableSessionTypes.isEmpty, !createSession.isUltrafastSelected {
                             modelButton(createSession)
                         }
 
@@ -207,7 +207,9 @@ struct CreateSessionView: View {
                 // has no session to be listed under. Same bubbles, and the same Retry / Put back
                 // in composer / Discard, as a session's own composer.
                 OutboxBubbleStack(sessionID: nil)
-                if ClaudeAuthPredicates.needsSignIn(claudeAuth.auth) {
+                // Ultra-fast needs no Claude credential at all — the one session type that
+                // still works while the sign-in gate would otherwise block everything else.
+                if ClaudeAuthPredicates.needsSignIn(claudeAuth.auth), !createSession.isUltrafastSelected {
                     signInBlockedRow
                 } else {
                     composerBar(createSession, voiceController)
@@ -509,6 +511,7 @@ struct CreateSessionView: View {
                     pregrantArmed: pregrantArmed,
                     onTogglePregrant: togglePregrant,
                     canRestorePreviousText: canRestorePreviousText,
+                    offersAttachments: !createSession.isUltrafastSelected,
                     onPastRecordings: { showingRecordingsSheet = true },
                     onPastMessages: { showingSentMessagesSheet = true },
                     onAddPhoto: { showingPhotoPicker = true },
@@ -665,9 +668,8 @@ struct CreateSessionView: View {
             // session that was just created.
             startsCallOnSend = false
         }
-        // Back out of that session belongs here rather than on the list: this screen is the step
-        // Back undoes. `SessionListView` is what acts on it, since this one is gone by then.
-        NewSessionHandoff.shared.opened(sessionID: sessionID)
+        // Back out of that session lands on the plain session list underneath — the push below
+        // lands on an empty path, so an interactive pop simply empties it back out.
         withTransaction(Transaction(animation: nil)) {
             environment.router.push(.session(id: sessionID))
         }

@@ -41,7 +41,8 @@ struct QuickActionsScreen: View {
 
     private let spacing: CGFloat = 12
     private let padding: CGFloat = 16
-    /// Computer (full-width), Home/Fast typed, Home/Fast call, notes, and a three-up shortcut row.
+    /// Computer (full-width), Home/Fast/Ultra-fast typed, Home/Fast/Ultra-fast call, notes, and
+    /// a three-up shortcut row.
     private let rowCount: CGFloat = 5
     /// Big enough to hit without looking, on the smallest phone this runs on.
     private let minRowHeight: CGFloat = 88
@@ -130,6 +131,12 @@ struct QuickActionsScreen: View {
                 ) {
                     startSession(type: "fast", call: false)
                 }
+                tile(
+                    title: "Ultra-fast", subtitle: "Type", systemImage: "hare.fill",
+                    tint: PaiPalette.green500, height: rowHeight, identifier: "quick-ultrafast"
+                ) {
+                    startSession(type: "ultrafast", call: false)
+                }
             }
             HStack(spacing: spacing) {
                 tile(
@@ -143,6 +150,12 @@ struct QuickActionsScreen: View {
                     tint: PaiPalette.amber500, height: rowHeight, identifier: "quick-fast-call"
                 ) {
                     startSession(type: "fast", call: true)
+                }
+                tile(
+                    title: "Ultra-fast", subtitle: "Call", systemImage: "hare.fill",
+                    tint: PaiPalette.green500, height: rowHeight, identifier: "quick-ultrafast-call"
+                ) {
+                    startSession(type: "ultrafast", call: true)
                 }
             }
             HStack(spacing: spacing) {

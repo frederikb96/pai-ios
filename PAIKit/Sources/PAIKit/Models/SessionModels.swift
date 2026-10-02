@@ -191,6 +191,12 @@ public enum SessionKind: Sendable, Hashable {
     /// behind it and never was, so nothing may offer to resume it, send to it, or open a
     /// terminal on it, and the backend refuses all three regardless.
     case computer
+    /// A session answered by a worker on the POD rather than by `claude` in a tmux session on a
+    /// machine — created with `session_type: "ultrafast"`. Unlike `.computer` above, this one
+    /// IS drivable: Freddy types into it and gets a reply, same as an ordinary conversation, just
+    /// served by a cheaper model with no Claude credential involved. See
+    /// `sessionKindsPodResident`.
+    case ultrafast
     case unrecognized(String)
 }
 
@@ -199,6 +205,12 @@ public enum SessionKind: Sendable, Hashable {
 /// cases repeated at each site, since a kind added to some of those checks and not the others is
 /// a difference nothing detects.
 public let sessionKindsWithoutProcess: Set<SessionKind> = [.subagent, .supervisor, .computer]
+
+/// Kinds answered by a worker running on the pod itself, never by a tmux session on a machine —
+/// mirrors `SESSION_KINDS_POD_RESIDENT` in `models.py`. `SessionListDomain.isDrivable` reads this
+/// before it ever looks at `state`, since a pod-resident session's lifecycle is not the ordinary
+/// starting/ready/closed one a machine-driven session goes through.
+public let sessionKindsPodResident: Set<SessionKind> = [.ultrafast]
 
 /// What `GET /api/sessions?kind=` may be asked for. `.listed` is a named SET rather than a kind:
 /// what belongs in the session list is the server's decision, so a kind added later shows up in
@@ -223,6 +235,7 @@ extension SessionKind {
         case .subagent: return "subagent"
         case .supervisor: return "supervisor"
         case .computer: return "computer"
+        case .ultrafast: return "ultrafast"
         case let .unrecognized(raw): return raw
         }
     }
@@ -231,7 +244,7 @@ extension SessionKind {
 extension SessionKind: Codable {
     private static let knownValues: [String: SessionKind] = [
         "conversation": .conversation, "subagent": .subagent, "supervisor": .supervisor,
-        "computer": .computer,
+        "computer": .computer, "ultrafast": .ultrafast,
     ]
 
     public init(from decoder: Decoder) throws {
@@ -403,6 +416,11 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// field rather than read off `title` because the two only agree for an unlocked session; a
     /// `titleLocked` session can diverge from its phase's current name.
     public let phaseName: String?
+    /// The model actually in force right now, read from the transcript's own assistant turns —
+    /// `claude-opus-4-8`, not a `--model` alias. `nil` until the first assistant turn has
+    /// landed; `model` above is the fallback for that window, since it never changes mid-session
+    /// where this does (an in-session `/model` switch, or Anthropic changing a default).
+    public let liveModel: String?
     /// The scheduled task that launched this conversation, if any — what the scheduled
     /// session filter matches on. `nil` for an ordinary session.
     public let taskId: String?
@@ -459,6 +477,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         case phaseId = "phase_id"
         case projectName = "project_name"
         case phaseName = "phase_name"
+        case liveModel = "live_model"
         case taskId = "task_id"
         case activityCounts = "activity_counts"
         case secretGrantable = "secret_grantable"
@@ -508,6 +527,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         phaseId: String?,
         projectName: String?,
         phaseName: String? = nil,
+        liveModel: String? = nil,
         taskId: String? = nil,
         activityCounts: ActivityCounts? = nil,
         secretGrantable: Bool? = nil,
@@ -555,6 +575,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.phaseId = phaseId
         self.projectName = projectName
         self.phaseName = phaseName
+        self.liveModel = liveModel
         self.taskId = taskId
         self.activityCounts = activityCounts
         self.secretGrantable = secretGrantable
@@ -572,7 +593,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// property relying on its default would be silently reset to `nil` on every live update.
     public func withLiveStatus(
         state: SessionState?, blocker: Blocker?, turnState: TurnState?, displayState: DisplayState?,
-        activityCounts: ActivityCounts?, secretGrantable: Bool?, secretPrompt: SecretPrompt?
+        activityCounts: ActivityCounts?, secretGrantable: Bool?, secretPrompt: SecretPrompt?,
+        liveModel: String?
     ) -> Session {
         Session(
             id: id, sessionType: sessionType, model: model, thinking: thinking, status: status, state: state,
@@ -588,7 +610,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             readPositionMessageId: readPositionMessageId, readPositionOffsetPx: readPositionOffsetPx,
             readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
             sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
-            projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName, taskId: taskId,
+            projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName,
+            liveModel: liveModel, taskId: taskId,
             activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt
         )
     }
@@ -613,7 +636,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             readPositionMessageId: readPositionMessageId, readPositionOffsetPx: readPositionOffsetPx,
             readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
             sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
-            projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName, taskId: taskId,
+            projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName,
+            liveModel: liveModel, taskId: taskId,
             activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt
         )
     }
@@ -724,32 +748,6 @@ public struct SessionModelsResponse: Codable, Sendable {
 
 // --- Machines ---
 
-/// Which controller a machine's *next* launch or resume uses. See `SessionStatus`'s doc comment
-/// for why `.unrecognized` exists rather than throwing — `getMachines()` decodes `[Machine]` in
-/// one shot, so a closed enum would blank the whole list over one machine's route.
-public enum RcRoute: Sendable, Hashable {
-    case local, anthropic
-    case unrecognized(String)
-}
-
-extension RcRoute: Codable {
-    private static let knownValues: [String: RcRoute] = ["local": .local, "anthropic": .anthropic]
-
-    public init(from decoder: Decoder) throws {
-        let raw = try decoder.singleValueContainer().decode(String.self)
-        self = Self.knownValues[raw] ?? .unrecognized(raw)
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        switch self {
-        case .local: try container.encode("local")
-        case .anthropic: try container.encode("anthropic")
-        case let .unrecognized(raw): try container.encode(raw)
-        }
-    }
-}
-
 /// A machine PAI can watch or drive — the VM, or Freddy's laptop while it is logged in. `types.ts`
 /// names this `Agent`, which this port deliberately does not: `Session.kind == .subagent` names a
 /// Claude Code sub-conversation, an entirely different thing, and keeping both called "agent" in
@@ -775,23 +773,18 @@ public struct Machine: Codable, Sendable, Equatable, Identifiable {
         /// Whether this machine's own local stand-in is currently usable — a capability, not a
         /// health signal: it can go false between one poll and the next with no session affected.
         public let rcLocal: Bool
-        /// A running session keeps whichever route it started on; this only decides what the
-        /// NEXT launch or resume on this machine uses.
-        public let rcRoute: RcRoute
 
         enum CodingKeys: String, CodingKey {
             case fastSessions = "fast_sessions"
             case reboot, shell
             case rcLocal = "rc_local"
-            case rcRoute = "rc_route"
         }
 
-        public init(fastSessions: Bool, reboot: Bool, shell: Bool, rcLocal: Bool, rcRoute: RcRoute) {
+        public init(fastSessions: Bool, reboot: Bool, shell: Bool, rcLocal: Bool) {
             self.fastSessions = fastSessions
             self.reboot = reboot
             self.shell = shell
             self.rcLocal = rcLocal
-            self.rcRoute = rcRoute
         }
     }
 
@@ -861,25 +854,5 @@ public struct Machine: Codable, Sendable, Equatable, Identifiable {
         self.capabilities = capabilities
         self.sessionTypes = sessionTypes
         self.backfill = backfill
-    }
-}
-
-/// What `PATCH /api/agents/{slug}` answers with — only the field(s) that were actually in the
-/// request, each set to what the agent reports is now in force rather than an echo of the request.
-public struct AgentPatchResult: Codable, Sendable {
-    public let slug: String
-    public let ingestEnabled: Bool?
-    public let rcRoute: RcRoute?
-
-    enum CodingKeys: String, CodingKey {
-        case slug
-        case ingestEnabled = "ingest_enabled"
-        case rcRoute = "rc_route"
-    }
-
-    public init(slug: String, ingestEnabled: Bool? = nil, rcRoute: RcRoute? = nil) {
-        self.slug = slug
-        self.ingestEnabled = ingestEnabled
-        self.rcRoute = rcRoute
     }
 }

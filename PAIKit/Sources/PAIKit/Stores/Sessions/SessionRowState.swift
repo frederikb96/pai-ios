@@ -72,8 +72,16 @@ public enum SessionListDomain {
     /// never drivable, whatever its state, and nor is a spoken Computer conversation — a record
     /// of something that already happened. A supervisor DOES have its own process, but is
     /// deliberately never drivable either — Freddy reads its verdicts, he never types into it.
+    ///
+    /// A pod-resident kind (`sessionKindsPodResident`) answers before `state` is even read: it
+    /// has a real worker behind it, just not the starting/ready/closed lifecycle a machine-driven
+    /// session goes through, so gating it on `state` the same way would read a session that has
+    /// simply never needed one as undrivable.
     public static func isDrivable(_ session: Session) -> Bool {
-        if let kind = session.kind, sessionKindsWithoutProcess.contains(kind) { return false }
+        if let kind = session.kind {
+            if sessionKindsPodResident.contains(kind) { return true }
+            if sessionKindsWithoutProcess.contains(kind) { return false }
+        }
         guard let state = session.state else { return false }
         return state != .closed
     }

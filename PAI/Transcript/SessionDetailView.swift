@@ -14,6 +14,7 @@ struct SessionDetailView: View {
     @Environment(TranscriptStore.self) private var transcript
     @Environment(SettingsStore.self) private var settings
     @Environment(OutboxStore.self) private var outbox
+    @Environment(DraftStore.self) private var drafts
     @State private var searchState = TranscriptSearchState()
     @State private var isPresentingActionsSheet = false
     @State private var isPresentingArcMenu = false
@@ -60,7 +61,8 @@ struct SessionDetailView: View {
                             PersistedReadPosition(
                                 messageId: $0.readPositionMessageId, offsetPx: $0.readPositionOffsetPx,
                                 atBottom: $0.readPositionAtBottom ?? false)
-                        }
+                        },
+                        onPullBackIntoComposer: { Task { await pullPendingBackIntoComposer(connection.apiClient) } }
                     )
                     .overlay { TranscriptLoadState(sessionID: sessionID) }
                     .overlay(alignment: .top) { TranscriptOlderPageState(sessionID: sessionID) }
@@ -216,7 +218,8 @@ struct SessionDetailView: View {
                 sessionId: sessionID, state: newValue.state, blocker: newValue.blocker,
                 turnState: newValue.turnState, displayState: newValue.displayState,
                 activityCounts: newValue.activityCounts,
-                secretGrantable: newValue.secretGrantable, secretPrompt: newValue.secretPrompt
+                secretGrantable: newValue.secretGrantable, secretPrompt: newValue.secretPrompt,
+                liveModel: newValue.liveModel
             )
         }
         .task {
@@ -246,12 +249,18 @@ struct SessionDetailView: View {
 
                     Spacer(minLength: 8)
 
+                    if let modelLabel = currentModelLabel(session) {
+                        Text(modelLabel)
+                            .foregroundStyle(PaiPalette.Semantic.textFaint)
+                            .accessibilityIdentifier("session-model-badge")
+                    }
+
                     Text(SessionListFormat.formatTokens(currentTokenCount(session)))
                         .monospacedDigit()
                         .foregroundStyle(PaiPalette.Semantic.textFaint)
 
-                    // Same trio the web's chat header carries, in the same order: tokens, what
-                    // the session has running, then the plan windows.
+                    // Same figures the web's chat header carries, in the same order: model,
+                    // tokens, what the session has running, then the plan windows.
                     if let counts = currentActivityCounts(session), counts.agents > 0 || counts.tasks > 0 {
                         ActivityBadges(counts: counts)
                             .foregroundStyle(PaiPalette.Semantic.textFaint)
@@ -268,6 +277,36 @@ struct SessionDetailView: View {
                 .background(PaiPalette.Semantic.panelBackground)
             }
         }
+    }
+
+    /// Same precedence as the token figure below: the transcript's own live SSE value wins once
+    /// this session has reported one, with the session's own persisted `liveModel` as the
+    /// fallback for a screen just opened. Before the FIRST assistant turn has ever landed —
+    /// neither has a value — this falls back further, to the launch-time model alias, so the
+    /// badge never sits empty for a session that has not spoken yet.
+    private func currentModelLabel(_ session: Session) -> String? {
+        let wireId = transcript.liveStatus[sessionID]?.liveModel ?? session.liveModel
+        if let label = ModelDisplay.label(forWireId: wireId) { return label }
+        guard let launchModel = session.model else { return nil }
+        return CreateSessionStore.modelDisplayLabels[launchModel] ?? launchModel
+    }
+
+    /// Row 59's withdraw-pending route, called from a pending bubble's own context menu — see
+    /// `OutboxEntryBubbleView.putBackInComposer` for the LOCAL half of the same idea. Server-pending
+    /// rows are session-wide, not per-bubble, so this always withdraws everything pending for the
+    /// session regardless of which bubble was tapped; the server already dropped them from its own
+    /// `pending_sends`, which the next status event reflects and is what makes the bubble disappear.
+    ///
+    /// Written straight from `withdrawn[].text` rather than waiting on a draft poll to catch up —
+    /// the server already wrote the identical merge into its own draft, so this is immediate, not
+    /// a race with it: `drafts.setDraftText` marks the key locally dirty, which is what stops the
+    /// ordinary 10s poll from clobbering it before its own debounced write reaches the server.
+    private func pullPendingBackIntoComposer(_ apiClient: PaiApiClient) async {
+        guard let result = try? await apiClient.withdrawPending(sessionId: sessionID), !result.withdrawn.isEmpty
+        else { return }
+        let pulled = result.withdrawn.map(\.text).joined(separator: "\n")
+        let current = drafts.draft(for: sessionID).text
+        drafts.setDraftText(key: sessionID, text: current.isEmpty ? pulled : "\(pulled)\n\n\(current)")
     }
 
     /// The transcript's own live SSE figure wins once it has reported anything for this session —

@@ -74,6 +74,8 @@ public final class TranscriptStore {
         public let activityCounts: ActivityCounts?
         public let secretGrantable: Bool?
         public let secretPrompt: SecretPrompt?
+        /// See `Session.liveModel`.
+        public let liveModel: String?
     }
 
     /// The latest `arc` SSE signal for one session, carried with an incrementing `sequence`

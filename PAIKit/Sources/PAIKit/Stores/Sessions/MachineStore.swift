@@ -6,7 +6,6 @@ import Observation
 /// structurally; the conformance is declared here, next to the protocol it satisfies.
 public protocol MachineDirectoryApiClient: Sendable {
     func getMachines() async throws -> [Machine]
-    func setRcRoute(machineSlug: String, route: RcRoute) async throws -> AgentPatchResult
 }
 
 extension PaiApiClient: MachineDirectoryApiClient {}
@@ -47,32 +46,6 @@ public final class MachineStore {
     /// choice to make.
     public static func hasMultipleAgents(_ machines: [Machine]) -> Bool {
         machines.count > 1
-    }
-
-    /// Switch one machine's Remote Control route. Updates `machines` from what the agent reports
-    /// is now in force, not from `route` itself — a refused switch (an offline agent, a machine
-    /// that cannot run the local route) throws, and the caller decides how to show that; nothing
-    /// here is optimistic. Swift port of `pai-cloud/web/src/stores/agents.ts`'s `setRcRoute`.
-    public func setRcRoute(slug: String, route: RcRoute) async throws {
-        let result = try await api.setRcRoute(machineSlug: slug, route: route)
-        guard let inForce = result.rcRoute else { return }
-        machines = machines.map { machine in
-            guard machine.slug == slug else { return machine }
-            var capabilities = machine.capabilities
-            capabilities = Machine.Capabilities(
-                fastSessions: capabilities.fastSessions,
-                reboot: capabilities.reboot,
-                shell: capabilities.shell,
-                rcLocal: capabilities.rcLocal,
-                rcRoute: inForce
-            )
-            return Machine(
-                slug: machine.slug, displayName: machine.displayName, online: machine.online,
-                lastSeenAt: machine.lastSeenAt, ingestEnabled: machine.ingestEnabled,
-                capabilities: capabilities, sessionTypes: machine.sessionTypes,
-                backfill: machine.backfill
-            )
-        }
     }
 
     /// What the session list's machine chips iterate — every machine ever seen. Offline ones stay

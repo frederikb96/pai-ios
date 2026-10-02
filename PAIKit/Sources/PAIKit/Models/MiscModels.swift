@@ -536,6 +536,45 @@ public struct PostMessageResponse: Codable, Sendable, Equatable {
     }
 }
 
+/// One withdrawn send's own content — `POST /api/session/{id}/withdraw-pending`'s `withdrawn[]`.
+public struct WithdrawnSend: Codable, Sendable, Equatable {
+    /// The outbox row's own id — the same id a `PendingSend` carries.
+    public let id: Int
+    public let text: String
+
+    public init(id: Int, text: String) {
+        self.id = id
+        self.text = text
+    }
+}
+
+/// `POST /api/session/{id}/withdraw-pending`'s reply. Every row counted as pending when the
+/// route ran falls into exactly one of the two lists: ``withdrawn`` carries back what it
+/// actually pulled, oldest first, and ``alreadyDelivered`` names what the agent had already
+/// consumed and left untouched — never both, and never neither, for the same id. The server
+/// also rewrites the session's own draft from ``withdrawn``'s texts and bumps its version to
+/// ``draftVersion``, which is informational here: the client builds the composer text from
+/// ``withdrawn`` directly rather than waiting on a draft poll to catch up.
+public struct WithdrawPendingResponse: Codable, Sendable, Equatable {
+    public let withdrawn: [WithdrawnSend]
+    /// Outbox ids the agent had already consumed — their bubbles stay exactly as a confirmed
+    /// send would, nothing pulled back for them.
+    public let alreadyDelivered: [Int]
+    public let draftVersion: Int
+
+    enum CodingKeys: String, CodingKey {
+        case withdrawn
+        case alreadyDelivered = "already_delivered"
+        case draftVersion = "draft_version"
+    }
+
+    public init(withdrawn: [WithdrawnSend], alreadyDelivered: [Int], draftVersion: Int) {
+        self.withdrawn = withdrawn
+        self.alreadyDelivered = alreadyDelivered
+        self.draftVersion = draftVersion
+    }
+}
+
 public struct CancelResponse: Codable, Sendable, Equatable {
     public enum Status: String, Codable, Sendable, Equatable { case cancelled }
     public let status: Status
