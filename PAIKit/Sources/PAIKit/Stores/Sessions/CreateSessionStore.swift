@@ -257,11 +257,17 @@ public final class CreateSessionStore {
         }
         let inlineFileData = Dictionary(
             uniqueKeysWithValues: zip(inlineFiles.map(\.localId), files.map(\.data)))
+        // An ultra-fast session takes no directory, model or effort — the backend refuses a
+        // create carrying any of them, so a previous visit's choice (this store is rebuilt per
+        // visit, but `selectedModel`/`workingDir` can still be set earlier in the SAME visit
+        // before the ultra-fast pill is picked) must never reach the request.
         outbox.enqueue(
             OutboxEntry(
                 target: .newSession(
-                    agent: selectedMachine, sessionType: selectedSessionTypeId, workingDir: workingDir,
-                    model: selectedModel, thinking: selectedThinking),
+                    agent: selectedMachine, sessionType: selectedSessionTypeId,
+                    workingDir: isUltrafastSelected ? nil : workingDir,
+                    model: isUltrafastSelected ? nil : selectedModel,
+                    thinking: isUltrafastSelected ? nil : selectedThinking),
                 text: message, draftAttachmentIds: draftAttachmentIds, inlineFiles: inlineFiles
             ),
             inlineFileData: inlineFileData)

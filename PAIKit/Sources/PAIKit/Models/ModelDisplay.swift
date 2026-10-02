@@ -38,7 +38,8 @@ public enum ModelDisplay {
     /// hyphenated wire string or hiding an id this table has not caught up to yet.
     private static func fallbackLabel(for wireId: String) -> String {
         let trimmed = wireId.hasPrefix("claude-") ? String(wireId.dropFirst("claude-".count)) : wireId
-        return trimmed
+        return
+            trimmed
             .split(separator: "-")
             .map { segment in segment.first?.isNumber == true ? String(segment) : segment.capitalized }
             .joined(separator: " ")

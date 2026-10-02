@@ -161,7 +161,7 @@ private struct SubagentRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "cpu")
+            Image(systemName: "person.2.fill")
                 .foregroundStyle(PaiPalette.Semantic.textFaint)
 
             VStack(alignment: .leading, spacing: 2) {

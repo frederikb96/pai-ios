@@ -294,6 +294,31 @@ final class SessionStoreCreateSessionTests: XCTestCase {
         XCTAssertEqual(calls[0].sessionType, "ultrafast")
     }
 
+    /// A model, effort level or directory picked earlier in the same visit — before the
+    /// ultra-fast pill was tapped — must never reach the request: the backend refuses a create
+    /// carrying any of them, and the model picker is hidden for this type, so there is no way
+    /// out in the UI once it 400s.
+    func testEnqueueStripsAStickyModelEffortAndDirectoryForUltrafast() async {
+        let api = FakeCreateSessionApi()
+        let sending = FakeOutboxSending()
+        let store = CreateSessionStore(machines: MachineStore(api: FakeMachineDirectoryApi()), api: api)
+        store.selectWorkingDir("/home/frederik/old-project")
+        store.selectModel("opus")
+        store.selectThinking("high")
+        store.selectSessionType("ultrafast")
+        XCTAssertTrue(store.isUltrafastSelected)
+
+        let outbox = makeOutbox(sending)
+        store.enqueueSend(message: "hello", outbox: outbox)
+
+        await waitForPost(sending)
+        let calls = await sending.postMessageCalls
+        XCTAssertEqual(calls[0].sessionType, "ultrafast")
+        XCTAssertNil(calls[0].workingDir)
+        XCTAssertNil(calls[0].model)
+        XCTAssertNil(calls[0].thinking)
+    }
+
     func testEnqueueSendsTheSelectedModel() async {
         let api = FakeCreateSessionApi()
         let sending = FakeOutboxSending()

@@ -160,16 +160,19 @@ private struct RootActionsList: View {
                 // list — this view has nothing of its own to show for one.
                 if session.kind != .subagent {
                     Button(action: onOpenSubagents) {
-                        Label("Subagents", systemImage: "cpu")
+                        Label("Subagents", systemImage: "person.2.fill")
                     }
                 }
 
                 // Attaching a supervisor to itself makes no sense, and nothing without a
-                // process of its own can be supervised — there is no run to watch. Matches the
-                // web's identical guard. Open, read-only, whether or not one is attached yet —
-                // `SupervisionView` itself decides between an attach offer and a read-only view
-                // once it has asked.
-                if !(session.kind.map(sessionKindsWithoutProcess.contains) ?? false) {
+                // process of its own can be supervised — there is no run to watch. A
+                // pod-resident session (ultra-fast) has a real process but no tmux pane for a
+                // supervisor to watch either. Matches the web's identical guard. Open,
+                // read-only, whether or not one is attached yet — `SupervisionView` itself
+                // decides between an attach offer and a read-only view once it has asked.
+                if !(session.kind.map(sessionKindsWithoutProcess.contains) ?? false),
+                    !(session.kind.map(sessionKindsPodResident.contains) ?? false)
+                {
                     Button {
                         path.append(.supervision)
                     } label: {
