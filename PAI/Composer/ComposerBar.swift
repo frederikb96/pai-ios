@@ -205,6 +205,7 @@ struct ComposerBar: View {
                     onCallThisSession: {
                         ComputerCallEntry.open(environment, connectSession: sessionID)
                     },
+                    offersAttachments: currentSession?.kind != .ultrafast,
                     onPastRecordings: { showingRecordingsSheet = true },
                     onPastMessages: { showingSentMessagesSheet = true },
                     onAddPhoto: { showingPhotoPicker = true },

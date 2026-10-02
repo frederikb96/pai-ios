@@ -508,7 +508,10 @@ struct CreateSessionView: View {
                     hasSession: false,
                     offersStartCallAfterSend: !startsCallOnSend,
                     canGrantSecretAccess: false,
-                    pregrantArmed: pregrantArmed,
+                    // An ultra-fast session has no process of its own to hand a grant to —
+                    // same reason `offersAttachments` below excludes it. `nil` (not `false`)
+                    // is what hides the entry entirely; see `ComposerActionMenu.pregrantArmed`.
+                    pregrantArmed: createSession.isUltrafastSelected ? nil : pregrantArmed,
                     onTogglePregrant: togglePregrant,
                     canRestorePreviousText: canRestorePreviousText,
                     offersAttachments: !createSession.isUltrafastSelected,
