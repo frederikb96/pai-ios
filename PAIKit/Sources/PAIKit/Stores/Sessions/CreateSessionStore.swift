@@ -25,9 +25,19 @@ extension PaiApiClient: CreateSessionApiClient {}
 public final class CreateSessionStore {
     /// Preselected ahead of every configured type, and written into the choice rather than merely
     /// displayed — the server's own default for an omitted `session_type` is the first ConfigMap
-    /// entry (`home`), not this. Guards the regression `SessionTypePicker.tsx` documents: showing
-    /// "Fast" selected while the request that would actually fire launches "Home".
-    public static let preselectedSessionTypeId = "fast"
+    /// entry (`home`), which happens to be this value too. Guards the regression
+    /// `SessionTypePicker.tsx` documents: showing one type selected while the request that would
+    /// actually fire launches another. Deliberately a SEPARATE constant from `fastSessionTypeId`
+    /// below — the two used to share one value, but "what shows preselected" and "what counts as
+    /// the fast sandbox" are different questions, and `isFastSelected` must keep answering the
+    /// second one regardless of which type this screen defaults to.
+    public static let preselectedSessionTypeId = "home"
+
+    /// The fast sandbox's own id — what `isFastSelected` checks against, kept apart from
+    /// `preselectedSessionTypeId` so a future change to the default never silently breaks the
+    /// fast-specific UI (`resolvedModel`/`resolvedThinking` below, the fast caption in
+    /// `ModelPickerSheet`) that has nothing to do with what the screen shows first.
+    public static let fastSessionTypeId = "fast"
 
     /// Session types built into the pod rather than the ConfigMap (see
     /// `backend/src/pai_cloud/config.py`'s `WEBSEARCH_SESSION_TYPE_ID`) sink under Custom rather
@@ -88,7 +98,7 @@ public final class CreateSessionStore {
 
     /// Whether `selectedSessionTypeId` is the fast sandbox — the one type whose launch defaults
     /// to a model and thinking level of its own rather than the plan's.
-    public var isFastSelected: Bool { selectedSessionTypeId == Self.preselectedSessionTypeId }
+    public var isFastSelected: Bool { selectedSessionTypeId == Self.fastSessionTypeId }
 
     /// What will actually launch if nothing more is chosen — an explicit selection always wins;
     /// unset falls back to the fast sandbox's own default on a fast session, and to the plan's

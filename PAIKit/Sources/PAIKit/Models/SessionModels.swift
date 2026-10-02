@@ -399,6 +399,10 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     public let phaseId: String?
     /// The project's own name, denormalized here so the session list's search can match on it.
     public let projectName: String?
+    /// The session's current phase name, denormalized the same way `projectName` is — its own
+    /// field rather than read off `title` because the two only agree for an unlocked session; a
+    /// `titleLocked` session can diverge from its phase's current name.
+    public let phaseName: String?
     /// The scheduled task that launched this conversation, if any — what the scheduled
     /// session filter matches on. `nil` for an ordinary session.
     public let taskId: String?
@@ -454,6 +458,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         case projectId = "project_id"
         case phaseId = "phase_id"
         case projectName = "project_name"
+        case phaseName = "phase_name"
         case taskId = "task_id"
         case activityCounts = "activity_counts"
         case secretGrantable = "secret_grantable"
@@ -502,6 +507,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         projectId: String?,
         phaseId: String?,
         projectName: String?,
+        phaseName: String? = nil,
         taskId: String? = nil,
         activityCounts: ActivityCounts? = nil,
         secretGrantable: Bool? = nil,
@@ -548,6 +554,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.projectId = projectId
         self.phaseId = phaseId
         self.projectName = projectName
+        self.phaseName = phaseName
         self.taskId = taskId
         self.activityCounts = activityCounts
         self.secretGrantable = secretGrantable
@@ -581,7 +588,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             readPositionMessageId: readPositionMessageId, readPositionOffsetPx: readPositionOffsetPx,
             readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
             sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
-            projectId: projectId, phaseId: phaseId, projectName: projectName, taskId: taskId,
+            projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName, taskId: taskId,
             activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt
         )
     }
@@ -606,7 +613,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             readPositionMessageId: readPositionMessageId, readPositionOffsetPx: readPositionOffsetPx,
             readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
             sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
-            projectId: projectId, phaseId: phaseId, projectName: projectName, taskId: taskId,
+            projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName, taskId: taskId,
             activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt
         )
     }

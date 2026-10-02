@@ -19,27 +19,13 @@ final class SessionStoreCreateSessionTests: XCTestCase {
     // MARK: - Preselection
 
     /// The regression `SessionTypePicker.tsx` documents by name: the server's own default for an
-    /// omitted `session_type` is the FIRST configured type, not `fast` — so the picker must write
-    /// `fast` into the choice itself whenever it is available, not merely display it as selected.
-    func testPreselectsFastWhenItIsAvailable() async {
+    /// omitted `session_type` is the FIRST configured type, which happens to be `home` too — so
+    /// the picker must write `home` into the choice itself whenever it is available, not merely
+    /// display it as selected.
+    func testPreselectsHomeWhenItIsAvailable() async {
         let machineApi = FakeMachineDirectoryApi()
         await machineApi.setResult(
-            .success([machine(slug: "vm", types: [type("home"), type("fast"), type("custom")])]))
-        let machines = MachineStore(api: machineApi)
-        await machines.refresh()
-
-        let store = CreateSessionStore(machines: machines, api: FakeCreateSessionApi())
-        await store.start()
-
-        XCTAssertEqual(store.selectedSessionTypeId, "fast")
-    }
-
-    /// A machine with no `fast` type at all falls back to the first configured one — never to
-    /// `nil`, which would leave the create request omitting `session_type` and silently landing
-    /// on whatever the SERVER'S first configured type is instead.
-    func testFallsBackToTheFirstTypeWhenFastIsNotAvailable() async {
-        let machineApi = FakeMachineDirectoryApi()
-        await machineApi.setResult(.success([machine(slug: "vm", types: [type("home"), type("custom")])]))
+            .success([machine(slug: "vm", types: [type("fast"), type("home"), type("custom")])]))
         let machines = MachineStore(api: machineApi)
         await machines.refresh()
 
@@ -47,6 +33,21 @@ final class SessionStoreCreateSessionTests: XCTestCase {
         await store.start()
 
         XCTAssertEqual(store.selectedSessionTypeId, "home")
+    }
+
+    /// A machine with no `home` type at all falls back to the first configured one — never to
+    /// `nil`, which would leave the create request omitting `session_type` and silently landing
+    /// on whatever the SERVER'S first configured type is instead.
+    func testFallsBackToTheFirstTypeWhenHomeIsNotAvailable() async {
+        let machineApi = FakeMachineDirectoryApi()
+        await machineApi.setResult(.success([machine(slug: "vm", types: [type("fast"), type("custom")])]))
+        let machines = MachineStore(api: machineApi)
+        await machines.refresh()
+
+        let store = CreateSessionStore(machines: machines, api: FakeCreateSessionApi())
+        await store.start()
+
+        XCTAssertEqual(store.selectedSessionTypeId, "fast")
     }
 
     func testNoTypesAvailableLeavesTheSelectionNil() async {
@@ -79,7 +80,7 @@ final class SessionStoreCreateSessionTests: XCTestCase {
 
     // MARK: - Machine switching clears type and directory
 
-    func testSwitchingMachineClearsTypeAndDirectoryThenReselectsFast() async {
+    func testSwitchingMachineClearsTypeAndDirectoryThenReselectsHome() async {
         let machineApi = FakeMachineDirectoryApi()
         await machineApi.setResult(
             .success([
@@ -101,7 +102,7 @@ final class SessionStoreCreateSessionTests: XCTestCase {
         XCTAssertEqual(store.selectedMachine, "laptop")
         XCTAssertNil(store.workingDir)
         // Re-preselected for the NEW machine's own type list, not left nil.
-        XCTAssertEqual(store.selectedSessionTypeId, "fast")
+        XCTAssertEqual(store.selectedSessionTypeId, "home")
     }
 
     // MARK: - selectWorkingDir couples directory and type
