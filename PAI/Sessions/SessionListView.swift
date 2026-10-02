@@ -446,16 +446,19 @@ struct SessionRow: View {
 
 /// What a session has running right now — subagents and background shells/monitors. Each half
 /// disappears on its own at zero, matching `ActivityBadges.tsx`, so a number on screen always
-/// means something is actually running. Shown in the list beside a row's timestamp and in the
-/// session header beside its token figure, exactly as the web shows it in both places.
+/// means something is actually there. `counts.agents` is every subagent still alive, idle ones
+/// included — `person.2.fill` pairs with the web's lucide `Users` for the same reason: there is
+/// no SF Symbol matching a "robot" glyph, so both sides draw this as people working for Freddy
+/// rather than as hardware. Shown in the list beside a row's timestamp and in the session header
+/// beside its token figure, exactly as the web shows it in both places.
 struct ActivityBadges: View {
     let counts: ActivityCounts
 
     var body: some View {
         HStack(spacing: 6) {
             if counts.agents > 0 {
-                Label("\(counts.agents)", systemImage: "cpu")
-                    .accessibilityLabel("\(counts.agents) subagent(s) working right now")
+                Label("\(counts.agents)", systemImage: "person.2.fill")
+                    .accessibilityLabel("\(counts.agents) subagent(s) running")
             }
             if counts.tasks > 0 {
                 Label("\(counts.tasks)", systemImage: "terminal")
