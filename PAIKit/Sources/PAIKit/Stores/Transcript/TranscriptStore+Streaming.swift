@@ -26,7 +26,7 @@ extension TranscriptStore {
     /// The `status` event's `pending_sends`/`last_error` pair, the derived "is a turn running"
     /// flag the transcript uses for its own loading indicator, and the session-level fields
     /// (`state`/`blocker`/`turn_state`/`display_state`/`activity_counts`/`secret_grantable`/
-    /// `secret_prompt`)
+    /// `secret_prompt`/`live_model`)
     /// recorded in `liveStatus` for whichever store owns the session list to route into its own
     /// rows — see that property's doc comment.
     public func applySseStatus(sessionId: String, event: SseStatusEvent) {
@@ -35,7 +35,8 @@ extension TranscriptStore {
         liveStatus[sessionId] = LiveSessionStatus(
             state: event.state, blocker: event.blocker, turnState: event.turnState,
             displayState: event.displayState, activityCounts: event.activityCounts,
-            secretGrantable: event.secretGrantable, secretPrompt: event.secretPrompt
+            secretGrantable: event.secretGrantable, secretPrompt: event.secretPrompt,
+            liveModel: event.liveModel
         )
     }
 

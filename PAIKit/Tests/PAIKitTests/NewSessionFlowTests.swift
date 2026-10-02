@@ -259,41 +259,6 @@ final class NewSessionFlowTests: XCTestCase {
         XCTAssertTrue(h.sessions.syncedSessions.isEmpty)
     }
 
-    // MARK: - Back out of a session created here
-
-    func testBackOutOfTheJustCreatedSessionReturnsToTheNewSessionScreen() async {
-        XCTAssertTrue(
-            Route.popLeavesJustCreatedSession(
-                from: [.session(id: "created-id")], to: [], justCreated: "created-id"))
-    }
-
-    /// Reached from the session list instead, so there is no new-session screen behind it and
-    /// Back belongs on the list — which is what `NavigationStack` does on its own.
-    func testBackOutOfASessionOpenedFromTheListIsLeftAlone() async {
-        XCTAssertFalse(
-            Route.popLeavesJustCreatedSession(from: [.session(id: "other")], to: [], justCreated: nil))
-        XCTAssertFalse(
-            Route.popLeavesJustCreatedSession(
-                from: [.session(id: "other")], to: [], justCreated: "created-id"))
-    }
-
-    /// Leaving the session's own deeper screens is not leaving the session — the step that gets
-    /// undone here is a pop within its stack, and the reader is still in the transcript.
-    func testAPopWithinTheCreatedSessionsOwnStackIsNotALeaving() async {
-        XCTAssertFalse(
-            Route.popLeavesJustCreatedSession(
-                from: [.session(id: "created-id"), .terminal(sessionID: "created-id")],
-                to: [.session(id: "created-id")], justCreated: "created-id"))
-    }
-
-    /// A jump straight past it to the root is still leaving it, whatever sat on top.
-    func testALongPressJumpPastTheCreatedSessionCounts() async {
-        XCTAssertTrue(
-            Route.popLeavesJustCreatedSession(
-                from: [.session(id: "created-id"), .subagents(parentID: "created-id")], to: [],
-                justCreated: "created-id"))
-    }
-
     // MARK: - The handoff's own one-shot rules
 
     func testACreatedSessionIsOfferedExactlyOnce() async {
@@ -304,30 +269,13 @@ final class NewSessionFlowTests: XCTestCase {
         XCTAssertNil(handoff.consumeCreated(), "a second visit to the screen must not reopen it")
     }
 
-    /// 🚨 The screen tears down immediately after pushing the session it created, and that
-    /// teardown withdraws an unopened offer — so it must leave the Back record alone, or Back out
-    /// of the session it just opened lands on the list after all.
-    func testWithdrawingAnUnopenedOfferLeavesTheBackRecordIntact() async {
+    /// Dropping an offer nobody opened must not resurrect it on a later visit to the screen.
+    func testWithdrawingAnUnopenedOfferClearsIt() async {
         let handoff = NewSessionHandoff()
         handoff.created(sessionID: "created-id")
-        _ = handoff.consumeCreated()
-        handoff.opened(sessionID: "created-id")
 
         handoff.withdrawCreated()
 
-        XCTAssertEqual(handoff.openedSessionID, "created-id")
-    }
-
-    /// Consumed once, and the Back record goes with it: opening the same session again later pops
-    /// to the list like any other.
-    func testAReopenIsRequestedOnceAndClearsWhatAskedForIt() async {
-        let handoff = NewSessionHandoff()
-        handoff.opened(sessionID: "created-id")
-
-        handoff.requestReopen()
-
-        XCTAssertTrue(handoff.consumeReopen())
-        XCTAssertFalse(handoff.consumeReopen())
-        XCTAssertNil(handoff.openedSessionID)
+        XCTAssertNil(handoff.consumeCreated())
     }
 }

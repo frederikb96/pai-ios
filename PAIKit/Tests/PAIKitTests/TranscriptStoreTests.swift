@@ -275,6 +275,23 @@ final class TranscriptStoreTests: XCTestCase {
         XCTAssertEqual(store.liveStatus["s1"]?.secretGrantable, true)
     }
 
+    /// `live_model` decodes off the wire and routes into `liveStatus` the same way
+    /// `secret_grantable` above does — the session header's model badge reads through this
+    /// rather than waiting for the row's own next poll.
+    func testApplySseStatusRecordsLiveModelIntoLiveStatus() async throws {
+        let json = Data(
+            """
+            {"status":"active","state":null,"blocker":null,"live_model":"claude-opus-4-8"}
+            """.utf8)
+        let event = try JSONDecoder().decode(SseStatusEvent.self, from: json)
+        XCTAssertEqual(event.liveModel, "claude-opus-4-8")
+
+        let store = TranscriptStore()
+        store.applySseStatus(sessionId: "s1", event: event)
+
+        XCTAssertEqual(store.liveStatus["s1"]?.liveModel, "claude-opus-4-8")
+    }
+
     /// The scalar these two used to be showed a session that had just been switched to whatever
     /// the previous session's stream last reported, until its own first status/connect event
     /// landed. Keyed by session, a session that has reported nothing yet must read as idle and

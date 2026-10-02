@@ -298,6 +298,45 @@ final class PaiModelsTests: XCTestCase {
         XCTAssertNil(session.pinnedAt)
     }
 
+    /// The live model wire id decodes onto its own field, distinct from the launch-time `model`
+    /// alias — the two coexist on the same row and must not collide.
+    func testSessionDecodesLiveModelDistinctFromLaunchModel() throws {
+        let json = Data(
+            """
+            {"id":"s1","session_type":"claude","status":"active","state":null,"blocker":null,
+             "title":null,"title_locked":null,"initial_message":null,
+             "session_tokens":0,"claude_session_id":null,"model":"sonnet",
+             "idle_timeout_minutes":null,"effective_idle_timeout_minutes":null,"cse_id":null,
+             "created_at":null,"updated_at":null,"last_activity_at":null,"working_dir":null,
+             "agent":null,"kind":null,"parent_session_id":null,"subagent_name":null,
+             "subagent_type":null,"subagent_description":null,"remote_control":null,
+             "discovered":null,"project_id":null,"phase_id":null,"project_name":null,
+             "live_model":"claude-opus-4-8"}
+            """.utf8)
+        let session = try JSONDecoder().decode(Session.self, from: json)
+        XCTAssertEqual(session.model, "sonnet")
+        XCTAssertEqual(session.liveModel, "claude-opus-4-8")
+    }
+
+    /// A backend that predates `live_model`, or a session with no assistant turn yet, omits the
+    /// key entirely — must decode to `nil` rather than throw, matching every other "reported
+    /// later" field's own guard above.
+    func testSessionLiveModelIsNilWhenTheKeyIsAbsent() throws {
+        let json = Data(
+            """
+            {"id":"s1","session_type":"claude","status":"active","state":null,"blocker":null,
+             "title":null,"title_locked":null,"initial_message":null,
+             "session_tokens":0,"claude_session_id":null,
+             "idle_timeout_minutes":null,"effective_idle_timeout_minutes":null,"cse_id":null,
+             "created_at":null,"updated_at":null,"last_activity_at":null,"working_dir":null,
+             "agent":null,"kind":null,"parent_session_id":null,"subagent_name":null,
+             "subagent_type":null,"subagent_description":null,"remote_control":null,
+             "discovered":null,"project_id":null,"phase_id":null,"project_name":null}
+            """.utf8)
+        let session = try JSONDecoder().decode(Session.self, from: json)
+        XCTAssertNil(session.liveModel)
+    }
+
     /// `withPinnedAt` calls `Session`'s memberwise init just as `withLiveStatus` does — every
     /// other field must survive the round trip rather than reset to its `= nil` default.
     func testWithPinnedAtReplacesOnlyThatFieldPreservingEverythingElse() throws {
@@ -316,8 +355,24 @@ final class PaiModelsTests: XCTestCase {
         var session = SessionFixture.make(secretGrantable: false)
         session = session.withLiveStatus(
             state: .ready, blocker: nil, turnState: .working, displayState: .working, activityCounts: nil,
-            secretGrantable: true, secretPrompt: nil)
+            secretGrantable: true, secretPrompt: nil, liveModel: nil)
         XCTAssertEqual(session.secretGrantable, true)
+    }
+
+    /// `liveModel` rides the same live SSE `status` event as `secretGrantable` above — the same
+    /// trap applies: a frame that says nothing new about it must not blank what the session
+    /// already had, and a frame that DOES report one must actually replace it.
+    func testWithLiveStatusCarriesLiveModelThrough() throws {
+        var session = SessionFixture.make(liveModel: "claude-sonnet-5")
+        session = session.withLiveStatus(
+            state: .ready, blocker: nil, turnState: .working, displayState: .working, activityCounts: nil,
+            secretGrantable: nil, secretPrompt: nil, liveModel: "claude-opus-4-8")
+        XCTAssertEqual(session.liveModel, "claude-opus-4-8")
+
+        session = session.withLiveStatus(
+            state: .ready, blocker: nil, turnState: .working, displayState: .working, activityCounts: nil,
+            secretGrantable: nil, secretPrompt: nil, liveModel: nil)
+        XCTAssertNil(session.liveModel)
     }
 
     /// Same guard as `SessionStatus`: a session list must not go empty just because one row
@@ -327,6 +382,18 @@ final class PaiModelsTests: XCTestCase {
         XCTAssertEqual(kind, .unrecognized("orchestrator"))
         let reencoded = try JSONEncoder().encode(kind)
         XCTAssertEqual(String(data: reencoded, encoding: .utf8), #""orchestrator""#)
+    }
+
+    /// `ultrafast` decodes to its own case, not `.unrecognized` — the pod-resident worker, and a
+    /// MEMBER of `sessionKindsPodResident` but NOT of `sessionKindsWithoutProcess`, since unlike
+    /// `.computer` it is genuinely drivable.
+    func testSessionKindDecodesUltrafastToItsOwnCase() throws {
+        let kind = try JSONDecoder().decode(SessionKind.self, from: Data(#""ultrafast""#.utf8))
+        XCTAssertEqual(kind, .ultrafast)
+        XCTAssertTrue(sessionKindsPodResident.contains(.ultrafast))
+        XCTAssertFalse(sessionKindsWithoutProcess.contains(.ultrafast))
+        let reencoded = try JSONEncoder().encode(kind)
+        XCTAssertEqual(String(data: reencoded, encoding: .utf8), #""ultrafast""#)
     }
 
     /// Same guard as `SessionStatus`/`SessionKind`: a value this build predates must not throw
@@ -374,7 +441,7 @@ final class PaiModelsTests: XCTestCase {
             {"slug":"vm","display_name":"Cloud Kai","online":true,"last_seen_at":null,
              "ingest_enabled":true,
              "capabilities":{"fast_sessions":true,"reboot":false,"shell":true,
-             "rc_local":true,"rc_route":"local"},
+             "rc_local":true},
              "session_types":[{"id":"fast","name":"Fast","icon":"bolt","working_dir":"/root"}]}
             """.utf8)
         let machine = try JSONDecoder().decode(Machine.self, from: json)
@@ -384,24 +451,23 @@ final class PaiModelsTests: XCTestCase {
         XCTAssertEqual(machine.capabilities.fastSessions, true)
         XCTAssertEqual(machine.capabilities.reboot, false)
         XCTAssertEqual(machine.capabilities.rcLocal, true)
-        XCTAssertEqual(machine.capabilities.rcRoute, .local)
         XCTAssertEqual(machine.sessionTypes.first?.workingDir, "/root")
     }
 
-    /// A route this build predates must decode to `.unrecognized`, not throw — the same
-    /// `SessionStatus` reasoning applies: `getMachines()` decodes the whole list in one shot.
-    func testMachineDecodesAnUnrecognizedRcRouteRatherThanThrowing() throws {
+    /// The backend may still send `rc_route` for a while after this client stops declaring it —
+    /// an extra, undeclared key in the JSON object must stay a no-op, not a thrown error.
+    func testMachineToleratesAnUndeclaredRcRouteField() throws {
         let json = Data(
             """
             {"slug":"vm","display_name":"Cloud Kai","online":true,"last_seen_at":null,
              "ingest_enabled":true,
              "capabilities":{"fast_sessions":true,"reboot":false,"shell":true,
-             "rc_local":true,"rc_route":"quantum"},
+             "rc_local":true,"rc_route":"anthropic"},
              "session_types":[]}
             """.utf8)
         let machine = try JSONDecoder().decode(Machine.self, from: json)
 
-        XCTAssertEqual(machine.capabilities.rcRoute, .unrecognized("quantum"))
+        XCTAssertEqual(machine.capabilities.rcLocal, true)
     }
 
     // MARK: - SessionSearchResult

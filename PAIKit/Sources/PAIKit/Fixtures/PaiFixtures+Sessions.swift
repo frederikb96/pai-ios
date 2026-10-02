@@ -33,7 +33,7 @@ extension PaiFixtures {
             },
             "capabilities": {
               "fast_sessions": true, "reboot": true, "shell": true,
-              "rc_local": true, "rc_route": "anthropic"
+              "rc_local": true
             },
             "session_types": [
               { "id": "default", "name": "Default", "icon": "💬" },
@@ -48,7 +48,7 @@ extension PaiFixtures {
             "ingest_enabled": true,
             "capabilities": {
               "fast_sessions": false, "reboot": false, "shell": false,
-              "rc_local": false, "rc_route": "anthropic"
+              "rc_local": false
             },
             "session_types": [
               { "id": "default", "name": "Default", "icon": "💬" }

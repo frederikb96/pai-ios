@@ -125,41 +125,34 @@ final class PaiApiClientTests: XCTestCase {
         XCTAssertTrue(query.contains("limit=50"), query)
     }
 
-    // MARK: - setRcRoute
+    // MARK: - withdrawPending
 
-    func testSetRcRouteSendsThePathMethodAndBody() async throws {
-        stubJSON(#"{"slug":"vm","rc_route":"local"}"#)
+    func testWithdrawPendingSendsThePathAndMethodWithNoBody() async throws {
+        stubJSON(#"{"withdrawn":[],"already_delivered":[],"draft_version":3}"#)
         let client = try makeClient()
-        let result = try await client.setRcRoute(machineSlug: "vm", route: .local)
+        _ = try await client.withdrawPending(sessionId: "s1")
 
-        XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.httpMethod, "PATCH")
+        XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.httpMethod, "POST")
         let path = PaiStubURLProtocol.capturedRequest?.url?.path ?? ""
-        XCTAssertTrue(path.hasSuffix("/api/agents/vm"), path)
-        let body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
-        XCTAssertEqual(body, #"{"rc_route":"local"}"#)
-        XCTAssertEqual(result.rcRoute, .local)
+        XCTAssertTrue(path.hasSuffix("/api/session/s1/withdraw-pending"), path)
+        XCTAssertNil(PaiStubURLProtocol.capturedBody)
     }
 
-    /// The response is what the AGENT reports in force, never an echo of what was asked for — a
-    /// refused switch (an unrecognised route, code `UNSUPPORTED`) leaves the machine's own stored
-    /// value unchanged, which this decode must be able to tell apart from success.
-    func testSetRcRouteDecodesWhateverRouteTheServerActuallyReports() async throws {
-        stubJSON(#"{"slug":"vm","rc_route":"anthropic"}"#)
+    /// The two lists partition every pending row the route found — some withdrawn with their
+    /// text, the rest left alone because the agent already consumed them.
+    func testWithdrawPendingDecodesWithdrawnAndAlreadyDeliveredSeparately() async throws {
+        stubJSON(
+            #"""
+            {"withdrawn":[{"id":41,"text":"first"},{"id":42,"text":"second"}],
+             "already_delivered":[43],"draft_version":7}
+            """#)
         let client = try makeClient()
-        let result = try await client.setRcRoute(machineSlug: "vm", route: .local)
+        let result = try await client.withdrawPending(sessionId: "s1")
 
-        XCTAssertEqual(result.rcRoute, .anthropic)
-    }
-
-    func testSetRcRouteThrowsOnAnAgentRefusal() async throws {
-        stubJSON(#"{"detail":"unrecognised route"}"#, statusCode: 502)
-        let client = try makeClient()
-        do {
-            _ = try await client.setRcRoute(machineSlug: "vm", route: .local)
-            XCTFail("Expected setRcRoute to throw on a refused switch")
-        } catch {
-            // Any throw is correct here; the point is that it does not return silently.
-        }
+        XCTAssertEqual(result.withdrawn.map(\.id), [41, 42])
+        XCTAssertEqual(result.withdrawn.map(\.text), ["first", "second"])
+        XCTAssertEqual(result.alreadyDelivered, [43])
+        XCTAssertEqual(result.draftVersion, 7)
     }
 
     /// This app's reverse proxy serves the SPA's `index.html` for any unmatched web path, which

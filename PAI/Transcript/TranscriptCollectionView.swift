@@ -89,6 +89,8 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// id already drawn as its own bubble from the server-reported pending list this controller
     /// draws inline.
     private let outbox: OutboxStore
+    /// See ``TranscriptCollectionView/onPullBackIntoComposer``'s own doc comment.
+    private let onPullBackIntoComposer: () -> Void
     /// Owns the same `Authorization` header every other transport applies, per
     /// `PaiRequestFactory`'s own doc comment. `PaiApiClient` keeps its own copy private, so the
     /// stream needs one passed in rather than reached for through the client.
@@ -251,7 +253,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         sessionID: String, store: TranscriptStore, apiClient: PaiApiClient, settings: SettingsStore,
         outbox: OutboxStore, requestFactory: PaiRequestFactory, searchState: TranscriptSearchState,
         initialJumpMessageID: Int? = nil, jumpRequests: TranscriptJumpRequests,
-        persistedReadPosition: PersistedReadPosition? = nil
+        persistedReadPosition: PersistedReadPosition? = nil, onPullBackIntoComposer: @escaping () -> Void = {}
     ) {
         self.sessionID = sessionID
         self.store = store
@@ -263,6 +265,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         self.initialJumpMessageID = initialJumpMessageID
         self.jumpRequests = jumpRequests
         self.persistedReadPosition = persistedReadPosition
+        self.onPullBackIntoComposer = onPullBackIntoComposer
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -1845,6 +1848,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                     onToggleReveal: { [weak self] index in
                         self?.toggleReveal(messageId: messageId, cardIndex: index)
                     },
+                    onPullBackIntoComposer: self.onPullBackIntoComposer,
                     timeSeparator: row.timeSeparator,
                     highlights: highlights,
                     currentHit: self.currentSearchHit(forMessageId: messageId, among: highlights),
@@ -1896,12 +1900,19 @@ struct TranscriptCollectionView: UIViewControllerRepresentable {
     /// What the server last held for this session's read position — `nil` when there is none, or
     /// when the caller does not know yet (a cold deep link, before `ensureSessionLoaded` returns).
     var persistedReadPosition: PersistedReadPosition? = nil
+    /// Row 59's withdraw-pending route, built by `SessionDetailView` (where `DraftStore` is
+    /// reachable through the environment this cell's own SwiftUI tree is not a descendant of) and
+    /// handed in like every other value this controller cannot build for itself. Fires the same
+    /// way regardless of which pending bubble's context menu triggered it — the route withdraws
+    /// everything pending for the session, not one row at a time.
+    var onPullBackIntoComposer: () -> Void = {}
 
     func makeUIViewController(context: Context) -> TranscriptCollectionViewController {
         TranscriptCollectionViewController(
             sessionID: sessionID, store: store, apiClient: apiClient, settings: settings, outbox: outbox,
             requestFactory: requestFactory, searchState: searchState, initialJumpMessageID: initialJumpMessageID,
-            jumpRequests: jumpRequests, persistedReadPosition: persistedReadPosition
+            jumpRequests: jumpRequests, persistedReadPosition: persistedReadPosition,
+            onPullBackIntoComposer: onPullBackIntoComposer
         )
     }
 

@@ -40,6 +40,10 @@ struct ComposerActionMenu: View {
     /// one. Offered only while no call is running: the phone has one call, so a second door into
     /// a different destination while one is live would promise something it cannot do.
     var onCallThisSession: () -> Void = {}
+    /// False for an ultra-fast session or draft, which has no attachment path on the pod worker
+    /// — the backend 400s a file on one regardless, but hiding the entries here is what keeps
+    /// Freddy from discovering that by trying.
+    var offersAttachments: Bool = true
     var onPastRecordings: () -> Void
     var onPastMessages: () -> Void
     var onAddPhoto: () -> Void
@@ -93,15 +97,17 @@ struct ComposerActionMenu: View {
             } label: {
                 Label("Past Messages", systemImage: "text.bubble")
             }
-            Button {
-                onAddPhoto()
-            } label: {
-                Label("Add Photo", systemImage: "photo.on.rectangle")
-            }
-            Button {
-                onAddFile()
-            } label: {
-                Label("Add File", systemImage: "paperclip")
+            if offersAttachments {
+                Button {
+                    onAddPhoto()
+                } label: {
+                    Label("Add Photo", systemImage: "photo.on.rectangle")
+                }
+                Button {
+                    onAddFile()
+                } label: {
+                    Label("Add File", systemImage: "paperclip")
+                }
             }
             Button {
                 onTemporaryNote()

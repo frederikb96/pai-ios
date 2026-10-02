@@ -11,7 +11,7 @@ final class SessionStoreCreateSessionTests: XCTestCase {
     private func machine(slug: String, types: [SessionType]) -> Machine {
         Machine(
             slug: slug, displayName: slug, online: true, lastSeenAt: nil, ingestEnabled: true,
-            capabilities: .init(fastSessions: true, reboot: true, shell: true, rcLocal: true, rcRoute: .anthropic),
+            capabilities: .init(fastSessions: true, reboot: true, shell: true, rcLocal: true),
             sessionTypes: types
         )
     }
@@ -274,6 +274,24 @@ final class SessionStoreCreateSessionTests: XCTestCase {
         // returns, which is what lets the composer clear and the bubble appear in one frame.
         XCTAssertEqual(outbox.newSessionEntries().count, 1)
         XCTAssertEqual(outbox.newSessionEntries().first?.text, "hello")
+    }
+
+    /// Selecting the pod-resident type must post exactly that string, however it reached the
+    /// picker — a hardcoded quick action and a backend-sourced pill both just call
+    /// `selectSessionType("ultrafast")`, and this is what the request actually carries.
+    func testEnqueueSendsUltrafastWhenSelected() async {
+        let api = FakeCreateSessionApi()
+        let sending = FakeOutboxSending()
+        let store = CreateSessionStore(machines: MachineStore(api: FakeMachineDirectoryApi()), api: api)
+        store.selectSessionType("ultrafast")
+        XCTAssertTrue(store.isUltrafastSelected)
+
+        let outbox = makeOutbox(sending)
+        store.enqueueSend(message: "hello", outbox: outbox)
+
+        await waitForPost(sending)
+        let calls = await sending.postMessageCalls
+        XCTAssertEqual(calls[0].sessionType, "ultrafast")
     }
 
     func testEnqueueSendsTheSelectedModel() async {

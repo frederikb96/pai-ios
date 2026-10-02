@@ -397,22 +397,6 @@ public struct PaiApiClient: Sendable {
         try await send(path: "/api/agents")
     }
 
-    /// Switch which controller a machine's *next* launch or resume uses. Answers with what the
-    /// agent reports is now in force, not an echo of `route` — an unrecognised route is refused
-    /// by the agent and leaves the stored value unchanged, and `PaiError.from(statusCode:)` is
-    /// what carries that refusal here as a thrown error.
-    public func setRcRoute(machineSlug: String, route: RcRoute) async throws -> AgentPatchResult {
-        struct Body: Encodable {
-            let rcRoute: RcRoute
-            enum CodingKeys: String, CodingKey { case rcRoute = "rc_route" }
-        }
-        return try await send(
-            path: "/api/agents/\(machineSlug)",
-            method: "PATCH",
-            body: try Self.jsonBody(Body(rcRoute: route))
-        )
-    }
-
     /// Every value this endpoint answers with — asserted rather than trusted, since this app's
     /// reverse proxy serves the SPA's `index.html` for any unmatched path on the web, and a
     /// route not yet deployed would otherwise decode a status this client cannot recognise
@@ -580,6 +564,15 @@ public struct PaiApiClient: Sendable {
 
     public func cancelSession(sessionId: String) async throws -> CancelResponse {
         try await send(path: "/api/session/\(sessionId)/cancel", method: "POST", body: nil, contentType: nil)
+    }
+
+    /// Pulls every still-pending send for this session back — an unsent row is withdrawn
+    /// outright, a relayed-but-unconfirmed one gets the stand-in's own verdict on whether the
+    /// agent already consumed it. No body: the route acts on every pending row at once, there is
+    /// nothing here to name.
+    public func withdrawPending(sessionId: String) async throws -> WithdrawPendingResponse {
+        try await send(
+            path: "/api/session/\(sessionId)/withdraw-pending", method: "POST", body: nil, contentType: nil)
     }
 
     public func closeSession(sessionId: String) async throws -> CloseResponse {

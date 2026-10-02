@@ -20,10 +20,6 @@ struct SettingsScreen: View {
                 .accessibilityIdentifier("theme-picker")
             }
 
-            if let machines = environment.connection?.machines {
-                MachineRouteSection(machines: machines)
-            }
-
             SmtpSection(smtp: settings.smtp)
 
             VoiceSection(settings: settings)
