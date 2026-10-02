@@ -293,6 +293,11 @@ private struct RenameActionView: View {
 
     @State private var text: String
     @State private var followsPhaseName: Bool
+    // Whether the toggle above was actually touched during this visit — without this, saving a
+    // plain rename (text changed, toggle never touched) would unconditionally resend the
+    // toggle's PRE-rename value and override `rename(title:)`'s own server-side default (a
+    // changed title locks unless told otherwise) right back to whatever it was before.
+    @State private var followsPhaseNameTouched = false
     @State private var isSaving = false
 
     init(actions: SessionActionsStore, toasts: ToastCenter, onDone: @escaping () -> Void) {
@@ -313,6 +318,7 @@ private struct RenameActionView: View {
             }
             Section {
                 Toggle("Follow the phase name from the VM", isOn: $followsPhaseName)
+                    .onChange(of: followsPhaseName) { followsPhaseNameTouched = true }
             } footer: {
                 Text("Until a name is chosen here, the session carries whatever the VM is calling the work.")
             }
@@ -331,7 +337,9 @@ private struct RenameActionView: View {
         isSaving = true
         defer { isSaving = false }
         let renamed = await actions.rename(title: text)
-        let lockChanged = await actions.setTitleLocked(!followsPhaseName)
+        // Untouched, the rename call above already settled the lock on its own (the server's
+        // default) — resending the toggle's stale initial value here would undo that.
+        let lockChanged = followsPhaseNameTouched ? await actions.setTitleLocked(!followsPhaseName) : true
         if renamed && lockChanged {
             onDone()
         } else {
