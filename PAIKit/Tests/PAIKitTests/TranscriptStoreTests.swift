@@ -480,4 +480,50 @@ final class TranscriptStoreTests: XCTestCase {
     func testOverlapsOrAbutsIsFalseForAnEmptyWindow() async {
         XCTAssertFalse(TranscriptStore.overlapsOrAbuts(.empty, pageMin: 1, pageMax: 5))
     }
+
+    // MARK: - Trimming a long-open window
+
+    private func seedTail(_ store: TranscriptStore, ids: ClosedRange<Int>) {
+        store.applyBootstrap(sessionId: "s1", entries: ids.map { message(id: $0) }, requestedLimit: 1_000)
+    }
+
+    /// An older page asked for what sat below the window's oldest row; trimming while it is in
+    /// flight would have it land below rows that are gone, a gap inside a window that claims to be
+    /// one contiguous run.
+    func testTrimRefusesWhileAnOlderPageIsInFlight() async {
+        let store = TranscriptStore()
+        seedTail(store, ids: 101...800)
+        store.setLoadingOlder("s1", loading: true)
+
+        XCTAssertFalse(store.trimToTail(sessionId: "s1", keepingNewest: 300, whenOver: 600))
+
+        store.prependOlder(sessionId: "s1", entries: (1...100).map { message(id: $0) }, requestedLimit: 150)
+        XCTAssertEqual(store.messages["s1"]?.map(\.id), Array(1...800))
+    }
+
+    /// A window that is not the tail holds newer rows back by id; trimming its head would leave it
+    /// with neither end anchored.
+    func testTrimRefusesAWindowThatIsNotTheTail() async {
+        let store = TranscriptStore()
+        store.replaceWindow(sessionId: "s1", entries: (101...800).map { message(id: $0) }, aroundId: 450, limit: 700)
+        XCTAssertTrue(store.window(for: "s1").hasNewer)
+
+        XCTAssertFalse(store.trimToTail(sessionId: "s1", keepingNewest: 300, whenOver: 600))
+        XCTAssertEqual(store.messages["s1"]?.count, 700)
+    }
+
+    func testTrimKeepsTheNewestRowsAndReportsTheRestAsHistory() async {
+        let store = TranscriptStore()
+        seedTail(store, ids: 101...800)
+
+        XCTAssertTrue(store.trimToTail(sessionId: "s1", keepingNewest: 300, whenOver: 600))
+
+        XCTAssertEqual(store.messages["s1"]?.map(\.id), Array(501...800))
+        let window = store.window(for: "s1")
+        XCTAssertEqual(window.oldestLoadedId, 501)
+        XCTAssertTrue(window.hasOlder)
+        // Live arrivals keep appending to the trimmed window.
+        store.applySseBatch(sessionId: "s1", event: SseBatchEvent(entries: [message(id: 801)], sessionTokens: nil))
+        XCTAssertEqual(store.messages["s1"]?.last?.id, 801)
+    }
 }

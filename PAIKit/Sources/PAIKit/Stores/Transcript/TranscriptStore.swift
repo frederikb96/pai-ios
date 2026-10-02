@@ -21,6 +21,14 @@ public final class TranscriptStore {
     /// sub-second load.
     public static let tailLimit = 300
     public static let olderPageLimit = 150
+    /// How many rows a window may hold while the reader follows the live edge before its oldest
+    /// are dropped back to ``tailLimit`` — see ``trimToTail(sessionId:keepingNewest:whenOver:)``.
+    ///
+    /// Every arriving batch rebuilds the transcript's row list from the whole window, so a
+    /// session left open at its live edge got slower with every message it had received since it
+    /// was opened. The gap between the two numbers keeps the drop rare: one per few hundred
+    /// arrivals, never one per message.
+    public static let liveWindowLimit = 600
     private static let maxCachedSessions = 5
 
     public internal(set) var messages: [String: [Message]] = [:]
@@ -378,6 +386,31 @@ public final class TranscriptStore {
         pendingNewerIds.removeValue(forKey: sessionId)
     }
 
+    // MARK: - Bounding a long-open window
+
+    /// Drops all but the newest `keep` messages of a window that has grown past `limit`, so a
+    /// session left open at its live edge holds a bounded window however long it runs. What is
+    /// dropped is history like any other: the window reports `hasOlder` and pages it back in on
+    /// demand. Returns whether anything was dropped.
+    ///
+    /// Refuses a window that is not the tail (its newest rows are not the session's), and one with
+    /// an older page in flight — that page would land below messages that are no longer there,
+    /// leaving a gap the window claims not to have. Deciding that the reader is nowhere near the
+    /// dropped rows is the caller's business: only it knows where the viewport is.
+    @discardableResult
+    public func trimToTail(sessionId: String, keepingNewest keep: Int, whenOver limit: Int) -> Bool {
+        guard keep > 0, let existing = messages[sessionId], existing.count > limit else { return false }
+        var win = window(for: sessionId)
+        guard !win.hasNewer, !win.loadingOlder else { return false }
+        let kept = Array(existing.suffix(keep))
+        messages[sessionId] = kept
+        win.oldestLoadedId = kept.first?.id
+        win.hasOlder = true
+        win.olderError = nil
+        windows[sessionId] = win
+        return true
+    }
+
     // MARK: - LRU
 
     func touch(_ sessionId: String) {
@@ -423,12 +456,26 @@ public final class TranscriptStore {
     /// check could never fully cover them anyway — and one that only sometimes fires would be
     /// worse than none, silently swallowing a message Freddy genuinely sent twice in a row.
     public static func displayMessages(_ messages: [Message]) -> [Message] {
-        messages.filter { message in
-            guard message.type == .assistant else { return true }
-            let hasContent = !(message.content?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-            let hasToolCalls = !(message.toolCalls?.isEmpty ?? true)
-            let hasThinking = !(message.thinking?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-            return hasContent || hasToolCalls || hasThinking
-        }
+        messages.filter(isDisplayable)
+    }
+
+    /// Whether ``displayMessages(_:)`` would keep anything — stopping at the first message it
+    /// would, rather than filtering the whole window to ask.
+    public static func hasDisplayableMessage(_ messages: [Message]) -> Bool {
+        messages.contains(where: isDisplayable)
+    }
+
+    private static func isDisplayable(_ message: Message) -> Bool {
+        guard message.type == .assistant else { return true }
+        return hasVisibleText(message.content) || !(message.toolCalls?.isEmpty ?? true)
+            || hasVisibleText(message.thinking)
+    }
+
+    /// The same answer as trimming whitespace and newlines and asking whether anything is left,
+    /// without copying the string to find out — this runs over every loaded message on every
+    /// arriving batch, and an assistant reply can run to tens of kilobytes.
+    private static func hasVisibleText(_ text: String?) -> Bool {
+        guard let text else { return false }
+        return text.unicodeScalars.contains { !CharacterSet.whitespacesAndNewlines.contains($0) }
     }
 }

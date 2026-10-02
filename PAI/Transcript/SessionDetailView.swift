@@ -420,7 +420,7 @@ private struct TranscriptLoadState: View {
 
     var body: some View {
         let window = transcript.window(for: sessionID)
-        if !TranscriptStore.displayMessages(transcript.messages[sessionID] ?? []).isEmpty {
+        if TranscriptStore.hasDisplayableMessage(transcript.messages[sessionID] ?? []) {
             EmptyView()
         } else if let error = window.bootstrapError {
             ContentUnavailableView {

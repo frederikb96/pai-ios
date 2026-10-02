@@ -50,7 +50,7 @@ private struct JumpToLatestButton: View {
 }
 
 /// One measured row, ready to hand to ``TranscriptLayout``.
-private struct TranscriptRow {
+private struct TranscriptRow: Equatable {
     let id: Int
     let message: Message
     let height: Double
@@ -64,12 +64,12 @@ private struct TranscriptRow {
 /// lifecycle, the measured-height pipeline, and the scroll mechanics the `scrolling` skill lays
 /// out — the edge-follow latch, the hold, identity-based anchoring, and older-page paging.
 ///
-/// Row heights are computed synchronously on the main actor for the whole loaded window whenever
-/// it changes, using the real ``TextKitBlockMeasurer`` and a ``BlockHeightCache`` owned by this
-/// controller. `BlockHeightCache` explicitly supports measuring off the main thread and reading
-/// back synchronously (see its doc comment) — this controller does not exercise that yet, so a
-/// large loaded window measures on the main thread. Whether that is fast enough is unverified
-/// until it runs on a device.
+/// Row heights are computed synchronously on the main actor whenever the loaded window changes,
+/// using the real ``TextKitBlockMeasurer`` and a ``BlockHeightCache`` owned by this controller.
+/// A ``TranscriptRowMemo`` keeps each row's measurement across passes, so a pass measures only
+/// the rows that are new or whose inputs changed; and a window followed at its live edge is
+/// trimmed back to its tail once it outgrows `TranscriptStore.liveWindowLimit`, so what a pass
+/// walks stays bounded however long the session stays open.
 final class TranscriptCollectionViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegate,
     UIGestureRecognizerDelegate
 {
@@ -103,6 +103,11 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
 
     private let measurer = TextKitBlockMeasurer()
     private let cache = BlockHeightCache()
+    /// What lets a pass over the window measure only what changed — see ``TranscriptRowMemo``.
+    private let rowMemo = TranscriptRowMemo()
+    /// How far the memo may outgrow the window before it is pruned back to it — slack so a pass
+    /// prunes once in a while rather than on every pass that follows a trim or an eviction.
+    private static let rowMemoSlack = 200
     private let layout = TranscriptLayout()
     private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
 
@@ -465,6 +470,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             return
         }
         cache.invalidateAll()
+        rowMemo.removeAll()
         recomputeRows(applying: .compensateFromTopVisibleRow)
     }
 
@@ -651,8 +657,31 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     }
 
     private func applySseBatch(_ event: SseBatchEvent) {
+        trimLiveWindowIfFollowing()
         store.applySseBatch(sessionId: sessionID, event: event)
         recomputeRows(applying: .stickToBottomIfPinned)
+    }
+
+    /// Drops the oldest rows of a window that has outgrown `TranscriptStore.liveWindowLimit` —
+    /// only while the reader is following the live edge, the one moment the rows going are
+    /// certainly nowhere near the viewport: everything they move is above a reader pinned to the
+    /// bottom. A drag or fling in progress, a hold placing the view, a deep-link ring, an open
+    /// search and a landing still resolving all keep every row; the window is trimmed on the
+    /// first batch after they are done.
+    ///
+    /// Runs before the batch is applied rather than after, so the trim is an update of its own —
+    /// a pure head removal — and the arrival that follows is the ordinary append it always was.
+    private func trimLiveWindowIfFollowing() {
+        guard hasLanded, edgeFollow.isPinned, !readerMotion.isReaderDriven, !holdController.isActive,
+            !isResolvingDeepLink, !isApplyingRows, highlightedMessageId == nil, !searchState.isActive,
+            measurementWidth() > 0
+        else { return }
+        guard
+            store.trimToTail(
+                sessionId: sessionID, keepingNewest: TranscriptStore.tailLimit,
+                whenOver: TranscriptStore.liveWindowLimit)
+        else { return }
+        recomputeRows(applying: .trimmedHeadWhileFollowing)
     }
 
     private func applyStatus(_ event: SseStatusEvent) {
@@ -770,6 +799,9 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         /// from a previous visit still in the loaded window) and begins the matching hold, since
         /// the layout is still settling immediately after `reloadData()`.
         case initialLoad(TranscriptRestoreTarget)
+        /// The oldest rows were dropped while the reader follows the live edge — see
+        /// ``trimLiveWindowIfFollowing()``. The reader stays on the bottom.
+        case trimmedHeadWhileFollowing
     }
 
     /// `onSettled` runs once the layout this call produces has actually landed — honoured only
@@ -811,29 +843,36 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         let environment = MeasurementEnvironment(
             sizeCategoryToken: traitCollection.preferredContentSizeCategory.rawValue)
         let metrics = Self.layoutMetrics(for: environment)
+        let revealedByMessage = revealedCardsByMessage()
+        let calendar = Calendar.current
 
         var newRows: [TranscriptRow] = []
         newRows.reserveCapacity(displayMessages.count)
         // Against the previous message that actually produced a row, not the previous message in
         // the store: a run of hidden entries between two rows is not a pause in the conversation.
-        var previousTimestamp: String?
+        var previousDate: Date?
         var isFirstRow = true
         for message in displayMessages {
+            let date = rowMemo.date(of: message)
             let separator = Self.timeSeparatorText(
-                previousTimestamp: isFirstRow ? nil : previousTimestamp, message: message)
+                date: date, previousDate: isFirstRow ? nil : previousDate, calendar: calendar)
+            let cards = memoisedCards(
+                for: message, width: width, environment: environment, metrics: metrics,
+                revealedCards: revealedByMessage[message.id] ?? [], hasTimeSeparator: separator != nil)
             guard
                 let height = TranscriptRowLayout.height(
-                    for: message, width: width, environment: environment,
-                    isRevealed: revealResolver(forMessageId: message.id), measurer: measurer,
-                    cache: cache, metrics: metrics, hasTimeSeparator: separator != nil)
+                    of: cards, hasTimeSeparator: separator != nil, metrics: metrics)
             else { continue }
             newRows.append(
                 TranscriptRow(id: message.id, message: message, height: height, timeSeparator: separator))
             // Only a row that carries a time updates the reference. A row without one — a message
             // still on its way — says nothing about when the conversation was, and letting it
             // clear this would stamp a full date on the next ordinary row.
-            if message.timestamp != nil { previousTimestamp = message.timestamp }
+            if message.timestamp != nil { previousDate = date }
             isFirstRow = false
+        }
+        if rowMemo.count > displayMessages.count + Self.rowMemoSlack {
+            rowMemo.retain(only: Set(displayMessages.map(\.id)))
         }
 
         #if DEBUG
@@ -873,6 +912,29 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         recomputeRows(applying: .compensateFromTopVisibleRow)
     }
 
+    /// Which cards the reader has opened, per message — built once per pass rather than asked of
+    /// `revealed` once per row.
+    private func revealedCardsByMessage() -> [Int: Set<Int>] {
+        var byMessage: [Int: Set<Int>] = [:]
+        for key in revealed { byMessage[key.messageId, default: []].insert(key.cardIndex) }
+        return byMessage
+    }
+
+    /// One row's cards through ``rowMemo`` — the single path both a pass over the window and a
+    /// cell drawing one row measure by, so the two cannot disagree about a height.
+    private func memoisedCards(
+        for message: Message, width: Double, environment: MeasurementEnvironment, metrics: MessageLayoutMetrics,
+        revealedCards: Set<Int>, hasTimeSeparator: Bool
+    ) -> [MeasuredCard] {
+        let inputs = TranscriptRowMemo.Inputs(
+            width: width, environment: environment, revealedCards: revealedCards, hasTimeSeparator: hasTimeSeparator)
+        return rowMemo.cards(for: message, inputs: inputs) {
+            TranscriptRowLayout.measure(
+                for: message, width: width, environment: environment, isRevealed: { revealedCards.contains($0) },
+                measurer: measurer, cache: cache, metrics: metrics, hasTimeSeparator: hasTimeSeparator)
+        }
+    }
+
     private func currentEnvironment() -> MeasurementEnvironment {
         MeasurementEnvironment(sizeCategoryToken: traitCollection.preferredContentSizeCategory.rawValue)
     }
@@ -886,10 +948,10 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         let width = measurementWidth()
         guard width > 0 else { return [] }
         let environment = currentEnvironment()
-        return TranscriptRowLayout.measure(
-            for: message, width: width, environment: environment,
-            isRevealed: revealResolver(forMessageId: message.id), measurer: measurer, cache: cache,
-            metrics: Self.layoutMetrics(for: environment), hasTimeSeparator: hasTimeSeparator)
+        let revealedCards = Set(revealed.lazy.filter { $0.messageId == message.id }.map(\.cardIndex))
+        return memoisedCards(
+            for: message, width: width, environment: environment, metrics: Self.layoutMetrics(for: environment),
+            revealedCards: revealedCards, hasTimeSeparator: hasTimeSeparator)
     }
 
     /// What one row's separator costs in a given version of the row list — `0` when that row is
@@ -904,9 +966,9 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// Formatting lives here rather than in the package because it is locale- and timezone-bound;
     /// the *decision* is `TranscriptTimeSeparator`'s, which is a pure function of two timestamps
     /// and proven on Linux.
-    private static func timeSeparatorText(previousTimestamp: String?, message: Message) -> String? {
-        guard let raw = message.timestamp, let date = IsoTimestamp.date(from: raw) else { return nil }
-        switch TranscriptTimeSeparator.style(previousTimestamp: previousTimestamp, currentTimestamp: raw) {
+    private static func timeSeparatorText(date: Date?, previousDate: Date?, calendar: Calendar) -> String? {
+        guard let date else { return nil }
+        switch TranscriptTimeSeparator.style(previous: previousDate, current: date, calendar: calendar) {
         case .none: return nil
         case .time: return timeOnlyFormatter.string(from: date)
         case .dateAndTime: return dateAndTimeFormatter.string(from: date)
@@ -1390,7 +1452,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         case .stickToBottomIfPinned:
             edgeFollow.recordWindow(hasNewer: store.window(for: sessionID).hasNewer)
             let shouldStick = edgeFollow.isPinned
-            applyDelta(delta, newRows: newRows, oldCount: oldIds.count) { [weak self] in
+            let settle: () -> Void = { [weak self] in
                 guard let self else { return }
                 if self.reassertHoldIfNeeded() { return }
                 // Not following: the reader stays put, and content growing below them is what
@@ -1399,6 +1461,24 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                 guard shouldStick else { return self.updateJumpToLatestVisibility() }
                 self.scrollToBottom(animated: true)
             }
+            // A pass that changed nothing — a status event, or the second pass the pending-bubble
+            // observation makes for a batch already applied — has nothing to redraw. Going on
+            // would reconfigure every visible cell for it.
+            guard newRows != rows else { return settle() }
+            applyDelta(delta, newRows: newRows, oldCount: oldIds.count, completion: settle)
+
+        case .trimmedHeadWhileFollowing:
+            // Without animation, then one immediate write to the bottom in the same run-loop turn,
+            // so no frame shows the shortened list at the old offset — rather than depending on
+            // whether a delete-only update consults the layout's anchor.
+            layout.pendingAnchor = nil
+            UIView.performWithoutAnimation {
+                applyDelta(delta, newRows: newRows, oldCount: oldIds.count, completion: nil)
+            }
+            collectionView.layoutIfNeeded()
+            scrollToBottom(animated: false)
+            updateJumpToLatestVisibility()
+            onSettled?()
         }
     }
 
@@ -1490,6 +1570,13 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             collectionView.performBatchUpdates({
                 self.commitRows(newRows)
                 collectionView.insertItems(at: indexPaths)
+            }) { _ in completion?() }
+
+        case .headRemoved(let count):
+            let indexPaths = (0..<count).map { IndexPath(item: $0, section: 0) }
+            collectionView.performBatchUpdates({
+                self.commitRows(newRows)
+                collectionView.deleteItems(at: indexPaths)
             }) { _ in completion?() }
 
         case .tailReplaced(let commonPrefix, let removed, let inserted):

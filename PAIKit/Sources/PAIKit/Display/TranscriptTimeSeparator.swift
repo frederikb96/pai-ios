@@ -33,10 +33,13 @@ public enum TranscriptTimeSeparator {
     /// older page arrives above it is deliberate and safe — the layout compensates by the distance
     /// the anchor row moved, so any height change above the reader, including this one, is
     /// absorbed rather than seen.
-    public static func style(previous: Date?, current: Date?) -> Style {
+    ///
+    /// `calendar` is a parameter so a caller deciding a whole window resolves `Calendar.current`
+    /// once rather than once per row.
+    public static func style(previous: Date?, current: Date?, calendar: Calendar = .current) -> Style {
         guard let current else { return .none }
         guard let previous else { return .dateAndTime }
-        if !Calendar.current.isDate(previous, inSameDayAs: current) { return .dateAndTime }
+        if !calendar.isDate(previous, inSameDayAs: current) { return .dateAndTime }
         return current.timeIntervalSince(previous) >= quietInterval ? .time : .none
     }
 

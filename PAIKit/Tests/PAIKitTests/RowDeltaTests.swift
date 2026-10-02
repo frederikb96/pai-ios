@@ -23,6 +23,12 @@ final class RowDeltaTests: XCTestCase {
         XCTAssertEqual(delta, .prepended(count: 2))
     }
 
+    /// A long-open window trimmed back to its tail. Falling through to `.replaced` would reload
+    /// every visible cell on screen for rows hundreds above it; a pure delete leaves them alone.
+    func testOldestRowsDroppedClassifyAsHeadRemoved() {
+        XCTAssertEqual(RowDelta.compute(old: [1, 2, 3, 4, 5, 6], new: [4, 5, 6]), .headRemoved(count: 3))
+    }
+
     func testIdenticalListsAreUnchanged() {
         XCTAssertEqual(RowDelta.compute(old: [1, 2, 3], new: [1, 2, 3]), .unchanged)
     }

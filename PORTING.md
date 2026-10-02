@@ -387,3 +387,18 @@ with `.id`, and `.createSession` provably cannot appear twice, so the reasoning 
 — but whether SwiftUI tolerates the mid-animation mutation needs one run through the
 Siri/home-screen-shortcut path: create a session, send, and watch for a black flash or
 an interrupted dismissal.
+
+### Verify: a long-open transcript stays smooth, and its live-window trim is invisible — pai-cloud anchor: `web/src/hooks/useTranscriptScroll.ts` (`LIVE_WINDOW_LIMIT`)
+Needs `PAI/` because: the per-message cost is proven bounded only in the package —
+`TranscriptRowMemo` (a pass measures only new or changed rows) and
+`TranscriptStore.trimToTail` (the window followed at its live edge drops back to its tail past
+`liveWindowLimit`). What the controller does with them is unrun:
+`TranscriptCollectionViewController.trimLiveWindowIfFollowing()` applies the trim as a
+`.headRemoved` delete inside `UIView.performWithoutAnimation`, then `layoutIfNeeded()` and a
+non-animated `scrollToBottom` in the same run-loop turn. The claim to check on a phone is that a
+reader pinned to the bottom sees nothing at all when that happens: no flash, no jump, no
+interrupted append animation. Keep a session open at its live edge through a few hundred arrivals
+(the trim fires each time the window passes the limit), then scroll up and confirm older pages
+load back in with the usual prepend compensation. Also confirm a status event no longer redraws
+the visible rows: `apply`'s `.stickToBottomIfPinned` returns before `applyDelta` when the rebuilt
+rows equal the current ones.
