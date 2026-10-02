@@ -946,7 +946,7 @@ struct RelayedBubbleView: View {
         )
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.leading, TranscriptRowMetrics.bubbleGutter)
-        .modifier(OptionalCopyAndExpand(text: text, pullBackAction: pullBackAction))
+        .modifier(OptionalCopyAndExpand(text: text))
     }
 }
 
@@ -1002,7 +1002,7 @@ struct ResentBubbleView: View {
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.leading, TranscriptRowMetrics.bubbleGutter)
-        .modifier(OptionalCopyAndExpand(text: text, pullBackAction: pullBackAction))
+        .modifier(OptionalCopyAndExpand(text: text))
     }
 }
 

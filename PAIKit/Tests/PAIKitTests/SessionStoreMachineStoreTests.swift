@@ -58,7 +58,6 @@ final class SessionStoreMachineStoreTests: XCTestCase {
 
         XCTAssertEqual(store.machines.map(\.slug), ["vm"])
     }
-
 }
 
 extension FakeMachineDirectoryApi {
