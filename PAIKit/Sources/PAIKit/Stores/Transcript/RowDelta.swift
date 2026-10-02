@@ -3,10 +3,11 @@ import Foundation
 /// How a transcript's loaded row-id list changed since the last measurement pass.
 ///
 /// A transcript's loaded window is a contiguous, ascending run of server rows (``TranscriptWindow``'s
-/// own doc comment) — ids are never reordered and never removed except by a whole-session LRU
-/// eviction the collection view never sees, since that only ever targets a *different* session.
-/// The one thing that does change at the tail is the pending-send bubbles the view appends after
-/// them, which stand in for sends the server has not confirmed yet.
+/// own doc comment) — ids are never reordered, and removed only from the head, when a long-open
+/// window is trimmed back to its tail (``TranscriptStore/trimToTail(sessionId:keepingNewest:whenOver:)``),
+/// or by a whole-session LRU eviction the collection view never sees, since that only ever targets
+/// a *different* session. The one thing that does change at the tail is the pending-send bubbles
+/// the view appends after them, which stand in for sends the server has not confirmed yet.
 ///
 /// Telling these shapes apart is what lets each get exactly the scroll treatment it needs,
 /// instead of one generic diff that cannot distinguish "grew at the top" from "grew at the
@@ -24,6 +25,11 @@ public enum RowDelta: Equatable, Sendable {
     /// Folded into ``replaced`` it forced a full reload on the single most common interaction
     /// there is, which discards the reader's scroll anchor along with it.
     case tailReplaced(commonPrefix: Int, removed: Int, inserted: Int)
+    /// The oldest `count` rows dropped and nothing else changed — `new` is `old`'s suffix. What a
+    /// long-open window being trimmed back while the reader follows the live edge looks like; a
+    /// pure delete the collection view can apply, rather than a reload that rebuilds every
+    /// visible cell.
+    case headRemoved(count: Int)
     /// Anything else — no shared leading run at all, so there is no anchor to preserve and a full
     /// reload is the honest answer.
     case replaced
@@ -39,6 +45,9 @@ public enum RowDelta: Equatable, Sendable {
         // `new`'s suffix.
         if new.count > old.count, Array(new.suffix(old.count)) == old {
             return .prepended(count: new.count - old.count)
+        }
+        if new.count < old.count, !new.isEmpty, Array(old.suffix(new.count)) == new {
+            return .headRemoved(count: old.count - new.count)
         }
         // Checked after the two above, which are the same shape with nothing removed, and which
         // the collection view can apply as a pure insert.

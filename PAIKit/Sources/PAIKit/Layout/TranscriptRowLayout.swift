@@ -235,9 +235,18 @@ public enum TranscriptRowLayout {
         metrics: MessageLayoutMetrics,
         hasTimeSeparator: Bool = false
     ) -> Double? {
-        let cards = measure(
-            for: message, width: width, environment: environment, isRevealed: isRevealed, measurer: measurer,
-            cache: cache, metrics: metrics, hasTimeSeparator: hasTimeSeparator)
+        height(
+            of: measure(
+                for: message, width: width, environment: environment, isRevealed: isRevealed, measurer: measurer,
+                cache: cache, metrics: metrics, hasTimeSeparator: hasTimeSeparator),
+            hasTimeSeparator: hasTimeSeparator, metrics: metrics)
+    }
+
+    /// The row height `cards` add up to — for a caller already holding the measured cards
+    /// (``TranscriptRowMemo``), so the two paths cannot sum them differently.
+    public static func height(of cards: [MeasuredCard], hasTimeSeparator: Bool, metrics: MessageLayoutMetrics)
+        -> Double?
+    {
         guard !cards.isEmpty else { return nil }
         // The separator sits above the first card rather than inside any of them, so it is added
         // here rather than summed — `measure` only shifts the cards' own offsets past it.
