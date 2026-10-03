@@ -54,20 +54,13 @@ final class SessionStoreRowStateTests: XCTestCase {
         XCTAssertFalse(SessionListDomain.isDrivable(session))
     }
 
-    /// Pod-resident, so a worker genuinely answers it — unlike a subagent or a supervisor, it
-    /// must read as drivable even with no `state` at all, which this guards against regressing.
-    func testUltrafastSessionIsDrivableWithNoStateAtAll() {
-        let session = SessionFixture.make(state: nil, kind: .ultrafast)
-        XCTAssertTrue(SessionListDomain.isDrivable(session))
-        XCTAssertFalse(SessionListDomain.isGrey(session))
-    }
-
-    /// Pod-resident sessions do not go through the ordinary starting/ready/closed lifecycle, so
-    /// a literal `.closed` state must not read as undrivable the way it would for an ordinary
-    /// conversation — `isDrivable` answers from the kind before it ever looks at `state`.
-    func testUltrafastSessionIsDrivableEvenReportingAClosedState() {
-        let session = SessionFixture.make(state: .closed, kind: .ultrafast)
-        XCTAssertTrue(SessionListDomain.isDrivable(session))
+    /// An ultra-fast session is answered by the pod, but its `state` is the ordinary open/closed
+    /// one: drivable while `ready`, grey once closed, like any other conversation.
+    func testUltrafastSessionFollowsItsState() {
+        XCTAssertTrue(SessionListDomain.isDrivable(SessionFixture.make(state: .ready, kind: .ultrafast)))
+        let closed = SessionFixture.make(state: .closed, kind: .ultrafast)
+        XCTAssertFalse(SessionListDomain.isDrivable(closed))
+        XCTAssertTrue(SessionListDomain.isGrey(closed))
     }
 
     /// The sharpest divergence risk in this file: an unrecognized state string is not `nil` and

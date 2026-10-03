@@ -207,9 +207,8 @@ public enum SessionKind: Sendable, Hashable {
 public let sessionKindsWithoutProcess: Set<SessionKind> = [.subagent, .supervisor, .computer]
 
 /// Kinds answered by a worker running on the pod itself, never by a tmux session on a machine —
-/// mirrors `SESSION_KINDS_POD_RESIDENT` in `models.py`. `SessionListDomain.isDrivable` reads this
-/// before it ever looks at `state`, since a pod-resident session's lifecycle is not the ordinary
-/// starting/ready/closed one a machine-driven session goes through.
+/// mirrors `SESSION_KINDS_POD_RESIDENT` in `models.py`. Their `state` is the ordinary open/closed
+/// one, so only what would watch or stop a process (the supervisor entry) consults this set.
 public let sessionKindsPodResident: Set<SessionKind> = [.ultrafast]
 
 /// What `GET /api/sessions?kind=` may be asked for. `.listed` is a named SET rather than a kind:
