@@ -28,7 +28,7 @@ final class RecordingsStoreTests: XCTestCase {
         // One past the cap, so exactly one entry falls off the end.
         for index in 1...(SettingsStore.maxRecordings + 1) {
             let entry = meta(id: String(index))
-            try await library.save(id: entry.id, raw: nil, sent: Data())
+            try await library.save(id: entry.id, audio: Data())
             settings.saveRecording(entry)
         }
 
@@ -55,7 +55,7 @@ final class RecordingsStoreTests: XCTestCase {
         let library = RecordingAudioLibrary(storage: audioStorage)
 
         for index in 1...12 {
-            try await library.save(id: String(index), raw: nil, sent: Data())
+            try await library.save(id: String(index), audio: Data())
         }
 
         let saved = await audioStorage.savedIds
@@ -70,7 +70,6 @@ final class RecordingsStoreTests: XCTestCase {
         let decoded = try JSONDecoder().decode(RecordingMeta.self, from: data)
         XCTAssertEqual(decoded, minimal)
         XCTAssertNil(decoded.transcript)
-        XCTAssertNil(decoded.silence)
     }
 }
 
@@ -78,7 +77,7 @@ actor FakeRecordingAudioStorage: RecordingAudioStorage {
     private(set) var savedIds: [String] = []
     private(set) var deletedIds: [String] = []
 
-    func save(id: String, raw: Data?, sent: Data) async throws {
+    func save(id: String, audio: Data) async throws {
         savedIds.append(id)
     }
 

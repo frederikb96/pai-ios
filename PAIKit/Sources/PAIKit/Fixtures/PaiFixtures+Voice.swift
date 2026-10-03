@@ -93,9 +93,11 @@ extension PaiFixtures {
     /// and the one every fallback has to work from.
     public static let spokenVoiceSettings: String = #"""
         {
-          "computer_voice": null, "computer_delivery": null,
-          "call_voice_id": null, "call_speed": 1.0,
-          "updated_at": "2026-09-20T12:00:00Z"
+          "computer_voice": "cedar", "computer_delivery": null, "computer_speed": 1.25,
+          "call_voice_id": null, "call_speed": 1.2,
+          "stt_keyterms": ["Computer", "Kai", "PAI"], "stt_language": null, "stt_no_verbatim": false,
+          "debug_recordings_enabled": true,
+          "updated_at": "2026-09-20T12:00:00.123456+00:00"
         }
         """#
 
@@ -161,14 +163,12 @@ extension PaiFixtures {
     // iOS `RecordingMeta` model is free to diverge, and there is nothing to reconcile against
     // when it does.
 
-    /// A clean recording — 16 kHz Bluetooth headset, wideband, silence-terminated, both the raw
-    /// capture and what was actually sent kept (the two rates differ, so both bytes exist).
+    /// A clean recording — 16 kHz Bluetooth headset, wideband, its transcript attached.
     public static let recordingClean: String = #"""
         {
           "timestamp": 1798610000000,
           "durationMs": 8420,
           "sampleRate": 16000,
-          "rawSampleRate": 16000,
           "mic": {
             "label": "AirPods Pro",
             "trackSampleRate": 16000,
@@ -179,20 +179,18 @@ extension PaiFixtures {
             "autoGainControl": true,
             "userAgent": "fixture-agent/1.0"
           },
-          "rawStored": true,
-          "endedBy": "silence",
-          "silence": { "enabled": true, "threshold": 0.02, "durationMs": 1500, "triggered": true },
-          "stt": { "model": "scribe_v2_realtime", "language": "en", "vadSilenceSecs": 1.5, "vadThreshold": 0.4 },
-          "transcript": "stt-rec: check whether the terminal frame shape matches what the backend sends",
+          "endedBy": "user",
+          "transcript": "check whether the terminal frame shape matches what the backend sends",
+          "transcriptSource": "live",
+          "transcriptComplete": true,
           "levels": { "peak": 0.71, "rms": 0.18, "clippedSamples": 0 },
           "narrowband": false,
-          "startup": { "captureMs": 210, "socketMs": 1780 },
           "mutedMs": 0
         }
         """#
 
     /// A degraded one — Bluetooth Hands-Free fallback (8 kHz, narrowband), cut short by an
-    /// interruption, raw capture dropped under the storage budget. Every field past `durationMs`
+    /// interruption. Every field past `durationMs`
     /// is optional for exactly this case: a recording made by an earlier build must still open.
     public static let recordingDegraded: String = #"""
         {
@@ -209,7 +207,6 @@ extension PaiFixtures {
             "autoGainControl": null,
             "userAgent": "fixture-agent/1.0"
           },
-          "rawStored": false,
           "endedBy": "interrupted",
           "narrowband": true
         }
@@ -228,23 +225,20 @@ extension PaiFixtures {
     // (`AppEnvironment.connect()`, fixture mode only) that seeds `SettingsStore.recordings`
     // directly so the picker has something to render at all.
 
-    /// An ordinary take, silence-terminated — everything a normal capture records.
+    /// An ordinary take — everything a normal capture records, its transcript attached.
     public static let recordingOrdinary = RecordingMeta(
         timestampMs: 1_798_610_000_000,
         durationMs: 8420,
         sampleRate: 16000,
-        rawSampleRate: 16000,
         mic: MicDiagnostics(
             label: "AirPods Pro", trackSampleRate: 16000, contextSampleRate: 48000, channelCount: 1,
             echoCancellation: true, noiseSuppression: true, autoGainControl: true, userAgent: "fixture-agent/1.0"),
-        rawStored: true,
-        endedBy: .silence,
-        silence: SilenceMeta(enabled: true, threshold: 0.02, durationMs: 1500, triggered: true),
-        stt: SttMeta(model: "scribe_v2_realtime", language: "en", vadSilenceSecs: 1.5, vadThreshold: 0.4),
-        transcript: "stt-rec: check whether the terminal frame shape matches what the backend sends",
+        endedBy: .user,
+        transcript: "check whether the terminal frame shape matches what the backend sends",
+        transcriptSource: .live,
+        transcriptComplete: true,
         levels: LevelStats(peak: 0.71, rms: 0.18, clippedSamples: 0, totalSamples: 134720),
         narrowband: false,
-        startup: RecordingStartup(captureMs: 210, socketMs: 1780),
         mutedMs: 0
     )
 
@@ -256,7 +250,6 @@ extension PaiFixtures {
         timestampMs: 1_798_600_500_000,
         durationMs: 5310,
         sampleRate: 16000,
-        rawStored: true,
         endedBy: .crashed
     )
 
@@ -268,7 +261,6 @@ extension PaiFixtures {
         timestampMs: 1_798_615_000_000,
         durationMs: 42_000,
         sampleRate: 16000,
-        rawStored: true,
         endedBy: .connectionLost,
         transcript: "the first part of this recording made it through before the connection dropped",
         transcription: TranscriptionMeta(coveredMs: 34_000, gapMs: 8000, gapCount: 1, state: .pending, delivered: false)

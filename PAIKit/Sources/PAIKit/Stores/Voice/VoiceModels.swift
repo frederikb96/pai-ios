@@ -27,21 +27,8 @@ public enum VoiceRecordingState: Sendable, Equatable {
     case transcriptionStopped
 }
 
-/// Client-local voice preferences — the web keeps these in `localStorage`, iOS in
-/// `UserDefaults`; this is the value type either side reads and writes, with the web's own
-/// defaults (`stores/settings.ts`).
-public struct VoiceSettings: Sendable, Equatable {
-    public enum Language: String, Sendable, Equatable, Codable {
-        case auto, en, de
-    }
-
-    public var sttLanguage: Language
-    /// `''` means the system default input — never a real device identifier, so it is always
-    /// safe to persist even when no device is currently selected.
-    public var micDeviceId: String
-
-    public init(sttLanguage: Language = .auto, micDeviceId: String = "") {
-        self.sttLanguage = sttLanguage
-        self.micDeviceId = micDeviceId
-    }
+/// The marker every dictated text carries, so a session reading it knows it came from speech and
+/// may hold transcription errors.
+public enum VoiceRecordingResult {
+    public static let sttPrefix = "stt-rec: "
 }

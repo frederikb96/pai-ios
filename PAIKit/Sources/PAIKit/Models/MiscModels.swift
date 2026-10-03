@@ -962,67 +962,138 @@ public struct SecretStatusMap: Codable, Sendable, Equatable {
 
 // MARK: - Voice settings
 //
-// How the two spoken voices sound. Computer speaks through OpenAI Realtime, which names a voice
-// and has no speed parameter — delivery there is shaped by telling the model how to speak. A
-// session's call-mode replies go through ElevenLabs, which takes a voice id and a speed and no
-// instructions. A `nil` means unset: whatever speaks picks its own.
+// Synced to the backend, which is the only thing that speaks or transcribes — one row read by
+// every transport, three groups: Computer (OpenAI Realtime: a voice name, a speed, and a voice
+// instruction told to the model as words), session replies (ElevenLabs text-to-speech: a voice
+// id and a speed, no style text — the API has none), and dictation (ElevenLabs Scribe: key terms,
+// language, filler-word removal). A `nil` means unset: whatever speaks picks its own.
+//
+// The ranges below are what the inputs offer. The backend validates the real bounds and answers
+// 400 outside them; there is no OpenAPI schema to share one constant from, the same duplication
+// `SmtpSecurity`'s own value list carries for the same reason.
 
-/// What the number input offers. The backend validates the real bound
-/// (`models.CALL_SPEED_MIN`/`MAX`) and answers 400 outside it; this project has no OpenAPI
-/// schema to share one constant from, the same duplication `SmtpSecurity`'s own value list
-/// already carries for the same reason.
-public let callSpeedRange: ClosedRange<Double> = 0.5...2.0
+/// ElevenLabs' own `voice_settings.speed` range.
+public let callSpeedRange: ClosedRange<Double> = 0.7...1.2
+/// OpenAI Realtime's `audio.output.speed` range.
+public let computerSpeedRange: ClosedRange<Double> = 0.25...1.5
+
+/// ElevenLabs realtime's limits on key terms — stricter than batch's, and both receive the list.
+public enum SttKeytermRules {
+    public static let maxCount = 50
+    public static let maxCharacters = 20
+    public static let maxWords = 5
+    public static let forbiddenCharacters = Set("<>{}[]\\")
+
+    /// `nil` when the term is acceptable, otherwise why not.
+    public static func problem(with term: String) -> String? {
+        if term.count > maxCharacters { return "“\(term)” is longer than \(maxCharacters) characters" }
+        if term.split(whereSeparator: \.isWhitespace).count > maxWords {
+            return "“\(term)” has more than \(maxWords) words"
+        }
+        if term.contains(where: { forbiddenCharacters.contains($0) }) {
+            return "“\(term)” contains one of < > { } [ ] \\"
+        }
+        return nil
+    }
+}
 
 public struct SpokenVoiceSettings: Codable, Sendable, Equatable {
     public let computerVoice: String?
     public let computerDelivery: String?
+    public let computerSpeed: Double?
     public let callVoiceId: String?
     public let callSpeed: Double
+    public let sttKeyterms: [String]
+    /// ISO 639 code; `nil` auto-detects.
+    public let sttLanguage: String?
+    public let sttNoVerbatim: Bool
+    /// Whether the backend keeps debug recordings of what each engine heard. Toggled from the
+    /// Debug Recordings sheet, not from the voice groups.
+    public let debugRecordingsEnabled: Bool
     public let updatedAt: String
 
     enum CodingKeys: String, CodingKey {
         case computerVoice = "computer_voice"
         case computerDelivery = "computer_delivery"
+        case computerSpeed = "computer_speed"
         case callVoiceId = "call_voice_id"
         case callSpeed = "call_speed"
+        case sttKeyterms = "stt_keyterms"
+        case sttLanguage = "stt_language"
+        case sttNoVerbatim = "stt_no_verbatim"
+        case debugRecordingsEnabled = "debug_recordings_enabled"
         case updatedAt = "updated_at"
     }
 
     public init(
-        computerVoice: String?, computerDelivery: String?, callVoiceId: String?,
-        callSpeed: Double, updatedAt: String
+        computerVoice: String?, computerDelivery: String?, computerSpeed: Double?, callVoiceId: String?,
+        callSpeed: Double, sttKeyterms: [String], sttLanguage: String?, sttNoVerbatim: Bool,
+        debugRecordingsEnabled: Bool, updatedAt: String
     ) {
         self.computerVoice = computerVoice
         self.computerDelivery = computerDelivery
+        self.computerSpeed = computerSpeed
         self.callVoiceId = callVoiceId
         self.callSpeed = callSpeed
+        self.sttKeyterms = sttKeyterms
+        self.sttLanguage = sttLanguage
+        self.sttNoVerbatim = sttNoVerbatim
+        self.debugRecordingsEnabled = debugRecordingsEnabled
         self.updatedAt = updatedAt
     }
 }
 
-/// Every field every time, the same whole-draft PUT `SmtpSettingsUpdate` sends and for the same
-/// reason: a `nil` here has to reach the server as JSON `null` to clear a field, which a
-/// selective patch cannot express.
+/// Every voice-group field every time, the same whole-draft PUT `SmtpSettingsUpdate` sends and
+/// for the same reason: a `nil` here has to reach the server as JSON `null` to clear a field,
+/// which a selective patch cannot express. `debug_recordings_enabled` is not in here — it is its
+/// own toggle with its own PUT.
 public struct SpokenVoiceSettingsUpdate: Encodable, Sendable, Equatable {
     public var computerVoice: String?
     public var computerDelivery: String?
+    public var computerSpeed: Double?
     public var callVoiceId: String?
     public var callSpeed: Double
+    public var sttKeyterms: [String]
+    public var sttLanguage: String?
+    public var sttNoVerbatim: Bool
 
     enum CodingKeys: String, CodingKey {
         case computerVoice = "computer_voice"
         case computerDelivery = "computer_delivery"
+        case computerSpeed = "computer_speed"
         case callVoiceId = "call_voice_id"
         case callSpeed = "call_speed"
+        case sttKeyterms = "stt_keyterms"
+        case sttLanguage = "stt_language"
+        case sttNoVerbatim = "stt_no_verbatim"
     }
 
     public init(
-        computerVoice: String?, computerDelivery: String?, callVoiceId: String?, callSpeed: Double
+        computerVoice: String?, computerDelivery: String?, computerSpeed: Double?, callVoiceId: String?,
+        callSpeed: Double, sttKeyterms: [String], sttLanguage: String?, sttNoVerbatim: Bool
     ) {
         self.computerVoice = computerVoice
         self.computerDelivery = computerDelivery
+        self.computerSpeed = computerSpeed
         self.callVoiceId = callVoiceId
         self.callSpeed = callSpeed
+        self.sttKeyterms = sttKeyterms
+        self.sttLanguage = sttLanguage
+        self.sttNoVerbatim = sttNoVerbatim
+    }
+
+    /// Nullable fields are always written, `null` included — the synthesised encoder would
+    /// leave a `nil` out, and an omitted key is "leave as-is" to the backend, not "clear".
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(computerVoice, forKey: .computerVoice)
+        try container.encode(computerDelivery, forKey: .computerDelivery)
+        try container.encode(computerSpeed, forKey: .computerSpeed)
+        try container.encode(callVoiceId, forKey: .callVoiceId)
+        try container.encode(callSpeed, forKey: .callSpeed)
+        try container.encode(sttKeyterms, forKey: .sttKeyterms)
+        try container.encode(sttLanguage, forKey: .sttLanguage)
+        try container.encode(sttNoVerbatim, forKey: .sttNoVerbatim)
     }
 }
 

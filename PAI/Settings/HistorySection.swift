@@ -30,8 +30,8 @@ struct HistorySection: View {
                 }
                 .accessibilityIdentifier("open-recordings")
                 .sheet(isPresented: $showingRecordings) {
-                    // No composer behind this screen, so no insert and no attach — the sheet
-                    // draws neither when they are absent.
+                    // No composer behind this screen: the transcript icon shows the text to copy
+                    // and the voice log is shared rather than attached.
                     RecordingsSheet(controller: voice)
                 }
             }
@@ -124,7 +124,8 @@ struct VoiceDiagnosticsLogSheet: View {
                     .accessibilityIdentifier("clear-voice-log")
                 } footer: {
                     Text(
-                        "What the voice pipeline did on this device — mode changes, connection drops, commands heard."
+                        "What the voice pipeline did on this device — mode changes, connection drops, the silence gate. "
+                            + "Rotates by itself at a few MB."
                     )
                 }
             }

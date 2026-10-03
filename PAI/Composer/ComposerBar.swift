@@ -154,9 +154,10 @@ struct ComposerBar: View {
                 VoiceRecordingIndicator(controller: voiceController)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 // No live transcript can arrive while the connection is anything but
-                // `.recording` — the overlay is what proves the microphone is still capturing in
-                // the meantime, which the plain state label alone could not.
-                if voiceController.state != .recording {
+                // `.recording`, or while the silence gate is holding the microphone back — the
+                // overlay is what proves the microphone is still capturing in the meantime, which
+                // the plain state label alone could not.
+                if voiceController.state != .recording || voiceController.isWithholding {
                     VoiceVolumeOverlay(controller: voiceController)
                 }
             }
@@ -250,19 +251,6 @@ struct ComposerBar: View {
                 if text != lastText {
                     lastText = text
                     scrollToTailOnNextUpdate = true
-                    // "Computer send the message" — see `SpokenSendCommand`'s own doc comment for
-                    // why this, rather than the full `CommandDetector`, is what a hands-free take
-                    // can still catch here. Abandons FIRST (see `VoiceRecorderController.
-                    // abandonAndStop()`'s own doc comment) — a graceful stop here would let the
-                    // live text loop heal the stripped phrase right back in on its next tick.
-                    if let stripped = SpokenSendCommand.strip(from: text) {
-                        Task {
-                            await voiceController.abandonAndStop()
-                            draftStore.setDraftText(key: sessionID, text: stripped)
-                            send(draftStore: draftStore, voiceController: voiceController)
-                        }
-                        return
-                    }
                 }
                 try? await Task.sleep(for: .milliseconds(150))
             }
@@ -292,7 +280,7 @@ struct ComposerBar: View {
             RecordingsSheet(
                 controller: voiceController,
                 onInsertTranscript: { prefixed in appendTranscript(prefixed, draftStore: draftStore) },
-                onAttach: { files in stageAttachments(files) }
+                onAttachVoiceLog: { log in stageAttachments([log]) }
             )
         }
         .sheet(isPresented: $showingSentMessagesSheet) {
@@ -460,9 +448,8 @@ struct ComposerBar: View {
         // hits. The wire contract's own rule: seal it, tell the server to abandon rather than
         // wait, and send whatever the box already shows. The `else` below is a defensive fallback
         // for any OTHER caller of this function while genuinely still `.recording` — none exists
-        // today (the spoken "computer send the message" path calls `abandonAndStop()` itself
-        // before ever reaching here) — which takes the graceful path instead: stop and let the
-        // take's own tail land before reading the text.
+        // today — which takes the graceful path instead: stop and let the take's own tail land
+        // before reading the text.
         let isFinishing = isRecordingHereNow && voiceController.state == .stopping
 
         Task {

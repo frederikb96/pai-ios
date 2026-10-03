@@ -111,7 +111,7 @@ struct VoiceRecordingIndicator: View {
 
     private var label: String? {
         switch controller.state {
-        case .recording: controller.isMuted ? "Muted" : "Rec"
+        case .recording: controller.isMuted ? "Muted" : (controller.isWithholding ? "Rec · holding silence" : "Rec")
         // Finishing, never "Rec" — the microphone has genuinely stopped by now, and claiming
         // otherwise is exactly the false-liveness reading `.paused`'s own case already avoids.
         case .stopping: "Finishing…"

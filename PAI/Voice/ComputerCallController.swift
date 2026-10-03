@@ -49,7 +49,10 @@ final class ComputerCallController {
     /// `cancel()` on whatever this held, never anything that touches this actor's isolated state.
     private nonisolated(unsafe) var micChunkConsumerTask: Task<Void, Never>?
 
-    init(requestFactory: PaiRequestFactory, authToken: @escaping @Sendable () -> String?, toasts: ToastCenter) {
+    init(
+        requestFactory: PaiRequestFactory, authToken: @escaping @Sendable () -> String?, settingsStore: SettingsStore,
+        toasts: ToastCenter
+    ) {
         self.toasts = toasts
         // Its own notifier over its own audio engine, not `VoiceRecorderController`'s: only one
         // of the two engines is ever running, and a cue rendered through the idle one is a cue
@@ -62,7 +65,10 @@ final class ComputerCallController {
                 makeTransport: { URLSessionVoiceSocketTransport() },
                 socketURL: { try requestFactory.voiceSocketURL() },
                 authToken: authToken,
-                feedback: { event in MainActor.assumeIsolated { notifier.handle(event) } }
+                feedback: { event in MainActor.assumeIsolated { notifier.handle(event) } },
+                silenceGate: { MainActor.assumeIsolated { settingsStore.silenceGate } },
+                device: { MainActor.assumeIsolated { VoiceDevice.current() } },
+                log: { line in AppVoiceDiagnosticsLog.shared.log(.info, .gate, line) }
             ))
 
         let (chunkStream, continuation) = AsyncStream<[Int16]>.makeStream()
@@ -176,6 +182,7 @@ final class ComputerCallController {
         guard session.connectionState != .idle else { return }
         do {
             try audioIO.start()
+            Task { await session.inputRouteChanged() }
         } catch {
             toasts.show("Lost the microphone — ending the call with Computer.")
             Task { await end() }

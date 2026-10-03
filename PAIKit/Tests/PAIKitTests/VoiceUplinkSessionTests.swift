@@ -114,7 +114,10 @@ final class VoiceUplinkSessionTests: XCTestCase {
 
         let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil)))
+            .control(
+                .ready(
+                    resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: false))
+        )
 
         await waitUntil { await transport.sentFrames.count >= 2 }
         let frames = await transport.sentFrames
@@ -140,13 +143,19 @@ final class VoiceUplinkSessionTests: XCTestCase {
 
         let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil)))
+            .control(
+                .ready(
+                    resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: false))
+        )
         await waitUntil { await transport.sentFrames.count >= 2 }
 
         // `resumed: false` a second time is what a reconnect past the grace window answers with —
         // a genuinely fresh bus, whatever the resume token happens to do.
         await transport.enqueue(
-            .control(.ready(resumeToken: "r2", busOwner: .transcription, resumed: false, sessionId: nil)))
+            .control(
+                .ready(
+                    resumeToken: "r2", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: false))
+        )
         await waitUntil { await transport.sentFrames.count >= 3 }
 
         let frames = await transport.sentFrames
@@ -168,7 +177,10 @@ final class VoiceUplinkSessionTests: XCTestCase {
         let session = makeSession(transport: transport)
         let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil)))
+            .control(
+                .ready(
+                    resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: false))
+        )
         await waitUntil { await transport.sentFrames.count >= 2 }
 
         await transport.enqueue(
@@ -202,7 +214,10 @@ final class VoiceUplinkSessionTests: XCTestCase {
         let session = makeSession(transport: transport)
         let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil)))
+            .control(
+                .ready(
+                    resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: false))
+        )
         await waitUntil { await transport.sentFrames.count >= 2 }
 
         await transport.enqueue(
@@ -212,7 +227,10 @@ final class VoiceUplinkSessionTests: XCTestCase {
         // A fresh bus past the resume grace window: `resumed: false` again, and its own
         // `end_sample` numbering starts back near zero.
         await transport.enqueue(
-            .control(.ready(resumeToken: "r2", busOwner: .transcription, resumed: false, sessionId: nil)))
+            .control(
+                .ready(
+                    resumeToken: "r2", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: false))
+        )
         await waitUntil { await transport.sentFrames.count >= 3 }
 
         // Delivered out of temporal order: "world" (the later utterance, the larger end_sample on
@@ -236,7 +254,10 @@ final class VoiceUplinkSessionTests: XCTestCase {
         let session = makeSession(transport: transport)
         let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil)))
+            .control(
+                .ready(
+                    resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: false))
+        )
         await waitUntil { await transport.sentFrames.count >= 2 }
         await transport.enqueue(
             .control(.transcript(takeId: "take-1", seq: 0, isFinal: true, text: "before sealing", endSample: 1000)))
@@ -266,7 +287,10 @@ final class VoiceUplinkSessionTests: XCTestCase {
         let session = makeSession(transport: transport)
         let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil)))
+            .control(
+                .ready(
+                    resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: false))
+        )
         await waitUntil { await transport.sentFrames.count >= 2 }
 
         let stopTask = Task { await session.stop() }
@@ -303,7 +327,10 @@ final class VoiceUplinkSessionTests: XCTestCase {
             ))
         let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil)))
+            .control(
+                .ready(
+                    resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: false))
+        )
         await waitUntil { await transport.sentFrames.count >= 2 }
 
         await session.stop()
@@ -320,7 +347,10 @@ final class VoiceUplinkSessionTests: XCTestCase {
         let session = makeSession(transport: transport)
         let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil)))
+            .control(
+                .ready(
+                    resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: false))
+        )
         await waitUntil { await transport.sentFrames.count >= 2 }
 
         session.sealTake("take-1")
@@ -345,7 +375,10 @@ final class VoiceUplinkSessionTests: XCTestCase {
         let session = makeSession(transport: transport)
         let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil)))
+            .control(
+                .ready(
+                    resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: false))
+        )
         await waitUntil { await transport.sentFrames.count >= 2 }
 
         let stopTask = Task { await session.stop() }
@@ -389,11 +422,16 @@ final class VoiceUplinkSessionTests: XCTestCase {
 
         let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil)))
+            .control(
+                .ready(
+                    resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: false))
+        )
         await waitUntil { await transport.sentFrames.count >= 2 }
 
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: true, sessionId: nil)))
+            .control(
+                .ready(
+                    resumeToken: "r1", busOwner: .transcription, resumed: true, sessionId: nil, silenceAllowed: false)))
         // Nothing further should ever be sent for this `ready` — wait past a couple of scheduler
         // turns rather than a fixed frame count, since the assertion is an absence.
         for _ in 0..<20 { await Task.yield() }
@@ -414,7 +452,10 @@ final class VoiceUplinkSessionTests: XCTestCase {
 
         let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil)))
+            .control(
+                .ready(
+                    resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: false))
+        )
         await waitUntil { await transport.sentFrames.count >= 2 }
 
         await session.ingestAudioChunk(pcm16le: [1, 2, 3], at: 0)
@@ -423,7 +464,9 @@ final class VoiceUplinkSessionTests: XCTestCase {
         // A rotated token on the SAME bus — the case the old token-comparison inference would
         // have misread as a fresh bus. `resumed: true` must not add a second gate frame.
         await transport.enqueue(
-            .control(.ready(resumeToken: "r2", busOwner: .transcription, resumed: true, sessionId: nil)))
+            .control(
+                .ready(
+                    resumeToken: "r2", busOwner: .transcription, resumed: true, sessionId: nil, silenceAllowed: false)))
         for _ in 0..<20 { await Task.yield() }
         let framesAfterResume = await transport.sentFrames
         XCTAssertEqual(framesAfterResume.count, 2, "a resumed ready must not send a second gate frame")
@@ -437,6 +480,87 @@ final class VoiceUplinkSessionTests: XCTestCase {
             sentAudio.last, expected,
             "seq must restart at 0 on the new socket even though the bus resumed")
 
+        await stopAfterTakeDone(session, transport: transport, takeId: "take-1")
+        _ = await startTask.value
+    }
+
+    // MARK: - Silence gate
+
+    private static func gateFrame(db: Double) -> [Int16] {
+        let amplitude = Int16((32768 * pow(10, db / 20)).rounded())
+        return (0..<1600).map { $0.isMultiple(of: 2) ? amplitude : -amplitude }
+    }
+
+    private static func offsets(of audio: [Data]) -> [Int] {
+        audio.map { data in
+            let bytes = [UInt8](data.prefix(8))
+            return Int(bytes[4]) << 24 | Int(bytes[5]) << 16 | Int(bytes[6]) << 8 | Int(bytes[7])
+        }
+    }
+
+    private func makeGatedSession(transport: FakeVoiceSocketTransport) -> VoiceUplinkSession {
+        VoiceUplinkSession(
+            dependencies: VoiceUplinkDependencies(
+                makeTransport: { transport },
+                socketURL: { URL(string: "wss://pai.example.com/api/voice/socket")! },
+                authToken: { "token" },
+                silenceGate: { .standard }
+            ))
+    }
+
+    /// A quiet stretch on a bus that allows it: audio stops leaving, the backend is told where,
+    /// and the first speech after it arrives with the second before it — never resending what
+    /// went up before the silence.
+    func testAQuietStretchIsWithheldAndSpeechResumesWithItsPreroll() async {
+        let transport = FakeVoiceSocketTransport()
+        let session = makeGatedSession(transport: transport)
+        let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
+        await transport.enqueue(
+            .control(
+                .ready(
+                    resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: true)))
+        await waitUntil { session.state == .recording }
+
+        var offset = 0
+        for db in Array(repeating: -40.0, count: 30) + Array(repeating: -75.0, count: 90) {
+            await session.ingestAudioChunk(pcm16le: Self.gateFrame(db: db), at: offset)
+            offset += 1600
+        }
+        let duringQuiet = await transport.sentAudioFrames
+        XCTAssertEqual(duringQuiet.count, 80)
+        XCTAssertTrue(session.isWithholding)
+        let silences = await transport.sentFrames.compactMap { frame -> Int? in
+            if case let .silence(atSample) = frame { return atSample }
+            return nil
+        }
+        XCTAssertEqual(silences, [128_000])
+
+        await session.ingestAudioChunk(pcm16le: Self.gateFrame(db: -40), at: offset)
+        let resumed = Self.offsets(of: Array(await transport.sentAudioFrames.dropFirst(80)))
+        XCTAssertEqual(resumed.first, 177_600)
+        XCTAssertEqual(resumed.last, 192_000)
+        XCTAssertFalse(session.isWithholding)
+
+        await stopAfterTakeDone(session, transport: transport, takeId: "take-1")
+        _ = await startTask.value
+    }
+
+    /// The hello says the gate is on, so the backend suspends the timers that would otherwise
+    /// read a quiet client as an idle one.
+    func testHelloDeclaresTheGate() async {
+        let transport = FakeVoiceSocketTransport()
+        let session = makeGatedSession(transport: transport)
+        let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
+        await waitUntil { await !transport.sentFrames.isEmpty }
+        guard case let .hello(_, caps, _, _, _, _, _) = await transport.sentFrames.first else {
+            return XCTFail("expected hello first")
+        }
+        XCTAssertTrue(caps.silenceGate)
+        await transport.enqueue(
+            .control(
+                .ready(
+                    resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: true)))
+        await waitUntil { session.state == .recording }
         await stopAfterTakeDone(session, transport: transport, takeId: "take-1")
         _ = await startTask.value
     }

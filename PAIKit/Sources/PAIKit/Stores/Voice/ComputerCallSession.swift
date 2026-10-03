@@ -14,6 +14,12 @@ public struct ComputerCallDependencies: Sendable {
     /// (`VoiceUplinkDependencies.feedback`), and for the same reason: a call is run with the
     /// phone in a pocket, so anything worth knowing has to reach Freddy without a screen.
     public var feedback: @Sendable (FeedbackEvent) -> Void
+    /// The client-local gate setting, read once per call; `nil` runs the call with no gate.
+    public var silenceGate: @Sendable () -> SilenceGateSettings?
+    /// This phone and its current microphone, sent on every `hello`.
+    public var device: @Sendable () -> VoiceDeviceInfo?
+    /// One line for the voice diagnostics log.
+    public var log: @Sendable (String) -> Void
 
     public init(
         makeTransport: @escaping @Sendable () -> any VoiceSocketTransportProtocol,
@@ -21,7 +27,10 @@ public struct ComputerCallDependencies: Sendable {
         authToken: @escaping @Sendable () -> String?,
         now: @escaping @Sendable () -> Date = Date.init,
         sleep: @escaping @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) },
-        feedback: @escaping @Sendable (FeedbackEvent) -> Void = { _ in }
+        feedback: @escaping @Sendable (FeedbackEvent) -> Void = { _ in },
+        silenceGate: @escaping @Sendable () -> SilenceGateSettings? = { nil },
+        device: @escaping @Sendable () -> VoiceDeviceInfo? = { nil },
+        log: @escaping @Sendable (String) -> Void = { _ in }
     ) {
         self.makeTransport = makeTransport
         self.socketURL = socketURL
@@ -29,6 +38,9 @@ public struct ComputerCallDependencies: Sendable {
         self.now = now
         self.sleep = sleep
         self.feedback = feedback
+        self.silenceGate = silenceGate
+        self.device = device
+        self.log = log
     }
 }
 
@@ -108,14 +120,16 @@ public final class ComputerCallSession {
     /// switchboard, `docs/VOICE_PROTOCOL.md`'s opening paragraph) — never something this session
     /// requests, only something it is told about.
     public private(set) var busOwner: VoiceBusOwner = .computer
-    /// Engine-internal (`listening`/`generating`/`speaking` under Computer; `wake`/`recording`/
-    /// `sending` under a call this bus was switched into) — rendered, never acted on.
+    /// Engine-internal (`listening`/`generating`/`speaking` under Computer; `wake`/`recording`
+    /// under a call this bus was switched into) — rendered, never acted on.
     public private(set) var phase: String = "listening"
     public private(set) var sessionId: String?
     public private(set) var lastNotice: (severity: String, code: String, text: String)?
     public private(set) var lastStartFailure: ComputerCallStartFailure?
     public private(set) var lastEndReason: ComputerCallEndReason?
     public private(set) var lastDisconnectDetail: String?
+    /// The silence gate is holding the microphone back right now — what the screen dims for.
+    public var isWithholding: Bool { gate?.isWithholding ?? false }
 
     /// One chunk of Computer's own synthesized speech to play, in `ref` order — the app hands
     /// this to its own player and calls `notePlayed(ref:)` once it has genuinely finished
@@ -152,6 +166,10 @@ public final class ComputerCallSession {
     /// exactly once. `connectionState` cannot answer this: `ready` sets it to `.active` before
     /// anything downstream could read what it was.
     private var wasReconnecting = false
+    /// The level gate for this call, built from the setting at start. Withholding only ever
+    /// happens where the backend allows it (a session's dictation phase), never under Computer or
+    /// in the wake phase, whose engines need the continuous stream.
+    private var gate: SilenceGate?
 
     public init(dependencies: ComputerCallDependencies) {
         self.dependencies = dependencies
@@ -160,12 +178,7 @@ public final class ComputerCallSession {
     public var canStart: Bool { connectionState == .idle }
 
     /// The Kai session this call was connected straight into, if any — `nil` for an ordinary
-    /// call that reached Computer first.
-    ///
-    /// 🚨 A bus that reached call mode this way never had Computer attached at all, so there is
-    /// nothing to go back to: the backend answers "computer listen" there by closing the
-    /// connection. That is why the screen asks this before offering the control
-    /// (`ComputerCallPresentation.make(canReturnToComputer:)`) rather than offering it always.
+    /// call that reached Computer first. Re-sent on every `hello`; only a fresh bus reads it.
     public private(set) var directSessionId: String?
 
     // MARK: - Start
@@ -187,6 +200,7 @@ public final class ComputerCallSession {
         busOwner = .computer
         phase = "listening"
         sessionId = nil
+        gate = dependencies.silenceGate().map { SilenceGate(settings: $0) }
 
         guard let token = dependencies.authToken(), !token.isEmpty else {
             lastStartFailure = .notAuthenticated
@@ -214,11 +228,13 @@ public final class ComputerCallSession {
             try await transport.send(
                 .hello(
                     transport: VoiceSocketProtocol.transportName,
-                    caps: VoiceSocketCapabilities(audioDownlink: true, dtmf: false),
+                    caps: VoiceSocketCapabilities(
+                        audioDownlink: true, dtmf: false, silenceGate: gate?.settings.enabled == true),
                     auth: token,
                     resumeToken: resumeToken,
                     draftKey: nil,
-                    connectSession: directSessionId
+                    connectSession: directSessionId,
+                    device: dependencies.device()
                 )
             )
         } catch {
@@ -257,8 +273,10 @@ public final class ComputerCallSession {
 
     private func handle(_ frame: VoiceDownFrame) async {
         switch frame {
-        case let .ready(newResumeToken, owner, resumed, sessId):
+        case let .ready(newResumeToken, owner, resumed, sessId, silenceAllowed):
             resumeToken = newResumeToken
+            gate?.reset()
+            _ = gate?.setAllowed(silenceAllowed)
             reconnectAttempt = 0
             busOwner = owner
             sessionId = sessId
@@ -284,10 +302,14 @@ public final class ComputerCallSession {
             break
         case .clear:
             onClearRequested?()
-        case let .state(owner, ph, sessId, _):
+        case let .state(owner, ph, sessId, _, silenceAllowed):
             busOwner = owner
             phase = ph
             sessionId = sessId
+            let wasWithholding = isWithholding
+            if let output = gate?.setAllowed(silenceAllowed) {
+                await sendGated(output, resumed: wasWithholding && !isWithholding)
+            }
         case let .notice(severity, code, text):
             lastNotice = (severity, code, text)
             if code == VoiceNoticeCode.authExpired {
@@ -388,12 +410,48 @@ public final class ComputerCallSession {
     /// this type's own concern, matching `VoiceUplinkSession.ingestAudioChunk`'s contract.
     /// Dropped while not `.active`: unlike a dictation take, nothing here archives what was said
     /// during a brief drop, so there is nothing to backfill later.
+    ///
+    /// Withheld frames still advance the offset: `sample_offset` is the true position in the
+    /// stream, so it jumps forward across a withheld stretch.
     public func sendMicChunk(pcm16le samples: [Int16]) async {
-        guard connectionState == .active, let transport, !samples.isEmpty else { return }
-        let seq = nextSeq
-        nextSeq += 1
+        guard connectionState == .active, !samples.isEmpty else { return }
         let offset = sampleOffset
         sampleOffset += samples.count
+        guard var gate else {
+            await sendAudio(offset: offset, samples: samples)
+            return
+        }
+        let wasWithholding = gate.isWithholding
+        let output = gate.push(offset: offset, samples: samples)
+        self.gate = gate
+        await sendGated(output, resumed: wasWithholding && !gate.isWithholding)
+    }
+
+    /// Re-measures the room after the microphone changed, and tells the backend which one it is.
+    public func inputRouteChanged() async {
+        gate?.reset()
+        guard connectionState == .active, let transport, let device = dependencies.device() else { return }
+        try? await transport.send(.device(device))
+    }
+
+    private func sendGated(_ output: SilenceGate.Output, resumed: Bool) async {
+        if resumed {
+            let samples = output.send.reduce(0) { $0 + $1.samples.count }
+            dependencies.log("gate resume preroll_ms=\(samples * 1000 / VoiceSocketProtocol.audioUplinkHz)")
+        }
+        for frame in output.send {
+            await sendAudio(offset: frame.offset, samples: frame.samples)
+        }
+        if let atSample = output.silenceAt, let transport {
+            dependencies.log("gate withhold at_sample=\(atSample) mode=\(gate?.settings.mode.rawValue ?? "-")")
+            try? await transport.send(.silence(atSample: atSample))
+        }
+    }
+
+    private func sendAudio(offset: Int, samples: [Int16]) async {
+        guard let transport else { return }
+        let seq = nextSeq
+        nextSeq += 1
         let frame = VoiceSocketProtocol.packUplinkAudio(seq: seq, sampleOffset: offset, pcm16le: samples)
         try? await transport.sendAudio(frame)
     }

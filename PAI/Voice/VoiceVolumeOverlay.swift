@@ -3,8 +3,9 @@ import SwiftUI
 
 /// Proves the microphone is still capturing while there is nothing else on screen that can —
 /// shown while dictating and not in the ordinary connected `.recording` state (connecting,
-/// reconnecting, paused, or transcription stopped), since that is exactly when no new committed
-/// word can arrive to prove it another way. See `MicrophoneHealthState`'s own doc comment for why
+/// reconnecting, paused, or transcription stopped), or while the silence gate is withholding,
+/// since that is exactly when no new committed word can arrive to prove it another way. The bars
+/// dim while the gate withholds: the microphone is heard, but nothing is being sent. See `MicrophoneHealthState`'s own doc comment for why
 /// "quiet" and "not hearing" are two different states rather than one amplitude reading.
 ///
 /// 🚨 Data-driven, never decorative: the bars redraw only when `controller.currentLevel` actually
@@ -24,6 +25,7 @@ struct VoiceVolumeOverlay: View {
             icon
             content
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .opacity(controller.isWithholding ? 0.35 : 1)
         }
         .frame(height: 28)
         .onChange(of: controller.currentLevel) { _, newValue in

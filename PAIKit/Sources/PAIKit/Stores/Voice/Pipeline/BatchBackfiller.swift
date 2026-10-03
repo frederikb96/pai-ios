@@ -18,9 +18,9 @@ public enum BatchBackfiller {
     /// zero, words out at offset zero, take-relative shifting is this function's own job (it is
     /// the only caller that knows the request's start offset).
     public static func run(
-        _ request: BackfillPlanner.Request, sampleRate: Int, language: VoiceSettings.Language,
+        _ request: BackfillPlanner.Request, sampleRate: Int,
         audioReader: any TakeAudioReader, takeId: String,
-        transcribe: @Sendable (Data, VoiceSettings.Language) async throws -> (text: String, words: [Word])
+        transcribe: @Sendable (Data) async throws -> (text: String, words: [Word])
     ) async -> Outcome {
         let byteRange = WavByteRange.forSamples(request.audioRange)
         let pcm: Data
@@ -31,12 +31,12 @@ public enum BatchBackfiller {
         }
         guard !pcm.isEmpty else { return .failed("no audio available for the requested range") }
 
-        let samples = Self.pcm16le(from: pcm)
+        let samples = PcmWavWriter.samples(fromPCM16LE: pcm)
         let wav = PcmWavWriter.wrap(pcm16le: samples, sampleRate: sampleRate)
 
         let result: (text: String, words: [Word])
         do {
-            result = try await transcribe(wav, language)
+            result = try await transcribe(wav)
         } catch {
             return .failed("\(error)")
         }
@@ -56,20 +56,5 @@ public enum BatchBackfiller {
         // margin exists only to give the model context, never to claim samples the gap itself
         // did not own.
         return .segment(Segment(range: request.range, text: result.text, words: shiftedWords, source: .batch))
-    }
-
-    /// The 16-bit little-endian samples `PcmWavWriter` needs, from what `TakeAudioReader` handed
-    /// back as raw bytes.
-    private static func pcm16le(from data: Data) -> [Int16] {
-        let bytes = [UInt8](data)
-        var samples: [Int16] = []
-        samples.reserveCapacity(bytes.count / 2)
-        var index = 0
-        while index + 1 < bytes.count {
-            let littleEndian = UInt16(bytes[index]) | (UInt16(bytes[index + 1]) << 8)
-            samples.append(Int16(bitPattern: littleEndian))
-            index += 2
-        }
-        return samples
     }
 }

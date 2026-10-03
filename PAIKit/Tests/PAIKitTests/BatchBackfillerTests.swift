@@ -34,8 +34,8 @@ final class BatchBackfillerTests: XCTestCase {
         let reader = makeReader(pcm: [Int16](repeating: 1, count: request.audioRange.count))
 
         let outcome = await BatchBackfiller.run(
-            request, sampleRate: sampleRate, language: .auto, audioReader: reader, takeId: "take-1",
-            transcribe: { _, _ in
+            request, sampleRate: sampleRate, audioReader: reader, takeId: "take-1",
+            transcribe: { _ in
                 // Words at offset zero, relative to the request's own audio — as `batchTranscribe`
                 // is contracted to return.
                 (
@@ -58,8 +58,8 @@ final class BatchBackfillerTests: XCTestCase {
         let reader = makeReader(pcm: [Int16](repeating: 0, count: 16000))
 
         let outcome = await BatchBackfiller.run(
-            request, sampleRate: sampleRate, language: .auto, audioReader: reader, takeId: "take-1",
-            transcribe: { _, _ in (text: "", words: []) }
+            request, sampleRate: sampleRate, audioReader: reader, takeId: "take-1",
+            transcribe: { _ in (text: "", words: []) }
         )
         XCTAssertEqual(outcome, .noSpeechDetected)
     }
@@ -69,8 +69,8 @@ final class BatchBackfillerTests: XCTestCase {
         let reader = FakeAudioReader(error: VoiceSocketTransportError.notConnected)
 
         let outcome = await BatchBackfiller.run(
-            request, sampleRate: sampleRate, language: .auto, audioReader: reader, takeId: "take-1",
-            transcribe: { _, _ in (text: "unreachable", words: []) }
+            request, sampleRate: sampleRate, audioReader: reader, takeId: "take-1",
+            transcribe: { _ in (text: "unreachable", words: []) }
         )
         guard case .failed = outcome else { return XCTFail("expected .failed") }
     }
@@ -80,8 +80,8 @@ final class BatchBackfillerTests: XCTestCase {
         let reader = makeReader(pcm: [Int16](repeating: 0, count: 16000))
 
         let outcome = await BatchBackfiller.run(
-            request, sampleRate: sampleRate, language: .auto, audioReader: reader, takeId: "take-1",
-            transcribe: { _, _ in throw VoiceSocketTransportError.notConnected }
+            request, sampleRate: sampleRate, audioReader: reader, takeId: "take-1",
+            transcribe: { _ in throw VoiceSocketTransportError.notConnected }
         )
         guard case .failed = outcome else { return XCTFail("expected .failed") }
     }
@@ -93,8 +93,8 @@ final class BatchBackfillerTests: XCTestCase {
         let reader = FakeAudioReader(bytes: Data())
 
         let outcome = await BatchBackfiller.run(
-            request, sampleRate: sampleRate, language: .auto, audioReader: reader, takeId: "take-1",
-            transcribe: { _, _ in (text: "should not be called with this", words: []) }
+            request, sampleRate: sampleRate, audioReader: reader, takeId: "take-1",
+            transcribe: { _ in (text: "should not be called with this", words: []) }
         )
         guard case .failed = outcome else { return XCTFail("expected .failed") }
     }

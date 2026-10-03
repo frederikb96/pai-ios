@@ -18,7 +18,7 @@ public struct SentMessage: Codable, Sendable, Equatable {
 /// `stores/settings.ts`'s `RecordingEnd`, plus `.crashed`, which the web has no equivalent of:
 /// only iOS reconciles a take the app never got to close (`RecordingReconciliation`).
 public enum RecordingEndReason: String, Codable, Sendable, CaseIterable {
-    case user, silence, interrupted, error
+    case user, interrupted, error
     case connectionLost = "connection-lost"
     /// Never written by `VoiceRecorderController.persistRecording()` — only by
     /// `RecordingReconciliation.metadata(for:)`, for a take a startup pass found on disk with no
@@ -69,68 +69,25 @@ public struct LevelStats: Codable, Sendable, Equatable {
     }
 }
 
-/// Silence detection as it stood for one recording, and what it did.
-///
-/// 🚨 Decoded only: nothing on this client produces one. Client-side silence gating is not part
-/// of the voice protocol, so a `RecordingMeta` carrying this is one whose audio was captured by
-/// a build that gated locally, and the row renders what it says rather than dropping it.
-public struct SilenceMeta: Codable, Sendable, Equatable {
-    public let enabled: Bool
-    public let threshold: Double
-    public let durationMs: Double
-    /// Whether silence ever gated the audio off during this take.
-    public let triggered: Bool
-    /// Total time spent gated off due to silence, across every time it fired.
-    public let gatedMs: Double
-
-    public init(enabled: Bool, threshold: Double, durationMs: Double, triggered: Bool, gatedMs: Double = 0) {
-        self.enabled = enabled
-        self.threshold = threshold
-        self.durationMs = durationMs
-        self.triggered = triggered
-        self.gatedMs = gatedMs
-    }
+/// Where a recording's stored `transcript` came from: the take's own live transcription, or a
+/// batch pass over the whole recording (a re-transcribe, or the automatic one a standalone
+/// recording gets once it stops).
+public enum RecordingTranscriptSource: String, Codable, Sendable, Equatable {
+    case live, batch
 }
 
-/// The transcription request as it was actually made. Port of `stores/settings.ts`'s `SttMeta`.
-public struct SttMeta: Codable, Sendable, Equatable {
-    public let model: String
-    public let language: String
-    public let vadSilenceSecs: Double
-    public let vadThreshold: Double
-
-    public init(model: String, language: String, vadSilenceSecs: Double, vadThreshold: Double) {
-        self.model = model
-        self.language = language
-        self.vadSilenceSecs = vadSilenceSecs
-        self.vadThreshold = vadThreshold
-    }
-}
-
-/// How long capture took to get going, from the moment the mic was tapped. Port of
-/// `stores/settings.ts`'s `RecordingStartup`.
-public struct RecordingStartup: Codable, Sendable, Equatable {
-    public let captureMs: Double
-    /// `nil` when the socket never opened.
-    public let socketMs: Double?
-
-    public init(captureMs: Double, socketMs: Double?) {
-        self.captureMs = captureMs
-        self.socketMs = socketMs
-    }
-}
-
-/// One entry in the Settings screen's "Recordings" diagnostic list — everything about a
-/// recording except the audio itself, which the voice-capture block stores separately (the web
-/// keeps it in IndexedDB, keyed by `timestampMs`; an iOS equivalent is that block's decision,
-/// not this one's). Port of `stores/settings.ts`'s `RecordingMeta`.
+/// One entry in the past-recordings list — everything about a recording except the audio
+/// itself, which `FileRecordingAudioStorage` keeps beside it on disk. Port of
+/// `stores/settings.ts`'s `RecordingMeta`.
 ///
 /// Every field past `durationMs` is optional because a recording made by an earlier app version
 /// is still in the list and must still open — nothing here is ever re-derived once stored, so a
-/// reader degrades rather than assumes a field it predates is present.
+/// reader degrades rather than assumes a field it predates is present. Decoding is lenient for
+/// the same reason: the list is stored as one array, and a single entry carrying an `endedBy`
+/// value this build no longer writes would otherwise fail every entry with it.
 public struct RecordingMeta: Codable, Sendable, Equatable, Identifiable {
-    /// The capture's own timestamp, which is also the web's IndexedDB key for the audio. Identity
-    /// that does not depend on list position — that changes every time a newer recording lands.
+    /// The capture's own timestamp, which is also the name of the audio on disk. Identity that
+    /// does not depend on list position — that changes every time a newer recording lands.
     public var id: String { Self.id(forTimestampMs: timestampMs) }
 
     /// The same formula `id` uses, exposed so a caller that must name a take's files *before*
@@ -140,60 +97,88 @@ public struct RecordingMeta: Codable, Sendable, Equatable, Identifiable {
 
     public let timestampMs: Double
     public let durationMs: Double
-    /// Rate the audio was sent at. Absent on recordings from before this was tracked.
+    /// Rate of the stored audio. Absent on recordings from before this was tracked; the WAV
+    /// header on disk is the authority either way.
     public let sampleRate: Double?
-    /// Rate actually captured at — the rate the raw audio is stored at.
-    public let rawSampleRate: Double?
     public let mic: MicDiagnostics?
-    /// `false` when the untouched capture could not be kept (quota, or too long).
-    public let rawStored: Bool?
     public let endedBy: RecordingEndReason?
-    public let silence: SilenceMeta?
-    public let stt: SttMeta?
-    /// What the live transcription produced — what a re-run is compared against.
+    /// The take's own text — no `stt-rec: ` prefix and none of the draft text that preceded it.
     public let transcript: String?
+    public let transcriptSource: RecordingTranscriptSource?
+    /// `false` when the take ended without the backend confirming its tail (the finishing wait
+    /// ran out, the link was down, or the backend reported the tail unavailable) — the row then
+    /// offers a re-transcribe rather than presenting a possibly-truncated text as whole.
+    public let transcriptComplete: Bool?
     /// Measured on the capture, before any conversion.
     public let levels: LevelStats?
     public let narrowband: Bool?
-    public let startup: RecordingStartup?
     /// Time the mic was muted. Absent when it never was.
     public let mutedMs: Double?
     /// The durable pipeline's own view of this take's coverage — absent for a recording made
     /// before the ledger existed, and for one still in progress.
     public let transcription: TranscriptionMeta?
-    /// Set at start, editable after. A label for recognition — sorting stays chronological by
-    /// `timestampMs` regardless of whether this is set.
+    /// Set at start for a standalone recording. A label for recognition — sorting stays
+    /// chronological by `timestampMs` regardless of whether this is set.
     public let name: String?
     /// `nil` means `.microphone` — an ordinary dictation take, the only kind that existed before
     /// this field did, so an old recording decodes as exactly what it always was. `.offline` is
-    /// the only other value a local take can ever carry: nothing here ever produces `.call`,
-    /// which lives entirely server-side in `CallModeEngine`.
+    /// the standalone recording: no session, no uplink. Nothing here ever produces `.call`, which
+    /// lives entirely server-side.
     public let mode: VoiceMode?
 
     public init(
-        timestampMs: Double, durationMs: Double, sampleRate: Double? = nil,
-        rawSampleRate: Double? = nil, mic: MicDiagnostics? = nil, rawStored: Bool? = nil,
-        endedBy: RecordingEndReason? = nil, silence: SilenceMeta? = nil, stt: SttMeta? = nil,
-        transcript: String? = nil, levels: LevelStats? = nil, narrowband: Bool? = nil,
-        startup: RecordingStartup? = nil, mutedMs: Double? = nil, transcription: TranscriptionMeta? = nil,
-        name: String? = nil, mode: VoiceMode? = nil
+        timestampMs: Double, durationMs: Double, sampleRate: Double? = nil, mic: MicDiagnostics? = nil,
+        endedBy: RecordingEndReason? = nil, transcript: String? = nil,
+        transcriptSource: RecordingTranscriptSource? = nil, transcriptComplete: Bool? = nil,
+        levels: LevelStats? = nil, narrowband: Bool? = nil, mutedMs: Double? = nil,
+        transcription: TranscriptionMeta? = nil, name: String? = nil, mode: VoiceMode? = nil
     ) {
         self.timestampMs = timestampMs
         self.durationMs = durationMs
         self.sampleRate = sampleRate
-        self.rawSampleRate = rawSampleRate
         self.mic = mic
-        self.rawStored = rawStored
         self.endedBy = endedBy
-        self.silence = silence
-        self.stt = stt
         self.transcript = transcript
+        self.transcriptSource = transcriptSource
+        self.transcriptComplete = transcriptComplete
         self.levels = levels
         self.narrowband = narrowband
-        self.startup = startup
         self.mutedMs = mutedMs
         self.transcription = transcription
         self.name = name
         self.mode = mode
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        timestampMs = try container.decode(Double.self, forKey: .timestampMs)
+        durationMs = try container.decode(Double.self, forKey: .durationMs)
+        sampleRate = try? container.decodeIfPresent(Double.self, forKey: .sampleRate)
+        mic = try? container.decodeIfPresent(MicDiagnostics.self, forKey: .mic)
+        endedBy = try? container.decodeIfPresent(RecordingEndReason.self, forKey: .endedBy)
+        transcript = try? container.decodeIfPresent(String.self, forKey: .transcript)
+        transcriptSource = try? container.decodeIfPresent(RecordingTranscriptSource.self, forKey: .transcriptSource)
+        transcriptComplete = try? container.decodeIfPresent(Bool.self, forKey: .transcriptComplete)
+        levels = try? container.decodeIfPresent(LevelStats.self, forKey: .levels)
+        narrowband = try? container.decodeIfPresent(Bool.self, forKey: .narrowband)
+        mutedMs = try? container.decodeIfPresent(Double.self, forKey: .mutedMs)
+        transcription = try? container.decodeIfPresent(TranscriptionMeta.self, forKey: .transcription)
+        name = try? container.decodeIfPresent(String.self, forKey: .name)
+        mode = try? container.decodeIfPresent(VoiceMode.self, forKey: .mode)
+    }
+
+    /// A copy with the transcript fields replaced — what a re-transcribe, a backfill heal and
+    /// the standalone auto-transcribe all write, so none of them rebuilds the other fields by
+    /// hand and silently drops one.
+    public func withTranscript(
+        _ transcript: String?, source: RecordingTranscriptSource?, complete: Bool?,
+        transcription: TranscriptionMeta? = nil
+    ) -> RecordingMeta {
+        RecordingMeta(
+            timestampMs: timestampMs, durationMs: durationMs, sampleRate: sampleRate, mic: mic, endedBy: endedBy,
+            transcript: transcript, transcriptSource: source, transcriptComplete: complete, levels: levels,
+            narrowband: narrowband, mutedMs: mutedMs, transcription: transcription ?? self.transcription, name: name,
+            mode: mode
+        )
     }
 }

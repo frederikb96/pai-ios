@@ -1196,6 +1196,11 @@ public struct PaiApiClient: Sendable {
         try await send(path: "/api/settings/voice", method: "PUT", body: try Self.jsonBody(update))
     }
 
+    public func setDebugRecordingsEnabled(_ enabled: Bool) async throws -> SpokenVoiceSettings {
+        try await send(
+            path: "/api/settings/voice", method: "PUT", body: try Self.jsonBody(["debug_recordings_enabled": enabled]))
+    }
+
     // MARK: Voice takes — offline/backfill batch STT
 
     /// Re-transcribes a stretch of audio in batch through the backend, which holds the
@@ -1206,7 +1211,9 @@ public struct PaiApiClient: Sendable {
     /// (see `VoiceUplinkSession`'s own doc comment on the long-reconnect gap), so those three are
     /// always omitted here and the caller heals the returned text into the draft's own `text`
     /// itself (`DraftHeal`).
-    public func transcribeVoiceTake(takeId: String, wav: Data, languageCode: String?) async throws -> String {
+    /// `previousText` is the text transcribed so far when `wav` is one piece of a longer
+    /// recording — the backend strips whatever this piece repeats of it.
+    public func transcribeVoiceTake(takeId: String, wav: Data, previousText: String? = nil) async throws -> String {
         let boundary = "PAIKit-\(UUID().uuidString)"
         // The WAV needs its own file part with a content type — `appendFormFile`'s shape, but for
         // raw bytes rather than a `PaiFileUpload`.
@@ -1217,8 +1224,8 @@ public struct PaiApiClient: Sendable {
         body.append("Content-Type: audio/wav\r\n\r\n".data(using: .utf8)!)
         body.append(wav)
         body.append("\r\n".data(using: .utf8)!)
-        if let languageCode {
-            Self.appendFormField(&body, boundary: boundary, name: "language_code", value: languageCode)
+        if let previousText {
+            Self.appendFormField(&body, boundary: boundary, name: "previous_text", value: previousText)
         }
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 

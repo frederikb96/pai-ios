@@ -260,7 +260,7 @@ struct CreateSessionView: View {
                 RecordingsSheet(
                     controller: voiceController,
                     onInsertTranscript: { prefixed in appendTranscript(prefixed) },
-                    onAttach: { files in stageAttachments(files) }
+                    onAttachVoiceLog: { log in stageAttachments([log]) }
                 )
             }
             .sheet(isPresented: $showingSentMessagesSheet) {
@@ -472,7 +472,7 @@ struct CreateSessionView: View {
             if isRecordingHere(voiceController) {
                 VoiceRecordingIndicator(controller: voiceController)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                if voiceController.state != .recording {
+                if voiceController.state != .recording || voiceController.isWithholding {
                     VoiceVolumeOverlay(controller: voiceController)
                 }
             }
@@ -553,17 +553,6 @@ struct CreateSessionView: View {
                 if currentText != lastText {
                     lastText = currentText
                     scrollToTailOnNextUpdate = true
-                    // "Computer send the message", spoken with the phone already pocketed — see
-                    // `VoiceRecorderController.abandonAndStop()`'s own doc comment for why this
-                    // abandons rather than gracefully stops.
-                    if let stripped = SpokenSendCommand.strip(from: currentText) {
-                        Task {
-                            await voiceController.abandonAndStop()
-                            drafts.setDraftText(key: DraftKey.newSession, text: stripped)
-                            send(createSession, voiceController)
-                        }
-                        return
-                    }
                 }
                 try? await Task.sleep(for: .milliseconds(150))
             }

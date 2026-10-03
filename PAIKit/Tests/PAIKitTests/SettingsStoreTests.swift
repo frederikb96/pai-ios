@@ -33,7 +33,7 @@ final class SettingsStoreTests: XCTestCase {
         try await MainActor.run {
             let store = try Self.makeStore()
 
-            XCTAssertEqual(store.sttLanguage, .auto)
+            XCTAssertEqual(store.silenceGate, SilenceGateSettings(enabled: true, mode: .auto, manualThresholdDb: -45))
             XCTAssertEqual(store.micDeviceId, "")
             XCTAssertEqual(store.sentMessages, [])
             XCTAssertEqual(store.recordings, [])
@@ -42,14 +42,15 @@ final class SettingsStoreTests: XCTestCase {
         }
     }
 
-    func testSetSttLanguagePersistsAcrossStoreInstances() async throws {
+    func testSilenceGateSettingPersistsAcrossStoreInstances() async throws {
         try await MainActor.run {
             let storage = SettingsInMemoryKeyValueStore()
             let first = try Self.makeStore(storage: storage)
-            first.setSttLanguage(.de)
+            first.setSilenceGate(SilenceGateSettings(enabled: true, mode: .manual, manualThresholdDb: -52))
 
             let second = try Self.makeStore(storage: storage)
-            XCTAssertEqual(second.sttLanguage, .de)
+            XCTAssertEqual(
+                second.silenceGate, SilenceGateSettings(enabled: true, mode: .manual, manualThresholdDb: -52))
         }
     }
 

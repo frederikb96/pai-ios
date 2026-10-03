@@ -21,41 +21,49 @@ public enum VoiceSocketProtocol {
 public struct VoiceSocketCapabilities: Sendable, Equatable {
     public var audioDownlink: Bool
     public var dtmf: Bool
+    /// This client withholds audio below its own level gate and announces it with `silence`.
+    /// True only when the gate setting is on at connect time; a toggle applies from the next
+    /// connection.
+    public var silenceGate: Bool
 
-    public init(audioDownlink: Bool = true, dtmf: Bool = false) {
+    public init(audioDownlink: Bool = true, dtmf: Bool = false, silenceGate: Bool = false) {
         self.audioDownlink = audioDownlink
         self.dtmf = dtmf
+        self.silenceGate = silenceGate
     }
 
     var jsonObject: [String: Any] {
-        ["audio_downlink": audioDownlink, "dtmf": dtmf]
+        ["audio_downlink": audioDownlink, "dtmf": dtmf, "silence_gate": silenceGate]
     }
 }
 
-/// A control a screen offers as a button, naming the same thing one of a call's spoken commands
-/// names — `docs/VOICE_PROTOCOL.md`'s `command` up frame. Only a bus a Kai session's call mode
-/// owns acts on these.
-///
-/// The raw values are the backend's own vocabulary (`call_engine.CLIENT_COMMANDS`), which is its
-/// spoken grammar plus `start`: there is no spoken "start", because what begins a take by voice
-/// is the wake word rather than a phrase.
-///
-/// Deliberately not `CommandKind`, which this package also carries: that type is the Swift
-/// original's *recogniser* vocabulary and still names three kinds this backend has no concept of
-/// (`start` there means something else again — a locally-detected phrase). A wire enum that could
-/// express a value no engine acts on would be a frame nothing answers.
+/// Which device and microphone this client is speaking from — `hello.device` and the `device`
+/// frame, which is what labels a backend debug recording with the phone and the headset that
+/// produced it.
+public struct VoiceDeviceInfo: Sendable, Equatable {
+    public var name: String
+    public var mic: String?
+
+    public init(name: String, mic: String?) {
+        self.name = name
+        self.mic = mic
+    }
+
+    var jsonObject: [String: Any] {
+        ["name": name, "mic": mic as Any? ?? NSNull()]
+    }
+}
+
+/// A control a screen offers as a button, naming the same thing the call's spoken grammar names
+/// — `docs/VOICE_PROTOCOL.md`'s `command` up frame. Only a bus a Kai session's call mode owns
+/// acts on these.
 public enum VoiceCallCommand: String, Sendable, Equatable, CaseIterable {
-    /// Begin a take — the button equivalent of saying the wake word.
+    /// Begin dictating — the button equivalent of saying the wake word.
+    case wake
+    /// "computer start": send the session's whole draft and drop to the wake phase.
     case start
-    /// End the take without sending it; the call drops back to its quiet phase.
+    /// "computer stop": send the session's whole draft and go back to Computer.
     case stop
-    /// End the take and send what was dictated to the session.
-    case send
-    /// Drop the reply currently being spoken.
-    case skip
-    /// Leave the session and return to Computer, without ending the call. Only the backend can
-    /// do this — switching which engine a bus is attached to is its own act, not the client's.
-    case listen
 }
 
 // The spoken grammar's "end" has no case here on purpose: hanging up is something this client
@@ -74,7 +82,7 @@ public enum VoiceUpFrame: Sendable, Equatable {
     /// hello costs nothing and keeps it a property of the session rather than of one connect.
     case hello(
         transport: String, caps: VoiceSocketCapabilities, auth: String, resumeToken: String?,
-        draftKey: String?, connectSession: String? = nil
+        draftKey: String?, connectSession: String? = nil, device: VoiceDeviceInfo? = nil
     )
     /// `takeId` is the client-minted identity of the take this `open: true` starts — present only
     /// for a take dictating into a draft (`docs/VOICE_PROTOCOL.md` "Addressing a take"), carried
@@ -83,6 +91,12 @@ public enum VoiceUpFrame: Sendable, Equatable {
     /// one. `nil` on `open: false` and on any gate this take's own identity does not apply to.
     case gate(open: Bool, reason: String, takeId: String? = nil)
     case played(ref: Int)
+    /// From `atSample` on, this client is withholding audio below its level gate; the take
+    /// continues, and the next audio frame is the resume. Sent only while the backend last said
+    /// `silence_allowed: true`.
+    case silence(atSample: Int)
+    /// The input route changed mid-connection.
+    case device(VoiceDeviceInfo)
     case dtmf(digit: String)
     case command(VoiceCallCommand)
     case bye(reason: String)
@@ -93,19 +107,24 @@ public enum VoiceUpFrame: Sendable, Equatable {
     func encoded() throws -> String {
         var object: [String: Any] = ["type": type]
         switch self {
-        case let .hello(transport, caps, auth, resumeToken, draftKey, connectSession):
+        case let .hello(transport, caps, auth, resumeToken, draftKey, connectSession, device):
             object["transport"] = transport
             object["caps"] = caps.jsonObject
             object["auth"] = auth
             if let resumeToken { object["resume_token"] = resumeToken }
             if let draftKey { object["draft_key"] = draftKey }
             if let connectSession { object["connect_session"] = connectSession }
+            if let device { object["device"] = device.jsonObject }
         case let .gate(open, reason, takeId):
             object["open"] = open
             object["reason"] = reason
             if let takeId { object["take_id"] = takeId }
         case let .played(ref):
             object["ref"] = ref
+        case let .silence(atSample):
+            object["at_sample"] = atSample
+        case let .device(device):
+            object.merge(device.jsonObject) { _, new in new }
         case let .dtmf(digit):
             object["digit"] = digit
         case let .command(command):
@@ -124,6 +143,8 @@ public enum VoiceUpFrame: Sendable, Equatable {
         case .hello: return "hello"
         case .gate: return "gate"
         case .played: return "played"
+        case .silence: return "silence"
+        case .device: return "device"
         case .dtmf: return "dtmf"
         case .command: return "command"
         case .bye: return "bye"
@@ -145,10 +166,12 @@ public enum VoiceDownFrame: Sendable, Equatable {
     /// fresh bus — independent of the socket's own `seq`, which restarts at 0 on every `hello`
     /// regardless of `resumed` (protocol doc, "Framing": "`seq` always restarts at 0 on the
     /// reconnected socket, even when `ready.resumed` is `true`").
-    case ready(resumeToken: String, busOwner: VoiceBusOwner, resumed: Bool, sessionId: String?)
+    /// `silenceAllowed` (also on `state`) is where withholding is allowed right now — the backend
+    /// decides it per attached engine, the client obeys. Absent reads as `false`.
+    case ready(resumeToken: String, busOwner: VoiceBusOwner, resumed: Bool, sessionId: String?, silenceAllowed: Bool)
     case clear
     case ack(throughSeq: Int)
-    case state(busOwner: VoiceBusOwner, phase: String, sessionId: String?, checkpoint: String?)
+    case state(busOwner: VoiceBusOwner, phase: String, sessionId: String?, checkpoint: String?, silenceAllowed: Bool)
     case notice(severity: String, code: String, text: String)
     case ping
     /// `endSample` is present on a committed segment (`isFinal == true`) — the engine's own
@@ -180,7 +203,8 @@ public enum VoiceDownFrame: Sendable, Equatable {
             // the backend never actually kept.
             let resumed = raw["resumed"] as? Bool ?? false
             return .ready(
-                resumeToken: resumeToken, busOwner: owner, resumed: resumed, sessionId: raw["session_id"] as? String)
+                resumeToken: resumeToken, busOwner: owner, resumed: resumed, sessionId: raw["session_id"] as? String,
+                silenceAllowed: raw["silence_allowed"] as? Bool ?? false)
         case "clear":
             return .clear
         case "ack":
@@ -191,7 +215,7 @@ public enum VoiceDownFrame: Sendable, Equatable {
             guard let phase = raw["phase"] as? String else { return nil }
             return .state(
                 busOwner: owner, phase: phase, sessionId: raw["session_id"] as? String,
-                checkpoint: raw["checkpoint"] as? String
+                checkpoint: raw["checkpoint"] as? String, silenceAllowed: raw["silence_allowed"] as? Bool ?? false
             )
         case "notice":
             guard let severity = raw["severity"] as? String, let code = raw["code"] as? String,

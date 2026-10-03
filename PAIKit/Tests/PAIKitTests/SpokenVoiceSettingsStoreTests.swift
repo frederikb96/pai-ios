@@ -30,20 +30,23 @@ final class SpokenVoiceSettingsStoreTests: XCTestCase {
             headers: ["Content-Type": "application/json"],
             body: Data(
                 """
-                {"computer_voice":\(voice),"computer_delivery":null,
+                {"computer_voice":\(voice),"computer_delivery":null,"computer_speed":null,
                  "call_voice_id":null,"call_speed":\(speed),
-                 "updated_at":"2026-09-20T12:00:00Z"}
+                 "stt_keyterms":[],"stt_language":null,"stt_no_verbatim":false,
+                 "debug_recordings_enabled":true,
+                 "updated_at":"2026-09-20T12:00:00.123456+00:00"}
                 """.utf8)
         )
     }
 
     private func loaded(
         computerVoice: String? = nil, computerDelivery: String? = nil,
-        callVoiceId: String? = nil, callSpeed: Double = 1.0
+        callVoiceId: String? = nil, callSpeed: Double = 1.0, sttKeyterms: [String] = []
     ) -> SpokenVoiceSettings {
         SpokenVoiceSettings(
-            computerVoice: computerVoice, computerDelivery: computerDelivery,
-            callVoiceId: callVoiceId, callSpeed: callSpeed, updatedAt: "2026-09-20T12:00:00Z")
+            computerVoice: computerVoice, computerDelivery: computerDelivery, computerSpeed: nil,
+            callVoiceId: callVoiceId, callSpeed: callSpeed, sttKeyterms: sttKeyterms, sttLanguage: nil,
+            sttNoVerbatim: false, debugRecordingsEnabled: true, updatedAt: "2026-09-20T12:00:00Z")
     }
 
     /// An unset field and an empty text field are the same thing to a person, and have to be the
@@ -66,7 +69,7 @@ final class SpokenVoiceSettingsStoreTests: XCTestCase {
     /// It must not be a state Save accepts: a value silently becoming 1.0 is exactly the outcome
     /// that reads as the setting not working.
     func testAHalfTypedOrOutOfRangeSpeedCannotBeSaved() {
-        for bad in ["", "-", "abc", "0.1", "9"] {
+        for bad in ["", "-", "abc", "0.1", "1.3", "9"] {
             var draft = SpokenVoiceSettingsDraft(loaded: loaded())
             draft.callSpeed = bad
             XCTAssertNil(draft.speed, "expected \(bad.debugDescription) to be unusable")
@@ -89,6 +92,30 @@ final class SpokenVoiceSettingsStoreTests: XCTestCase {
 
         XCTAssertEqual(draft.callSpeed, "1.15")
         XCTAssertEqual(draft.speed, 1.15)
+    }
+
+    /// Clearing a field has to reach the backend as `null`: an omitted key means "leave as-is"
+    /// there, so a cleared voice that was simply left out of the body would never clear.
+    func testAClearedFieldIsSentAsNullNotOmitted() throws {
+        var draft = SpokenVoiceSettingsDraft(loaded: loaded(computerVoice: "cedar"))
+        draft.computerVoice = ""
+        let body = try JSONSerialization.jsonObject(with: JSONEncoder().encode(XCTUnwrap(draft.asUpdate())))
+        let object = try XCTUnwrap(body as? [String: Any])
+        XCTAssertTrue(object.keys.contains("computer_voice"))
+        XCTAssertTrue(object["computer_voice"] is NSNull)
+    }
+
+    /// Key terms travel as a list, and one ElevenLabs would refuse blocks Save rather than
+    /// failing the whole PUT server-side.
+    func testKeyTermsAreSplitAndAnUnacceptableOneBlocksSave() {
+        var draft = SpokenVoiceSettingsDraft(loaded: loaded(sttKeyterms: ["Computer", "Kai"]))
+        XCTAssertEqual(draft.sttKeyterms, "Computer, Kai")
+        draft.sttKeyterms = " Computer ,Kai,, PAI "
+        XCTAssertEqual(draft.asUpdate()?.sttKeyterms, ["Computer", "Kai", "PAI"])
+
+        draft.sttKeyterms = "Computer, Supercalifragilistic word"
+        XCTAssertNotNil(draft.keytermProblem)
+        XCTAssertNil(draft.asUpdate())
     }
 
     func testBeforeLoadNothingIsDirtyOrSaveable() async throws {

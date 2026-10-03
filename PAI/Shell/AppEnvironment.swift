@@ -217,7 +217,8 @@ final class AppEnvironment {
             apiClient: client, requestFactory: factory, authToken: { [tokens] in tokens.read() },
             settingsStore: settingsStore, drafts: draftStore, toasts: toasts)
         let computerCall = ComputerCallController(
-            requestFactory: factory, authToken: { [tokens] in tokens.read() }, toasts: toasts)
+            requestFactory: factory, authToken: { [tokens] in tokens.read() }, settingsStore: settingsStore,
+            toasts: toasts)
 
         connection = Connection(
             requestFactory: factory,
