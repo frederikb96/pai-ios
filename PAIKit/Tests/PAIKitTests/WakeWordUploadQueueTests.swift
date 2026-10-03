@@ -6,9 +6,11 @@ private actor FakeWakeWordTransport: WakeWordUploadTransport {
     private(set) var calls: [String] = []
     var failing = false
     var goneRuns: Set<String> = []
+    var refusedTakes: Set<String> = []
 
     func setFailing(_ value: Bool) { failing = value }
     func markGone(_ runId: String) { goneRuns.insert(runId) }
+    func refuse(_ takeId: String) { refusedTakes.insert(takeId) }
 
     func putRun(id: String, run: WakeWordRunUpload) async throws {
         if failing { throw PaiError.transport("offline") }
@@ -18,8 +20,26 @@ private actor FakeWakeWordTransport: WakeWordUploadTransport {
     func putTake(runId: String, take: WakeWordPendingTake, wav: Data) async throws -> WakeWordTakeUploadOutcome {
         if failing { throw PaiError.transport("offline") }
         if goneRuns.contains(runId) { return .runGone }
+        if refusedTakes.contains(take.id) { throw PaiError.detail("take too long", statusCode: 400) }
         calls.append("take \(runId)/\(take.id)")
         return .stored
+    }
+}
+
+private final class LockedLines: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String] = []
+
+    func append(_ line: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        storage.append(line)
+    }
+
+    var lines: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
     }
 }
 
@@ -69,7 +89,8 @@ final class WakeWordUploadQueueTests: XCTestCase {
     func testTheRunIsStoredBeforeItsTakesAndAFinishedRunLeavesNothingBehind() async {
         let transport = FakeWakeWordTransport()
         let files = FakeTakeFiles()
-        let queue = WakeWordUploadQueue(storage: SettingsInMemoryKeyValueStore(), transport: transport, files: files)
+        let queue = WakeWordUploadQueue(
+            storage: SettingsInMemoryKeyValueStore(), transport: transport, files: files, log: { _ in })
         queue.openRun(id: "r1", upload: upload)
         queue.addTake(runId: "r1", take: take("t1", 1, files: files))
         queue.addTake(runId: "r1", take: take("t2", 2, files: files))
@@ -91,7 +112,7 @@ final class WakeWordUploadQueueTests: XCTestCase {
         await transport.setFailing(true)
         let files = FakeTakeFiles()
         let storage = SettingsInMemoryKeyValueStore()
-        let first = WakeWordUploadQueue(storage: storage, transport: transport, files: files)
+        let first = WakeWordUploadQueue(storage: storage, transport: transport, files: files, log: { _ in })
         first.openRun(id: "r1", upload: upload)
         first.addTake(runId: "r1", take: take("t1", 1, files: files))
         first.closeRun(id: "r1")
@@ -100,7 +121,7 @@ final class WakeWordUploadQueueTests: XCTestCase {
         XCTAssertNotNil(first.lastError)
 
         await transport.setFailing(false)
-        let second = WakeWordUploadQueue(storage: storage, transport: transport, files: files)
+        let second = WakeWordUploadQueue(storage: storage, transport: transport, files: files, log: { _ in })
         XCTAssertEqual(second.runs.map(\.id), ["r1"])
         await second.drain()
         let calls = await transport.calls
@@ -114,7 +135,8 @@ final class WakeWordUploadQueueTests: XCTestCase {
         let transport = FakeWakeWordTransport()
         await transport.markGone("r1")
         let files = FakeTakeFiles()
-        let queue = WakeWordUploadQueue(storage: SettingsInMemoryKeyValueStore(), transport: transport, files: files)
+        let queue = WakeWordUploadQueue(
+            storage: SettingsInMemoryKeyValueStore(), transport: transport, files: files, log: { _ in })
         queue.openRun(id: "r1", upload: upload)
         queue.addTake(runId: "r1", take: take("a", 1, files: files))
         queue.addTake(runId: "r1", take: take("b", 2, files: files))
@@ -130,11 +152,45 @@ final class WakeWordUploadQueueTests: XCTestCase {
         XCTAssertEqual(calls, ["run r1", "run r2", "take r2/c"])
     }
 
+    /// A take the backend refuses outright (a 400 for a take over its length limit) will be
+    /// refused every time: it is dropped, audio included, and logged, instead of blocking every
+    /// take behind it.
+    func testATakeTheBackendRefusesIsDroppedAndTheNextOneUploads() async {
+        let transport = FakeWakeWordTransport()
+        await transport.refuse("long")
+        let files = FakeTakeFiles()
+        let logged = LockedLines()
+        let queue = WakeWordUploadQueue(
+            storage: SettingsInMemoryKeyValueStore(), transport: transport, files: files, log: { logged.append($0) })
+        queue.openRun(id: "r1", upload: upload)
+        queue.addTake(runId: "r1", take: take("long", 1, files: files))
+        queue.addTake(runId: "r1", take: take("next", 2, files: files))
+        queue.closeRun(id: "r1")
+
+        await queue.drain()
+
+        let calls = await transport.calls
+        XCTAssertEqual(calls, ["run r1", "take r1/next"])
+        XCTAssertTrue(queue.runs.isEmpty)
+        XCTAssertTrue(files.names.isEmpty)
+        XCTAssertEqual(logged.lines.count, 1)
+        XCTAssertTrue(logged.lines[0].contains("long"))
+    }
+
+    /// An outage or an expired credential is not a verdict on the take: it stays queued.
+    func testAnAuthenticationFailureKeepsTheTakeQueued() async {
+        XCTAssertFalse(PaiError.detail("expired", statusCode: 401).isPermanentRejection)
+        XCTAssertFalse(PaiError.http(statusCode: 429, reason: "slow down").isPermanentRejection)
+        XCTAssertFalse(PaiError.transport("offline").isPermanentRejection)
+        XCTAssertTrue(PaiError.detail("too long", statusCode: 400).isPermanentRejection)
+    }
+
     /// An open run whose takes are all up stays queued — more takes are coming.
     func testAnOpenRunStaysQueuedOnceItsTakesAreUp() async {
         let transport = FakeWakeWordTransport()
         let files = FakeTakeFiles()
-        let queue = WakeWordUploadQueue(storage: SettingsInMemoryKeyValueStore(), transport: transport, files: files)
+        let queue = WakeWordUploadQueue(
+            storage: SettingsInMemoryKeyValueStore(), transport: transport, files: files, log: { _ in })
         queue.openRun(id: "r1", upload: upload)
         queue.addTake(runId: "r1", take: take("t1", 1, files: files))
         await queue.drain()

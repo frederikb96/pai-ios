@@ -150,7 +150,7 @@ final class ComputerCallSessionTests: XCTestCase {
                 .ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil, silenceAllowed: false)))
         await waitUntil { session.connectionState == .active }
 
-        await transport.failReceives(detail: "close 1000 computer quit the call")
+        await transport.failReceives(detail: "close 1000 call closed by the server")
         await waitUntil { session.connectionState == .idle }
 
         XCTAssertEqual(feedback.events, [.callEndedUnexpectedly(hadUnsentText: false)])

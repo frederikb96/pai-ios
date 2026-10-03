@@ -54,10 +54,10 @@ final class ComputerCallPresentationTests: XCTestCase {
         XCTAssertEqual(make(busOwner: .call, phase: "wake", sessionId: "s-1").enabledCommands, [.wake, .stop])
     }
 
-    /// A phase a newer backend invents must not enable sending a dictation this build cannot see.
-    func testAnUnknownPhaseIsTreatedAsTheQuietPhase() {
-        XCTAssertEqual(
-            make(busOwner: .call, phase: "transcribing", sessionId: "s-1").enabledCommands, [.wake, .stop])
+    /// A phase a newer backend invents offers no button, the same as the browser: a control
+    /// addressed at a state this build cannot vouch for is one that may do the wrong thing.
+    func testAnUnknownPhaseOffersNoCommands() {
+        XCTAssertTrue(make(busOwner: .call, phase: "transcribing", sessionId: "s-1").enabledCommands.isEmpty)
     }
 
     /// Every one of these frames is dropped by the session while the socket is not active, so an

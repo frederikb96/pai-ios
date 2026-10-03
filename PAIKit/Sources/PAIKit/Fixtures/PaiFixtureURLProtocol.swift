@@ -146,8 +146,7 @@
             ) { PaiFixtures.data(json()) }
         }
 
-        /// Covers every `GET` a screen fetches to render itself, plus the one `POST` (minting a
-        /// voice token) a screen needs before it can even offer recording. Extend this table
+        /// Covers every `GET` a screen fetches to render itself. Extend this table
         /// alongside a new store's fetch call — it is the one place a fixture response is wired
         /// to the path that requests it.
         private static let routes: [FixtureRoute] = [

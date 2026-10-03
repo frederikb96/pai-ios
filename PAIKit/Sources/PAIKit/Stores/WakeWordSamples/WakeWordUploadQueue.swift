@@ -32,7 +32,9 @@ public struct PendingWakeWordRun: Codable, Sendable, Equatable, Identifiable {
 ///
 /// Order is the contract the backend holds it to: a run is stored before any of its takes, and a
 /// take answered "run gone" (deleted on the web meanwhile) drops the whole run here too, audio
-/// included, rather than retrying into a run that no longer exists.
+/// included, rather than retrying into a run that no longer exists. A take the backend refuses
+/// outright (a 4xx that is not about credentials or load) is dropped alone and reported to `log`,
+/// since sending it again can only be refused again and would block every take behind it.
 @MainActor
 @Observable
 public final class WakeWordUploadQueue {
@@ -44,13 +46,18 @@ public final class WakeWordUploadQueue {
     private let storage: SettingsKeyValueStore
     private let transport: WakeWordUploadTransport
     private let files: WakeWordTakeFiles
+    private let log: @Sendable (String) -> Void
     private var isDraining = false
     private var drainRequestedWhileDraining = false
 
-    public init(storage: SettingsKeyValueStore, transport: WakeWordUploadTransport, files: WakeWordTakeFiles) {
+    public init(
+        storage: SettingsKeyValueStore, transport: WakeWordUploadTransport, files: WakeWordTakeFiles,
+        log: @escaping @Sendable (String) -> Void
+    ) {
         self.storage = storage
         self.transport = transport
         self.files = files
+        self.log = log
         runs = storage.value(forKey: Self.storageKey) ?? []
     }
 
@@ -121,6 +128,11 @@ public final class WakeWordUploadQueue {
                 let outcome: WakeWordTakeUploadOutcome
                 do {
                     outcome = try await transport.putTake(runId: runId, take: take, wav: wav)
+                } catch let error as PaiError where error.isPermanentRejection {
+                    log("wake-word take \(take.id) of run \(runId) refused, dropped: \(error.userMessage)")
+                    files.delete(fileName: take.fileName)
+                    update(runId) { $0.takes.removeAll { $0.id == take.id } }
+                    continue
                 } catch {
                     lastError = "\(error)"
                     return
