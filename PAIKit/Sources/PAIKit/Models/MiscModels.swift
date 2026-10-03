@@ -206,7 +206,8 @@ extension UsagePaceLevel: Codable {
 public struct UsagePace: Codable, Sendable, Equatable {
     /// Where the line sits right now, in percent of the window.
     public let linePercent: Double
-    /// Utilization minus the line, in percentage points; positive is ahead of a steady pace.
+    /// Utilization minus the line, in percentage points; positive means above the steady line,
+    /// i.e. spending faster than a steady pace.
     public let deltaPoints: Double
     public let level: UsagePaceLevel
 
