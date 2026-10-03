@@ -149,6 +149,25 @@ final class SessionStoreRowStateTests: XCTestCase {
         XCTAssertFalse(SessionDotState.closed.pulses)
     }
 
+    // MARK: - statusStripLabel
+
+    /// The strip's spinner already says "working"; the words are what made it overflow a phone.
+    func testStatusStripLabelIsOmittedWhileWorking() {
+        let session = SessionFixture.make(displayState: .working)
+        XCTAssertNil(SessionListDomain.statusStripLabel(for: session, isWorking: true))
+    }
+
+    func testStatusStripLabelKeepsEveryOtherState() {
+        XCTAssertEqual(
+            SessionListDomain.statusStripLabel(
+                for: SessionFixture.make(displayState: .blocked), isWorking: false),
+            "Waiting on you")
+        XCTAssertEqual(
+            SessionListDomain.statusStripLabel(
+                for: SessionFixture.make(displayState: .error), isWorking: false),
+            "Needs attention")
+    }
+
     // MARK: - sessionLabel
 
     func testSessionLabelReadsDisplayStateDirectly() {
