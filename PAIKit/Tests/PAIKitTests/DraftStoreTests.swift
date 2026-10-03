@@ -295,6 +295,18 @@ final class DraftStoreTests: XCTestCase {
         XCTAssertNil(entry.sessionType, "clearing the directory should have cleared the derived session type too")
     }
 
+    /// Picking Home or Fast after browsing a folder must forget the folder, or the restored draft
+    /// brings the custom directory back on the next visit.
+    func testChoosingANonCustomTypeForgetsTheChosenDirectory() async {
+        let store = DraftStore(api: FakeDraftsFetching(), scheduler: InstantDraftScheduler())
+        store.selectWorkingDir("/home/frederik/Programming/pai-ios")
+        store.selectSessionType("home")
+
+        let entry = store.draft(for: DraftKey.newSession)
+        XCTAssertNil(entry.workingDir)
+        XCTAssertEqual(entry.sessionType, "home")
+    }
+
     /// `selectModel` is independent of the session-type/working-dir coupling above — picking a
     /// model must not disturb either.
     func testSelectingAModelDoesNotClobberAnAlreadyChosenSessionType() async {
