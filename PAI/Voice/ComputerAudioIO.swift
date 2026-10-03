@@ -93,6 +93,19 @@ final class ComputerAudioIO: @unchecked Sendable {
     }
 
     func stop() {
+        tearDownGraph()
+        try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    /// Rebuilds the graph against whatever the input is now, without deactivating the session — a
+    /// deactivation would hand a Bluetooth headset back to its output-only profile and provoke
+    /// the very route change being recovered from.
+    func restart() throws {
+        tearDownGraph()
+        try start()
+    }
+
+    private func tearDownGraph() {
         engine.inputNode.removeTap(onBus: 0)
         if let playerNode {
             engine.disconnectNodeOutput(playerNode)
@@ -102,7 +115,6 @@ final class ComputerAudioIO: @unchecked Sendable {
         if engine.isRunning { engine.stop() }
         micConverter = nil
         micSendFormat = nil
-        try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     /// One chunk of Computer's own synthesized speech — mono 16-bit PCM at

@@ -15,6 +15,11 @@ enum VoiceDevice {
         "\(UIDevice.current.model) · iOS \(UIDevice.current.systemVersion)"
     }
 
+    /// The input port's uid — stable across a headset's profile switches, unlike its name or format.
+    static var currentMicrophoneId: String? {
+        AVAudioSession.sharedInstance().currentRoute.inputs.first?.uid
+    }
+
     static var currentMicrophone: String? {
         AVAudioSession.sharedInstance().currentRoute.inputs.first?.portName
     }

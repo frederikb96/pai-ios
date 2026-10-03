@@ -39,11 +39,13 @@ final class WakeWordSampleCaptureController {
         case microphoneChanged
         case interrupted
         case takeTooLong
+        case audioFailed
 
         var userMessage: String {
             switch self {
             case .microphoneChanged: "The microphone changed — run stopped. Start a new run for the new microphone."
             case .interrupted: "A call or Siri interrupted — run stopped."
+            case .audioFailed: "Lost the microphone — run stopped."
             case .takeTooLong: "Nothing happened for a while — run stopped so the microphone is free again."
             }
         }
@@ -74,6 +76,7 @@ final class WakeWordSampleCaptureController {
     private let pathObserver = NetworkPathObserver()
 
     private var run: WakeWordSampleRun?
+    private var routeGuard: MicrophoneRouteGuard?
     private var streaming: StreamingRecordingFile?
     private var takeId: String?
     private var takeRecordedAt: Date?
@@ -98,7 +101,7 @@ final class WakeWordSampleCaptureController {
         }
         pathObserver.start()
         audioIO.onConfigurationChange = { [weak self] in
-            Task { @MainActor [weak self] in self?.endRunEarly(.microphoneChanged) }
+            Task { @MainActor [weak self] in self?.engineReconfigured() }
         }
     }
 
@@ -167,6 +170,7 @@ final class WakeWordSampleCaptureController {
             return
         }
         observeInterruptions()
+        routeGuard = MicrophoneRouteGuard(input: VoiceDevice.currentMicrophoneId, startedAt: Date())
 
         let runId = UUID().uuidString.lowercased()
         queue.openRun(
@@ -266,7 +270,26 @@ final class WakeWordSampleCaptureController {
         chunkContinuation = nil
     }
 
-    /// A route change (a headset connecting) or an interruption: what was captured before it is
+    /// The engine invalidated its graph. Capture is rebuilt in place unless the microphone really
+    /// became a different device (`MicrophoneRouteGuard`); a take in progress keeps its file and
+    /// carries on with what the rebuilt capture delivers.
+    private func engineReconfigured() {
+        guard isRunning, var routeGuard else { return }
+        let decision = routeGuard.engineReconfigured(input: VoiceDevice.currentMicrophoneId, now: Date())
+        self.routeGuard = routeGuard
+        switch decision {
+        case .endRun:
+            endRunEarly(.microphoneChanged)
+        case .restartCapture:
+            do {
+                try audioIO.restart()
+            } catch {
+                endRunEarly(.audioFailed)
+            }
+        }
+    }
+
+    /// A different microphone or an interruption: what was captured before it is
     /// kept, and a fresh run under the new conditions is the clean answer — one run per
     /// microphone is the model the screen asks for anyway.
     private func endRunEarly(_ reason: RunEndReason) {
@@ -285,6 +308,7 @@ final class WakeWordSampleCaptureController {
         if let run { queue.closeRun(id: run.id) }
         isRunning = false
         run = nil
+        routeGuard = nil
         runKind = nil
         runLabel = nil
         currentTakeIndex = nil

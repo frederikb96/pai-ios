@@ -26,7 +26,7 @@ public struct PendingWakeWordRun: Codable, Sendable, Equatable, Identifiable {
 }
 
 /// Gets wake-word sample runs to the backend whatever the network is doing: a run is queued the
-/// moment it starts, each take the moment it closes, and the queue drains whenever it is asked —
+/// moment it starts (and stored with its first take), each take the moment it closes, and the queue drains whenever it is asked —
 /// on a take closing, the app coming to the foreground, the network path returning. What is
 /// queued survives the app being killed.
 ///
@@ -111,6 +111,15 @@ public final class WakeWordUploadQueue {
     private func drainOnce() async {
         for runId in runs.map(\.id) {
             guard let run = runs.first(where: { $0.id == runId }) else { continue }
+            // A run is stored with its first take, so one that never recorded anything (a start
+            // that stopped at once) never reaches the backend or its list.
+            if !run.runStored && run.takes.isEmpty {
+                if !run.isOpen {
+                    runs.removeAll { $0.id == runId }
+                    persist()
+                }
+                continue
+            }
             if !run.runStored {
                 do {
                     try await transport.putRun(id: run.id, run: run.upload)

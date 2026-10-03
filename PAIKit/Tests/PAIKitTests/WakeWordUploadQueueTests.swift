@@ -105,6 +105,22 @@ final class WakeWordUploadQueueTests: XCTestCase {
         XCTAssertTrue(files.names.isEmpty, "a stored take's local audio is deleted")
     }
 
+    func testARunThatNeverRecordedATakeIsNeverStoredAndLeavesNothingBehind() async {
+        let transport = FakeWakeWordTransport()
+        let queue = WakeWordUploadQueue(
+            storage: SettingsInMemoryKeyValueStore(), transport: transport, files: FakeTakeFiles(), log: { _ in })
+        queue.openRun(id: "r1", upload: upload)
+        await queue.drain()
+        let whileOpen = await transport.calls
+        XCTAssertEqual(whileOpen, [], "an open run with no take is not stored yet")
+
+        queue.closeRun(id: "r1")
+        await queue.drain()
+        let afterClose = await transport.calls
+        XCTAssertEqual(afterClose, [])
+        XCTAssertTrue(queue.runs.isEmpty)
+    }
+
     /// Recorded offline, the app killed, the network back later: the takes are still queued in a
     /// new process and go up then.
     func testWhatFailedToSendSurvivesARestartAndGoesUpLater() async {
