@@ -15,6 +15,7 @@ struct SessionDetailView: View {
     @Environment(SettingsStore.self) private var settings
     @Environment(OutboxStore.self) private var outbox
     @Environment(DraftStore.self) private var drafts
+    @Environment(ToastCenter.self) private var toasts
     @State private var searchState = TranscriptSearchState()
     @State private var isPresentingActionsSheet = false
     @State private var isPresentingArcMenu = false
@@ -62,7 +63,7 @@ struct SessionDetailView: View {
                                 messageId: $0.readPositionMessageId, offsetPx: $0.readPositionOffsetPx,
                                 atBottom: $0.readPositionAtBottom ?? false)
                         },
-                        onPullBackIntoComposer: { Task { await pullPendingBackIntoComposer(connection.apiClient) } }
+                        onPullBackIntoComposer: { Task { await pullPendingBackIntoComposer() } }
                     )
                     .overlay { TranscriptLoadState(sessionID: sessionID) }
                     .overlay(alignment: .top) { TranscriptOlderPageState(sessionID: sessionID) }
@@ -291,22 +292,14 @@ struct SessionDetailView: View {
         return CreateSessionStore.modelDisplayLabels[launchModel] ?? launchModel
     }
 
-    /// Row 59's withdraw-pending route, called from a pending bubble's own context menu — see
-    /// `OutboxEntryBubbleView.putBackInComposer` for the LOCAL half of the same idea. Server-pending
-    /// rows are session-wide, not per-bubble, so this always withdraws everything pending for the
-    /// session regardless of which bubble was tapped; the server already dropped them from its own
-    /// `pending_sends`, which the next status event reflects and is what makes the bubble disappear.
-    ///
-    /// Written straight from `withdrawn[].text` rather than waiting on a draft poll to catch up —
-    /// the server already wrote the identical merge into its own draft, so this is immediate, not
-    /// a race with it: `drafts.setDraftText` marks the key locally dirty, which is what stops the
-    /// ordinary 10s poll from clobbering it before its own debounced write reaches the server.
-    private func pullPendingBackIntoComposer(_ apiClient: PaiApiClient) async {
-        guard let result = try? await apiClient.withdrawPending(sessionId: sessionID), !result.withdrawn.isEmpty
-        else { return }
-        let pulled = result.withdrawn.map(\.text).joined(separator: "\n")
-        let current = drafts.draft(for: sessionID).text
-        drafts.setDraftText(key: sessionID, text: current.isEmpty ? pulled : "\(pulled)\n\n\(current)")
+    /// The plus menu's "Undo send", from a pending bubble's own context menu: everything unsent
+    /// for the session comes back, whichever bubble was tapped — the server already dropped the
+    /// withdrawn rows from its own `pending_sends`, which the next status event reflects and is
+    /// what makes the bubble disappear. One implementation (`OutboxStore.undoSend`) for both
+    /// entries, so they can never disagree about when a text may be put back.
+    private func pullPendingBackIntoComposer() async {
+        let summary = await outbox.undoSend(sessionId: sessionID, drafts: drafts)
+        if let text = summary.toast(announceNothing: false) { toasts.show(text) }
     }
 
     /// The transcript's own live SSE figure wins once it has reported anything for this session —

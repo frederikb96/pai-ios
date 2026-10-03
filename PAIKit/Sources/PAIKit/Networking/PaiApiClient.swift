@@ -568,11 +568,31 @@ public struct PaiApiClient: Sendable {
 
     /// Pulls every still-pending send for this session back — an unsent row is withdrawn
     /// outright, a relayed-but-unconfirmed one gets the stand-in's own verdict on whether the
-    /// agent already consumed it. No body: the route acts on every pending row at once, there is
-    /// nothing here to name.
-    public func withdrawPending(sessionId: String) async throws -> WithdrawPendingResponse {
-        try await send(
-            path: "/api/session/\(sessionId)/withdraw-pending", method: "POST", body: nil, contentType: nil)
+    /// agent already consumed it. `clientMessageIds` names sends the caller holds that may already
+    /// have left it (a request in flight, or retried after a timeout): the server tombstones the
+    /// ones it has not seen so they are refused when they land, and answers which are withdrawn
+    /// and which were delivered.
+    public func withdrawPending(sessionId: String, clientMessageIds: [String] = []) async throws
+        -> WithdrawPendingResponse
+    {
+        struct Body: Encodable {
+            let clientMessageIds: [String]
+            enum CodingKeys: String, CodingKey { case clientMessageIds = "client_message_ids" }
+        }
+        return try await send(
+            path: "/api/session/\(sessionId)/withdraw-pending", method: "POST",
+            body: clientMessageIds.isEmpty ? nil : try Self.jsonBody(Body(clientMessageIds: clientMessageIds)),
+            contentType: clientMessageIds.isEmpty ? nil : "application/json")
+    }
+
+    /// The terminal's own send-now: make Claude take the messages it is holding.
+    public func sendNow(sessionId: String) async throws -> SendNowResponse {
+        try await send(path: "/api/session/\(sessionId)/send-now", method: "POST", body: nil, contentType: nil)
+    }
+
+    /// The terminal's own Ctrl+B: push the running foreground command to the background.
+    public func moveToBackground(sessionId: String) async throws -> MoveToBackgroundResponse {
+        try await send(path: "/api/session/\(sessionId)/background", method: "POST", body: nil, contentType: nil)
     }
 
     public func closeSession(sessionId: String) async throws -> CloseResponse {
