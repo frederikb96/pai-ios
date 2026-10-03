@@ -63,7 +63,8 @@ struct ComputerCallBar: View {
             sessionName: controller.session.sessionId
                 .flatMap { sessions.session(withId: $0) }
                 .map { SessionListFormat.displayTitle(for: $0) },
-            isSpeaking: controller.isSpeaking
+            isSpeaking: controller.isSpeaking,
+            hasEnded: controller.session.lastEndReason != nil
         )
     }
 }

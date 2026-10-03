@@ -886,8 +886,8 @@ final class VoiceRecorderController {
         let text = try await RecordingRetranscription.run(
             totalSamples: totalSamples, sampleRate: sampleRate,
             read: { range in
-                PcmWavWriter.samples(
-                    fromPCM16LE: try await storage.readSamples(id: id, range: WavByteRange.forSamples(range)))
+                let pcm = try await storage.readSamples(id: id, range: WavByteRange.forSamples(range))
+                return PcmWavWriter.samples(fromPCM16LE: pcm)
             },
             transcribe: { wav, previousText in
                 try await api.transcribeVoiceTake(takeId: id, wav: wav, previousText: previousText)
