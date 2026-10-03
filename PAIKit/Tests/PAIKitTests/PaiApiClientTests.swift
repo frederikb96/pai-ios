@@ -155,6 +155,95 @@ final class PaiApiClientTests: XCTestCase {
         XCTAssertEqual(result.draftVersion, 7)
     }
 
+    /// A body is sent ONLY when ids are named, and it carries them under the server's own key —
+    /// a body on every call would turn the plain "pull back whatever is pending" gesture into a
+    /// request the server has to parse for nothing.
+    func testWithdrawPendingNamesClientIdsInAJsonBody() async throws {
+        stubJSON(
+            #"""
+            {"withdrawn":[{"id":41,"text":"seen","client_message_id":"cid-1"}],"already_delivered":[],
+             "unresolved":[44],"withdrawn_client_ids":["cid-1","cid-2"],"delivered_client_ids":["cid-3"],
+             "draft_version":7}
+            """#)
+        let client = try makeClient()
+        let result = try await client.withdrawPending(sessionId: "s1", clientMessageIds: ["cid-1", "cid-2", "cid-3"])
+
+        let body = try XCTUnwrap(PaiStubURLProtocol.capturedBody)
+        let decoded = try JSONSerialization.jsonObject(with: body) as? [String: [String]]
+        XCTAssertEqual(decoded, ["client_message_ids": ["cid-1", "cid-2", "cid-3"]])
+        XCTAssertEqual(
+            PaiStubURLProtocol.capturedRequest?.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        XCTAssertEqual(result.withdrawn.first?.clientMessageId, "cid-1")
+        XCTAssertEqual(result.withdrawnClientIds, ["cid-1", "cid-2"])
+        XCTAssertEqual(result.deliveredClientIds, ["cid-3"])
+        XCTAssertEqual(result.unresolved, [44])
+    }
+
+    /// An older server sends none of the new lists; that must decode as "nothing named", not
+    /// fail every Undo send during the window between a pod release and an app release.
+    func testWithdrawPendingFromAnOlderServerDecodesTheNewListsAsEmpty() async throws {
+        stubJSON(#"{"withdrawn":[{"id":41,"text":"first"}],"already_delivered":[],"draft_version":7}"#)
+        let client = try makeClient()
+        let result = try await client.withdrawPending(sessionId: "s1")
+
+        XCTAssertEqual(result.withdrawn.first?.clientMessageId, nil)
+        XCTAssertEqual(result.unresolved, [])
+        XCTAssertEqual(result.withdrawnClientIds, [])
+        XCTAssertEqual(result.deliveredClientIds, [])
+    }
+
+    func testPostMessageDecodesAWithdrawnRefusalAndDefaultsItToFalse() throws {
+        let refused = try JSONDecoder().decode(
+            PostMessageResponse.self,
+            from: Data(
+                #"{"session_id":"s1","message_id":5,"duplicate":true,"withdrawn":true,"text_in_draft":false}"#.utf8))
+        XCTAssertTrue(refused.withdrawn)
+        XCTAssertFalse(refused.textInDraft)
+
+        let ordinary = try JSONDecoder().decode(
+            PostMessageResponse.self, from: Data(#"{"session_id":"s1","message_id":5}"#.utf8))
+        XCTAssertFalse(ordinary.withdrawn)
+    }
+
+    // MARK: - sendNow / moveToBackground
+
+    func testSendNowPostsToItsOwnRouteAndDecodesTheVerdict() async throws {
+        stubJSON(#"{"status":"sent","delivered":[7],"still_queued":[8]}"#)
+        let client = try makeClient()
+        let result = try await client.sendNow(sessionId: "s1")
+
+        XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.httpMethod, "POST")
+        XCTAssertTrue((PaiStubURLProtocol.capturedRequest?.url?.path ?? "").hasSuffix("/api/session/s1/send-now"))
+        XCTAssertNil(PaiStubURLProtocol.capturedBody)
+        XCTAssertEqual(result.status, .sent)
+        XCTAssertEqual(result.delivered, [7])
+        XCTAssertEqual(result.stillQueued, [8])
+    }
+
+    func testSendNowADeclinedKeyNamesWhyAndAnUnknownReasonStillDecodes() async throws {
+        stubJSON(#"{"status":"refused","reason":"prompt_has_draft"}"#)
+        let client = try makeClient()
+        var result = try await client.sendNow(sessionId: "s1")
+        XCTAssertEqual(result.status, .refused)
+        XCTAssertEqual(result.reason, .promptHasDraft)
+
+        stubJSON(#"{"status":"refused","reason":"something_new"}"#)
+        result = try await client.sendNow(sessionId: "s1")
+        XCTAssertEqual(result.reason, .paneUnreadable)
+    }
+
+    func testMoveToBackgroundPostsToItsOwnRouteAndDecodesWhatMoved() async throws {
+        stubJSON(#"{"status":"moved","moved":["toolu_1"],"not_moved":["toolu_2"]}"#)
+        let client = try makeClient()
+        let result = try await client.moveToBackground(sessionId: "s1")
+
+        XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.httpMethod, "POST")
+        XCTAssertTrue((PaiStubURLProtocol.capturedRequest?.url?.path ?? "").hasSuffix("/api/session/s1/background"))
+        XCTAssertEqual(result.status, .moved)
+        XCTAssertEqual(result.moved, ["toolu_1"])
+        XCTAssertEqual(result.notMoved, ["toolu_2"])
+    }
+
     /// This app's reverse proxy serves the SPA's `index.html` for any unmatched web path, which
     /// answers 200 with an HTML-shaped-as-JSON body a naive decode could half-accept. Asserting
     /// on `status` here is what turns "route not yet deployed" into a thrown error instead of a

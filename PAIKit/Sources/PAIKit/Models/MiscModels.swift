@@ -510,19 +510,33 @@ public struct PostMessageResponse: Codable, Sendable, Equatable {
     /// The version of the draft this send consumed and cleared, so the sender's own next poll is
     /// a no-op and another device's composer reads empty without anyone issuing a delete.
     public let draftVersion: Int?
+    /// The send was pulled back into the composer (Escape-undo) before it was delivered, so the
+    /// server refused it: nothing was enqueued and the draft was not touched. Only ever set on a
+    /// ``duplicate`` answer — and when it is, the sender must NOT treat the send as accepted.
+    public let withdrawn: Bool
+    /// With ``withdrawn``: the server's own draft already holds this text (a row withdrawn after
+    /// it arrived). `false` means the sender holds the only copy and must put it back itself.
+    public let textInDraft: Bool
 
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
         case messageId = "message_id"
         case duplicate
         case draftVersion = "draft_version"
+        case withdrawn
+        case textInDraft = "text_in_draft"
     }
 
-    public init(sessionId: String, messageId: Int, duplicate: Bool = false, draftVersion: Int? = nil) {
+    public init(
+        sessionId: String, messageId: Int, duplicate: Bool = false, draftVersion: Int? = nil,
+        withdrawn: Bool = false, textInDraft: Bool = false
+    ) {
         self.sessionId = sessionId
         self.messageId = messageId
         self.duplicate = duplicate
         self.draftVersion = draftVersion
+        self.withdrawn = withdrawn
+        self.textInDraft = textInDraft
     }
 
     /// A hand-written `init` rather than the synthesized one: `duplicate` defaults to `false`
@@ -534,6 +548,8 @@ public struct PostMessageResponse: Codable, Sendable, Equatable {
         messageId = try container.decode(Int.self, forKey: .messageId)
         duplicate = try container.decodeIfPresent(Bool.self, forKey: .duplicate) ?? false
         draftVersion = try container.decodeIfPresent(Int.self, forKey: .draftVersion)
+        withdrawn = try container.decodeIfPresent(Bool.self, forKey: .withdrawn) ?? false
+        textInDraft = try container.decodeIfPresent(Bool.self, forKey: .textInDraft) ?? false
     }
 }
 
@@ -542,37 +558,169 @@ public struct WithdrawnSend: Codable, Sendable, Equatable {
     /// The outbox row's own id — the same id a `PendingSend` carries.
     public let id: Int
     public let text: String
+    /// Ties the row back to the caller's own entry; `nil` for a row some other client sent.
+    public let clientMessageId: String?
 
-    public init(id: Int, text: String) {
+    enum CodingKeys: String, CodingKey {
+        case id
+        case text
+        case clientMessageId = "client_message_id"
+    }
+
+    public init(id: Int, text: String, clientMessageId: String? = nil) {
         self.id = id
         self.text = text
+        self.clientMessageId = clientMessageId
     }
 }
 
 /// `POST /api/session/{id}/withdraw-pending`'s reply. Every row counted as pending when the
-/// route ran falls into exactly one of the two lists: ``withdrawn`` carries back what it
-/// actually pulled, oldest first, and ``alreadyDelivered`` names what the agent had already
-/// consumed and left untouched — never both, and never neither, for the same id. The server
-/// also rewrites the session's own draft from ``withdrawn``'s texts and bumps its version to
-/// ``draftVersion``, which is informational here: the client builds the composer text from
-/// ``withdrawn`` directly rather than waiting on a draft poll to catch up.
+/// route ran falls into exactly one of ``withdrawn`` (pulled back — carries its text, oldest
+/// first), ``alreadyDelivered`` (the agent had already consumed it; left untouched) or
+/// ``unresolved`` (a relay that errored whose fate the wire could not settle; left untouched).
+/// The server also rewrites the session's own draft from ``withdrawn``'s texts and bumps its
+/// version to ``draftVersion``, which is informational here: the client builds the composer text
+/// from ``withdrawn`` directly rather than waiting on a draft poll to catch up.
+///
+/// The request may name `client_message_ids` — sends the caller holds that may already have left
+/// it. Of those, ``withdrawnClientIds`` are now withdrawn (a send the server never saw was
+/// tombstoned, so it has no row in ``withdrawn`` and its text is the caller's own),
+/// ``deliveredClientIds`` reached Claude, and an id in neither is undecided.
 public struct WithdrawPendingResponse: Codable, Sendable, Equatable {
     public let withdrawn: [WithdrawnSend]
     /// Outbox ids the agent had already consumed — their bubbles stay exactly as a confirmed
     /// send would, nothing pulled back for them.
     public let alreadyDelivered: [Int]
+    public let unresolved: [Int]
+    public let withdrawnClientIds: [String]
+    public let deliveredClientIds: [String]
     public let draftVersion: Int
 
     enum CodingKeys: String, CodingKey {
         case withdrawn
         case alreadyDelivered = "already_delivered"
+        case unresolved
+        case withdrawnClientIds = "withdrawn_client_ids"
+        case deliveredClientIds = "delivered_client_ids"
         case draftVersion = "draft_version"
     }
 
-    public init(withdrawn: [WithdrawnSend], alreadyDelivered: [Int], draftVersion: Int) {
+    public init(
+        withdrawn: [WithdrawnSend], alreadyDelivered: [Int], draftVersion: Int, unresolved: [Int] = [],
+        withdrawnClientIds: [String] = [], deliveredClientIds: [String] = []
+    ) {
         self.withdrawn = withdrawn
         self.alreadyDelivered = alreadyDelivered
+        self.unresolved = unresolved
+        self.withdrawnClientIds = withdrawnClientIds
+        self.deliveredClientIds = deliveredClientIds
         self.draftVersion = draftVersion
+    }
+
+    /// The three lists an older server does not send decode as empty rather than failing the
+    /// whole answer: the rest of the shape is unchanged.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        withdrawn = try container.decode([WithdrawnSend].self, forKey: .withdrawn)
+        alreadyDelivered = try container.decode([Int].self, forKey: .alreadyDelivered)
+        unresolved = try container.decodeIfPresent([Int].self, forKey: .unresolved) ?? []
+        withdrawnClientIds = try container.decodeIfPresent([String].self, forKey: .withdrawnClientIds) ?? []
+        deliveredClientIds = try container.decodeIfPresent([String].self, forKey: .deliveredClientIds) ?? []
+        draftVersion = try container.decode(Int.self, forKey: .draftVersion)
+    }
+}
+
+/// `POST /api/session/{id}/send-now` — what became of making Claude take its queued messages.
+public struct SendNowResponse: Codable, Sendable, Equatable {
+    public enum Status: String, Codable, Sendable, Equatable {
+        case nothingQueued = "nothing_queued"
+        case sent
+        case refused
+        case unavailable
+        case notApplicable = "not_applicable"
+    }
+
+    /// Why the agent would not press the key. An unknown value decodes as ``paneUnreadable`` —
+    /// the answer that tells the user to try again — rather than failing the whole reply.
+    public enum Reason: String, Codable, Sendable, Equatable {
+        case blocked
+        case promptHasDraft = "prompt_has_draft"
+        case paneUnreadable = "pane_unreadable"
+        case notRunning = "not_running"
+
+        public init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = Reason(rawValue: raw) ?? .paneUnreadable
+        }
+    }
+
+    public let status: Status
+    /// With ``Status/sent``: outbox ids Claude took.
+    public let delivered: [Int]
+    /// With ``Status/sent``: outbox ids Claude is holding for a reason of its own.
+    public let stillQueued: [Int]
+    public let reason: Reason?
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case delivered
+        case stillQueued = "still_queued"
+        case reason
+    }
+
+    public init(status: Status, delivered: [Int] = [], stillQueued: [Int] = [], reason: Reason? = nil) {
+        self.status = status
+        self.delivered = delivered
+        self.stillQueued = stillQueued
+        self.reason = reason
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        status = try container.decode(Status.self, forKey: .status)
+        delivered = try container.decodeIfPresent([Int].self, forKey: .delivered) ?? []
+        stillQueued = try container.decodeIfPresent([Int].self, forKey: .stillQueued) ?? []
+        reason = try container.decodeIfPresent(Reason.self, forKey: .reason)
+    }
+}
+
+/// `POST /api/session/{id}/background` — what became of moving the running foreground command
+/// (or subagent) to the background.
+public struct MoveToBackgroundResponse: Codable, Sendable, Equatable {
+    public enum Status: String, Codable, Sendable, Equatable {
+        case nothingRunning = "nothing_running"
+        case moved
+        case refused
+        case unavailable
+        case notApplicable = "not_applicable"
+    }
+
+    public let status: Status
+    public let moved: [String]
+    public let notMoved: [String]
+    /// With ``Status/refused``: the worker's own words.
+    public let reason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case moved
+        case notMoved = "not_moved"
+        case reason
+    }
+
+    public init(status: Status, moved: [String] = [], notMoved: [String] = [], reason: String? = nil) {
+        self.status = status
+        self.moved = moved
+        self.notMoved = notMoved
+        self.reason = reason
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        status = try container.decode(Status.self, forKey: .status)
+        moved = try container.decodeIfPresent([String].self, forKey: .moved) ?? []
+        notMoved = try container.decodeIfPresent([String].self, forKey: .notMoved) ?? []
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
     }
 }
 

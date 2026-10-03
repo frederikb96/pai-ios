@@ -13,6 +13,46 @@ public protocol OutboxSending: Sendable {
 
 extension PaiApiClient: OutboxSending {}
 
+/// What Undo send needs from the server, kept out of ``OutboxSending``'s required members so a
+/// sender that only ever posts (a test double) need not pretend to withdraw. ``OutboxStore`` asks
+/// for it by cast, and a sender without it is treated exactly like a withdraw request that
+/// failed: everything that may be on the server is left alone.
+public protocol OutboxWithdrawing: Sendable {
+    func withdrawPending(sessionId: String, clientMessageIds: [String]) async throws -> WithdrawPendingResponse
+}
+
+extension PaiApiClient: OutboxWithdrawing {}
+
+/// What one Undo send did, for a caller that wants to say so.
+public struct UndoSendSummary: Equatable, Sendable {
+    /// Messages whose text went back into the composer.
+    public var restored = 0
+    /// Messages Claude already has.
+    public var delivered = 0
+    /// Messages that could not be settled and were left as they were.
+    public var undecided = 0
+    /// The server could not be asked at all, so every message that may be on it was left alone.
+    public var requestFailed = false
+
+    public init(restored: Int = 0, delivered: Int = 0, undecided: Int = 0, requestFailed: Bool = false) {
+        self.restored = restored
+        self.delivered = delivered
+        self.undecided = undecided
+        self.requestFailed = requestFailed
+    }
+
+    /// The sentence to show, or `nil` when nothing needs saying: the text visibly landed in the
+    /// composer. `announceNothing` is the menu entry (an explicit tap deserves an answer); the
+    /// per-bubble action passes `false`.
+    public func toast(announceNothing: Bool) -> String? {
+        if restored > 0 { return nil }
+        if requestFailed { return "Could not reach the server to undo — try again" }
+        if delivered > 0 { return "Already delivered" }
+        if undecided > 0 { return "Could not undo yet — the session has not confirmed it" }
+        return announceNothing ? "Nothing to undo" : nil
+    }
+}
+
 /// A durable, exactly-once send queue. Swift port of the web's own `stores/outbox.ts` design:
 /// persisted before the composer that produced it is ever cleared, one FIFO worker per target
 /// (a session, or the not-yet-created "new" session), retried with backoff, and resumed on
@@ -45,6 +85,15 @@ public final class OutboxStore {
     /// ``installHandover(drafts:sessions:handoff:)`` here; this stays a plain closure so a test can
     /// observe the moment without one.
     public var onSent: (@MainActor (OutboxEntry) -> Void)?
+    /// Called when the server REFUSED an entry because it was pulled back (Escape-undo, here or
+    /// on another device) before it could be delivered — the entry is already gone from
+    /// ``entries``. The `Bool` is whether the server's own draft already holds the text; when it
+    /// does not, the handler owns putting the text back.
+    public var onRefused: (@MainActor (OutboxEntry, Bool) -> Void)?
+    /// Entries an ``undoSend`` has asked the server about and not heard back on — the worker
+    /// leaves them alone meanwhile, so no further request carrying one is issued while its fate
+    /// is being decided.
+    private var withdrawing: Set<String> = []
 
     /// One loop per ``OutboxTarget/workerKey`` — FIFO within a target, matching the server
     /// outbox's own per-target ordering. `nil` once a worker finds nothing left to do; a fresh
@@ -99,6 +148,90 @@ public final class OutboxStore {
             }
             self?.discard(id: entry.id)
         }
+        onRefused = { [weak drafts] entry, textInDraft in
+            guard !textInDraft, let drafts else { return }
+            Self.putBack([entry.text], into: drafts, key: entry.draftKey)
+        }
+    }
+
+    /// Writes pulled-back texts into a composer: newline-joined, ahead of whatever is already
+    /// typed with a blank line between.
+    public static func putBack(_ texts: [String], into drafts: DraftStore, key: String) {
+        let pulled = texts.filter { !$0.isEmpty }.joined(separator: "\n")
+        guard !pulled.isEmpty else { return }
+        let current = drafts.draft(for: key).text
+        drafts.setDraftText(key: key, text: current.isEmpty ? pulled : "\(pulled)\n\n\(current)")
+    }
+
+    /// Whether a request carrying this entry may have reached the server: one is in the air
+    /// (`.sending`, which a restart turns back into `.queued` and sends again at once), or an
+    /// earlier one failed without an answer (`attempts`). The only entries that cannot are those
+    /// no request was ever issued for.
+    private static func mayHaveLeft(_ entry: OutboxEntry) -> Bool {
+        entry.state == .sending || entry.attempts > 0
+    }
+
+    /// Undo send. Pulls every still-unsent message for one session back into its composer,
+    /// oldest first, and reports what it did.
+    ///
+    /// What a message is allowed to be afterwards is exactly one of: back in the composer, or
+    /// delivered — never both, never neither. So an entry is treated as purely local ONLY when no
+    /// request carrying it was ever issued; one whose request is in the air, timed out, or was
+    /// interrupted by a restart may already be on the server, and is named to the server by its
+    /// id instead. The server withdraws it if it arrived, or leaves a tombstone so it is refused
+    /// when it does; its answer decides, and the entry is kept untouched when the request itself
+    /// fails (so the same action can simply be tried again). Texts return in the order: rows the
+    /// server withdrew, then entries the server tombstoned, then entries that never left.
+    @discardableResult
+    public func undoSend(sessionId: String, drafts: DraftStore) async -> UndoSendSummary {
+        let eligible = entries(for: sessionId)
+            .filter { $0.state == .queued || $0.state == .sending || $0.state == .failed }
+            .sorted { $0.createdAt < $1.createdAt }
+        let neverLeft = eligible.filter { !Self.mayHaveLeft($0) }
+        let mayBeOnServer = eligible.filter(Self.mayHaveLeft)
+
+        // Dropped before anything is awaited, so no worker can issue a request for one of these
+        // in between.
+        let neverLeftTexts = neverLeft.map(\.text)
+        for entry in neverLeft { discard(id: entry.id) }
+        for entry in mayBeOnServer { withdrawing.insert(entry.id) }
+
+        var summary = UndoSendSummary()
+        var response: WithdrawPendingResponse?
+        do {
+            guard let withdrawer = api as? any OutboxWithdrawing else { throw PaiError.transport("cannot withdraw") }
+            response = try await withdrawer.withdrawPending(
+                sessionId: sessionId, clientMessageIds: mayBeOnServer.map(\.id))
+        } catch {
+            // Nothing is known about those entries, so none of them is touched.
+            summary.requestFailed = !mayBeOnServer.isEmpty
+        }
+        for entry in mayBeOnServer { withdrawing.remove(entry.id) }
+
+        let serverRows = response?.withdrawn ?? []
+        let restoredIds = Set(response?.withdrawnClientIds ?? [])
+        let deliveredIds = Set(response?.deliveredClientIds ?? [])
+        let rowIds = Set(serverRows.compactMap(\.clientMessageId))
+        // Entries still here: a request that was in the air may have resolved meanwhile and
+        // restored its own text (see ``attemptSend(at:)``).
+        let present = Set(entries.map(\.id))
+        let tombstoned = mayBeOnServer.filter {
+            restoredIds.contains($0.id) && !rowIds.contains($0.id) && present.contains($0.id)
+        }
+        let deliveredHere = mayBeOnServer.filter { deliveredIds.contains($0.id) }
+        for entry in mayBeOnServer where restoredIds.contains(entry.id) || deliveredIds.contains(entry.id) {
+            discard(id: entry.id)
+        }
+
+        let pulledBack = (serverRows.map(\.text) + tombstoned.map(\.text) + neverLeftTexts).filter { !$0.isEmpty }
+        Self.putBack(pulledBack, into: drafts, key: sessionId)
+
+        summary.restored = pulledBack.count
+        summary.delivered = max(deliveredHere.count, response?.alreadyDelivered.count ?? 0)
+        summary.undecided = response?.unresolved.count ?? 0
+        // Entries left in place (request failed, or undecided) still owe their delivery.
+        ensureWorker(for: OutboxTarget.session(sessionId: sessionId).workerKey)
+        return summary
     }
 
     /// The entries to show for a target, oldest first — a composer's own pending-bubble list.
@@ -165,7 +298,11 @@ public final class OutboxStore {
 
     private func runWorker(key: String) async {
         while true {
-            guard let index = entries.firstIndex(where: { $0.target.workerKey == key && $0.state == .queued }) else {
+            guard
+                let index = entries.firstIndex(where: {
+                    $0.target.workerKey == key && $0.state == .queued && !withdrawing.contains($0.id)
+                })
+            else {
                 workers[key] = nil
                 return
             }
@@ -191,6 +328,15 @@ public final class OutboxStore {
                 thinking: entry.target.thinking, clientMode: entry.clientMode
             )
             guard let current = entries.firstIndex(where: { $0.id == entry.id }) else { return }
+            if response.withdrawn {
+                // The server refused it: it was pulled back before it could be delivered. If an
+                // undo already took the entry there is nothing left to do (the guard above);
+                // otherwise this one is the only thing that knows to put the text back.
+                let refused = entries[current]
+                discard(id: refused.id)
+                onRefused?(refused, response.textInDraft)
+                return
+            }
             entries[current].state = .sent
             entries[current].result = OutboxResult(
                 sessionId: response.sessionId, messageId: response.messageId, draftVersion: response.draftVersion)

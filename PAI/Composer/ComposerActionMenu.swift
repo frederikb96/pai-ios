@@ -51,7 +51,16 @@ struct ComposerActionMenu: View {
     var onTemporaryNote: () -> Void
     var onSecretGrant: () -> Void
     var onRestorePreviousText: () -> Void
+    /// Cancel, Undo send, Send now and Move to background — each a session action, drawn in the
+    /// order ``ComposerSessionAction/entries(hasSession:offersProcessActions:canGrantSecretAccess:)``
+    /// gives them.
     var onCancel: () -> Void
+    var onUndoSend: () -> Void = {}
+    var onSendNow: () -> Void = {}
+    var onMoveToBackground: () -> Void = {}
+    /// False for a pod-resident (ultra-fast) session, which has no process to hold a queue or run
+    /// a command.
+    var offersProcessActions: Bool = true
     var onStartCallAfterSend: () -> Void = {}
 
     private var computerLabel: String {
@@ -114,12 +123,18 @@ struct ComposerActionMenu: View {
             } label: {
                 Label("Temporary Note", systemImage: "note.text")
             }
-            if canGrantSecretAccess {
-                Button {
-                    onSecretGrant()
+            ForEach(
+                ComposerSessionAction.entries(
+                    hasSession: hasSession, offersProcessActions: offersProcessActions,
+                    canGrantSecretAccess: canGrantSecretAccess),
+                id: \.self
+            ) { action in
+                Button(role: Self.role(for: action)) {
+                    perform(action)
                 } label: {
-                    Label("Grant Secret Access", systemImage: "key")
+                    Label(action.title, systemImage: action.systemImage)
                 }
+                .accessibilityIdentifier("composer-menu-\(action.rawValue)")
             }
             if let pregrantArmed {
                 Button {
@@ -141,15 +156,6 @@ struct ComposerActionMenu: View {
                 }
                 .accessibilityIdentifier("composer-menu-restore-previous-text")
             }
-            if hasSession {
-                // Needs a real session id to cancel — unlike the other four entries, there is
-                // nothing sensible for this one to do before a session exists.
-                Button(role: .destructive) {
-                    onCancel()
-                } label: {
-                    Label("Cancel", systemImage: "stop.fill")
-                }
-            }
         } label: {
             // Unfilled — a solid white disc here was the single brightest object on the whole
             // transcript, louder than any message in it. An attachment menu is a secondary
@@ -159,7 +165,24 @@ struct ComposerActionMenu: View {
                 .font(.system(size: 24, weight: .regular))
                 .foregroundStyle(PaiPalette.Semantic.textSecondary)
         }
+        // A Menu opened from a bar at the bottom of the screen may list its items bottom-up;
+        // the fixed order is the one declared above, so Cancel stays first whatever the edge.
+        .menuOrder(.fixed)
         .accessibilityIdentifier("composer-action-menu")
         .accessibilityLabel("More options")
+    }
+
+    private static func role(for action: ComposerSessionAction) -> ButtonRole? {
+        action == .cancel ? .destructive : nil
+    }
+
+    private func perform(_ action: ComposerSessionAction) {
+        switch action {
+        case .cancel: onCancel()
+        case .undoSend: onUndoSend()
+        case .sendNow: onSendNow()
+        case .moveToBackground: onMoveToBackground()
+        case .grantSecretAccess: onSecretGrant()
+        }
     }
 }

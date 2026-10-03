@@ -29,6 +29,7 @@ struct ComposerBar: View {
     @Environment(SessionListStore.self) private var sessions
     @Environment(StagedAttachmentStore.self) private var staging
     @Environment(OutboxStore.self) private var outbox
+    @Environment(ToastCenter.self) private var toasts
 
     let sessionID: String
 
@@ -213,7 +214,11 @@ struct ComposerBar: View {
                     onTemporaryNote: { showingTemporaryNote = true },
                     onSecretGrant: { secretGrantTarget = SecretGrantTarget(promptAt: currentSecretPrompt?.at) },
                     onRestorePreviousText: { draftStore.restorePreviousText(key: sessionID) },
-                    onCancel: { Task { await cancelSession() } }
+                    onCancel: { Task { await cancelSession() } },
+                    onUndoSend: { Task { await undoSend() } },
+                    onSendNow: { Task { await sendNow() } },
+                    onMoveToBackground: { Task { await moveToBackground() } },
+                    offersProcessActions: currentSession?.kind != .ultrafast
                 )
 
                 VoiceRecorderButton(
@@ -537,6 +542,32 @@ struct ComposerBar: View {
         // Errors are swallowed on purpose, matching the web exactly: tapping Cancel on a session
         // with nothing running, or with the agent disconnected, is a no-op either way.
         _ = try? await environment.connection?.apiClient.cancelSession(sessionId: sessionID)
+    }
+
+    /// The same action the per-bubble "Pull back into composer" runs: names what may already be on
+    /// the server by id, and puts a message back in the composer only when the server says it was
+    /// withdrawn. An explicit tap gets an answer even when there was nothing to undo.
+    private func undoSend() async {
+        let summary = await outbox.undoSend(sessionId: sessionID, drafts: drafts)
+        if let text = summary.toast(announceNothing: true) { toasts.show(text) }
+    }
+
+    private func sendNow() async {
+        guard let apiClient = environment.connection?.apiClient else { return }
+        if let result = try? await apiClient.sendNow(sessionId: sessionID) {
+            toasts.show(result.toastText)
+        } else {
+            toasts.show("Could not send now", kind: .error)
+        }
+    }
+
+    private func moveToBackground() async {
+        guard let apiClient = environment.connection?.apiClient else { return }
+        if let result = try? await apiClient.moveToBackground(sessionId: sessionID) {
+            toasts.show(result.toastText)
+        } else {
+            toasts.show("Could not move to the background", kind: .error)
+        }
     }
 
     // MARK: - Session / machine lookup
