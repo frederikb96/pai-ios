@@ -1,17 +1,6 @@
 import Foundation
 import Observation
 
-/// STT language selection. Port of `stores/settings.ts`'s `SttLanguage`.
-///
-/// No `.unrecognized` fallback the way `SmtpSecurity` has one: this project has exactly one STT
-/// provider and deliberately no provider-abstraction fallback branch (see `CLAUDE.md` — the
-/// retired Android client's `else -> OpenAI` default is the cascading-default pattern this
-/// avoids), and the same discipline applies to the language selector next to it. A value this
-/// app never wrote is a bug to surface, not a value to silently coerce into `.auto`.
-public enum SttLanguage: String, Codable, Sendable, CaseIterable {
-    case auto, en, de
-}
-
 /// Everything the Settings screen shows and edits, minus what other layers already own:
 /// **theme** (the app shell — needed before any screen including this one renders) and
 /// **terminal font size** (the terminal view — the web has no Settings UI for it either; it
@@ -19,7 +8,7 @@ public enum SttLanguage: String, Codable, Sendable, CaseIterable {
 ///
 /// Three different persistence shapes live here, deliberately kept distinct rather than implied
 /// by which method happens to get called:
-/// - **client-side, immediate** — STT language, mic device, the two diagnostic lists, expand
+/// - **client-side, immediate** — mic device, the silence gate, the two diagnostic lists, expand
 ///   preferences: a `set...` call persists to `storage` and updates published state in the same
 ///   step, same as the web's `localStorage` + immediate apply.
 /// - **server-persisted, draft-and-save** — `smtp`, a whole sub-store, because Save/dirty
@@ -31,7 +20,7 @@ public enum SttLanguage: String, Codable, Sendable, CaseIterable {
 @Observable
 public final class SettingsStore {
     private enum Keys {
-        static let sttLanguage = "sttLanguage"
+        static let silenceGate = "silenceGate"
         static let micDeviceId = "micDeviceId"
         static let sentMessages = "sentMessages"
         static let recordings = "recordings"
@@ -43,7 +32,8 @@ public final class SettingsStore {
     static let maxSentMessages = 10
     static let maxRecordings = 10
 
-    public private(set) var sttLanguage: SttLanguage
+    /// Client-local and never synced: the threshold is a property of this phone's microphones.
+    public private(set) var silenceGate: SilenceGateSettings
     public private(set) var micDeviceId: String
     public private(set) var sentMessages: [SentMessage]
     public private(set) var recordings: [RecordingMeta]
@@ -89,7 +79,7 @@ public final class SettingsStore {
         self.smtp = SmtpSettingsStore(apiClient: apiClient)
         self.voices = SpokenVoiceSettingsStore(apiClient: apiClient)
 
-        sttLanguage = storage.value(forKey: Keys.sttLanguage) ?? .auto
+        silenceGate = storage.value(forKey: Keys.silenceGate) ?? .standard
         micDeviceId = storage.value(forKey: Keys.micDeviceId) ?? ""
         sentMessages = storage.value(forKey: Keys.sentMessages) ?? []
         recordings = storage.value(forKey: Keys.recordings) ?? []
@@ -106,9 +96,13 @@ public final class SettingsStore {
         storage.setValue(theme, forKey: Keys.theme)
     }
 
-    public func setSttLanguage(_ language: SttLanguage) {
-        sttLanguage = language
-        storage.setValue(language, forKey: Keys.sttLanguage)
+    public func setSilenceGate(_ settings: SilenceGateSettings) {
+        var clamped = settings
+        clamped.manualThresholdDb = min(
+            max(settings.manualThresholdDb, SilenceGateSettings.manualRange.lowerBound),
+            SilenceGateSettings.manualRange.upperBound)
+        silenceGate = clamped
+        storage.setValue(clamped, forKey: Keys.silenceGate)
     }
 
     public func setMicDeviceId(_ deviceId: String) {

@@ -259,6 +259,25 @@ final class SessionStoreCreateSessionTests: XCTestCase {
         XCTAssertNil(calls[0].sessionId, "omitting session_id is what makes this endpoint CREATE")
     }
 
+    /// A folder browsed and then abandoned for Home must not reach the create: the backend
+    /// launches in any directory it is handed, whatever type the request names.
+    func testChoosingHomeAfterAFolderSendsNoDirectory() async {
+        let api = FakeCreateSessionApi()
+        let sending = FakeOutboxSending()
+        let store = CreateSessionStore(machines: MachineStore(api: FakeMachineDirectoryApi()), api: api)
+        store.selectWorkingDir("/home/frederik/pai-cloud")
+        store.selectSessionType("home")
+        XCTAssertNil(store.workingDir)
+
+        let outbox = makeOutbox(sending)
+        store.enqueueSend(message: "hello", outbox: outbox)
+
+        await waitForPost(sending)
+        let calls = await sending.postMessageCalls
+        XCTAssertEqual(calls.first?.sessionType, "home")
+        XCTAssertNil(calls.first?.workingDir)
+    }
+
     /// 🚨 Returns without waiting for the network, deliberately: the entry is already on disk, and
     /// the screen has a queued bubble to show for it. Awaiting the entry instead cannot work — the
     /// handover retires it the instant it is sent, so a poll for its `.sent` state finds nothing.

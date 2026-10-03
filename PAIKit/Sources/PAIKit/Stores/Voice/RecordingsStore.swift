@@ -5,7 +5,7 @@ import Foundation
 /// directories) is a real-device concept this package cannot exercise on Linux, so the app
 /// supplies a concrete implementation that touches disk.
 public protocol RecordingAudioStorage: Sendable {
-    func save(id: String, raw: Data?, sent: Data) async throws
+    func save(id: String, audio: Data) async throws
     func delete(id: String) async
 }
 
@@ -32,10 +32,8 @@ public final class RecordingAudioLibrary {
         self.storage = storage
     }
 
-    /// `raw` is `nil` when the untouched capture could not be kept. `RecordingMeta.rawStored`
-    /// already records that, and this does not second-guess it.
-    public func save(id: String, raw: Data?, sent: Data) async throws {
-        try await storage.save(id: id, raw: raw, sent: sent)
+    public func save(id: String, audio: Data) async throws {
+        try await storage.save(id: id, audio: audio)
     }
 
     public func delete(id: String) async {

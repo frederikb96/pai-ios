@@ -13,11 +13,12 @@ final class ComputerCallPresentationTests: XCTestCase {
         phase: String = "listening",
         sessionId: String? = nil,
         sessionName: String? = nil,
-        isSpeaking: Bool = false
+        isSpeaking: Bool = false,
+        hasEnded: Bool = false
     ) -> ComputerCallPresentation {
         ComputerCallPresentation.make(
             connectionState: connectionState, busOwner: busOwner, phase: phase,
-            sessionId: sessionId, sessionName: sessionName, isSpeaking: isSpeaking)
+            sessionId: sessionId, sessionName: sessionName, isSpeaking: isSpeaking, hasEnded: hasEnded)
     }
 
     /// The face follows the bus, and only the bus — nothing this screen asks for, and nothing it
@@ -41,36 +42,22 @@ final class ComputerCallPresentationTests: XCTestCase {
             .call(sessionId: "s-9", sessionName: nil))
     }
 
-    /// A take is open or it is not — so the control that opens one and the two that close one
-    /// can never be offered together.
-    func testStartAndTheTakeEndingControlsAreMutuallyExclusive() {
-        let recording = make(busOwner: .call, phase: "recording", sessionId: "s-1")
-        XCTAssertTrue(recording.enabledCommands.isSuperset(of: [.stop, .send]))
-        XCTAssertFalse(recording.enabledCommands.contains(.start))
-
-        let quiet = make(busOwner: .call, phase: "wake", sessionId: "s-1")
-        XCTAssertTrue(quiet.enabledCommands.contains(.start))
-        XCTAssertTrue(quiet.enabledCommands.isDisjoint(with: [.stop, .send]))
+    /// The same cases as the browser's `callControls.test.ts`, so the two clients offer the same
+    /// buttons in the same phase. Dictating: send-and-pause and send-and-go-to-Computer, never a
+    /// second "start dictating".
+    func testDictatingOffersStartAndStopOnly() {
+        XCTAssertEqual(make(busOwner: .call, phase: "recording", sessionId: "s-1").enabledCommands, [.start, .stop])
     }
 
-    /// A reply is spoken during the quiet phase too, and leaving for Computer costs nothing from
-    /// either phase — both are wrong to gate on a take being open.
-    func testSkipAndLeavingApplyInEitherPhase() {
-        for phase in ["recording", "wake"] {
-            let presentation = make(busOwner: .call, phase: phase, sessionId: "s-1")
-            XCTAssertTrue(
-                presentation.enabledCommands.isSuperset(of: [.skip, .listen]),
-                "expected skip and listen in phase \(phase)")
-        }
+    /// Paused: talk again, or go to Computer — nothing to send.
+    func testTheQuietPhaseOffersWakeAndStopOnly() {
+        XCTAssertEqual(make(busOwner: .call, phase: "wake", sessionId: "s-1").enabledCommands, [.wake, .stop])
     }
 
-    /// A phase a newer backend invents must not silently enable the pair that ends a take: this
-    /// build cannot know whether one is open, and offering Send against no take sends nothing
-    /// while looking like it sent something.
-    func testAnUnknownPhaseWillNotOfferToEndATakeItCannotSee() {
-        let presentation = make(busOwner: .call, phase: "transcribing", sessionId: "s-1")
-        XCTAssertTrue(presentation.enabledCommands.isDisjoint(with: [.stop, .send]))
-        XCTAssertTrue(presentation.enabledCommands.contains(.start))
+    /// A phase a newer backend invents must not enable sending a dictation this build cannot see.
+    func testAnUnknownPhaseIsTreatedAsTheQuietPhase() {
+        XCTAssertEqual(
+            make(busOwner: .call, phase: "transcribing", sessionId: "s-1").enabledCommands, [.wake, .stop])
     }
 
     /// Every one of these frames is dropped by the session while the socket is not active, so an
@@ -112,25 +99,10 @@ final class ComputerCallPresentationTests: XCTestCase {
     }
 }
 
-/// A call connected straight into a session (`hello.connect_session`) never had Computer on its
-/// bus at all — the backend answers "computer listen" there by closing the connection.
 extension ComputerCallPresentationTests {
-    func testACallWithNoComputerBehindItDoesNotOfferToGoBackToOne() {
-        let direct = ComputerCallPresentation.make(
-            connectionState: .active, busOwner: .call, phase: "wake", sessionId: "s-1",
-            sessionName: "Deploy", isSpeaking: false, canReturnToComputer: false)
-
-        XCTAssertFalse(direct.enabledCommands.contains(.listen))
-        // Everything else is untouched: the take controls are about the take, not about how the
-        // call was reached.
-        XCTAssertTrue(direct.enabledCommands.isSuperset(of: [.skip, .start]))
-    }
-
-    func testACallThatReachedComputerFirstStillOffersTheWayBack() {
-        let viaComputer = ComputerCallPresentation.make(
-            connectionState: .active, busOwner: .call, phase: "wake", sessionId: "s-1",
-            sessionName: "Deploy", isSpeaking: false, canReturnToComputer: true)
-
-        XCTAssertTrue(viaComputer.enabledCommands.contains(.listen))
+    /// Opening the voice screen before any call has been placed is not the aftermath of one.
+    func testTheIdleScreenSaysCallEndedOnlyAfterACallEnded() {
+        XCTAssertNotEqual(make(connectionState: .idle, hasEnded: false).status, "Call ended.")
+        XCTAssertEqual(make(connectionState: .idle, hasEnded: true).status, "Call ended.")
     }
 }

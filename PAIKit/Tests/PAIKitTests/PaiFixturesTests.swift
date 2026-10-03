@@ -67,6 +67,7 @@ final class PaiFixturesTests: XCTestCase {
             PaiFixtures.usageEmpty, PaiFixtures.secretStatuses,
             PaiFixtures.claudeAuthHealthy, PaiFixtures.claudeAuthUnknown, PaiFixtures.claudeAuthSignedOut,
             PaiFixtures.claudeAuthLoginInProgress, PaiFixtures.recordingClean, PaiFixtures.recordingDegraded,
+            PaiFixtures.debugRecordings, PaiFixtures.wakeWordRuns, PaiFixtures.spokenVoiceSettings,
             PaiFixtures.browseResult, PaiFixtures.outgoingPutDraftNew, PaiFixtures.outgoingPutDraftSession,
             PaiFixtures.outgoingPostMessageNewSession, PaiFixtures.outgoingPostMessageExistingSession,
             PaiFixtures.outgoingRenameSession, PaiFixtures.outgoingSetTitleLocked,
@@ -412,5 +413,17 @@ final class PaiFixturesTests: XCTestCase {
         let data = PaiFixtures.data(PaiFixtures.healthOk)
         let decoded = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         XCTAssertEqual(decoded?["status"] as? String, "ok")
+    }
+
+    /// The voice fixtures decode into the models the sheets read, so a field-name slip fails here
+    /// rather than as an empty sheet on a metered run.
+    func testTheVoiceFixturesDecodeIntoTheirModels() throws {
+        let decoder = JSONDecoder()
+        let list = try decoder.decode(DebugRecordingList.self, from: Data(PaiFixtures.debugRecordings.utf8))
+        XCTAssertEqual(list.recordings.count, 2)
+        let runs = try decoder.decode(WakeWordRunList.self, from: Data(PaiFixtures.wakeWordRuns.utf8))
+        XCTAssertEqual(runs.runs.first?.takes.count, 1)
+        let voice = try decoder.decode(SpokenVoiceSettings.self, from: Data(PaiFixtures.spokenVoiceSettings.utf8))
+        XCTAssertEqual(voice.sttKeyterms, ["Computer", "Kai", "PAI"])
     }
 }

@@ -38,16 +38,15 @@ public struct VoiceLogEntry: Sendable, Equatable {
 /// can group lines without guessing at spelling. Not exhaustive: any caller may pass its own
 /// string to ``VoiceDiagnosticsLog/log(_:_:_:at:)`` directly when none of these fit.
 public enum VoiceLogCategory: String, Sendable {
-    /// Take start/stop, call cycles, wake mode ⇄ recording mode.
+    /// Take start/stop, calls.
     case mode
     /// `ConnectionHealth` state transitions.
     case connectionHealth = "connection-health"
     /// Every `FeedbackEvent` — socket drops/reconnects, gaps, backfill, TTS drop/reconnect,
-    /// interruptions, command confirmations — whatever `VoiceFeedbackNotifier` turns into a cue or
-    /// a notification.
+    /// interruptions — whatever `VoiceFeedbackNotifier` turns into a cue or a notification.
     case feedback
-    /// A command the offline engine or the transcript fallback detected, with its score.
-    case command
+    /// The silence gate starting and ending a withheld stretch, and how a stop sequence ended.
+    case gate
     /// `AVAudioSession` route changes and interruptions.
     case audioSession = "audio-session"
     /// App foreground/background.

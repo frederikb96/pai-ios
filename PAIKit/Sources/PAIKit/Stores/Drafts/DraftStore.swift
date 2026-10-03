@@ -150,9 +150,13 @@ public final class DraftStore {
     }
 
     /// Launch choices for the next session, held in the `new` draft only.
+    /// Any type but Custom drops a previously chosen directory, the same coupling as
+    /// `selectWorkingDir` from the other side — or a relaunch restores the directory and with it
+    /// the custom session the type pill said it was not.
     public func selectSessionType(_ id: String?) {
         var entry = draft(for: DraftKey.newSession)
         entry.sessionType = id
+        if id != "custom" { entry.workingDir = nil }
         drafts[DraftKey.newSession] = entry
         scheduleFlush(DraftKey.newSession)
     }

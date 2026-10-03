@@ -1,7 +1,7 @@
 import Foundation
 
 /// Wraps raw 16-bit little-endian mono PCM in a minimal WAV container — what the batch
-/// re-transcription endpoint and the "attach as file" action both need, and what
+/// re-transcription endpoint and the wake-word sample upload both need, and what
 /// `RecordingAudioStorage` stores. Mirrors the web's `wrapPcmAsWav`: no compression, no extra
 /// chunks, just the 44-byte canonical header in front of the samples.
 ///
@@ -10,6 +10,20 @@ import Foundation
 /// section states for everything here: what needs no Apple framework is proven on Linux for
 /// free, and only *where* the bytes land on disk is a real-device concern.
 public enum PcmWavWriter {
+    /// The 16-bit little-endian samples in raw PCM bytes — the inverse of what `wrap` writes
+    /// after its header. A trailing odd byte is ignored.
+    public static func samples(fromPCM16LE data: Data) -> [Int16] {
+        let bytes = [UInt8](data)
+        var samples: [Int16] = []
+        samples.reserveCapacity(bytes.count / 2)
+        var index = 0
+        while index + 1 < bytes.count {
+            samples.append(Int16(bitPattern: UInt16(bytes[index]) | (UInt16(bytes[index + 1]) << 8)))
+            index += 2
+        }
+        return samples
+    }
+
     public static func wrap(pcm16le samples: [Int16], sampleRate: Int) -> Data {
         var data = header(sampleRate: sampleRate, dataSize: UInt32(samples.count * 2))
         data.reserveCapacity(44 + samples.count * 2)

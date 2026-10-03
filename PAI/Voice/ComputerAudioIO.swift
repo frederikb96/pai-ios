@@ -56,7 +56,7 @@ final class ComputerAudioIO: @unchecked Sendable {
     }
 
     /// Activates the session, wires the microphone tap, and readies the player — mirrors
-    /// `MicrophoneCapture.start(targetSampleRate:)`'s shape, plus the downlink half it has no use
+    /// `MicrophoneCapture.start()`'s shape, plus the downlink half it has no use
     /// for.
     func start() throws {
         try activateSession()

@@ -63,10 +63,10 @@ final class VoiceFeedbackNotifier {
     private static func logLevel(for event: FeedbackEvent) -> VoiceLogLevel {
         switch event {
         case .connectionDropped, .serverNotice, .mintFailed, .fatalProtocolError, .captureGaveUp, .backfillFailed,
-            .ttsDropped, .ttsRejected, .replyNotSpoken, .commandModelMissing, .recordingStartFailed, .sendFailed:
+            .ttsDropped, .ttsRejected, .replyNotSpoken, .recordingStartFailed, .sendFailed:
             .warning
         case .reconnected, .gapOpened, .backfillCompleted, .captureRestarted, .interruptionPaused,
-            .interruptionResumed, .ttsReconnected, .commandRecognized:
+            .interruptionResumed, .ttsReconnected:
             .info
         case .callEndedUnexpectedly:
             .warning
@@ -93,8 +93,6 @@ final class VoiceFeedbackNotifier {
         case .replyNotSpoken: "a reply was not spoken"
         case .recordingStartFailed(let reason): "call recording could not connect: \(reason)"
         case .sendFailed: "call turn was not sent"
-        case .commandRecognized(let kind): "command recognized: \(kind.rawValue)"
-        case .commandModelMissing: "no offline model bundled for the \"computer\" wake word"
         case .callEndedUnexpectedly(let hadUnsentText): "call ended unexpectedly (unsent text: \(hadUnsentText))"
         }
     }
@@ -181,12 +179,10 @@ final class VoiceFeedbackNotifier {
             // be wrong exactly when it matters most, encouraging a duplicate send.
             return
                 "Your message may not have gone through — the text is back in the draft. Check before sending it again."
-        case .commandModelMissing:
-            return "The \"computer\" wake word has no offline model bundled yet — a call won't start listening for it."
         case .callEndedUnexpectedly(let hadUnsentText):
             return hadUnsentText
                 ? "The call ended — your unsent text is in the draft." : "The call ended."
-        case .interruptionPaused, .interruptionResumed, .commandRecognized:
+        case .interruptionPaused, .interruptionResumed:
             // `FeedbackPolicy` never emits a `notify` for these — a cue only, no notification.
             return ""
         }

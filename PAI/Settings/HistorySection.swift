@@ -19,6 +19,8 @@ struct HistorySection: View {
     @State private var showingRecordings = false
     @State private var showingSentMessages = false
     @State private var showingVoiceLog = false
+    @State private var showingDebugRecordings = false
+    @State private var showingWakeWordSamples = false
 
     var body: some View {
         Section {
@@ -30,8 +32,8 @@ struct HistorySection: View {
                 }
                 .accessibilityIdentifier("open-recordings")
                 .sheet(isPresented: $showingRecordings) {
-                    // No composer behind this screen, so no insert and no attach — the sheet
-                    // draws neither when they are absent.
+                    // No composer behind this screen: the transcript icon shows the text to copy
+                    // and the voice log is shared rather than attached.
                     RecordingsSheet(controller: voice)
                 }
             }
@@ -51,10 +53,39 @@ struct HistorySection: View {
                 .sheet(isPresented: $showingVoiceLog) {
                     VoiceDiagnosticsLogSheet()
                 }
+
+            if let connection = environment.connection {
+                Button("Debug Recordings") { showingDebugRecordings = true }
+                    .accessibilityIdentifier("open-debug-recordings")
+                    .sheet(isPresented: $showingDebugRecordings) {
+                        DebugRecordingsSheet(
+                            apiClient: connection.apiClient,
+                            microphoneBusy: {
+                                connection.voice.state != .idle || connection.voice.isRecordingOffline
+                                    || connection.computerCall.isLive || connection.wakeWordSamples.isRunning
+                            })
+                    }
+
+                Button("Wake-word Samples") { showingWakeWordSamples = true }
+                    .accessibilityIdentifier("open-wake-word-samples")
+                    .sheet(isPresented: $showingWakeWordSamples) {
+                        NavigationStack {
+                            WakeWordSampleScreen(controller: connection.wakeWordSamples)
+                                .toolbar {
+                                    ToolbarItem(placement: .cancellationAction) {
+                                        Button("Done") { showingWakeWordSamples = false }
+                                    }
+                                }
+                        }
+                    }
+            }
         } header: {
             Text("History")
         } footer: {
-            Text("Recordings and sent messages are kept on this device only, ten of each.")
+            Text(
+                "Recordings and sent messages are kept on this device only, ten of each. Debug recordings and "
+                    + "wake-word samples live on the server, so every device sees the same ones."
+            )
         }
     }
 }
@@ -124,7 +155,8 @@ struct VoiceDiagnosticsLogSheet: View {
                     .accessibilityIdentifier("clear-voice-log")
                 } footer: {
                     Text(
-                        "What the voice pipeline did on this device — mode changes, connection drops, commands heard."
+                        "What the voice pipeline did on this device — mode changes, connection drops, the silence gate. "
+                            + "Rotates by itself at a few MB."
                     )
                 }
             }

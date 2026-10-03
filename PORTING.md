@@ -344,6 +344,27 @@ call into its own session, the composer's "Call this session" item appearing onl
 live, and the session list's leading swipe to close. Each is one tap against a real backend, and
 none of them has been run.
 
+### Verify: dictation audio on a real phone — 16 kHz capture, the silence gate, the stop tail — pai-cloud anchor: `docs/VOICE_PROTOCOL.md` "Withheld silence"
+Needs `PAI/` because: `MicrophoneCapture` converts every route to 16 kHz through `AVAudioConverter`
+and the controller's stop keeps capture open 300 ms then drains every queued chunk before the gate
+closes — both live in the app target. The gate's decisions (`SilenceGate`) and the uplink's
+handling of them are unit-tested; that the converter really delivers 16 kHz on the phone mic, an
+AirPods route and an 8 kHz HFP headset, that the overlay dims while withholding, and that the last
+word before stop now arrives, needs a device and the backend's debug recordings to hear.
+
+### Verify: the wake-word sample recorder and the debug recordings sheet — pai-cloud anchor: `backend/src/pai_cloud/voice/wake_corpus.py`, `recordings_router.py`
+Needs `PAI/` because: `WakeWordSampleCaptureController` records through `ComputerAudioIO`'s call
+path and `DebugRecordingsSheet` plays a downloaded WAV through `AVAudioPlayer` — neither runs off a
+device. The run sequencing and the upload queue (order, offline survival, a run deleted on the web)
+are unit-tested; Start/Next/Stop latency, a headset change ending a run, and playback over a live
+call's audio session are not.
+
+### Verify: the three voice-settings groups and the call controls — pai-cloud anchor: `web/src/components/SettingsPanel.tsx`, `web/src/components/CallControls.tsx`
+Needs `PAI/` because: `SpokenVoiceSection` is now three `Form` sections with links, a key-terms
+field whose error replaces Save, and `ComputerCallView` shows Talk / Send / Computer for the call's
+`wake`/`start`/`stop` commands. `SpokenVoiceSettingsDraft` and `ComputerCallPresentation` are
+unit-tested; the layout is not.
+
 ## A search hit inside an expanded Thinking card does not scroll to the hit
 
 Needs a device or a Mac run to fix and to verify, which is why it is here.

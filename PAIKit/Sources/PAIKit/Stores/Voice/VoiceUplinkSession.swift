@@ -15,6 +15,12 @@ public struct VoiceUplinkDependencies: Sendable {
     public var sleep: @Sendable (Duration) async -> Void
     public var feedback: @Sendable (FeedbackEvent) -> Void
     public var connectionEvent: @Sendable (ConnectionHealthEvent) -> Void
+    /// The client-local gate setting, read once per take; `nil` runs the take with no gate.
+    public var silenceGate: @Sendable () -> SilenceGateSettings?
+    /// This phone and its current microphone, sent on every `hello`.
+    public var device: @Sendable () -> VoiceDeviceInfo?
+    /// One line for the voice diagnostics log.
+    public var log: @Sendable (String) -> Void
 
     public init(
         makeTransport: @escaping @Sendable () -> any VoiceSocketTransportProtocol,
@@ -23,7 +29,10 @@ public struct VoiceUplinkDependencies: Sendable {
         now: @escaping @Sendable () -> Date = Date.init,
         sleep: @escaping @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) },
         feedback: @escaping @Sendable (FeedbackEvent) -> Void = { _ in },
-        connectionEvent: @escaping @Sendable (ConnectionHealthEvent) -> Void = { _ in }
+        connectionEvent: @escaping @Sendable (ConnectionHealthEvent) -> Void = { _ in },
+        silenceGate: @escaping @Sendable () -> SilenceGateSettings? = { nil },
+        device: @escaping @Sendable () -> VoiceDeviceInfo? = { nil },
+        log: @escaping @Sendable (String) -> Void = { _ in }
     ) {
         self.makeTransport = makeTransport
         self.socketURL = socketURL
@@ -32,6 +41,9 @@ public struct VoiceUplinkDependencies: Sendable {
         self.sleep = sleep
         self.feedback = feedback
         self.connectionEvent = connectionEvent
+        self.silenceGate = silenceGate
+        self.device = device
+        self.log = log
     }
 }
 
@@ -97,11 +109,11 @@ public final class VoiceUplinkSession {
     static let watchdogTimeoutSeconds: TimeInterval = 12
 
     /// How long `stop()` waits, once the gate is closed, for `take_done` to arrive before giving
-    /// up and closing anyway — the stop-recording design's own D1. Comfortably below the
-    /// backend's own worst case (a ~25s forced-commit ceiling plus one batch request): those are
-    /// exactly the slow cases where the honest answer is "still transcribing, the rest is
-    /// coming", not a longer wait.
-    public static let finishingDeadlineSeconds: TimeInterval = 8
+    /// up and closing anyway — above the backend's own worst case for finishing a take (its
+    /// commit ceiling plus a batch recovery of the tail), so the last words are waited for rather
+    /// than cut off. The finishing control stays pressable meanwhile, so leaving early is always
+    /// a choice rather than a timeout.
+    public static let finishingDeadlineSeconds: TimeInterval = 30
 
     public private(set) var state: VoiceRecordingState = .idle
     public private(set) var isMuted = false
@@ -118,6 +130,11 @@ public final class VoiceUplinkSession {
     /// still say about why.
     public private(set) var lastDisconnectDetail: String?
     public private(set) var lastNotice: (severity: String, code: String, text: String)?
+    /// The silence gate is holding the microphone back right now — what the volume overlay dims
+    /// for.
+    public var isWithholding: Bool { gate?.isWithholding ?? false }
+    /// The level gate for this take, built from the setting at start.
+    private var gate: SilenceGate?
 
     /// One committed segment, addressed by its take-absolute end sample rather than by arrival
     /// order — a batch-recovered stretch for an earlier gap can arrive after live segments that
@@ -147,6 +164,12 @@ public final class VoiceUplinkSession {
         committedSegments.sorted { ($0.absoluteEndSample, $0.seq) < ($1.absoluteEndSample, $1.seq) }
             .map(\.text)
             .joined(separator: " ")
+    }
+    /// The same committed segments, placed by their take-absolute end sample — what the take's
+    /// ledger keeps as its live text.
+    public var committedLiveText: [LiveTextSegment] {
+        committedSegments.sorted { ($0.absoluteEndSample, $0.seq) < ($1.absoluteEndSample, $1.seq) }
+            .map { LiveTextSegment(endSample: $0.absoluteEndSample, text: $0.text) }
     }
     /// The current take's own live partial — replaced whole by every `is_final: false` frame,
     /// cleared the moment its words are committed. Never persisted anywhere on its own; a caller
@@ -258,6 +281,7 @@ public final class VoiceUplinkSession {
         highestAppliedSeq = -1
         lastTakeDone = nil
         abandonedTakeIds = []
+        gate = dependencies.silenceGate().map { SilenceGate(settings: $0) }
 
         guard let token = dependencies.authToken(), !token.isEmpty else {
             lastStartFailure = .notAuthenticated
@@ -286,10 +310,12 @@ public final class VoiceUplinkSession {
             try await transport.send(
                 .hello(
                     transport: VoiceSocketProtocol.transportName,
-                    caps: VoiceSocketCapabilities(audioDownlink: true, dtmf: false),
+                    caps: VoiceSocketCapabilities(
+                        audioDownlink: true, dtmf: false, silenceGate: gate?.settings.enabled == true),
                     auth: token,
                     resumeToken: resumeToken,
-                    draftKey: currentDraftKey
+                    draftKey: currentDraftKey,
+                    device: dependencies.device()
                 )
             )
         } catch {
@@ -340,8 +366,12 @@ public final class VoiceUplinkSession {
 
     private func handle(_ frame: VoiceDownFrame) async {
         switch frame {
-        case let .ready(newResumeToken, _, resumed, _):
+        case let .ready(newResumeToken, _, resumed, _, silenceAllowed):
             resumeToken = newResumeToken
+            // A fresh connection starts streaming with no memory of the room; whatever a gate
+            // decided while the socket was down is settled here rather than queued.
+            gate?.reset()
+            _ = gate?.setAllowed(silenceAllowed)
             reconnectAttempt = 0
             dependencies.connectionEvent(.mintSucceeded)
             let wasReconnecting = state == .reconnecting
@@ -389,11 +419,18 @@ public final class VoiceUplinkSession {
             if let acked = inFlight[throughSeq] {
                 ackedUpTo = max(ackedUpTo, acked)
             }
+            if let gate {
+                ackedUpTo = gate.accountedWatermark(acked: ackedUpTo, capturedUpTo: capturedUpTo)
+            }
             inFlight = inFlight.filter { $0.key > throughSeq }
         case .clear:
             break
-        case let .state(_, phase, _, _):
+        case let .state(_, phase, _, _, silenceAllowed):
             lastNotice = phase == "listening" ? nil : lastNotice
+            let wasWithholding = isWithholding
+            if let output = gate?.setAllowed(silenceAllowed) {
+                await sendGated(output, resumed: wasWithholding && !isWithholding)
+            }
         case let .notice(severity, code, text):
             lastNotice = (severity, code, text)
             if code == VoiceNoticeCode.authExpired {
@@ -509,15 +546,54 @@ public final class VoiceUplinkSession {
     /// resamples to the transport rate first, this never does its own conversion, and a chunk
     /// arriving while `canIngestAudio` is false is silently dropped (the recorder itself never
     /// stops — only this session's opinion about sending it changes).
+    ///
+    /// With a silence gate, every chunk goes through it first: a withheld chunk is neither sent
+    /// nor queued, and once the backend has acknowledged everything up to where withholding
+    /// began, it counts as accounted for — recorded locally, never sent, never backfilled.
     public func ingestAudioChunk(pcm16le samples: [Int16], at offset: Int) async {
         guard canIngestAudio, !samples.isEmpty else { return }
         capturedUpTo = max(capturedUpTo, offset + samples.count)
         let toSend = isMuted ? [Int16](repeating: 0, count: samples.count) : samples
-        guard state == .recording, let transport else {
-            pendingChunks.append((offset, toSend))
+        guard var gate else {
+            await sendOrQueue(offset: offset, samples: toSend)
             return
         }
-        await send(offset: offset, samples: toSend, transport: transport)
+        let wasWithholding = gate.isWithholding
+        let output = gate.push(offset: offset, samples: toSend)
+        ackedUpTo = gate.accountedWatermark(acked: ackedUpTo, capturedUpTo: capturedUpTo)
+        self.gate = gate
+        await sendGated(output, resumed: wasWithholding && !gate.isWithholding)
+    }
+
+    /// Re-measures the room after the microphone changed, and tells the backend which one it is.
+    public func inputRouteChanged() async {
+        gate?.reset()
+        guard state == .recording, let transport, let device = dependencies.device() else { return }
+        try? await transport.send(.device(device))
+    }
+
+    private func sendGated(_ output: SilenceGate.Output, resumed: Bool) async {
+        if resumed {
+            let samples = output.send.reduce(0) { $0 + $1.samples.count }
+            dependencies.log("gate resume preroll_ms=\(samples * 1000 / VoiceSocketProtocol.audioUplinkHz)")
+        }
+        for frame in output.send {
+            await sendOrQueue(offset: frame.offset, samples: frame.samples)
+        }
+        // Only on a live socket: a `silence` decided while disconnected is never queued, since
+        // the gate resets on the `ready` that ends the outage anyway.
+        if let atSample = output.silenceAt, state == .recording, let transport {
+            dependencies.log("gate withhold at_sample=\(atSample) mode=\(gate?.settings.mode.rawValue ?? "-")")
+            try? await transport.send(.silence(atSample: atSample))
+        }
+    }
+
+    private func sendOrQueue(offset: Int, samples: [Int16]) async {
+        guard state == .recording, let transport else {
+            pendingChunks.append((offset, samples))
+            return
+        }
+        await send(offset: offset, samples: samples, transport: transport)
     }
 
     private func send(offset: Int, samples: [Int16], transport: any VoiceSocketTransportProtocol) async {
@@ -622,6 +698,10 @@ public final class VoiceUplinkSession {
         state = .stopping
         let takeId = currentTakeId
         if wasConnected, let transport {
+            // Stopped while withholding: the ring goes out only if it caught the start of speech.
+            for frame in gate?.stopFlush() ?? [] where !abandon {
+                await send(offset: frame.offset, samples: frame.samples, transport: transport)
+            }
             try? await transport.send(.gate(open: false, reason: abandon ? "abandon" : "button"))
             if !abandon, let takeId {
                 await waitForTakeDone(takeId: takeId)

@@ -120,73 +120,47 @@ struct ComputerCallView: View {
 
     // MARK: - Call controls
 
-    /// Row 54's list, as buttons. The three that shape the take sit together and keep their
-    /// positions; leaving for Computer sits apart from them, and ending the call apart again —
-    /// the two irreversible-feeling things are the two that are not under the thumb.
+    /// The two spoken commands and the wake word, as buttons — the same row the browser's call
+    /// panel shows. Each keeps its position whatever the phase; a control that does nothing right
+    /// now is drawn disabled rather than moved, so the row is learnt by position.
     @ViewBuilder
     private func callControls(presentation: ComputerCallPresentation, controller: ComputerCallController)
         -> some View
     {
-        let isRecording = presentation.enabledCommands.contains(.stop)
-        VStack(spacing: 16) {
-            HStack(spacing: 28) {
-                commandButton(
-                    .skip, systemImage: "forward.end.fill", label: "Skip the reply",
-                    identifier: "computer-call-skip", presentation: presentation, controller: controller
-                )
-                // Start and Stop are one control because they cannot both apply: a take is open
-                // or it is not. Same shape as the composer's own mic button, which is the
-                // gesture this is learnt from.
-                takeButton(isRecording: isRecording, presentation: presentation, controller: controller)
-                commandButton(
-                    .send, systemImage: "arrow.up.circle.fill", label: "Send the message",
-                    identifier: "computer-call-send", presentation: presentation, controller: controller
-                )
-            }
-            Button {
-                Task { await controller.send(command: .listen) }
-            } label: {
-                Label("Back to Computer", systemImage: "arrow.uturn.backward")
-                    .font(PaiTypography.body.font)
-            }
-            .disabled(!presentation.enabledCommands.contains(.listen))
-            .accessibilityIdentifier("computer-call-listen")
+        HStack(spacing: 28) {
+            commandButton(
+                .wake, systemImage: "mic.fill", title: "Talk", label: "Start dictating",
+                identifier: "computer-call-wake", presentation: presentation, controller: controller
+            )
+            commandButton(
+                .start, systemImage: "arrow.up.circle.fill", title: "Send", label: "Send and pause",
+                identifier: "computer-call-send", presentation: presentation, controller: controller
+            )
+            commandButton(
+                .stop, systemImage: "arrow.uturn.backward", title: "Computer",
+                label: "Send and go back to Computer", identifier: "computer-call-stop",
+                presentation: presentation, controller: controller
+            )
         }
-    }
-
-    @ViewBuilder
-    private func takeButton(
-        isRecording: Bool, presentation: ComputerCallPresentation, controller: ComputerCallController
-    ) -> some View {
-        let command: VoiceCallCommand = isRecording ? .stop : .start
-        Button {
-            Task { await controller.send(command: command) }
-        } label: {
-            Image(systemName: isRecording ? "stop.fill" : "mic.fill")
-                .font(.system(size: 28, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 72, height: 72)
-                .background(isRecording ? PaiPalette.amber500 : PaiPalette.primary500, in: Circle())
-                .opacity(presentation.enabledCommands.contains(command) ? 1 : 0.4)
-        }
-        .disabled(!presentation.enabledCommands.contains(command))
-        .accessibilityLabel(isRecording ? "Stop the message" : "Start dictating")
-        .accessibilityIdentifier("computer-call-take")
     }
 
     @ViewBuilder
     private func commandButton(
-        _ command: VoiceCallCommand, systemImage: String, label: String, identifier: String,
+        _ command: VoiceCallCommand, systemImage: String, title: String, label: String, identifier: String,
         presentation: ComputerCallPresentation, controller: ComputerCallController
     ) -> some View {
         let enabled = presentation.enabledCommands.contains(command)
         Button {
             Task { await controller.send(command: command) }
         } label: {
-            Image(systemName: systemImage)
-                .font(.system(size: 26, weight: .semibold))
-                .foregroundStyle(enabled ? PaiPalette.primary500 : PaiPalette.Semantic.textFaint)
-                .frame(width: 56, height: 56)
+            VStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 26, weight: .semibold))
+                    .frame(width: 56, height: 56)
+                Text(title)
+                    .font(PaiTypography.caption.font)
+            }
+            .foregroundStyle(enabled ? PaiPalette.primary500 : PaiPalette.Semantic.textFaint)
         }
         .disabled(!enabled)
         .accessibilityLabel(label)
@@ -244,7 +218,7 @@ struct ComputerCallView: View {
                 .flatMap { sessions.session(withId: $0) }
                 .map { SessionListFormat.displayTitle(for: $0) },
             isSpeaking: controller.isSpeaking,
-            canReturnToComputer: controller.session.directSessionId == nil
+            hasEnded: controller.session.lastEndReason != nil
         )
     }
 }

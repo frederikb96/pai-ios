@@ -30,12 +30,7 @@ public enum FeedbackEvent: Sendable, Equatable {
     case recordingStartFailed(reason: String)
     /// A call's turn was not sent — refused or failed. Its text is back in the draft.
     case sendFailed
-    case commandRecognized(CommandKind)
-    /// The "computer" wake-word classifier has no `.onnx` file in the app bundle — a call is
-    /// silently unreachable by voice until this is fixed, never a crash. Always carries `.start`,
-    /// the only command the offline engine ever means.
-    case commandModelMissing(CommandKind)
-    /// A call ended for a reason other than a deliberate End tap — a spoken "computer quit", or a
+    /// A call ended for a reason other than a deliberate End tap — Computer hanging up, or a
     /// teardown neither channel asked for. Worth its own cue and notification: the whole point of
     /// call mode is running hands-free with the phone out of sight, so an ending Freddy did not
     /// just watch happen on screen needs telling about, especially when `hadUnsentText` — the
@@ -47,7 +42,4 @@ public enum FeedbackEvent: Sendable, Equatable {
 /// actually synthesizes one.
 public enum EarconKind: Sendable, Equatable {
     case drop, reconnect, healed, error, pause
-    /// One tone per command, distinct per command — exempt from `FeedbackPolicy`'s rate
-    /// limiting, since a swallowed confirmation is worse than a chatty one.
-    case command(CommandKind)
 }

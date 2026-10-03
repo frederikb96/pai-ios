@@ -208,8 +208,11 @@ public final class CreateSessionStore {
         applyPreselectionIfNeeded()
     }
 
+    /// Any type but Custom drops a previously browsed directory: the directory is what makes a
+    /// session custom, and a create carrying one launches there whatever type it names.
     public func selectSessionType(_ id: String) {
         selectedSessionTypeId = id
+        if id != "custom" { workingDir = nil }
     }
 
     public func selectModel(_ id: String?) {

@@ -118,13 +118,15 @@ final class ComputerCallSessionTests: XCTestCase {
 
         let startTask = Task { await session.start() }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
+            .control(
+                .ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil, silenceAllowed: false)))
         await waitUntil { session.connectionState == .active }
 
         await transport.failReceives(detail: "dropped")
         await waitUntil { session.connectionState == .reconnecting }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r2", busOwner: .computer, resumed: true, sessionId: nil)))
+            .control(
+                .ready(resumeToken: "r2", busOwner: .computer, resumed: true, sessionId: nil, silenceAllowed: false)))
         await waitUntil { feedback.events.contains(.reconnected) }
 
         XCTAssertEqual(
@@ -144,7 +146,8 @@ final class ComputerCallSessionTests: XCTestCase {
 
         let startTask = Task { await session.start() }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
+            .control(
+                .ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil, silenceAllowed: false)))
         await waitUntil { session.connectionState == .active }
 
         await transport.failReceives(detail: "close 1000 computer quit the call")
@@ -163,7 +166,8 @@ final class ComputerCallSessionTests: XCTestCase {
 
         let startTask = Task { await session.start() }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
+            .control(
+                .ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil, silenceAllowed: false)))
         await waitUntil { session.connectionState == .active }
 
         await session.end()
@@ -183,7 +187,7 @@ final class ComputerCallSessionTests: XCTestCase {
 
         let frames = await transport.sentFrames
         guard
-            case let .hello(transportName, caps, _, resumeToken, draftKey, connectSession) =
+            case let .hello(transportName, caps, _, resumeToken, draftKey, connectSession, _) =
                 frames.first
         else {
             return XCTFail("expected a hello frame, got \(String(describing: frames.first))")
@@ -211,7 +215,7 @@ final class ComputerCallSessionTests: XCTestCase {
         await waitUntil { await !transport.sentFrames.isEmpty }
 
         let frames = await transport.sentFrames
-        guard case let .hello(_, _, _, _, draftKey, connectSession) = frames.first else {
+        guard case let .hello(_, _, _, _, draftKey, connectSession, _) = frames.first else {
             return XCTFail("expected a hello frame, got \(String(describing: frames.first))")
         }
         XCTAssertEqual(connectSession, "s-42")
@@ -234,7 +238,8 @@ final class ComputerCallSessionTests: XCTestCase {
 
         let startTask = Task { await session.start() }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
+            .control(
+                .ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil, silenceAllowed: false)))
         await waitUntil { await transport.sentFrames.count >= 2 }
 
         XCTAssertEqual(session.connectionState, .active)
@@ -261,17 +266,18 @@ final class ComputerCallSessionTests: XCTestCase {
 
         let startTask = Task { await session.start() }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .call, resumed: false, sessionId: "s-1")))
+            .control(
+                .ready(resumeToken: "r1", busOwner: .call, resumed: false, sessionId: "s-1", silenceAllowed: false)))
         await waitUntil { session.connectionState == .active }
 
-        await session.send(command: .send)
-        await waitUntil { await transport.sentFrames.contains(.command(.send)) }
+        await session.send(command: .start)
+        await waitUntil { await transport.sentFrames.contains(.command(.start)) }
 
         // Decoded rather than string-compared: `JSONSerialization` does not promise key order,
         // and the backend reads fields by name.
-        let encoded = try XCTUnwrap(VoiceUpFrame.command(.send).encoded().data(using: .utf8))
+        let encoded = try XCTUnwrap(VoiceUpFrame.command(.start).encoded().data(using: .utf8))
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: String])
-        XCTAssertEqual(object, ["type": "command", "kind": "send"])
+        XCTAssertEqual(object, ["type": "command", "kind": "start"])
 
         await session.end()
         _ = await startTask.value
@@ -286,11 +292,12 @@ final class ComputerCallSessionTests: XCTestCase {
 
         let startTask = Task { await session.start() }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
+            .control(
+                .ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil, silenceAllowed: false)))
         await waitUntil { session.connectionState == .active }
         let before = await transport.sentFrames.count
 
-        await session.send(command: .skip)
+        await session.send(command: .stop)
 
         let after = await transport.sentFrames.count
         XCTAssertEqual(before, after)
@@ -307,11 +314,15 @@ final class ComputerCallSessionTests: XCTestCase {
 
         let startTask = Task { await session.start() }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
+            .control(
+                .ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil, silenceAllowed: false)))
         await waitUntil { await transport.sentFrames.count >= 2 }
 
         await transport.enqueue(
-            .control(.state(busOwner: .call, phase: "recording", sessionId: "session-9", checkpoint: nil)))
+            .control(
+                .state(
+                    busOwner: .call, phase: "recording", sessionId: "session-9", checkpoint: nil, silenceAllowed: false)
+            ))
         await waitUntil { session.busOwner == .call }
 
         XCTAssertEqual(session.phase, "recording")
@@ -340,7 +351,8 @@ final class ComputerCallSessionTests: XCTestCase {
 
         let startTask = Task { await session.start() }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
+            .control(
+                .ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil, silenceAllowed: false)))
         await waitUntil { session.connectionState == .active }
 
         await transport.enqueue(.audio(ref: 3, pcm: Data([1, 2, 3, 4])))
@@ -363,7 +375,8 @@ final class ComputerCallSessionTests: XCTestCase {
 
         let startTask = Task { await session.start() }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
+            .control(
+                .ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil, silenceAllowed: false)))
         await waitUntil { session.connectionState == .active }
 
         await transport.enqueue(.control(.clear))
@@ -384,7 +397,8 @@ final class ComputerCallSessionTests: XCTestCase {
 
         let startTask = Task { await session.start() }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
+            .control(
+                .ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil, silenceAllowed: false)))
         await waitUntil { session.connectionState == .active }
 
         await session.notePlayed(ref: 7)
@@ -412,7 +426,8 @@ final class ComputerCallSessionTests: XCTestCase {
 
         let startTask = Task { await session.start() }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
+            .control(
+                .ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil, silenceAllowed: false)))
         await waitUntil { session.connectionState == .active }
 
         await transport.failReceives(detail: "close 1000: computer ended the call")
@@ -436,7 +451,8 @@ final class ComputerCallSessionTests: XCTestCase {
 
         let startTask = Task { await session.start() }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
+            .control(
+                .ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil, silenceAllowed: false)))
         await waitUntil { session.connectionState == .active }
 
         await transport.failReceives(detail: nil)
@@ -456,7 +472,8 @@ final class ComputerCallSessionTests: XCTestCase {
 
         let startTask = Task { await session.start() }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
+            .control(
+                .ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil, silenceAllowed: false)))
         await waitUntil { session.connectionState == .active }
 
         await session.end()
@@ -483,10 +500,13 @@ final class ComputerCallSessionTests: XCTestCase {
 
         let startTask = Task { await session.start() }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
+            .control(
+                .ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil, silenceAllowed: false)))
         await waitUntil { session.connectionState == .active }
 
-        await transport.enqueue(.control(.ready(resumeToken: "r1", busOwner: .computer, resumed: true, sessionId: nil)))
+        await transport.enqueue(
+            .control(
+                .ready(resumeToken: "r1", busOwner: .computer, resumed: true, sessionId: nil, silenceAllowed: false)))
         for _ in 0..<20 { await Task.yield() }
 
         let frames = await transport.sentFrames
@@ -505,7 +525,8 @@ final class ComputerCallSessionTests: XCTestCase {
 
         let startTask = Task { await session.start() }
         await transport.enqueue(
-            .control(.ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil)))
+            .control(
+                .ready(resumeToken: "r1", busOwner: .computer, resumed: false, sessionId: nil, silenceAllowed: false)))
         await waitUntil { session.connectionState == .active }
 
         await session.sendMicChunk(pcm16le: [1, 2, 3])
@@ -513,7 +534,9 @@ final class ComputerCallSessionTests: XCTestCase {
 
         // A rotated token on the SAME bus — the case a token-comparison inference would have
         // misread as a fresh bus.
-        await transport.enqueue(.control(.ready(resumeToken: "r2", busOwner: .computer, resumed: true, sessionId: nil)))
+        await transport.enqueue(
+            .control(
+                .ready(resumeToken: "r2", busOwner: .computer, resumed: true, sessionId: nil, silenceAllowed: false)))
         for _ in 0..<20 { await Task.yield() }
 
         await session.sendMicChunk(pcm16le: [4, 5, 6])

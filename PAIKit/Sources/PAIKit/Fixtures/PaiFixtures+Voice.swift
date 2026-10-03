@@ -93,10 +93,47 @@ extension PaiFixtures {
     /// and the one every fallback has to work from.
     public static let spokenVoiceSettings: String = #"""
         {
-          "computer_voice": null, "computer_delivery": null,
-          "call_voice_id": null, "call_speed": 1.0,
-          "updated_at": "2026-09-20T12:00:00Z"
+          "computer_voice": "cedar", "computer_delivery": null, "computer_speed": 1.25,
+          "call_voice_id": null, "call_speed": 1.2,
+          "stt_keyterms": ["Computer", "Kai", "PAI"], "stt_language": null, "stt_no_verbatim": false,
+          "debug_recordings_enabled": true,
+          "updated_at": "2026-09-20T12:00:00.123456+00:00"
         }
+        """#
+
+    // MARK: - Debug recordings and wake-word samples
+
+    public static let debugRecordings: String = #"""
+        {"enabled": true, "recordings": [
+          {"id": "6f1c2d3e-0000-4000-8000-000000000001", "kind": "dictation",
+           "engine": "elevenlabs_realtime", "model": "scribe_v2_realtime", "transport": "ios",
+           "device": "iPhone · iOS 26.0", "mics": ["iPhone Microphone"],
+           "bus_id": "6f1c2d3e-0000-4000-8000-0000000000aa", "session_id": null, "session_title": null,
+           "take_id": "1798610000000", "sample_rate": 16000, "encoding": "pcm_s16le", "channels": 1,
+           "started_at": "2026-10-03T10:15:02.123456+00:00", "ended_at": "2026-10-03T10:15:44.501234+00:00",
+           "duration_ms": 42000, "byte_count": 1344000, "peak_dbfs": -4.2, "rms_dbfs": -27.9,
+           "clipped_samples": 0, "status": "complete", "end_reason": "stopped", "truncated": false,
+           "events": []},
+          {"id": "6f1c2d3e-0000-4000-8000-000000000002", "kind": "computer",
+           "engine": "openai_realtime", "model": "gpt-realtime", "transport": "twilio",
+           "device": null, "mics": [],
+           "bus_id": "6f1c2d3e-0000-4000-8000-0000000000bb", "session_id": null, "session_title": null,
+           "take_id": null, "sample_rate": 24000, "encoding": "pcm_s16le", "channels": 1,
+           "started_at": "2026-10-03T09:02:11.000001+00:00", "ended_at": "2026-10-03T09:04:30.000001+00:00",
+           "duration_ms": 139000, "byte_count": 6672000, "peak_dbfs": -1.0, "rms_dbfs": -30.5,
+           "clipped_samples": 12, "status": "complete", "end_reason": "call_ended", "truncated": false,
+           "events": [{"sample": 48000, "kind": "parked"}]}
+        ]}
+        """#
+
+    public static let wakeWordRuns: String = #"""
+        {"runs": [
+          {"id": "3a0e6c1b-0000-4000-8000-000000000001", "kind": "positive", "label": "AirPods Pro",
+           "device": "iPhone · iOS 26.0", "mic": "AirPods Pro", "source": "recorded", "sample_rate": 16000,
+           "created_at": "2026-10-03T10:20:00.000000+00:00",
+           "takes": [{"id": "3a0e6c1b-0000-4000-8000-0000000000a1", "index": 1,
+                      "recorded_at": "2026-10-03T10:20:01.500000+00:00", "duration_ms": 900}]}
+        ]}
         """#
 
     // MARK: - Claude sign-in on the VM (`GET /api/auth/claude`)
@@ -161,14 +198,12 @@ extension PaiFixtures {
     // iOS `RecordingMeta` model is free to diverge, and there is nothing to reconcile against
     // when it does.
 
-    /// A clean recording — 16 kHz Bluetooth headset, wideband, silence-terminated, both the raw
-    /// capture and what was actually sent kept (the two rates differ, so both bytes exist).
+    /// A clean recording — 16 kHz Bluetooth headset, wideband, its transcript attached.
     public static let recordingClean: String = #"""
         {
           "timestamp": 1798610000000,
           "durationMs": 8420,
           "sampleRate": 16000,
-          "rawSampleRate": 16000,
           "mic": {
             "label": "AirPods Pro",
             "trackSampleRate": 16000,
@@ -179,20 +214,18 @@ extension PaiFixtures {
             "autoGainControl": true,
             "userAgent": "fixture-agent/1.0"
           },
-          "rawStored": true,
-          "endedBy": "silence",
-          "silence": { "enabled": true, "threshold": 0.02, "durationMs": 1500, "triggered": true },
-          "stt": { "model": "scribe_v2_realtime", "language": "en", "vadSilenceSecs": 1.5, "vadThreshold": 0.4 },
-          "transcript": "stt-rec: check whether the terminal frame shape matches what the backend sends",
+          "endedBy": "user",
+          "transcript": "check whether the terminal frame shape matches what the backend sends",
+          "transcriptSource": "live",
+          "transcriptComplete": true,
           "levels": { "peak": 0.71, "rms": 0.18, "clippedSamples": 0 },
           "narrowband": false,
-          "startup": { "captureMs": 210, "socketMs": 1780 },
           "mutedMs": 0
         }
         """#
 
     /// A degraded one — Bluetooth Hands-Free fallback (8 kHz, narrowband), cut short by an
-    /// interruption, raw capture dropped under the storage budget. Every field past `durationMs`
+    /// interruption. Every field past `durationMs`
     /// is optional for exactly this case: a recording made by an earlier build must still open.
     public static let recordingDegraded: String = #"""
         {
@@ -209,7 +242,6 @@ extension PaiFixtures {
             "autoGainControl": null,
             "userAgent": "fixture-agent/1.0"
           },
-          "rawStored": false,
           "endedBy": "interrupted",
           "narrowband": true
         }
@@ -228,23 +260,20 @@ extension PaiFixtures {
     // (`AppEnvironment.connect()`, fixture mode only) that seeds `SettingsStore.recordings`
     // directly so the picker has something to render at all.
 
-    /// An ordinary take, silence-terminated — everything a normal capture records.
+    /// An ordinary take — everything a normal capture records, its transcript attached.
     public static let recordingOrdinary = RecordingMeta(
         timestampMs: 1_798_610_000_000,
         durationMs: 8420,
         sampleRate: 16000,
-        rawSampleRate: 16000,
         mic: MicDiagnostics(
             label: "AirPods Pro", trackSampleRate: 16000, contextSampleRate: 48000, channelCount: 1,
             echoCancellation: true, noiseSuppression: true, autoGainControl: true, userAgent: "fixture-agent/1.0"),
-        rawStored: true,
-        endedBy: .silence,
-        silence: SilenceMeta(enabled: true, threshold: 0.02, durationMs: 1500, triggered: true),
-        stt: SttMeta(model: "scribe_v2_realtime", language: "en", vadSilenceSecs: 1.5, vadThreshold: 0.4),
-        transcript: "stt-rec: check whether the terminal frame shape matches what the backend sends",
+        endedBy: .user,
+        transcript: "check whether the terminal frame shape matches what the backend sends",
+        transcriptSource: .live,
+        transcriptComplete: true,
         levels: LevelStats(peak: 0.71, rms: 0.18, clippedSamples: 0, totalSamples: 134720),
         narrowband: false,
-        startup: RecordingStartup(captureMs: 210, socketMs: 1780),
         mutedMs: 0
     )
 
@@ -256,7 +285,6 @@ extension PaiFixtures {
         timestampMs: 1_798_600_500_000,
         durationMs: 5310,
         sampleRate: 16000,
-        rawStored: true,
         endedBy: .crashed
     )
 
@@ -268,7 +296,6 @@ extension PaiFixtures {
         timestampMs: 1_798_615_000_000,
         durationMs: 42_000,
         sampleRate: 16000,
-        rawStored: true,
         endedBy: .connectionLost,
         transcript: "the first part of this recording made it through before the connection dropped",
         transcription: TranscriptionMeta(coveredMs: 34_000, gapMs: 8000, gapCount: 1, state: .pending, delivered: false)

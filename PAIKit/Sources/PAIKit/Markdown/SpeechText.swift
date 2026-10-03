@@ -20,7 +20,7 @@ public enum SpeechText {
     }
 
     /// Splits already-speakable text into sentence-sized pieces for `SendTextMulti` frames —
-    /// sent incrementally so "computer skip" can interrupt within a reply rather than only
+    /// sent incrementally so the wake word can interrupt within a reply rather than only
     /// between replies, and so a TTS socket drop mid-reply costs only the sentence in flight
     /// rather than the whole thing. Not linguistically exact; a sentence boundary is whatever
     /// immediately follows `.`, `!` or `?`, which is good enough for interruption granularity.

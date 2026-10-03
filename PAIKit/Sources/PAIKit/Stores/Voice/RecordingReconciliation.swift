@@ -25,13 +25,11 @@ public enum RecordingReconciliation {
         /// every append, so this reflects what actually reached disk rather than what the take
         /// was meant to produce.
         public let dataSize: UInt32
-        public let rawStored: Bool
 
-        public init(id: String, sampleRate: Int, dataSize: UInt32, rawStored: Bool) {
+        public init(id: String, sampleRate: Int, dataSize: UInt32) {
             self.id = id
             self.sampleRate = sampleRate
             self.dataSize = dataSize
-            self.rawStored = rawStored
         }
     }
 
@@ -45,7 +43,7 @@ public enum RecordingReconciliation {
     /// tagged `.crashed` so the row reads as recovered rather than an ordinary take.
     ///
     /// `nil` for a take with no audio in it — the mirror of `persistRecording()`'s own
-    /// `guard result.durationMs > 0, sent?.hasData == true`: `start()` opens both files before
+    /// `guard result.durationMs > 0, audio?.hasData == true`: `start()` opens the file before
     /// the first sample arrives, so a take that crashed before appending anything (or whose id is
     /// not a real timestamp) leaves a 44-byte stub behind. That stub is real, on disk, and must
     /// never be deleted by a startup pass — it is simply not a recording worth surfacing, so it
@@ -58,7 +56,6 @@ public enum RecordingReconciliation {
             timestampMs: timestampMs,
             durationMs: durationMs,
             sampleRate: Double(take.sampleRate),
-            rawStored: take.rawStored,
             endedBy: .crashed
         )
     }
@@ -82,7 +79,7 @@ public enum RecordingReconciliation {
             preText: base.preText, segments: base.segments, capturedUpTo: capturedSampleCount,
             gaps: base.derivedGaps(capturedUpTo: capturedSampleCount), boundaries: base.boundaries,
             collecting: base.collecting, events: base.events, delivered: base.delivered,
-            acknowledged: base.acknowledged
+            acknowledged: base.acknowledged, liveText: base.liveText
         )
     }
 }

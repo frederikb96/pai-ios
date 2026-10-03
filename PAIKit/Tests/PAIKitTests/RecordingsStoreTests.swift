@@ -28,7 +28,7 @@ final class RecordingsStoreTests: XCTestCase {
         // One past the cap, so exactly one entry falls off the end.
         for index in 1...(SettingsStore.maxRecordings + 1) {
             let entry = meta(id: String(index))
-            try await library.save(id: entry.id, raw: nil, sent: Data())
+            try await library.save(id: entry.id, audio: Data())
             settings.saveRecording(entry)
         }
 
@@ -55,7 +55,7 @@ final class RecordingsStoreTests: XCTestCase {
         let library = RecordingAudioLibrary(storage: audioStorage)
 
         for index in 1...12 {
-            try await library.save(id: String(index), raw: nil, sent: Data())
+            try await library.save(id: String(index), audio: Data())
         }
 
         let saved = await audioStorage.savedIds
@@ -70,7 +70,25 @@ final class RecordingsStoreTests: XCTestCase {
         let decoded = try JSONDecoder().decode(RecordingMeta.self, from: data)
         XCTAssertEqual(decoded, minimal)
         XCTAssertNil(decoded.transcript)
-        XCTAssertNil(decoded.silence)
+    }
+
+    /// The list is stored as one array, so a single entry an earlier build wrote — with an end
+    /// reason and fields this one no longer has — must not make the whole list fail to decode and
+    /// read as empty.
+    func testAnOlderEntryWithARetiredEndReasonStillDecodesInTheList() async throws {
+        let stored = Data(
+            """
+            [{"timestampMs": 1798610000000, "durationMs": 8420, "sampleRate": 24000, "rawSampleRate": 48000,
+              "rawStored": true, "endedBy": "silence",
+              "silence": {"enabled": true, "threshold": 0.02, "durationMs": 1500, "triggered": true},
+              "transcript": "kept"},
+             {"timestampMs": 1798600000000, "durationMs": 1000, "endedBy": "user"}]
+            """.utf8)
+        let decoded = try JSONDecoder().decode([RecordingMeta].self, from: stored)
+        XCTAssertEqual(decoded.count, 2)
+        XCTAssertNil(decoded[0].endedBy)
+        XCTAssertEqual(decoded[0].transcript, "kept")
+        XCTAssertEqual(decoded[1].endedBy, .user)
     }
 }
 
@@ -78,7 +96,7 @@ actor FakeRecordingAudioStorage: RecordingAudioStorage {
     private(set) var savedIds: [String] = []
     private(set) var deletedIds: [String] = []
 
-    func save(id: String, raw: Data?, sent: Data) async throws {
+    func save(id: String, audio: Data) async throws {
         savedIds.append(id)
     }
 

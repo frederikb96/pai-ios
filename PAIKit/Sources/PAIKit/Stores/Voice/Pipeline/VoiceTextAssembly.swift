@@ -4,8 +4,12 @@ import Foundation
 /// arithmetic lives, so a live take streaming into its draft and a recovered take healing later
 /// both read the identical rule instead of two copies that can silently disagree.
 public enum VoiceTextAssembly {
-    /// A ledger's segments in take order, joined by a space, with an inline `…` marker at any
-    /// stretch the ledger's own `gaps` still lists as open.
+    /// The take's text: its live transcription, any batch-recovered segments and an inline `…`
+    /// marker at every stretch the ledger's own `gaps` still lists as open, each placed by the
+    /// take sample it ends at and joined by a space.
+    ///
+    /// Segments with empty text are skipped — the live path records delivery as one textless
+    /// acknowledged range, and its words live in `liveText` instead.
     ///
     /// 🚨 Reads `ledger.segments` as already deduplicated — never re-runs `SeamMerge.merge` on
     /// them. Both places that ever produce a ledger's `segments` (`folding`, `applyingBackfill`)
@@ -25,9 +29,17 @@ public enum VoiceTextAssembly {
     /// up-to-date, authoritative record; `derivedGaps` is only ever for detecting what is newly
     /// open, which is `folding`'s job, not this one's.
     public static func assembledText(from ledger: TranscriptLedger) -> String {
-        let parts: [(offset: Int, text: String)] =
-            ledger.segments.map { ($0.range.lowerBound, $0.text) } + ledger.gaps.map { ($0.range.lowerBound, "…") }
-        return parts.sorted { $0.offset < $1.offset }.map(\.text).joined(separator: " ")
+        var parts: [(endSample: Int, text: String)] = []
+        for live in ledger.liveText ?? [] where !live.text.isEmpty {
+            parts.append((live.endSample, live.text))
+        }
+        for segment in ledger.segments where !segment.text.isEmpty {
+            parts.append((segment.range.upperBound, segment.text))
+        }
+        for gap in ledger.gaps {
+            parts.append((gap.range.upperBound, "…"))
+        }
+        return parts.sorted { $0.endSample < $1.endSample }.map(\.text).joined(separator: " ")
     }
 
     /// `assembledText`, prefixed with `stt-rec: ` the same way `VoiceRecordingResult.prefixedText`

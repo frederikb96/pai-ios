@@ -53,6 +53,20 @@ public struct Segment: Codable, Sendable, Equatable {
     }
 }
 
+/// One committed stretch of the take's live transcription, placed by the take sample it ends at —
+/// what the backend's `transcript` frames carry. Kept apart from `segments`, which record audio
+/// delivery (an acknowledged range has no text of its own), so the take's text survives the take
+/// rather than living only in the draft it was written into.
+public struct LiveTextSegment: Codable, Sendable, Equatable {
+    public let endSample: Int
+    public let text: String
+
+    public init(endSample: Int, text: String) {
+        self.endSample = endSample
+        self.text = text
+    }
+}
+
 /// A stretch of captured audio with no committed segment covering it yet — a work item that
 /// survives a restart with its retry budget intact, not a hole recomputed on the fly from
 /// `segments` and the WAV header on every launch.
@@ -157,12 +171,16 @@ public struct TranscriptLedger: Codable, Sendable, Equatable {
     /// decodes; read as empty, which means "nothing acknowledged yet" rather than "everything
     /// captured is fine" — the safe direction, same as every other crash-recovery default here.
     public let acknowledged: [SampleRange]?
+    /// The live transcription's committed text, in take order. Optional so a ledger written
+    /// before this field existed still decodes.
+    public let liveText: [LiveTextSegment]?
 
     public init(
         takeId: String, mode: VoiceMode, sampleRate: Int, draftKey: String?, preText: String,
         segments: [Segment] = [], capturedUpTo: Int = 0, gaps: [Gap] = [],
         boundaries: [MessageBoundary] = [], collecting: [SampleRange] = [],
-        events: [PipelineEvent] = [], delivered: Bool = false, acknowledged: [SampleRange]? = nil
+        events: [PipelineEvent] = [], delivered: Bool = false, acknowledged: [SampleRange]? = nil,
+        liveText: [LiveTextSegment]? = nil
     ) {
         self.takeId = takeId
         self.mode = mode
@@ -177,6 +195,7 @@ public struct TranscriptLedger: Codable, Sendable, Equatable {
         self.events = events
         self.delivered = delivered
         self.acknowledged = acknowledged
+        self.liveText = liveText
     }
 }
 
@@ -249,8 +268,9 @@ extension TranscriptLedger {
     /// being dropped by whichever one happened to run last.
     public func folding(
         liveSegments: [Segment], capturedUpTo: Int, newlyAcknowledged: [SampleRange],
-        collecting: [SampleRange]? = nil, pendingLiveRange: SampleRange? = nil
+        collecting: [SampleRange]? = nil, pendingLiveRange: SampleRange? = nil, liveText: [LiveTextSegment]? = nil
     ) -> TranscriptLedger {
+        let resolvedLiveText = liveText ?? self.liveText
         let recoveredSegments = segments.filter { $0.source == .batch || $0.source == .recovery }
         let mergedSegments = SeamMerge.merge(liveSegments + recoveredSegments)
         let mergedAcknowledged = Self.merge((acknowledged ?? []) + newlyAcknowledged)
@@ -258,14 +278,16 @@ extension TranscriptLedger {
         let withoutGaps = TranscriptLedger(
             takeId: takeId, mode: mode, sampleRate: sampleRate, draftKey: draftKey, preText: preText,
             segments: mergedSegments, capturedUpTo: capturedUpTo, gaps: gaps, boundaries: boundaries,
-            collecting: resolvedCollecting, events: events, delivered: delivered, acknowledged: mergedAcknowledged
+            collecting: resolvedCollecting, events: events, delivered: delivered, acknowledged: mergedAcknowledged,
+            liveText: resolvedLiveText
         )
         return TranscriptLedger(
             takeId: takeId, mode: mode, sampleRate: sampleRate, draftKey: draftKey, preText: preText,
             segments: mergedSegments, capturedUpTo: capturedUpTo,
             gaps: withoutGaps.derivedGaps(capturedUpTo: capturedUpTo, pendingLiveRange: pendingLiveRange),
             boundaries: boundaries,
-            collecting: resolvedCollecting, events: events, delivered: delivered, acknowledged: mergedAcknowledged
+            collecting: resolvedCollecting, events: events, delivered: delivered, acknowledged: mergedAcknowledged,
+            liveText: resolvedLiveText
         )
     }
 
@@ -307,7 +329,18 @@ extension TranscriptLedger {
         return TranscriptLedger(
             takeId: takeId, mode: mode, sampleRate: sampleRate, draftKey: draftKey, preText: preText,
             segments: mergedSegments, capturedUpTo: capturedUpTo, gaps: updatedGaps, boundaries: boundaries,
-            collecting: collecting, events: events, delivered: delivered, acknowledged: mergedAcknowledged
+            collecting: collecting, events: events, delivered: delivered, acknowledged: mergedAcknowledged,
+            liveText: liveText
+        )
+    }
+
+    /// `delivered` set — only by the caller that actually put the assembled text where it
+    /// belongs, never inferred from `gaps.isEmpty`.
+    public func markingDelivered() -> TranscriptLedger {
+        TranscriptLedger(
+            takeId: takeId, mode: mode, sampleRate: sampleRate, draftKey: draftKey, preText: preText,
+            segments: segments, capturedUpTo: capturedUpTo, gaps: gaps, boundaries: boundaries,
+            collecting: collecting, events: events, delivered: true, acknowledged: acknowledged, liveText: liveText
         )
     }
 

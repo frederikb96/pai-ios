@@ -26,7 +26,7 @@ final class EarconTests: XCTestCase {
     // MARK: - Peak
 
     func testPeakStaysWithinInt16BoundsAndIsAudible() {
-        for kind: EarconKind in [.drop, .reconnect, .healed, .error, .pause, .command(.start)] {
+        for kind: EarconKind in [.drop, .reconnect, .healed, .error, .pause] {
             let samples = Earcon.samples(kind: kind, sampleRate: rate)
             let peak = samples.map { abs(Int($0)) }.max() ?? 0
             XCTAssertLessThan(peak, Int(Int16.max), "\(kind) clips")
@@ -72,15 +72,5 @@ final class EarconTests: XCTestCase {
         let drop = Earcon.samples(kind: .drop, sampleRate: rate)
         let reconnect = Earcon.samples(kind: .reconnect, sampleRate: rate)
         XCTAssertNotEqual(drop, reconnect)
-    }
-
-    func testEveryCommandKindProducesADistinctCue() {
-        let cues = CommandKind.allCases.map { Earcon.samples(kind: .command($0), sampleRate: rate) }
-        for i in 0..<cues.count {
-            for j in (i + 1)..<cues.count where j < cues.count {
-                XCTAssertNotEqual(
-                    cues[i], cues[j], "\(CommandKind.allCases[i]) and \(CommandKind.allCases[j]) sound the same")
-            }
-        }
     }
 }

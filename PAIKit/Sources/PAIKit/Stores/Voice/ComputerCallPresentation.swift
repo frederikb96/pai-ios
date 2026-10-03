@@ -44,12 +44,9 @@ public struct ComputerCallPresentation: Equatable, Sendable {
 
     /// `sessionName` is looked up by the caller from `session_id`, since only the client has it.
     /// `isSpeaking` is the client's own observation that downlink audio is rendering — Computer
-    /// announces `listening` once at attach and never says "speaking" itself.
-    ///
-    /// `canReturnToComputer` is false for a call connected straight into a session
-    /// (`hello.connect_session`): no Computer was ever attached to that bus, and the backend
-    /// answers "computer listen" there by closing the connection. Offering a control that ends
-    /// the call while labelled "Back to Computer" is worse than not offering it.
+    /// announces `listening` once at attach and never says "speaking" itself. `hasEnded` is
+    /// whether a call has ended since the screen's controller was created — the idle screen says
+    /// "Call ended." only after there was a call to end.
     public static func make(
         connectionState: ComputerCallConnectionState,
         busOwner: VoiceBusOwner,
@@ -57,7 +54,7 @@ public struct ComputerCallPresentation: Equatable, Sendable {
         sessionId: String?,
         sessionName: String?,
         isSpeaking: Bool,
-        canReturnToComputer: Bool = true
+        hasEnded: Bool
     ) -> ComputerCallPresentation {
         let face: ComputerCallFace =
             if busOwner == .call, let sessionId {
@@ -68,7 +65,8 @@ public struct ComputerCallPresentation: Equatable, Sendable {
 
         switch connectionState {
         case .idle:
-            return ComputerCallPresentation(face: face, status: "Call ended.", enabledCommands: [])
+            return ComputerCallPresentation(
+                face: face, status: hasEnded ? "Call ended." : "Tap the phone to call Computer.", enabledCommands: [])
         case .connecting:
             return ComputerCallPresentation(face: face, status: "Connecting…", enabledCommands: [])
         case .reconnecting:
@@ -88,11 +86,9 @@ public struct ComputerCallPresentation: Equatable, Sendable {
                 enabledCommands: []
             )
         case .call:
-            var enabled = commands(inPhase: phase)
-            if !canReturnToComputer { enabled.remove(.listen) }
             return ComputerCallPresentation(
                 face: face, status: callStatus(phase: phase, isSpeaking: isSpeaking),
-                enabledCommands: enabled
+                enabledCommands: commands(inPhase: phase)
             )
         }
     }
@@ -100,31 +96,24 @@ public struct ComputerCallPresentation: Equatable, Sendable {
     private static func callStatus(phase: String, isSpeaking: Bool) -> String {
         if isSpeaking { return "Speaking the reply…" }
         switch phase {
-        case recordingPhase: return "Listening — what you say goes into the draft."
-        case quietPhase: return "Quiet. Say “computer”, or tap Start."
+        case recordingPhase: return "Dictating — “computer start” sends, “computer stop” goes to Computer."
+        case quietPhase: return "Paused. Say “computer”, or tap Talk."
         default: return humanized(phase: phase)
         }
     }
 
-    /// `stop` and `send` both end the take that is open, so neither means anything when none is;
-    /// `start` opens one, so it means nothing when one already is. Everything else applies in
-    /// either phase — a reply is spoken during the quiet phase too, so it can be skipped there,
-    /// and leaving for Computer is never phase-dependent.
+    /// `start` sends what is being dictated, so it means nothing when no dictation is open, and
+    /// `wake` opens one, so it means nothing when one already is. `stop` always applies: from
+    /// dictation it sends and goes to Computer, from the quiet phase it simply goes to Computer.
     ///
     /// Hanging up is deliberately not in here: it is not a frame at all (see `VoiceCallCommand`),
     /// so the End control stays available on every face and in every connection state, including
     /// the one where nothing else is.
     ///
-    /// A phase this build does not know is treated as "no take open": the pair that would end one
-    /// stays off rather than being offered against a state nothing here can vouch for.
+    /// A phase this build does not know is treated as the quiet phase: `start` stays off rather
+    /// than being offered against a dictation nothing here can vouch for.
     private static func commands(inPhase phase: String) -> Set<VoiceCallCommand> {
-        var enabled: Set<VoiceCallCommand> = [.skip, .listen]
-        if phase == recordingPhase {
-            enabled.formUnion([.stop, .send])
-        } else {
-            enabled.insert(.start)
-        }
-        return enabled
+        phase == recordingPhase ? [.start, .stop] : [.wake, .stop]
     }
 
     private static func humanized(phase: String) -> String {

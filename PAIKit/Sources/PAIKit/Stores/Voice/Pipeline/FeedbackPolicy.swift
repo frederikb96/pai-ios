@@ -132,12 +132,6 @@ public struct FeedbackPolicy: Sendable, Equatable {
             return FeedbackAction(cue: .pause)
         case .interruptionResumed:
             return FeedbackAction(cue: .reconnect)
-        case .commandRecognized(let kind):
-            // Confirmations are exempt from every rate limit here — a swallowed one is worse
-            // than a chatty one.
-            return FeedbackAction(cue: .command(kind))
-        case .commandModelMissing(let kind):
-            return causeGated("commandModelMissing:\(kind.rawValue)", event: event)
         case .callEndedUnexpectedly:
             // Never deduped: each is a separate call Freddy believes is still running.
             return FeedbackAction(

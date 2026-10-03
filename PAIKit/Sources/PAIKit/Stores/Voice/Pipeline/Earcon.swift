@@ -59,34 +59,6 @@ public enum Earcon {
             return [Tone(frequency: 220, durationMs: 420)]
         case .pause:
             return [Tone(frequency: 440, durationMs: 140)]
-        case .command(.interruptOn):
-            // Rising, distinct from `.reconnect`'s own rising pair — replies may interrupt again.
-            return [Tone(frequency: 587.33, durationMs: 70), Tone(frequency: 783.99, durationMs: 70)]
-        case .command(.interruptOff):
-            // Falling, the interruptOn pair in reverse — replies hold while recording.
-            return [Tone(frequency: 783.99, durationMs: 70), Tone(frequency: 587.33, durationMs: 70)]
-        case .command(.end):
-            // Three falling tones — the call shutting down, heard as such with the phone away.
-            return [
-                Tone(frequency: 783.99, durationMs: 90), Tone(frequency: 659.25, durationMs: 90),
-                Tone(frequency: 523.25, durationMs: 140),
-            ]
-        case .command(let commandKind):
-            return [Tone(frequency: commandFrequency(commandKind), durationMs: 90)]
-        }
-    }
-
-    /// One frequency per single-tone command — confirmations that need to be told apart from each
-    /// other as much as from the connection-health cues above. `interruptOn`/`interruptOff` are
-    /// two-tone and handled directly in `tones(for:)`.
-    private static func commandFrequency(_ kind: CommandKind) -> Double {
-        switch kind {
-        case .start: return 987.77  // B5
-        case .stop: return 392.00  // G4
-        case .send: return 659.25  // E5
-        case .skip: return 1_174.66  // D6
-        case .end: return 523.25  // unreachable — handled in tones(for:)
-        case .interruptOn, .interruptOff: return 783.99  // unreachable — handled in tones(for:)
         }
     }
 

@@ -1,25 +1,27 @@
 import PAIKit
 import SwiftUI
+import UIKit
 import UserNotifications
 
-/// Past Recordings — the last `RecordingsStore.maxRecordings` *complete* takes, plus every take
-/// the durable pipeline still owes a gap to, whatever their count (`SettingsStore.saveRecording`'s
-/// own retention rule). Strictly local: nothing here has ever been uploaded, and this list starts
-/// empty on a fresh install even though the account's browser session may have a full one. There
-/// is no backend recordings route to sync from, on the web or here.
+/// Past Recordings — the last `SettingsStore.maxRecordings` *complete* takes, plus every take the
+/// durable pipeline still owes a gap to, whatever their count (`SettingsStore.saveRecording`'s own
+/// retention rule). Strictly local: the audio never leaves this device except as a re-transcribe
+/// request, and this list starts empty on a fresh install. What the backend itself heard lives in
+/// the debug recordings, not here.
+///
+/// One sheet, two doors with different meanings for the transcript icon: opened from a session's
+/// plus menu it puts the text into that composer; opened from Settings it shows the text to copy.
+/// A row tap re-transcribes in both — the result is stored on the recording, never inserted.
 struct RecordingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(SettingsStore.self) private var settings
     let controller: VoiceRecorderController
-    /// Inserts `stt-rec: <text>` into the composer and closes the sheet. `nil` when this sheet
-    /// is opened from Settings rather than from a composer: there is nothing to insert into, and
-    /// a control that silently does nothing is worse than one that is not there.
+    /// Inserts `stt-rec: <text>` into the composer and closes the sheet. `nil` when this sheet is
+    /// opened from Settings, which shows the text in a popup instead.
     var onInsertTranscript: ((String) -> Void)?
-    /// Stages one to three files (raw/sent WAV, or a single combined WAV, plus a JSON report).
-    /// `nil` on the same terms as `onInsertTranscript`.
-    var onAttach: (([StagedAttachment]) -> Void)?
+    /// Stages the voice diagnostics log in the composer. `nil` from Settings, which shares it.
+    var onAttachVoiceLog: ((StagedAttachment) -> Void)?
 
-    @State private var transcribingID: String?
     @State private var errorMessage: String?
     /// `nil` until the one-shot authorization check below resolves — read once, not kept in sync
     /// with a Settings-app toggle flipped while this sheet is open, which is not a case worth
@@ -27,45 +29,45 @@ struct RecordingsSheet: View {
     @State private var notificationsAuthorized: Bool?
     @State private var showingNewRecordingPrompt = false
     @State private var newRecordingName = ""
+    @State private var shownTranscript: ShownTranscript?
+    @State private var shareFile: AttachmentShareFile?
 
     private let storage = FileRecordingAudioStorage()
 
     var body: some View {
         NavigationStack {
-            Group {
+            List {
+                Section {
+                    voiceLogRow
+                    storageHeaderLine
+                    if notificationsAuthorized == false {
+                        Text("Notifications are off — only the tone will tell you about a drop.")
+                            .font(PaiTypography.caption.font)
+                            .foregroundStyle(PaiPalette.Semantic.warningText)
+                    }
+                    if controller.isRecordingOffline {
+                        offlineRecordingInProgressRow
+                    }
+                }
                 if settings.recordings.isEmpty && !controller.isRecordingOffline {
-                    ContentUnavailableView(
-                        "No recordings yet", systemImage: "waveform",
-                        description: Text("Recordings you make are kept on this device only.")
+                    Text("No recordings yet. Recordings you make are kept on this device only.")
+                        .font(PaiTypography.caption.font)
+                        .foregroundStyle(PaiPalette.Semantic.textMuted)
+                }
+                ForEach(settings.recordings) { meta in
+                    RecordingRow(
+                        meta: meta, isTranscribing: controller.retranscribingIds.contains(meta.id),
+                        transcriptIcon: onInsertTranscript == nil ? "text.bubble" : "text.insert",
+                        transcriptLabel: onInsertTranscript == nil ? "Show transcript" : "Insert transcript",
+                        onTapRetranscribe: { retranscribe(meta) },
+                        onTranscript: { useTranscript(meta) },
+                        onTranscribeRemaining: { controller.transcribeRemainingGaps(id: meta.id) }
                     )
-                } else {
-                    List {
-                        Section {
-                            storageHeaderLine
-                            if notificationsAuthorized == false {
-                                Text("Notifications are off — only the tone will tell you about a drop.")
-                                    .font(PaiTypography.caption.font)
-                                    .foregroundStyle(PaiPalette.Semantic.warningText)
-                            }
-                            if controller.isRecordingOffline {
-                                offlineRecordingInProgressRow
-                            }
-                        }
-                        ForEach(settings.recordings) { meta in
-                            RecordingRow(
-                                meta: meta, isTranscribing: transcribingID == meta.id,
-                                onTapRetranscribe: { Task { await retranscribe(meta) } },
-                                onInsert: onInsertTranscript == nil ? nil : { insert(meta) },
-                                onTranscribeRemaining: { controller.transcribeRemainingGaps(id: meta.id) },
-                                onAttach: onAttach == nil ? nil : { attach(meta) }
-                            )
-                            .swipeActions(edge: .trailing) {
-                                Button(role: .destructive) {
-                                    controller.deleteRecording(meta)
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
-                            }
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            controller.deleteRecording(meta)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
                         }
                     }
                 }
@@ -77,9 +79,6 @@ struct RecordingsSheet: View {
                     Button("Close") { dismiss() }
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    // A recording made here has nowhere to be transcribed to yet — it just sits
-                    // in this same list, named, until Freddy asks for it (tapping the row runs
-                    // the same retranscribe flow any other recording already offers).
                     Button {
                         newRecordingName = ""
                         showingNewRecordingPrompt = true
@@ -88,20 +87,6 @@ struct RecordingsSheet: View {
                     }
                     .disabled(!controller.canStart)
                     .accessibilityIdentifier("new-offline-recording")
-                }
-                // Reachable here rather than only from Settings, because this sheet already has a
-                // session's composer to attach into — Settings' own "Share Voice Log" has no
-                // session to hand the file to, so it goes through the iOS share sheet instead.
-                if onAttach != nil {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            attachVoiceLog()
-                        } label: {
-                            Label("Attach Voice Log", systemImage: "doc.text")
-                        }
-                        .disabled(AppVoiceDiagnosticsLog.shared.totalSizeBytes() == 0)
-                        .accessibilityIdentifier("attach-voice-log")
-                    }
                 }
             }
             .alert("New Recording", isPresented: $showingNewRecordingPrompt) {
@@ -112,12 +97,18 @@ struct RecordingsSheet: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Recorded on this device only, transcribed whenever you ask.")
+                Text("Not tied to a session. Transcribed automatically once it stops and the phone is online.")
             }
             .alert("Couldn't transcribe recording", isPresented: errorBinding) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(errorMessage ?? "")
+            }
+            .sheet(item: $shownTranscript) { shown in
+                TranscriptPopup(transcript: shown)
+            }
+            .sheet(item: $shareFile) { file in
+                AttachmentShareSheet(activityItems: [file.url])
             }
         }
         .task {
@@ -127,6 +118,26 @@ struct RecordingsSheet: View {
                 || notificationSettings.authorizationStatus == .provisional
         }
         .accessibilityIdentifier("recordings-sheet")
+    }
+
+    /// The voice diagnostics log, at the top whichever door opened the sheet: attached to the
+    /// composer from a plus menu, shared from Settings.
+    private var voiceLogRow: some View {
+        Button {
+            let attachment = AppVoiceDiagnosticsLog.makeAttachment()
+            if let onAttachVoiceLog {
+                onAttachVoiceLog(attachment)
+                dismiss()
+            } else {
+                shareFile = AttachmentSharing.stage(attachment.data, filename: attachment.filename)
+            }
+        } label: {
+            Label(
+                onAttachVoiceLog == nil ? "Share Voice Log" : "Attach Voice Log",
+                systemImage: "doc.text")
+        }
+        .disabled(AppVoiceDiagnosticsLog.shared.totalSizeBytes() == 0)
+        .accessibilityIdentifier("voice-log-from-recordings")
     }
 
     private var storageHeaderLine: some View {
@@ -158,100 +169,80 @@ struct RecordingsSheet: View {
         Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })
     }
 
-    /// A fresh, full pass over the whole take — from the untouched raw capture where one was kept
-    /// (the batch model accepts any input rate, the entire reason a raw copy is worth keeping),
-    /// falling back to the sent audio otherwise. Distinct from `onTranscribeRemaining`, which
-    /// only ever fills in a take's open gaps.
-    private func retranscribe(_ meta: RecordingMeta) async {
-        guard settings.elevenLabsKey.status?.set == true else {
-            errorMessage = "Set the ElevenLabs API key on the server first."
-            return
-        }
-        guard let bytes = storage.load(id: meta.id) else {
-            errorMessage = "Recording audio data not found."
-            return
-        }
-        transcribingID = meta.id
-        defer { transcribingID = nil }
-
-        do {
-            let wav = bytes.raw ?? bytes.sent
-            let language = Self.language(from: settings.sttLanguage)
-            let text = try await controller.transcribe(wav: wav, language: language)
-            guard !text.isEmpty else {
-                errorMessage = "No speech detected in recording."
-                return
+    /// A fresh batch pass over the whole take, stored on the recording. Distinct from
+    /// `onTranscribeRemaining`, which only fills in a take's open gaps.
+    private func retranscribe(_ meta: RecordingMeta) {
+        Task {
+            do {
+                try await controller.retranscribe(id: meta.id)
+            } catch {
+                errorMessage = (error as? PaiError)?.userMessage ?? error.localizedDescription
             }
-            onInsertTranscript?("\(VoiceRecordingResult.sttPrefix)\(text)")
+        }
+    }
+
+    private func useTranscript(_ meta: RecordingMeta) {
+        guard let text = meta.transcript, !text.isEmpty else { return }
+        if let onInsertTranscript {
+            onInsertTranscript("\(VoiceRecordingResult.sttPrefix)\(text)")
             dismiss()
-        } catch {
-            errorMessage = (error as? PaiError)?.userMessage ?? "\(error)"
-        }
-    }
-
-    /// Inserts whatever this take has transcribed so far — complete or not, an inline `…` marker
-    /// (`VoiceRecorderController.assembledPrefixedText`'s own convention) stands in for anything
-    /// still open.
-    private func insert(_ meta: RecordingMeta) {
-        guard let text = meta.transcript, !text.isEmpty else {
-            errorMessage = "No transcript to insert yet."
-            return
-        }
-        onInsertTranscript?("\(VoiceRecordingResult.sttPrefix)\(text)")
-        dismiss()
-    }
-
-    /// Stages the recording as attachments: `-raw`/`-sent` when both were kept, a single combined
-    /// file when nothing was converted (raw and sent are identical bytes), plus a JSON report —
-    /// what makes a bad recording diagnosable rather than merely reproducible.
-    private func attach(_ meta: RecordingMeta) {
-        guard let bytes = storage.load(id: meta.id) else {
-            errorMessage = "Recording audio data not found."
-            return
-        }
-        let iso = ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: meta.timestampMs / 1000))
-        var files: [StagedAttachment] = []
-
-        if let raw = bytes.raw, raw != bytes.sent {
-            files.append(makeAttachment(data: raw, name: "recording-\(iso)-raw.wav", mime: "audio/wav"))
-            files.append(makeAttachment(data: bytes.sent, name: "recording-\(iso)-sent.wav", mime: "audio/wav"))
         } else {
-            files.append(makeAttachment(data: bytes.sent, name: "recording-\(iso).wav", mime: "audio/wav"))
+            shownTranscript = ShownTranscript(id: meta.id, title: RecordingRow.headline(for: meta), text: text)
         }
+    }
+}
 
-        if let reportData = try? RecordingReport.encode(meta) {
-            files.append(makeAttachment(data: reportData, name: "recording-\(iso).json", mime: "application/json"))
+/// The transcript a Settings-opened sheet shows, with a Copy button.
+private struct ShownTranscript: Identifiable {
+    let id: String
+    let title: String
+    let text: String
+}
+
+private struct TranscriptPopup: View {
+    @Environment(\.dismiss) private var dismiss
+    let transcript: ShownTranscript
+    @State private var didCopy = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                Text(transcript.text)
+                    .font(PaiTypography.body.font)
+                    .foregroundStyle(PaiPalette.Semantic.textPrimary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+            }
+            .navigationTitle(transcript.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        UIPasteboard.general.string = transcript.text
+                        didCopy = true
+                    } label: {
+                        Label(didCopy ? "Copied" : "Copy", systemImage: didCopy ? "checkmark" : "doc.on.doc")
+                    }
+                    .accessibilityIdentifier("copy-recording-transcript")
+                }
+            }
         }
-
-        onAttach?(files)
-        dismiss()
-    }
-
-    private func attachVoiceLog() {
-        onAttach?([AppVoiceDiagnosticsLog.makeAttachment()])
-        dismiss()
-    }
-
-    private func makeAttachment(data: Data, name: String, mime: String) -> StagedAttachment {
-        StagedAttachment(filename: name, mimeType: mime, data: data, previewImage: nil, originalSize: data.count)
-    }
-
-    private static func language(from language: SttLanguage) -> VoiceSettings.Language {
-        switch language {
-        case .auto: .auto
-        case .en: .en
-        case .de: .de
-        }
+        .presentationDetents([.medium, .large])
     }
 }
 
 private struct RecordingRow: View {
     let meta: RecordingMeta
     let isTranscribing: Bool
+    let transcriptIcon: String
+    let transcriptLabel: String
     var onTapRetranscribe: () -> Void
-    var onInsert: (() -> Void)?
+    var onTranscript: () -> Void
     var onTranscribeRemaining: () -> Void
-    var onAttach: (() -> Void)?
 
     var body: some View {
         HStack {
@@ -266,8 +257,13 @@ private struct RecordingRow: View {
                         .font(PaiTypography.caption.font)
                         .foregroundStyle(PaiPalette.Semantic.textSecondary)
                 }
-                Text(headline)
+                Text(Self.headline(for: meta))
                     .font(PaiTypography.bodyEmphasized.font)
+                if let transcriptLine {
+                    Text(transcriptLine)
+                        .font(PaiTypography.caption.font)
+                        .foregroundStyle(transcriptLineColor)
+                }
                 if let coverageLine {
                     Text(coverageLine)
                         .font(PaiTypography.caption.font)
@@ -278,11 +274,6 @@ private struct RecordingRow: View {
                         .font(PaiTypography.caption.font)
                         .foregroundStyle(
                             meta.narrowband == true ? PaiPalette.Semantic.warningText : PaiPalette.Semantic.textMuted)
-                }
-                if let captureLine {
-                    Text(captureLine)
-                        .font(PaiTypography.caption.font)
-                        .foregroundStyle(PaiPalette.Semantic.textMuted)
                 }
             }
             Spacer()
@@ -296,17 +287,12 @@ private struct RecordingRow: View {
                         }
                         .accessibilityLabel("Transcribe remaining audio")
                     }
-                    if let onInsert, meta.transcript?.isEmpty == false {
-                        Button(action: onInsert) {
-                            Image(systemName: "text.insert")
+                    if meta.transcript?.isEmpty == false {
+                        Button(action: onTranscript) {
+                            Image(systemName: transcriptIcon)
                         }
-                        .accessibilityLabel("Insert transcript")
-                    }
-                    if let onAttach {
-                        Button(action: onAttach) {
-                            Image(systemName: "paperclip")
-                        }
-                        .accessibilityLabel("Attach recording")
+                        .accessibilityLabel(transcriptLabel)
+                        .accessibilityIdentifier("recording-transcript")
                     }
                 }
                 .buttonStyle(.borderless)
@@ -314,14 +300,28 @@ private struct RecordingRow: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { if !isTranscribing { onTapRetranscribe() } }
+        .accessibilityHint("Tap to transcribe again")
     }
 
     private var hasOpenGaps: Bool { (meta.transcription?.gapCount ?? 0) > 0 }
 
+    /// What the stored transcript is worth: missing, possibly cut short, or a full batch pass.
+    private var transcriptLine: String? {
+        if meta.transcript?.isEmpty ?? true {
+            return meta.mode == .offline ? "Transcribing once online…" : "No transcript · tap to transcribe"
+        }
+        if meta.transcriptComplete == false { return "Incomplete · tap to re-transcribe" }
+        return meta.transcriptSource == .batch ? "Transcribed in full" : nil
+    }
+
+    private var transcriptLineColor: Color {
+        meta.transcriptComplete == false ? PaiPalette.Semantic.warningText : PaiPalette.Semantic.textMuted
+    }
+
     private var coverageLine: String? {
         guard let transcription = meta.transcription else { return nil }
         switch transcription.state {
-        case .complete: return "Complete"
+        case .complete: return nil
         case .pending: return "\(Self.durationLabel(ms: transcription.gapMs)) untranscribed"
         case .failed: return "Failed to transcribe \(Self.durationLabel(ms: transcription.gapMs))"
         }
@@ -340,7 +340,7 @@ private struct RecordingRow: View {
         return "\(totalSeconds / 60):\(String(format: "%02d", totalSeconds % 60))"
     }
 
-    private var headline: String {
+    static func headline(for meta: RecordingMeta) -> String {
         let date = Date(timeIntervalSince1970: meta.timestampMs / 1000)
         let formatter = DateFormatter()
         formatter.dateStyle = .short
@@ -349,56 +349,19 @@ private struct RecordingRow: View {
         return "\(formatter.string(from: date)) · \(duration)s"
     }
 
-    /// The marker an offline recording gets in this list — its own name, plus what tells it apart
-    /// from an ordinary dictation take at a glance. A named *dictation* take (were one ever to
-    /// exist) would show just the name with no marker, though nothing today ever sets `name`
-    /// outside `startOfflineRecording(name:)`.
+    /// A standalone recording's own name, plus what tells it apart from a dictation take.
     private var nameLine: String? {
         switch (meta.name, meta.mode) {
-        case (let name?, .offline): "\(name) · Offline"
+        case (let name?, .offline): "\(name) · Standalone"
         case (.some(let name), _): name
-        case (.none, .offline): "Offline"
+        case (.none, .offline): "Standalone"
         case (.none, _): nil
         }
     }
 
     private var micLine: String? {
-        guard let mic = meta.mic, let sampleRate = meta.sampleRate else { return nil }
-        let kHz = sampleRate / 1000
+        guard let mic = meta.mic else { return nil }
         let narrowbandSuffix = meta.narrowband == true ? " · narrowband" : ""
-        return "\(mic.label) · \(String(format: "%.0f", kHz)) kHz\(narrowbandSuffix)"
-    }
-
-    private var captureLine: String? {
-        var parts: [String] = []
-        if let raw = meta.rawSampleRate, let sent = meta.sampleRate, raw != sent {
-            parts.append("\(Int(raw / 1000))→\(Int(sent / 1000)) kHz")
-        }
-        if let peak = meta.levels?.peak, peak > 0 {
-            parts.append("peak \(String(format: "%.0f", 20 * log10(peak))) dB")
-        }
-        if let muted = meta.mutedMs, muted > 0 {
-            parts.append("\(Int(muted / 1000))s muted")
-        }
-        // `triggered` no longer means the take ended by silence -- a gate now resumes on its
-        // own once speech returns, so this shows how long it actually withheld audio, the same
-        // shape the muted line above already uses.
-        if let silence = meta.silence, silence.triggered, silence.gatedMs > 0 {
-            parts.append("\(Int(silence.gatedMs / 1000))s silence-gated")
-        }
-        if meta.rawStored == false {
-            parts.append("no raw kept")
-        }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-}
-
-/// A human-readable diagnostic report attached alongside a recording — what turns "here is some
-/// audio" into "here is why this take sounded the way it did".
-enum RecordingReport {
-    static func encode(_ meta: RecordingMeta) throws -> Data {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return try encoder.encode(meta)
+        return "\(mic.label)\(narrowbandSuffix)"
     }
 }

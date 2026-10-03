@@ -28,94 +28,146 @@ struct ComputerSection: View {
     }
 }
 
-/// How the two spoken voices sound. Two synthesisers, so two independent halves: Computer speaks
-/// through OpenAI Realtime, which names a voice and has no speed parameter at all — delivery
-/// there is words, told to the model. A session's call-mode replies go through ElevenLabs, which
-/// takes a voice id and a speed and no instructions.
+/// The synced voice settings, in three groups — one per engine the backend drives, since each
+/// takes different knobs: Computer (OpenAI Realtime), session replies (ElevenLabs text-to-speech),
+/// and dictation (ElevenLabs Scribe). One Save for all three: they are one row on the backend.
 struct SpokenVoiceSection: View {
     let store: SpokenVoiceSettingsStore
 
+    private static let openAIVoicesURL = URL(
+        string: "https://developers.openai.com/api/docs/guides/realtime-conversations#voice-options")!
+    private static let openAIListenURL = URL(string: "https://openai.fm")!
+    private static let elevenLabsVoicesURL = URL(string: "https://elevenlabs.io/app/voice-library")!
+
     var body: some View {
-        Section {
-            if store.draft != nil {
-                TextField("OpenAI voice name, e.g. marin", text: computerVoice)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .accessibilityIdentifier("computer-voice")
-
-                TextField(
-                    "Speak quickly and get to the point.", text: computerDelivery,
-                    axis: .vertical
-                )
-                .lineLimit(2...4)
-                .accessibilityIdentifier("computer-delivery")
-
-                TextField("ElevenLabs voice id", text: callVoiceId)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .accessibilityIdentifier("call-voice-id")
-
-                LabeledContent("Reply speed") {
-                    TextField("1", text: callSpeed)
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.trailing)
-                        .accessibilityIdentifier("call-speed")
-                }
-
-                if !store.isSpeedValid {
-                    Text("Speed must be a number between \(speedBounds).")
-                        .font(PaiTypography.caption.font)
-                        .foregroundStyle(PaiPalette.Semantic.errorText)
-                }
-
+        if store.draft != nil {
+            computerGroup
+            repliesGroup
+            dictationGroup
+            Section {
                 Button("Save") { Task { await store.save() } }
                     .disabled(!store.canSave)
                     .accessibilityIdentifier("save-voices")
-            } else if store.isLoading {
-                ProgressView()
-            } else if let error = store.loadError {
-                Text(error)
-                    .font(PaiTypography.caption.font)
-                    .foregroundStyle(PaiPalette.Semantic.errorText)
+                if let error = store.saveError {
+                    Text(error)
+                        .font(PaiTypography.caption.font)
+                        .foregroundStyle(PaiPalette.Semantic.errorText)
+                }
             }
+        } else {
+            Section {
+                if let error = store.loadError {
+                    Text(error)
+                        .font(PaiTypography.caption.font)
+                        .foregroundStyle(PaiPalette.Semantic.errorText)
+                } else {
+                    ProgressView()
+                }
+            } header: {
+                Text("Voices")
+            }
+            .task { if store.loaded == nil { await store.load() } }
+        }
+    }
 
-            if let error = store.saveError {
-                Text(error)
-                    .font(PaiTypography.caption.font)
-                    .foregroundStyle(PaiPalette.Semantic.errorText)
+    private var computerGroup: some View {
+        Section {
+            TextField("OpenAI voice name, e.g. cedar", text: field(\.computerVoice))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityIdentifier("computer-voice")
+            Link("Voice list", destination: Self.openAIVoicesURL)
+            Link("Listen to the voices", destination: Self.openAIListenURL)
+            LabeledContent("Speed") {
+                TextField("default", text: field(\.computerSpeed))
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .accessibilityIdentifier("computer-speed")
+            }
+            if !store.isComputerSpeedValid {
+                invalid("Speed must be empty or a number between \(bounds(computerSpeedRange)).")
+            }
+            TextField("Voice instruction — how Computer should sound", text: field(\.computerDelivery), axis: .vertical)
+                .lineLimit(2...6)
+                .accessibilityIdentifier("computer-delivery")
+        } header: {
+            Text("Computer — OpenAI Realtime")
+        } footer: {
+            Text("The voice cannot change once Computer has spoken in a call; a change applies from the next call.")
+        }
+    }
+
+    private var repliesGroup: some View {
+        Section {
+            TextField("ElevenLabs voice id", text: field(\.callVoiceId))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityIdentifier("call-voice-id")
+            Link("Voice library", destination: Self.elevenLabsVoicesURL)
+            LabeledContent("Reply speed") {
+                TextField("1", text: field(\.callSpeed))
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .accessibilityIdentifier("call-speed")
+            }
+            if !store.isSpeedValid {
+                invalid("Speed must be a number between \(bounds(callSpeedRange)).")
             }
         } header: {
-            Text("Computer's Voice")
+            Text("Session replies — ElevenLabs")
         } footer: {
             Text(
-                "An empty voice leaves the choice to whatever speaks. How Computer speaks is told to the model, because that voice has no speed setting."
+                "How a session's replies are read aloud in a call. ElevenLabs takes no style text, only a voice and a speed."
             )
         }
-        .task { if store.loaded == nil { await store.load() } }
     }
 
-    private var speedBounds: String {
-        "\(callSpeedRange.lowerBound) and \(callSpeedRange.upperBound)"
+    private var dictationGroup: some View {
+        Section {
+            TextField("Key terms, comma-separated", text: field(\.sttKeyterms), axis: .vertical)
+                .lineLimit(1...4)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityIdentifier("stt-keyterms")
+            if let problem = store.draft?.keytermProblem {
+                invalid(problem)
+            }
+            TextField("Language code — empty detects it", text: field(\.sttLanguage))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityIdentifier("stt-language")
+            Toggle("Drop filler words", isOn: noVerbatim)
+                .accessibilityIdentifier("stt-no-verbatim")
+        } header: {
+            Text("Dictation — ElevenLabs Scribe")
+        } footer: {
+            Text(
+                "Applies to every dictation: the composer, a call, the laptop, and re-transcribing a recording. "
+                    + "Key terms bias recognition toward names it would otherwise miss, and cost extra. "
+                    + "Dropping filler words also drops false starts."
+            )
+        }
     }
 
-    private var computerVoice: Binding<String> {
-        field(\.computerVoice)
+    private func invalid(_ text: String) -> some View {
+        Text(text)
+            .font(PaiTypography.caption.font)
+            .foregroundStyle(PaiPalette.Semantic.errorText)
     }
 
-    private var computerDelivery: Binding<String> {
-        field(\.computerDelivery)
+    private func bounds(_ range: ClosedRange<Double>) -> String {
+        "\(range.lowerBound) and \(range.upperBound)"
     }
 
-    private var callVoiceId: Binding<String> {
-        field(\.callVoiceId)
+    private var noVerbatim: Binding<Bool> {
+        Binding(
+            get: { store.draft?.sttNoVerbatim ?? false },
+            set: { store.draft?.sttNoVerbatim = $0 }
+        )
     }
 
-    private var callSpeed: Binding<String> {
-        field(\.callSpeed)
-    }
-
-    /// One binding builder for four identical text fields — a `Binding` per field written out
-    /// would be four places to get the same `draft == nil` guard right.
+    /// One binding builder for every text field — a `Binding` per field written out would be as
+    /// many places to get the same `draft == nil` guard right.
     private func field(_ key: WritableKeyPath<SpokenVoiceSettingsDraft, String>) -> Binding<String> {
         Binding(
             get: { store.draft?[keyPath: key] ?? "" },
