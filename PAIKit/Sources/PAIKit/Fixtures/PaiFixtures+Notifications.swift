@@ -99,6 +99,33 @@ extension PaiFixtures {
         {"marked": 0}
         """#
 
+    /// Real wire shape: six-digit fractions and a numeric offset, `details` either an object or null.
+    public static let alerts = #"""
+        {
+          "total": 2,
+          "alerts": [
+            {
+              "id": "a1b2c3d4-0000-4c1a-8f30-2b7e5c918e01",
+              "source": "agent", "key": "agent:vm:backup_notify_Grocery_Sync", "severity": "critical",
+              "message": "Grocery sync failing - 3 runs in a row: unknown certificate verification error",
+              "details": {"runs": 3},
+              "count": 2,
+              "created_at": "2026-10-01T08:22:54.123456+00:00",
+              "last_seen_at": "2026-10-01T09:07:54.654321+00:00"
+            },
+            {
+              "id": "a1b2c3d4-0000-4c1a-8f30-2b7e5c918e02",
+              "source": "pipeline", "key": "embedding:qwen", "severity": "warning",
+              "message": "An embedding call to qwen failed: timeout",
+              "details": null,
+              "count": 1,
+              "created_at": "2026-10-03T12:00:00.000001+00:00",
+              "last_seen_at": "2026-10-03T12:00:00.000001+00:00"
+            }
+          ]
+        }
+        """#
+
     public static let alertsCleared = #"""
         {"cleared": 0}
         """#

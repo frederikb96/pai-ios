@@ -38,6 +38,15 @@ final class PaiFixturesNotificationsTests: XCTestCase {
         XCTAssertTrue(messages.contains { $0.id == anchored.anchor?.messageId })
     }
 
+    /// Both a null and an object `details`, and the wire's own timestamp shape, must decode.
+    func testTheAlertsFixtureDecodesWithBothDetailsShapes() throws {
+        let response = try decode(AlertsResponse.self, PaiFixtures.alerts)
+        XCTAssertEqual(response.total, response.alerts.count)
+        XCTAssertNotNil(response.alerts[0].details)
+        XCTAssertNil(response.alerts[1].details)
+        XCTAssertNotNil(IsoTimestamp.date(from: response.alerts[0].lastSeenAt))
+    }
+
     func testTheSummaryDecodesAndAgreesWithTheListsUnreadCount() throws {
         let summary = try decode(NotificationSummary.self, PaiFixtures.notificationsSummary)
         let response = try decode(NotificationsResponse.self, PaiFixtures.notifications)
