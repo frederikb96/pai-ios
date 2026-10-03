@@ -185,6 +185,7 @@
                 method: "GET",
                 matches: { $0.hasPrefix("/api/notifications/") && $0.split(separator: "/").count == 3 }
             ) { PaiFixtures.data(PaiFixtures.notificationDetail) },
+            exact("GET", "/api/alerts") { PaiFixtures.alerts },
             exact("POST", "/api/alerts/clear") { PaiFixtures.alertsCleared },
             // The create. Without it `-PaiFixtureAutoCreateSession` drives a send that the
             // table answers 404 for, which the outbox reads as a refusal it must not retry —

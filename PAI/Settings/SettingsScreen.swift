@@ -20,6 +20,8 @@ struct SettingsScreen: View {
                 .accessibilityIdentifier("theme-picker")
             }
 
+            AlertsSection(alerts: settings.alerts)
+
             SmtpSection(smtp: settings.smtp)
 
             VoiceSection(settings: settings)

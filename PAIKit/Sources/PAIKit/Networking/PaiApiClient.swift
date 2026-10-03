@@ -1430,6 +1430,11 @@ public struct PaiApiClient: Sendable {
         let cleared: Int
     }
 
+    /// Every alert nobody has acknowledged, newest first.
+    public func listAlerts() async throws -> AlertsResponse {
+        try await send(path: "/api/alerts")
+    }
+
     /// Acknowledges specific alerts, freeing their key so the next occurrence raises fresh rather
     /// than folding onto the old one. `ids` is always sent explicitly and never empty — the
     /// backend reads an *absent* `ids` field as "clear every active alert", which is exactly the

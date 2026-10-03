@@ -120,6 +120,16 @@ public enum SessionListDomain {
         return isGrey(session) ? "Not driven by PAI" : ""
     }
 
+    /// The words beside the state indicator in the chat header. A working session shows none: its
+    /// spinner already says so, and "Working…" was the widest thing in a strip that must fit one
+    /// phone-width line. Every other state keeps its label, since a dot's colour alone does not
+    /// distinguish "Waiting on you" from "Needs attention".
+    public static func statusStripLabel(for session: Session, isWorking: Bool) -> String? {
+        if isWorking { return nil }
+        let label = sessionLabel(for: session)
+        return label.isEmpty ? nil : label
+    }
+
     /// What to head a session's chat view with. A subagent is outside the phase-naming rule and
     /// its `title` is normally `nil`, so it falls back to `initial_message` or literally
     /// "Session" exactly like an ordinary session unless it has a name or type of its own to show

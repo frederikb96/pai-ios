@@ -239,37 +239,18 @@ struct SessionDetailView: View {
     // A `UINavigationBar` cannot carry a dot, a spinner, live tokens and a usage badge at once —
     // this strip is that placement decision, sitting below the bar with the plain nav title
     // (`navigationTitle` above) left to carry just the name.
+    //
+    // One line, always. Every figure is `fixedSize`d with a single line, so a number can never
+    // wrap; when the strip runs out of room whole items drop instead, lowest value first: the
+    // state's words (the dot or spinner already says it, and VoiceOver reads it from the
+    // indicator), then the model name. Tokens, running agents/tasks and plan usage always stay.
     private var headerStrip: some View {
         Group {
             if let session = currentSession {
-                HStack(spacing: 10) {
-                    SessionStateIndicator(
-                        dotState: SessionListDomain.dotState(for: session), isWorking: isWorking(session))
-                    Text(SessionListDomain.sessionLabel(for: session))
-                        .lineLimit(1)
-
-                    Spacer(minLength: 8)
-
-                    if let modelLabel = currentModelLabel(session) {
-                        Text(modelLabel)
-                            .foregroundStyle(PaiPalette.Semantic.textFaint)
-                            .accessibilityIdentifier("session-model-badge")
-                    }
-
-                    Text(SessionListFormat.formatTokens(currentTokenCount(session)))
-                        .monospacedDigit()
-                        .foregroundStyle(PaiPalette.Semantic.textFaint)
-
-                    // Same figures the web's chat header carries, in the same order: model,
-                    // tokens, what the session has running, then the plan windows.
-                    if let counts = currentActivityCounts(session), counts.agents > 0 || counts.tasks > 0 {
-                        ActivityBadges(counts: counts)
-                            .foregroundStyle(PaiPalette.Semantic.textFaint)
-                    }
-
-                    if let usage {
-                        PlanUsageBadge(usage: usage)
-                    }
+                ViewThatFits(in: .horizontal) {
+                    stripContent(session, showLabel: true, showModel: true)
+                    stripContent(session, showLabel: false, showModel: true)
+                    stripContent(session, showLabel: false, showModel: false)
                 }
                 .font(PaiTypography.caption.font)
                 .foregroundStyle(PaiPalette.Semantic.textMuted)
@@ -278,6 +259,47 @@ struct SessionDetailView: View {
                 .background(PaiPalette.Semantic.panelBackground)
             }
         }
+    }
+
+    private func stripContent(_ session: Session, showLabel: Bool, showModel: Bool) -> some View {
+        HStack(spacing: 10) {
+            SessionStateIndicator(
+                dotState: SessionListDomain.dotState(for: session), isWorking: isWorking(session)
+            )
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(SessionListDomain.sessionLabel(for: session))
+            if showLabel, let label = SessionListDomain.statusStripLabel(for: session, isWorking: isWorking(session)) {
+                Text(label).fixedSize(horizontal: true, vertical: false)
+            }
+
+            Spacer(minLength: 8)
+
+            if showModel, let modelLabel = currentModelLabel(session) {
+                Text(modelLabel)
+                    .foregroundStyle(PaiPalette.Semantic.textFaint)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .accessibilityIdentifier("session-model-badge")
+            }
+
+            Text(SessionListFormat.formatTokens(currentTokenCount(session)))
+                .monospacedDigit()
+                .fixedSize(horizontal: true, vertical: false)
+                .foregroundStyle(PaiPalette.Semantic.textFaint)
+
+            // Same figures the web's chat header carries, in the same order: model,
+            // tokens, what the session has running, then the plan windows.
+            if let counts = currentActivityCounts(session), counts.agents > 0 || counts.tasks > 0 {
+                ActivityBadges(counts: counts)
+                    .foregroundStyle(PaiPalette.Semantic.textFaint)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+
+            if let usage {
+                PlanUsageBadge(usage: usage)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+        }
+        .lineLimit(1)
     }
 
     /// Same precedence as the token figure below: the transcript's own live SSE value wins once
