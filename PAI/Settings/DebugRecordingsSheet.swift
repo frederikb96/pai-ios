@@ -252,7 +252,7 @@ private struct DebugRecordingRow: View {
     private var engineLine: String {
         let engine =
             switch recording.engine {
-            case "elevenlabs_realtime": "ElevenLabs"
+            case "elevenlabs_realtime", "elevenlabs_batch": "ElevenLabs"
             case "openai_realtime": "OpenAI"
             case "wake_word": "Wake word"
             default: recording.engine
