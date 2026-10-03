@@ -173,15 +173,19 @@ final class ComputerCallController {
         isSpeaking = false
     }
 
-    /// The engine invalidated every tap and connection on itself — a route change, matching
-    /// `MicrophoneCapture.onConfigurationChange`'s own doc comment. Rebuilding from scratch is
-    /// safe here the same way `ComputerAudioIO.start()` already is for a fresh call: it never
-    /// assumes prior state, only that the engine and session objects still exist. Ends the call
-    /// rather than leaving it half-broken if the rebuild itself fails.
+    /// The engine invalidated every tap and connection on itself — a route change (a Bluetooth
+    /// headset switching profile, above all), matching `MicrophoneCapture.onConfigurationChange`'s
+    /// own doc comment. `restart()` rebuilds the graph against the new input without deactivating
+    /// the session or leaving the old player node attached. Speech scheduled but not yet played
+    /// went with the old graph and its completion handlers never fire, so the playback
+    /// bookkeeping is reset the way a barge-in resets it; the next downlink chunk plays on the
+    /// rebuilt node. Ends the call rather than leaving it half-broken if the rebuild fails.
     private func handleConfigurationChange() {
         guard session.connectionState != .idle else { return }
         do {
-            try audioIO.start()
+            try audioIO.restart()
+            pendingPlaybackChunks = 0
+            isSpeaking = false
             Task { await session.inputRouteChanged() }
         } catch {
             toasts.show("Lost the microphone — ending the call with Computer.")
