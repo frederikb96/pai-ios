@@ -534,7 +534,7 @@ public struct PaiApiClient: Sendable {
         )
     }
 
-    private static func appendFormField(_ body: inout Data, boundary: String, name: String, value: String) {
+    static func appendFormField(_ body: inout Data, boundary: String, name: String, value: String) {
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
         body.append(value.data(using: .utf8)!)

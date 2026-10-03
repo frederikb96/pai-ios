@@ -88,6 +88,9 @@ final class AppEnvironment {
         /// reason `voice` is: a call outlives the screen that shows it, and leaving that screen
         /// to read a session mid-call is what the voice screen is for.
         let computerCall: ComputerCallController
+        /// The wake-word sample recorder and the queue that gets its takes to the backend —
+        /// app-wide so a queued upload keeps draining whatever screen is open.
+        let wakeWordSamples: WakeWordSampleCaptureController
         /// The notification feed (row 5.27) — app-wide rather than scoped to its own screen,
         /// since the unread count drives a badge visible from the session list's toolbar and the
         /// springboard, neither of which is that screen.
@@ -219,6 +222,8 @@ final class AppEnvironment {
         let computerCall = ComputerCallController(
             requestFactory: factory, authToken: { [tokens] in tokens.read() }, settingsStore: settingsStore,
             toasts: toasts)
+        let wakeWordSamples = WakeWordSampleCaptureController(
+            apiClient: client, storage: defaults, voice: voice, computerCall: computerCall)
 
         connection = Connection(
             requestFactory: factory,
@@ -240,6 +245,7 @@ final class AppEnvironment {
             outbox: outbox,
             voice: voice,
             computerCall: computerCall,
+            wakeWordSamples: wakeWordSamples,
             notifications: NotificationCenterStore(api: client),
             transcriptJumps: TranscriptJumpRequests()
         )

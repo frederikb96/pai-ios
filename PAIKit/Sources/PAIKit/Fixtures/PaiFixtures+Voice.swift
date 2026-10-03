@@ -101,6 +101,41 @@ extension PaiFixtures {
         }
         """#
 
+    // MARK: - Debug recordings and wake-word samples
+
+    public static let debugRecordings: String = #"""
+        {"enabled": true, "recordings": [
+          {"id": "6f1c2d3e-0000-4000-8000-000000000001", "kind": "dictation",
+           "engine": "elevenlabs_realtime", "model": "scribe_v2_realtime", "transport": "ios",
+           "device": "iPhone · iOS 26.0", "mics": ["iPhone Microphone"],
+           "bus_id": "6f1c2d3e-0000-4000-8000-0000000000aa", "session_id": null, "session_title": null,
+           "take_id": "1798610000000", "sample_rate": 16000, "encoding": "pcm_s16le", "channels": 1,
+           "started_at": "2026-10-03T10:15:02.123456+00:00", "ended_at": "2026-10-03T10:15:44.501234+00:00",
+           "duration_ms": 42000, "byte_count": 1344000, "peak_dbfs": -4.2, "rms_dbfs": -27.9,
+           "clipped_samples": 0, "status": "complete", "end_reason": "stopped", "truncated": false,
+           "events": []},
+          {"id": "6f1c2d3e-0000-4000-8000-000000000002", "kind": "computer",
+           "engine": "openai_realtime", "model": "gpt-realtime", "transport": "twilio",
+           "device": null, "mics": [],
+           "bus_id": "6f1c2d3e-0000-4000-8000-0000000000bb", "session_id": null, "session_title": null,
+           "take_id": null, "sample_rate": 24000, "encoding": "pcm_s16le", "channels": 1,
+           "started_at": "2026-10-03T09:02:11.000001+00:00", "ended_at": "2026-10-03T09:04:30.000001+00:00",
+           "duration_ms": 139000, "byte_count": 6672000, "peak_dbfs": -1.0, "rms_dbfs": -30.5,
+           "clipped_samples": 12, "status": "complete", "end_reason": "call_ended", "truncated": false,
+           "events": [{"sample": 48000, "kind": "parked"}]}
+        ]}
+        """#
+
+    public static let wakeWordRuns: String = #"""
+        {"runs": [
+          {"id": "3a0e6c1b-0000-4000-8000-000000000001", "kind": "positive", "label": "AirPods Pro",
+           "device": "iPhone · iOS 26.0", "mic": "AirPods Pro", "source": "recorded", "sample_rate": 16000,
+           "created_at": "2026-10-03T10:20:00.000000+00:00",
+           "takes": [{"id": "3a0e6c1b-0000-4000-8000-0000000000a1", "index": 1,
+                      "recorded_at": "2026-10-03T10:20:01.500000+00:00", "duration_ms": 900}]}
+        ]}
+        """#
+
     // MARK: - Claude sign-in on the VM (`GET /api/auth/claude`)
 
     public static let claudeAuthHealthy: String = #"""

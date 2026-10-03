@@ -192,6 +192,7 @@ struct RootView: View {
                     case .active:
                         AppVoiceDiagnosticsLog.shared.log(.info, .lifecycle, "app active")
                         connectNotificationStream(connection)
+                        connection.wakeWordSamples.drain()
                         Task {
                             await connection.notifications.refreshSummary()
                             await PushRegistrar.reconcileDeliveredNotifications(against: connection.notifications)

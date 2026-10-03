@@ -117,19 +117,6 @@ public final class SpokenVoiceSettingsStore {
         loaded != nil && isDirty && draft?.asUpdate() != nil && !isSaving
     }
 
-    /// The debug-recordings toggle, saved on its own the moment it flips — it is not part of the
-    /// voice groups' draft, and lives on the Debug Recordings sheet.
-    public func setDebugRecordingsEnabled(_ enabled: Bool) async {
-        saveError = nil
-        do {
-            let settings = try await apiClient.setDebugRecordingsEnabled(enabled)
-            loaded = settings
-            if draft == nil { draft = SpokenVoiceSettingsDraft(loaded: settings) }
-        } catch {
-            saveError = (error as? PaiError)?.userMessage ?? "\(error)"
-        }
-    }
-
     public func load() async {
         isLoading = true
         loadError = nil

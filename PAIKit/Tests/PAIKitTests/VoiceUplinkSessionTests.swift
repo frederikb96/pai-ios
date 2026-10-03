@@ -57,8 +57,16 @@ private final class FakeClockAndSleep: @unchecked Sendable {
         return current
     }
 
+    /// Only the finishing wait's short polls advance time. The liveness watchdog sleeps for its
+    /// whole timeout on the same clock, and letting that jump the clock too would trip it before
+    /// `ready` is even processed — a reconnect mid-test that has nothing to do with the deadline
+    /// under test. Its sleep therefore never ends on its own; cancelling the watchdog ends it.
     func sleep(_ duration: Duration) async {
         let seconds = Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
+        guard seconds < 12 else {
+            try? await Task.sleep(for: .seconds(3600))
+            return
+        }
         advance(by: seconds)
     }
 
