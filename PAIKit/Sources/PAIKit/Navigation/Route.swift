@@ -109,6 +109,9 @@ public enum Route: Hashable, Sendable {
     /// is currently inside; `Router.surface(_:)` is what makes all three land on the one screen
     /// rather than stacking copies of it.
     case computerCall
+    /// The canteen's forwarded mails — reached from Apps' "Canteen" row. Carries no identity
+    /// concern of its own, the same reason `.schedulerList` does not.
+    case canteen
 
     /// Ignores `session`'s `messageID` — see that case's doc comment. Everything else is a plain
     /// per-case comparison, same as the synthesized version this replaces.
@@ -134,6 +137,7 @@ public enum Route: Hashable, Sendable {
         case (.schedulerTask(let a), .schedulerTask(let b)): return a == b
         case (.quickActions, .quickActions): return true
         case (.computerCall, .computerCall): return true
+        case (.canteen, .canteen): return true
         default: return false
         }
     }
@@ -192,6 +196,8 @@ public enum Route: Hashable, Sendable {
             hasher.combine(19)
         case .computerCall:
             hasher.combine(20)
+        case .canteen:
+            hasher.combine(21)
         }
     }
 }
@@ -207,7 +213,7 @@ extension Route {
     public static let namedScreens: [String] = [
         "session", "terminal", "settings", "createSession", "subagents", "notes", "note", "noteContainers",
         "notePreview", "notifications", "recordings", "arcSpec", "apps", "arcSpecList", "arcReport", "arcOverview",
-        "schedulerList", "schedulerTask", "quickActions", "computerCall",
+        "schedulerList", "schedulerTask", "quickActions", "computerCall", "canteen",
     ]
 
     /// Every spec-scoped fixture route answers under, regardless of which uuid the request
@@ -253,6 +259,7 @@ extension Route {
         case "schedulerTask": return .schedulerTask(id: nil)
         case "quickActions": return .quickActions
         case "computerCall": return .computerCall
+        case "canteen": return .canteen
         default: return nil
         }
     }
@@ -416,7 +423,7 @@ public final class Router {
             case .terminal(let sessionID): return sessionID
             case .settings, .createSession, .subagents, .notes, .note, .noteContainers, .notePreview,
                 .notifications, .recordings, .arcSpec, .apps, .arcSpecList, .arcReport, .arcOverview,
-                .schedulerList, .schedulerTask, .quickActions, .computerCall:
+                .schedulerList, .schedulerTask, .quickActions, .computerCall, .canteen:
                 continue
             }
         }
@@ -431,7 +438,7 @@ public final class Router {
             case .note(let id), .notePreview(let id): return id
             case .session, .terminal, .settings, .createSession, .subagents, .notes, .noteContainers,
                 .notifications, .recordings, .arcSpec, .apps, .arcSpecList, .arcReport, .arcOverview,
-                .schedulerList, .schedulerTask, .quickActions, .computerCall:
+                .schedulerList, .schedulerTask, .quickActions, .computerCall, .canteen:
                 continue
             }
         }
