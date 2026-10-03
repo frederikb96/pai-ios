@@ -312,6 +312,8 @@ struct RootView: View {
             QuickActionsScreen()
         case .computerCall:
             ComputerCallView()
+        case .canteen:
+            CanteenView()
         }
     }
 
