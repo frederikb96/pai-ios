@@ -699,8 +699,15 @@ public final class VoiceUplinkSession {
         let takeId = currentTakeId
         if wasConnected, let transport {
             // Stopped while withholding: the ring goes out only if it caught the start of speech.
-            for frame in gate?.stopFlush() ?? [] where !abandon {
+            let withheldFrom = gate?.withheldFrom
+            let owed = gate?.stopFlush() ?? []
+            for frame in owed where !abandon {
                 await send(offset: frame.offset, samples: frame.samples, transport: transport)
+            }
+            // Dropped as silence, the kept pre-roll will never be sent: it is accounted for like
+            // the rest of the withheld stretch, or the backfill would transcribe it as a gap.
+            if owed.isEmpty, let withheldFrom, ackedUpTo >= withheldFrom {
+                ackedUpTo = max(ackedUpTo, capturedUpTo)
             }
             try? await transport.send(.gate(open: false, reason: abandon ? "abandon" : "button"))
             if !abandon, let takeId {
