@@ -143,9 +143,8 @@ final class DebugRecordingPlayer {
         loadingId = id
         defer { loadingId = nil }
         do {
-            let data = try await store.audio(for: id)
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("debug-recording-\(id).wav")
-            try data.write(to: url, options: .atomic)
+            try await store.downloadAudio(for: id, to: url)
             if !microphoneBusy() {
                 try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
                 try AVAudioSession.sharedInstance().setActive(true)

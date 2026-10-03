@@ -283,6 +283,42 @@ public struct PaiApiClient: Sendable {
         return (http.statusCode, data)
     }
 
+    /// A `GET` whose body goes straight to `destination` on disk through a download task, so a
+    /// large response (a long recording) is never held in memory. A non-2xx answer throws exactly
+    /// as the other helpers do and leaves `destination` untouched.
+    func download(path: String, to destination: URL) async throws {
+        let request = try requestFactory.makeRequest(
+            path: path, method: "GET", query: [], body: nil, contentType: nil
+        )
+        let session = urlSession
+        let (data, response): (Data?, URLResponse) = try await withCheckedThrowingContinuation { continuation in
+            // The system deletes the downloaded file as soon as this handler returns, so it is
+            // moved (or, for an error body, read) inside it.
+            session.downloadTask(with: request) { location, response, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                guard let location, let response else {
+                    continuation.resume(throwing: PaiError.transport("Download produced no file"))
+                    return
+                }
+                do {
+                    if (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) == true {
+                        try? FileManager.default.removeItem(at: destination)
+                        try FileManager.default.moveItem(at: location, to: destination)
+                        continuation.resume(returning: (nil, response))
+                    } else {
+                        continuation.resume(returning: (try Data(contentsOf: location), response))
+                    }
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }.resume()
+        }
+        if let data { try checkStatus(response: response, data: data) }
+    }
+
     private func sendRaw(
         path: String,
         method: String,

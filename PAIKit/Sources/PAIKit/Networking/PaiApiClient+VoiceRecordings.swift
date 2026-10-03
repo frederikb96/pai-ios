@@ -15,12 +15,12 @@ extension PaiApiClient {
         try await send(path: "/api/voice/debug-recordings")
     }
 
-    /// The recording as a WAV — the exact samples the engine received behind a plain header.
-    /// Fetched as bytes because the route needs the bearer header a streaming player cannot send.
-    public func getDebugRecordingAudio(id: String) async throws -> Data {
-        try await sendPassingThrough(
-            path: "/api/voice/debug-recordings/\(id)/audio", method: "GET", contentType: nil, passthrough: []
-        ).body
+    /// The recording as a WAV — the exact samples the engine received behind a plain header —
+    /// written straight to `destination`. A download rather than a read because the route needs
+    /// the bearer header a streaming player cannot send, and a long recording is hundreds of
+    /// megabytes that must not sit in memory.
+    public func downloadDebugRecordingAudio(id: String, to destination: URL) async throws {
+        try await download(path: "/api/voice/debug-recordings/\(id)/audio", to: destination)
     }
 
     public func deleteDebugRecording(id: String) async throws {

@@ -33,6 +33,18 @@ public enum PaiError: Error, Equatable {
         }
     }
 
+    /// The server understood the request and refused it, so sending the same request again gets
+    /// the same answer. Authentication, timeouts and rate limits are not verdicts on the request
+    /// and are excluded; so is a 404, which callers that care already ask for as an outcome.
+    public var isPermanentRejection: Bool {
+        switch self {
+        case .detail(_, let statusCode), .http(let statusCode, _):
+            return (400..<500).contains(statusCode) && ![401, 403, 404, 408, 429].contains(statusCode)
+        case .transport, .decoding:
+            return false
+        }
+    }
+
     /// What the user should see. Always non-empty.
     public var userMessage: String {
         switch self {

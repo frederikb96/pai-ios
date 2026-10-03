@@ -49,8 +49,9 @@ final class WakeWordSampleCaptureController {
         }
     }
 
-    /// A take is one spoken word, so a minute of it means the run was left open.
-    private static let takeLimitSeconds = 60
+    /// A take is one spoken word, so half a minute of it means the run was left open — and the
+    /// backend refuses a longer take outright, so a longer one could never be stored anyway.
+    private static let takeLimitSeconds = 30
     private static let sampleRate = VoiceSocketProtocol.audioUplinkHz
 
     let queue: WakeWordUploadQueue
@@ -88,7 +89,9 @@ final class WakeWordSampleCaptureController {
         self.apiClient = apiClient
         self.voice = voice
         self.computerCall = computerCall
-        queue = WakeWordUploadQueue(storage: storage, transport: apiClient, files: WakeWordSampleFiles())
+        queue = WakeWordUploadQueue(
+            storage: storage, transport: apiClient, files: WakeWordSampleFiles(),
+            log: { AppVoiceDiagnosticsLog.shared.log(.warning, "wake-word", $0) })
         pathObserver.onEvent = { [weak self] event in
             guard case .pathSatisfied(true) = event else { return }
             Task { @MainActor [weak self] in self?.drain() }

@@ -138,7 +138,9 @@ struct ComputerCallView: View {
             )
             commandButton(
                 .stop, systemImage: "arrow.uturn.backward", title: "Computer",
-                label: "Send and go back to Computer", identifier: "computer-call-stop",
+                label: presentation.enabledCommands.contains(.start)
+                    ? "Send and go back to Computer" : "Go back to Computer",
+                identifier: "computer-call-stop",
                 presentation: presentation, controller: controller
             )
         }

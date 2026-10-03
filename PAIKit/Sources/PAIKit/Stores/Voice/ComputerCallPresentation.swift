@@ -110,10 +110,14 @@ public struct ComputerCallPresentation: Equatable, Sendable {
     /// so the End control stays available on every face and in every connection state, including
     /// the one where nothing else is.
     ///
-    /// A phase this build does not know is treated as the quiet phase: `start` stays off rather
-    /// than being offered against a dictation nothing here can vouch for.
+    /// A phase this build does not know offers nothing, the same as the browser: a button
+    /// addressed at a state nothing here can vouch for may do the wrong thing.
     private static func commands(inPhase phase: String) -> Set<VoiceCallCommand> {
-        phase == recordingPhase ? [.start, .stop] : [.wake, .stop]
+        switch phase {
+        case recordingPhase: [.start, .stop]
+        case quietPhase: [.wake, .stop]
+        default: []
+        }
     }
 
     private static func humanized(phase: String) -> String {

@@ -176,6 +176,47 @@ final class VoiceUplinkSessionTests: XCTestCase {
         _ = await startTask.value
     }
 
+    // MARK: - Silence gate accounting
+
+    /// A stop that drops the kept pre-roll as silence settles it too: the ring will never be
+    /// sent, so leaving it below the ack watermark would hand a second of silence to the backfill
+    /// at every stop. While withholding, the ring is claimed only after that.
+    func testASilentStopAccountsForThePreRollItDrops() async {
+        let transport = FakeVoiceSocketTransport()
+        let session = VoiceUplinkSession(
+            dependencies: VoiceUplinkDependencies(
+                makeTransport: { transport },
+                socketURL: { URL(string: "wss://pai.example.com/api/voice/socket")! },
+                authToken: { "token" },
+                silenceGate: { .standard }
+            ))
+        let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
+        await transport.enqueue(
+            .control(
+                .ready(
+                    resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: true))
+        )
+        await waitUntil { await transport.sentFrames.count >= 2 }
+
+        func samples(amplitude: Int16) -> [Int16] {
+            (0..<1600).map { $0.isMultiple(of: 2) ? amplitude : -amplitude }
+        }
+        // 3 s of speech-level audio, then quiet: withholding begins at 8 s (128_000 samples).
+        for index in 0..<100 {
+            await session.ingestAudioChunk(
+                pcm16le: samples(amplitude: index < 30 ? 328 : 6), at: index * 1600)
+        }
+        XCTAssertEqual(session.capturedUpTo, 160_000)
+        await transport.enqueue(.control(.ack(throughSeq: 79)))
+        await waitUntil { session.ackedUpTo >= 128_000 }
+        XCTAssertLessThan(
+            session.ackedUpTo, 160_000, "the ring is still to be sent, so it is not claimed while withholding")
+
+        await stopAfterTakeDone(session, transport: transport, takeId: "take-1")
+        XCTAssertEqual(session.ackedUpTo, 160_000)
+        _ = await startTask.value
+    }
+
     // MARK: - Live transcript assembly
 
     /// A partial replaces whatever partial preceded it; a committed segment appends and clears

@@ -53,7 +53,7 @@ public final class DebugRecordingsStore {
         }
     }
 
-    public func audio(for id: String) async throws -> Data {
-        try await apiClient.getDebugRecordingAudio(id: id)
+    public func downloadAudio(for id: String, to destination: URL) async throws {
+        try await apiClient.downloadDebugRecordingAudio(id: id, to: destination)
     }
 }

@@ -139,15 +139,21 @@ final class SilenceGateTests: XCTestCase {
         XCTAssertEqual(run.sent.last?.endOffset, 160_000)
     }
 
-    /// V8 — once acks reach where withholding began, each captured frame counts as accounted
-    /// for up to its own end; before that, the ack watermark is left alone.
+    /// V8 — once acks reach where withholding began, every captured frame older than the
+    /// pre-roll ring counts as accounted for; the ring itself is still to be sent on resume, so
+    /// it is never claimed. Before the ack reaches the start, the watermark is left alone.
     func testV8WithheldAudioIsAccountedOnceTheAckReachesTheStart() {
         var run = Run()
         run.feed(db: -40, count: 30)
         run.feed(db: -75, count: 50)
         run.feed(db: -75, count: 3)
         XCTAssertEqual(run.gate.accountedWatermark(acked: 120_000, capturedUpTo: run.offset), 120_000)
-        XCTAssertEqual(run.gate.accountedWatermark(acked: 128_000, capturedUpTo: run.offset), 132_800)
+        XCTAssertEqual(run.gate.accountedWatermark(acked: 128_000, capturedUpTo: run.offset), 128_000)
+
+        // Twenty withheld frames: the ring keeps the last ten, so only what precedes them is settled.
+        run.feed(db: -75, count: 17)
+        XCTAssertEqual(run.offset, 160_000)
+        XCTAssertEqual(run.gate.accountedWatermark(acked: 128_000, capturedUpTo: run.offset), 144_000)
     }
 
     /// Stop while withholding with nothing above open in the ring: nothing is sent.

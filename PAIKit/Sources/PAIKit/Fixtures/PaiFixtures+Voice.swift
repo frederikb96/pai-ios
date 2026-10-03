@@ -1,8 +1,7 @@
 import Foundation
 
-/// Drafts, plan usage, secret presence, a voice token, Claude sign-in state, and recording
-/// metadata — `GET /api/drafts`, `/api/usage`, `/api/settings/secrets`, `POST /api/voice/token`,
-/// `/api/auth/claude`.
+/// Drafts, plan usage, secret presence, Claude sign-in state, and recording metadata —
+/// `GET /api/drafts`, `/api/usage`, `/api/settings/secrets`, `/api/auth/claude`.
 ///
 /// `SmtpSettings` is deliberately not covered: it configures PAI Cloud's own alert mail, which is
 /// not part of any screen the iOS overview lists as in scope (session list, search, chat,

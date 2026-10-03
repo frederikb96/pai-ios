@@ -16,7 +16,7 @@ import Foundation
 ///   (both machines, every `SessionState`, every `BlockerKind`, a subagent), semantic search
 /// - `PaiFixtures+Transcript.swift` — one session's full transcript: every `Message` type and
 ///   system subtype, every tool family, and the markdown edge cases that stress the renderer
-/// - `PaiFixtures+Voice.swift` — drafts, plan usage, secret presence, a voice token, Claude
+/// - `PaiFixtures+Voice.swift` — drafts, plan usage, secret presence, Claude
 ///   sign-in state, and the recording metadata a "past recordings" screen would show
 /// - `PaiFixtures+Terminal.swift` — a short terminal frame sequence, live and scrolled-back
 /// - `PaiFixtures+Attachment.swift` — the one real, decodable image `GET

@@ -166,10 +166,12 @@ public struct SilenceGate: Sendable {
 
     /// The ack watermark to keep while withheld audio counts as accounted for: once everything up
     /// to where withholding began has been acknowledged, every frame captured since is settled
-    /// too — recorded locally, deliberately never sent, never to be backfilled.
+    /// too — recorded locally, deliberately never sent, never to be backfilled — except the
+    /// frames still in the pre-roll ring, which go up on resume and so are not settled until the
+    /// backend acknowledges them.
     public func accountedWatermark(acked: Int, capturedUpTo: Int) -> Int {
         guard isWithholding, let withheldFrom, acked >= withheldFrom else { return acked }
-        return max(acked, capturedUpTo)
+        return max(acked, min(capturedUpTo, ring.first?.offset ?? capturedUpTo))
     }
 
     // MARK: - Internals
