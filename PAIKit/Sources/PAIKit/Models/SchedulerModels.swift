@@ -226,6 +226,11 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
     public let sessionUsageGatePercent: Int?
     /// A fire is skipped once the 7-day plan window is at or above this percentage.
     public let weeklyUsageGatePercent: Int?
+    /// A fire is skipped while 5-hour usage is MORE than this many percentage points above that
+    /// window's pace line; negative demands usage below the line. `nil`: no pace gate.
+    public let sessionPaceGatePoints: Int?
+    /// Same, for the 7-day window.
+    public let weeklyPaceGatePoints: Int?
     /// Whether a gate-percentage skip raises an alert. Off by default.
     public let notifyOnGateSkip: Bool?
     public let supervisionEnabled: Bool
@@ -263,6 +268,7 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         model: String? = nil, maxRuntimeMinutes: Int? = nil,
         maxTokenBudget: Int? = nil, compactionThresholdTokens: Int? = nil,
         sessionUsageGatePercent: Int? = nil, weeklyUsageGatePercent: Int? = nil,
+        sessionPaceGatePoints: Int? = nil, weeklyPaceGatePoints: Int? = nil,
         notifyOnGateSkip: Bool? = nil, supervisionEnabled: Bool, supervisionModel: String?,
         supervisionAppendPrompt: String? = nil, supervisionCompactionThresholdTokens: Int? = nil,
         supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
@@ -291,6 +297,8 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         self.compactionThresholdTokens = compactionThresholdTokens
         self.sessionUsageGatePercent = sessionUsageGatePercent
         self.weeklyUsageGatePercent = weeklyUsageGatePercent
+        self.sessionPaceGatePoints = sessionPaceGatePoints
+        self.weeklyPaceGatePoints = weeklyPaceGatePoints
         self.notifyOnGateSkip = notifyOnGateSkip
         self.supervisionEnabled = supervisionEnabled
         self.supervisionModel = supervisionModel
@@ -323,6 +331,8 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         case compactionThresholdTokens = "compaction_threshold_tokens"
         case sessionUsageGatePercent = "session_usage_gate_percent"
         case weeklyUsageGatePercent = "weekly_usage_gate_percent"
+        case sessionPaceGatePoints = "session_pace_gate_points"
+        case weeklyPaceGatePoints = "weekly_pace_gate_points"
         case notifyOnGateSkip = "notify_on_gate_skip"
         case supervisionEnabled = "supervision_enabled"
         case supervisionModel = "supervision_model"
@@ -372,6 +382,11 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
     public let sessionUsageGatePercent: Int?
     /// A fire is skipped once the 7-day plan window is at or above this percentage.
     public let weeklyUsageGatePercent: Int?
+    /// A fire is skipped while 5-hour usage is MORE than this many percentage points above that
+    /// window's pace line; negative demands usage below the line. `nil`: no pace gate.
+    public let sessionPaceGatePoints: Int?
+    /// Same, for the 7-day window.
+    public let weeklyPaceGatePoints: Int?
     /// Whether a gate-percentage skip raises an alert. Off by default.
     public let notifyOnGateSkip: Bool?
     public let supervisionEnabled: Bool
@@ -404,6 +419,7 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         model: String? = nil, maxRuntimeMinutes: Int? = nil,
         maxTokenBudget: Int? = nil, compactionThresholdTokens: Int? = nil,
         sessionUsageGatePercent: Int? = nil, weeklyUsageGatePercent: Int? = nil,
+        sessionPaceGatePoints: Int? = nil, weeklyPaceGatePoints: Int? = nil,
         notifyOnGateSkip: Bool? = nil, supervisionEnabled: Bool, supervisionModel: String?,
         supervisionAppendPrompt: String? = nil, supervisionCompactionThresholdTokens: Int? = nil,
         supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
@@ -432,6 +448,8 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         self.compactionThresholdTokens = compactionThresholdTokens
         self.sessionUsageGatePercent = sessionUsageGatePercent
         self.weeklyUsageGatePercent = weeklyUsageGatePercent
+        self.sessionPaceGatePoints = sessionPaceGatePoints
+        self.weeklyPaceGatePoints = weeklyPaceGatePoints
         self.notifyOnGateSkip = notifyOnGateSkip
         self.supervisionEnabled = supervisionEnabled
         self.supervisionModel = supervisionModel
@@ -465,6 +483,8 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         case compactionThresholdTokens = "compaction_threshold_tokens"
         case sessionUsageGatePercent = "session_usage_gate_percent"
         case weeklyUsageGatePercent = "weekly_usage_gate_percent"
+        case sessionPaceGatePoints = "session_pace_gate_points"
+        case weeklyPaceGatePoints = "weekly_pace_gate_points"
         case notifyOnGateSkip = "notify_on_gate_skip"
         case supervisionEnabled = "supervision_enabled"
         case supervisionModel = "supervision_model"
@@ -818,6 +838,8 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
     public var compactionThresholdTokens: Int?
     public var sessionUsageGatePercent: Int
     public var weeklyUsageGatePercent: Int
+    public var sessionPaceGatePoints: Int?
+    public var weeklyPaceGatePoints: Int?
     public var notifyOnGateSkip: Bool
     public var supervisionEnabled: Bool
     public var supervisionModel: String?
@@ -834,6 +856,7 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         quietPeriodMinutes: Int, model: String?, maxRuntimeMinutes: Int? = nil,
         maxTokenBudget: Int? = nil, compactionThresholdTokens: Int? = nil,
         sessionUsageGatePercent: Int = 60, weeklyUsageGatePercent: Int = 80,
+        sessionPaceGatePoints: Int? = nil, weeklyPaceGatePoints: Int? = nil,
         notifyOnGateSkip: Bool = false, supervisionEnabled: Bool, supervisionModel: String?,
         supervisionAppendPrompt: String? = nil, supervisionCompactionThresholdTokens: Int? = nil,
         supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
@@ -857,6 +880,8 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         self.compactionThresholdTokens = compactionThresholdTokens
         self.sessionUsageGatePercent = sessionUsageGatePercent
         self.weeklyUsageGatePercent = weeklyUsageGatePercent
+        self.sessionPaceGatePoints = sessionPaceGatePoints
+        self.weeklyPaceGatePoints = weeklyPaceGatePoints
         self.notifyOnGateSkip = notifyOnGateSkip
         self.supervisionEnabled = supervisionEnabled
         self.supervisionModel = supervisionModel
@@ -892,6 +917,8 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
             compactionThresholdTokens: task.compactionThresholdTokens,
             sessionUsageGatePercent: task.sessionUsageGatePercent ?? 60,
             weeklyUsageGatePercent: task.weeklyUsageGatePercent ?? 80,
+            sessionPaceGatePoints: task.sessionPaceGatePoints,
+            weeklyPaceGatePoints: task.weeklyPaceGatePoints,
             notifyOnGateSkip: task.notifyOnGateSkip ?? false,
             supervisionEnabled: task.supervisionEnabled, supervisionModel: task.supervisionModel,
             enabled: task.enabled)
@@ -911,6 +938,8 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         case compactionThresholdTokens = "compaction_threshold_tokens"
         case sessionUsageGatePercent = "session_usage_gate_percent"
         case weeklyUsageGatePercent = "weekly_usage_gate_percent"
+        case sessionPaceGatePoints = "session_pace_gate_points"
+        case weeklyPaceGatePoints = "weekly_pace_gate_points"
         case notifyOnGateSkip = "notify_on_gate_skip"
         case supervisionEnabled = "supervision_enabled"
         case supervisionModel = "supervision_model"
@@ -918,6 +947,42 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         case supervisionCompactionThresholdTokens = "supervision_compaction_threshold_tokens"
         case supervisionChunkIntervalSeconds = "supervision_chunk_interval_seconds"
         case supervisionChunkTokenThreshold = "supervision_chunk_token_threshold"
+    }
+
+    /// Every key is written, `nil` as an explicit `null`. The server's PATCH treats an omitted key
+    /// as "leave alone" and `null` as "clear", and the synthesized `Encodable` would drop a `nil`
+    /// property — so a gate or ceiling cleared on the phone would silently stay set. The web form
+    /// sends every field the same way.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name)
+        try c.encode(environment, forKey: .environment)
+        try c.encode(workingDir, forKey: .workingDir)
+        try c.encode(prompt, forKey: .prompt)
+        try c.encode(appendSystemPrompt, forKey: .appendSystemPrompt)
+        try c.encode(cadence, forKey: .cadence)
+        try c.encode(timezone, forKey: .timezone)
+        try c.encode(gateSource, forKey: .gateSource)
+        try c.encode(gateRuntime, forKey: .gateRuntime)
+        try c.encode(gateTimeoutSeconds, forKey: .gateTimeoutSeconds)
+        try c.encode(sessionPolicy, forKey: .sessionPolicy)
+        try c.encode(quietPeriodMinutes, forKey: .quietPeriodMinutes)
+        try c.encode(model, forKey: .model)
+        try c.encode(maxRuntimeMinutes, forKey: .maxRuntimeMinutes)
+        try c.encode(maxTokenBudget, forKey: .maxTokenBudget)
+        try c.encode(compactionThresholdTokens, forKey: .compactionThresholdTokens)
+        try c.encode(sessionUsageGatePercent, forKey: .sessionUsageGatePercent)
+        try c.encode(weeklyUsageGatePercent, forKey: .weeklyUsageGatePercent)
+        try c.encode(sessionPaceGatePoints, forKey: .sessionPaceGatePoints)
+        try c.encode(weeklyPaceGatePoints, forKey: .weeklyPaceGatePoints)
+        try c.encode(notifyOnGateSkip, forKey: .notifyOnGateSkip)
+        try c.encode(supervisionEnabled, forKey: .supervisionEnabled)
+        try c.encode(supervisionModel, forKey: .supervisionModel)
+        try c.encode(supervisionAppendPrompt, forKey: .supervisionAppendPrompt)
+        try c.encode(supervisionCompactionThresholdTokens, forKey: .supervisionCompactionThresholdTokens)
+        try c.encode(supervisionChunkIntervalSeconds, forKey: .supervisionChunkIntervalSeconds)
+        try c.encode(supervisionChunkTokenThreshold, forKey: .supervisionChunkTokenThreshold)
+        try c.encode(enabled, forKey: .enabled)
     }
 }
 

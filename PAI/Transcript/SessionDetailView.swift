@@ -344,8 +344,8 @@ struct SessionDetailView: View {
 }
 
 /// The account's plan usage: `⏳ 55%/26% 18:20` — the five-hour window, the seven-day window, and
-/// when the five-hour one resets. Swift port of `UsageBadge.tsx`, and the same three figures the
-/// statusline shows; renders nothing until the agent has reported (the caller already guards on
+/// when the five-hour one resets, each window coloured by its own pace. Swift port of
+/// `UsageBadge.tsx`, and the same three figures the statusline shows; renders nothing until the agent has reported (the caller already guards on
 /// `usage` being non-nil, so this only ever formats real data).
 ///
 /// All three earn their place for different reasons. The five-hour figure is the one that moves
@@ -356,20 +356,21 @@ struct SessionDetailView: View {
 private struct PlanUsageBadge: View {
     let usage: Usage
 
-    private static let amberAt = 50.0
-    private static let redAt = 80.0
-
     var body: some View {
         if usage.fiveHour != nil || usage.sevenDay != nil {
             HStack(spacing: 4) {
                 Image(systemName: "hourglass")
-                Text("\(percent(usage.fiveHour))/\(percent(usage.sevenDay))")
+                    .foregroundStyle(PaiPalette.surface500)
+                HStack(spacing: 0) {
+                    Text(percent(usage.fiveHour)).foregroundStyle(color(usage.fiveHour))
+                    Text("/").foregroundStyle(color(usage.sevenDay))
+                    Text(percent(usage.sevenDay)).foregroundStyle(color(usage.sevenDay))
+                }
                 if let resetsAt {
-                    Text(resetsAt)
+                    Text(resetsAt).foregroundStyle(PaiPalette.surface500)
                 }
             }
             .monospacedDigit()
-            .foregroundStyle(color)
             .accessibilityLabel(accessibilityLabel)
             .accessibilityIdentifier("plan-usage-badge")
         }
@@ -391,17 +392,27 @@ private struct PlanUsageBadge: View {
 
     private var accessibilityLabel: String {
         var parts = [
-            "\(percent(usage.fiveHour)) of the 5-hour window", "\(percent(usage.sevenDay)) of the 7-day window",
+            "\(percent(usage.fiveHour)) of the 5-hour window\(paceSuffix(usage.fiveHour))",
+            "\(percent(usage.sevenDay)) of the 7-day window\(paceSuffix(usage.sevenDay))",
         ]
         if let resetsAt { parts.append("5-hour window resets at \(resetsAt)") }
         return parts.joined(separator: ", ")
     }
 
-    private var color: Color {
-        let highest = max(usage.fiveHour?.utilization ?? 0, usage.sevenDay?.utilization ?? 0)
-        if highest >= Self.redAt { return PaiPalette.red500 }
-        if highest >= Self.amberAt { return PaiPalette.amber500 }
-        return PaiPalette.green500
+    private func paceSuffix(_ window: UsageWindow?) -> String {
+        window?.paceDescription.map { " (\($0))" } ?? ""
+    }
+
+    /// Each window is painted by its own distance from its steady-pace line (the server computes
+    /// it and picks the steps); a window with no line is neutral rather than a guessed colour.
+    private func color(_ window: UsageWindow?) -> Color {
+        switch window?.paceTone ?? .neutral {
+        case .green: return PaiPalette.green500
+        case .yellow: return .yellow
+        case .orange: return .orange
+        case .red: return PaiPalette.red500
+        case .neutral: return PaiPalette.surface500
+        }
     }
 }
 

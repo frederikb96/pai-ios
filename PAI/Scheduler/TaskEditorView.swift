@@ -192,6 +192,16 @@ struct TaskEditorView: View {
                         .keyboardType(.numberPad)
                         .multilineTextAlignment(.trailing)
                     }
+                    LabeledContent("Skip while 5-hour usage is more than … points above its pace line") {
+                        TextField("off", text: intFieldBinding(store, \.sessionPaceGatePoints))
+                            .keyboardType(.numbersAndPunctuation)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    LabeledContent("Skip while 7-day usage is more than … points above its pace line") {
+                        TextField("off", text: intFieldBinding(store, \.weeklyPaceGatePoints))
+                            .keyboardType(.numbersAndPunctuation)
+                            .multilineTextAlignment(.trailing)
+                    }
                     Toggle("Alert when a plan-usage gate skips a fire", isOn: notifyOnGateSkipBinding(store))
                 } header: {
                     Text("This task's own limits")
