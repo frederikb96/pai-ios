@@ -71,6 +71,25 @@ final class RecordingsStoreTests: XCTestCase {
         XCTAssertEqual(decoded, minimal)
         XCTAssertNil(decoded.transcript)
     }
+
+    /// The list is stored as one array, so a single entry an earlier build wrote — with an end
+    /// reason and fields this one no longer has — must not make the whole list fail to decode and
+    /// read as empty.
+    func testAnOlderEntryWithARetiredEndReasonStillDecodesInTheList() async throws {
+        let stored = Data(
+            """
+            [{"timestampMs": 1798610000000, "durationMs": 8420, "sampleRate": 24000, "rawSampleRate": 48000,
+              "rawStored": true, "endedBy": "silence",
+              "silence": {"enabled": true, "threshold": 0.02, "durationMs": 1500, "triggered": true},
+              "transcript": "kept"},
+             {"timestampMs": 1798600000000, "durationMs": 1000, "endedBy": "user"}]
+            """.utf8)
+        let decoded = try JSONDecoder().decode([RecordingMeta].self, from: stored)
+        XCTAssertEqual(decoded.count, 2)
+        XCTAssertNil(decoded[0].endedBy)
+        XCTAssertEqual(decoded[0].transcript, "kept")
+        XCTAssertEqual(decoded[1].endedBy, .user)
+    }
 }
 
 actor FakeRecordingAudioStorage: RecordingAudioStorage {

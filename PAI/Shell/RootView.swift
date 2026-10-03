@@ -507,7 +507,7 @@ private struct RecordingsRouteScreen: View {
                     RecordingsSheet(
                         controller: voice,
                         onInsertTranscript: { _ in },
-                        onAttach: { _ in }
+                        onAttachVoiceLog: { _ in }
                     )
                 }
             }
