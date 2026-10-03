@@ -106,7 +106,8 @@ struct NonDrivableComposerBar: View {
         if session.kind == .supervisor { return .supervisor }
         if session.kind == .computer { return .computer }
         let machineSlug = session.agent ?? MachineStore.defaultMachineSlug
-        if let machine = machines.allMachines.first(where: { $0.slug == machineSlug }), !machine.online {
+        let podAnswers = session.kind.map(sessionKindsPodResident.contains) ?? false
+        if !podAnswers, let machine = machines.allMachines.first(where: { $0.slug == machineSlug }), !machine.online {
             return .machineOffline(machine.displayName)
         }
         let mayCollide =

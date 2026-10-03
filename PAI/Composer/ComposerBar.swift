@@ -582,6 +582,8 @@ struct ComposerBar: View {
 
     private var offlineMachineName: String? {
         guard let session = currentSession else { return nil }
+        // A pod-resident kind is answered by the pod, whatever its machine is doing.
+        if let kind = session.kind, sessionKindsPodResident.contains(kind) { return nil }
         let slug = session.agent ?? MachineStore.defaultMachineSlug
         guard let machine = machines.allMachines.first(where: { $0.slug == slug }), !machine.online else { return nil }
         return machine.displayName
