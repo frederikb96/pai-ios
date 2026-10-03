@@ -19,10 +19,10 @@ final class MicrophoneCapture: @unchecked Sendable {
 
     /// One buffer of mono, 16-bit little-endian PCM at `VoiceSocketProtocol.audioUplinkHz` —
     /// the rate the voice socket declares, whatever the microphone's own rate is. Already
-    /// converted, matching `ingestAudioChunk`'s contract that it never resamples on its own, and
-    /// the same samples the take's local recording stores.
+    /// converted, matching `ingestAudioChunk`'s contract that it never resamples on its own, with
+    /// `DictationInputGain` applied, and the same samples the take's local recording stores.
     var onChunk: (@Sendable ([Int16]) -> Void)?
-    /// One RMS reading per buffer, normalised to `0...1` — what `VoiceRecordingSession.ingestLevel`
+    /// One RMS reading per buffer, normalised to `0...1` and scaled by `DictationInputGain` like the samples — what `VoiceRecordingSession.ingestLevel`
     /// and the recording's own level metering both want, computed once here rather than twice.
     var onLevel: (@Sendable (Double) -> Void)?
     /// 🚨 The engine has stopped itself and every tap and connection on it is now invalid —
@@ -154,9 +154,9 @@ final class MicrophoneCapture: @unchecked Sendable {
     /// this is a phone microphone feed rather than a synthesizer voice; moving the conversion to
     /// another thread would only relocate the same work, not remove it.
     private func process(_ buffer: AVAudioPCMBuffer) {
-        onLevel?(Self.rms(of: buffer))
+        onLevel?(DictationInputGain.apply(toLevel: Self.rms(of: buffer)))
         if let sendFormat, let sendConverter, let samples = Self.convert(buffer, using: sendConverter, to: sendFormat) {
-            onChunk?(samples)
+            onChunk?(DictationInputGain.apply(to: samples))
         }
     }
 
