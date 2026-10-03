@@ -47,7 +47,7 @@ public struct DebugRecording: Codable, Sendable, Equatable, Identifiable {
     /// `dictation` | `call_dictation` | `wake` | `computer` — kept as the wire string, so a kind a
     /// newer backend adds still lists rather than failing the whole response.
     public let kind: String
-    /// `elevenlabs_realtime` | `openai_realtime` | `wake_word`.
+    /// `elevenlabs_realtime` | `elevenlabs_batch` (an uploaded take) | `openai_realtime` | `wake_word`.
     public let engine: String
     public let model: String
     public let transport: String

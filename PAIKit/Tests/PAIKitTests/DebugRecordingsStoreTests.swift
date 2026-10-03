@@ -52,6 +52,34 @@ final class DebugRecordingsStoreTests: XCTestCase {
         XCTAssertNil(recordings.first?.events[2].detail)
     }
 
+    /// A recording made from an uploaded take has no device, mics or session, and its own engine,
+    /// transport and end reason strings — it must list like any other.
+    func testAnUploadedTakeRecordingDecodes() async throws {
+        stub(
+            200,
+            """
+            {"enabled": true, "recordings": [{
+              "id": "6f1c2d3e-0000-4000-8000-000000000002", "kind": "dictation",
+              "engine": "elevenlabs_batch", "model": "scribe_v2", "transport": "upload",
+              "device": null, "mics": [],
+              "bus_id": "6f1c2d3e-0000-4000-8000-0000000000bb", "session_id": null, "session_title": null,
+              "take_id": "T1", "sample_rate": 16000, "encoding": "pcm_s16le", "channels": 1,
+              "started_at": "2026-10-03T10:15:02.123456+00:00", "ended_at": "2026-10-03T10:15:09.123456+00:00",
+              "duration_ms": 7000, "byte_count": 224000, "peak_dbfs": -12.3, "rms_dbfs": -31.5,
+              "clipped_samples": 0, "status": "complete", "end_reason": "uploaded", "truncated": false,
+              "events": []
+            }]}
+            """)
+        let store = await DebugRecordingsStore(apiClient: try Self.makeClient())
+        await store.load()
+        let recording = await store.recordings.first
+        XCTAssertEqual(recording?.engine, "elevenlabs_batch")
+        XCTAssertEqual(recording?.transport, "upload")
+        XCTAssertEqual(recording?.endReason, "uploaded")
+        XCTAssertNil(recording?.device)
+        XCTAssertEqual(recording?.mics, [])
+    }
+
     /// A recording still being written is refused by the backend; it must stay listed.
     func testARefusedDeleteKeepsTheRecordingListed() async throws {
         stub(200, Self.listBody)
