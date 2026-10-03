@@ -171,19 +171,101 @@ public struct SecretPrompt: Codable, Sendable, Equatable {
 
 // MARK: - Plan usage
 
+/// How far above its steady-pace line a window's usage sits, in steps the server decides
+/// (`pai_cloud/usage_pace.py`). A level this client does not know decodes to `.unrecognized` and
+/// paints neutral rather than failing the whole usage decode.
+public enum UsagePaceLevel: Sendable, Hashable {
+    case onPace, slightlyOver, over, farOver
+    case unrecognized(String)
+}
+
+extension UsagePaceLevel: Codable {
+    private static let knownValues: [String: UsagePaceLevel] = [
+        "on_pace": .onPace, "slightly_over": .slightlyOver, "over": .over, "far_over": .farOver,
+    ]
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = Self.knownValues[raw] ?? .unrecognized(raw)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .onPace: try container.encode("on_pace")
+        case .slightlyOver: try container.encode("slightly_over")
+        case .over: try container.encode("over")
+        case .farOver: try container.encode("far_over")
+        case let .unrecognized(raw): try container.encode(raw)
+        }
+    }
+}
+
+/// Where a window's usage stands against a straight line from 0% at the window's start to 100%
+/// at its reset. The server owns the line and the steps; this client only paints `level`.
+public struct UsagePace: Codable, Sendable, Equatable {
+    /// Where the line sits right now, in percent of the window.
+    public let linePercent: Double
+    /// Utilization minus the line, in percentage points; positive is ahead of a steady pace.
+    public let deltaPoints: Double
+    public let level: UsagePaceLevel
+
+    enum CodingKeys: String, CodingKey {
+        case level
+        case linePercent = "line_percent"
+        case deltaPoints = "delta_points"
+    }
+
+    public init(linePercent: Double, deltaPoints: Double, level: UsagePaceLevel) {
+        self.linePercent = linePercent
+        self.deltaPoints = deltaPoints
+        self.level = level
+    }
+}
+
+/// What a pace level is painted as; `.neutral` is the answer for "no line known".
+public enum UsagePaceTone: Sendable, Equatable {
+    case green, yellow, orange, red, neutral
+}
+
 public struct UsageWindow: Codable, Sendable, Equatable {
     /// Percent of the window consumed.
     public let utilization: Double
-    public let resetsAt: String
+    /// Absent when the window has not started counting.
+    public let resetsAt: String?
+    /// `nil` when the server could not draw a line (no usable reset time) and from a server too
+    /// old to compute one — both read as "unknown", never as a guessed colour.
+    public let pace: UsagePace?
 
     enum CodingKeys: String, CodingKey {
-        case utilization
+        case utilization, pace
         case resetsAt = "resets_at"
     }
 
-    public init(utilization: Double, resetsAt: String) {
+    public init(utilization: Double, resetsAt: String?, pace: UsagePace? = nil) {
         self.utilization = utilization
         self.resetsAt = resetsAt
+        self.pace = pace
+    }
+
+    public var paceTone: UsagePaceTone {
+        switch pace?.level {
+        case .onPace: return .green
+        case .slightlyOver: return .yellow
+        case .over: return .orange
+        case .farOver: return .red
+        case .unrecognized, .none: return .neutral
+        }
+    }
+
+    /// "4 points over a steady pace of 14%" for accessibility and tooltips; `nil` when unknown.
+    public var paceDescription: String? {
+        guard let pace else { return nil }
+        let points = Int(abs(pace.deltaPoints).rounded())
+        let line = Int(pace.linePercent.rounded())
+        return pace.deltaPoints <= 0
+            ? "\(points) points under a steady pace of \(line)%"
+            : "\(points) points over a steady pace of \(line)%"
     }
 }
 
