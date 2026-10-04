@@ -63,4 +63,6 @@ in that job can pass while the screen renders nothing.
 ## Releasing
 
 Push a `v*.*.*` tag, or dispatch the workflow. The tag is the single source of truth for the
-version; the build number is the CI run number. TestFlight builds expire after 90 days.
+version; the build number is the CI run number. TestFlight builds expire after 90 days;
+dispatching with `refresh_tag` rebuilds an existing release under a new build number to keep an
+installed copy launching.
