@@ -41,6 +41,20 @@ public enum DeepLink: Equatable, Sendable, Hashable {
         case .notification: return [.notifications]
         }
     }
+
+    /// Whether whatever the app is presenting (a sheet, a cover) must be closed before the routes
+    /// apply. A presented screen sits on top of the navigation stack, so replacing the path
+    /// underneath it leaves it covering the destination.
+    ///
+    /// Only the launcher asks for it: it is a fresh start from a hardware button. `createSession`
+    /// is itself a presented sheet, so closing the overlays first would tear down the very screen
+    /// the link is opening.
+    public var dismissesOverlays: Bool {
+        switch self {
+        case .quickActions: return true
+        case .session, .note, .notesList, .createSession, .notification: return false
+        }
+    }
 }
 
 extension DeepLink {

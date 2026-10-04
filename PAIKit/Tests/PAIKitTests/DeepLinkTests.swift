@@ -147,6 +147,14 @@ final class DeepLinkTests: XCTestCase {
         XCTAssertEqual(DeepLink.createSession.routes, [.createSession])
     }
 
+    /// The launcher closes presented screens first; the new-session link must not, because that
+    /// screen is itself a sheet and would be torn down by its own link.
+    func testOnlyTheLauncherDismissesOverlays() {
+        XCTAssertTrue(DeepLink.quickActions.dismissesOverlays)
+        XCTAssertFalse(DeepLink.createSession.dismissesOverlays)
+        XCTAssertFalse(DeepLink.notesList.dismissesOverlays)
+    }
+
     /// Replaces the path rather than pushing: the hardware button is pressed from wherever the
     /// app was last left, and burying the launcher under that is how Back stops meaning anything.
     func testQuickActionsLandsOnTheLauncherAlone() {

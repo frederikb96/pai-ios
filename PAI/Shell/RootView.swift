@@ -333,7 +333,12 @@ struct RootView: View {
             Task { await resolveAndOpenNotification(id: id, connection: connection) }
             return
         }
-        environment.router.replace(with: link.routes)
+        guard link.dismissesOverlays else {
+            environment.router.replace(with: link.routes)
+            return
+        }
+        // Routed only once the overlays are gone — see `OverlayDismissal`.
+        OverlayDismissal.dismissAll { environment.router.replace(with: link.routes) }
     }
 
     /// What a tapped push notification does once the app can act on it (row 5.28). The payload
