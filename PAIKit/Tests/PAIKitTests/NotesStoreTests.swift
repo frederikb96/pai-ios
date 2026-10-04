@@ -294,34 +294,6 @@ final class NotesStoreTests: XCTestCase {
         XCTAssertEqual(api.patchNoteBodies.last, "first and more and yet more")
     }
 
-    /// `requestDelete` marks a row `pendingDelete` rather than removing it, for the undo window,
-    /// and nothing prunes it back out short of a full `refresh()` — so a stale row is exactly what
-    /// `createNote`'s taken-name scan sees on the very next create. Left unfiltered, a
-    /// create-delete-create cycle climbs the number forever even though the server has long since
-    /// finished deleting the note and no note by that name exists anywhere.
-    func testCreatingAfterDeletingDoesNotClimbThePendingDeleteRow() async {
-        let api = FakeNotesApi()
-        let store = NotesStore(api: api)
-        await store.refresh()
-
-        api.createNoteResult = NoteFixture.detail(id: "n1", name: "Untitled")
-        _ = await store.createNote(name: "Untitled")
-
-        let deleted = await store.requestDelete(id: "n1")
-        XCTAssertTrue(deleted)
-        XCTAssertTrue(store.notes.first { $0.id == "n1" }?.pendingDelete ?? false)
-
-        api.createNoteResult = NoteFixture.detail(id: "n2", name: "Untitled")
-        _ = await store.createNote(name: "Untitled")
-
-        // What the fake echoes back is scripted and would pass either way — the free name
-        // actually asked for, on the other hand, is only right if the taken-name scan saw past
-        // the pendingDelete row.
-        XCTAssertEqual(
-            api.createNoteCalls.last?.name, "Untitled",
-            "a row already marked pendingDelete must not count as a name still in use")
-    }
-
     /// The one place the undo window is defined is the backend's own config route — `refresh()`
     /// fetches it alongside the index rather than the store carrying its own copy.
     func testRefreshAdoptsTheUndoWindowThePlatformPublishes() async {
@@ -350,22 +322,29 @@ final class NotesStoreTests: XCTestCase {
         XCTAssertNil(store.loadError)
     }
 
-    /// The taken-name scan for a CONTAINER-LESS create is scoped to the other container-less
-    /// notes — never the whole index. A note sharing the base name inside some container has no
-    /// bearing on a fresh top-level note; matching against it anyway would give the new note a
-    /// number after it for no reason.
-    func testCreateNoteWithNoContainerIsNotBumpedByANoteInsideAContainer() async {
+    /// A name already in the index is still sent as typed: the server owns numbering, and the
+    /// index and caller take the name it answers with rather than the one requested.
+    func testCreateNoteSendsTheRequestedNameAndAdoptsTheServersNumberedOne() async {
         let api = FakeNotesApi()
-        api.createNoteResult = NoteFixture.detail(id: "n2", name: "Untitled")
-        api.getNotesResult = [NoteFixture.summary(id: "n1", name: "Untitled", containerId: "c1")]
+        api.getNotesResult = [NoteFixture.summary(id: "n1", name: "2026-10-04")]
+        api.createNoteResult = NoteFixture.detail(id: "n2", name: "2026-10-04 2")
         let store = NotesStore(api: api)
         await store.refresh()
 
-        _ = await store.createNote(name: "Untitled")
+        let created = await store.createNote(name: "2026-10-04")
 
-        XCTAssertEqual(
-            api.createNoteCalls.last?.name, "Untitled",
-            "a same-named note inside a container has no bearing on a fresh top-level note's free name")
+        XCTAssertEqual(api.createNoteCalls.last?.name, "2026-10-04")
+        XCTAssertEqual(created?.name, "2026-10-04 2")
+        XCTAssertEqual(store.notes.first?.name, "2026-10-04 2")
+    }
+
+    func testCreateNoteWithABlankNameAsksForUntitled() async {
+        let api = FakeNotesApi()
+        let store = NotesStore(api: api)
+
+        _ = await store.createNote(name: "   ")
+
+        XCTAssertEqual(api.createNoteCalls.last?.name, NoteNaming.untitled)
     }
 
     func testCreateNoteInsertsAtFrontOfIndex() async {

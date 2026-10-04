@@ -19,25 +19,6 @@ public enum NoteNaming {
         return String(format: "%04d-%02d-%02d", year, month, day)
     }
 
-    /// `base`, or `base 2`, `base 3`… — the first spelling no existing note is using.
-    ///
-    /// A note's name is a filename in a synced folder, so the backend refuses a duplicate. That is
-    /// right for a rename, where the name is the point, and wrong for creating one: every system
-    /// that makes new files makes a second `Untitled` without asking, and an error instead is a
-    /// dead end with no way forward except inventing a name before there is anything to name.
-    ///
-    /// Compared case- and diacritic-insensitively, because the folder may sit on a volume that
-    /// treats `Notes` and `notes` as the same file.
-    public static func freeName(base: String, taken: [String]) -> String {
-        let trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
-        let root = trimmed.isEmpty ? untitled : trimmed
-        let used = Set(taken.map(normalizeForNoteSearch))
-        guard used.contains(normalizeForNoteSearch(root)) else { return root }
-        var suffix = 2
-        while used.contains(normalizeForNoteSearch("\(root) \(suffix)")) { suffix += 1 }
-        return "\(root) \(suffix)"
-    }
-
     /// Whether `name` already belongs to some other note in `containerId` — a fast, local
     /// preview of what the server's own rename check will say. Mirrors the backend's own rule
     /// (`repository.find_note_in_container`, `notes_service.find_rename_collision`) exactly,

@@ -189,22 +189,17 @@ public final class NotesStore {
     /// brand new note is a real file the moment it is created, not a draft that only becomes one
     /// on first keystroke.
     ///
-    /// The name is made free before it is asked for — see ``NoteNaming/freeName(base:taken:)``.
-    /// Creating a note is not the same act as naming one, and a "New note" button that fails
-    /// because a note called `Untitled` already exists has no way forward at all.
-    ///
-    /// `taken` excludes `pendingDelete` rows — `requestDelete` marks a row rather than removing
-    /// it, for the undo window, and nothing here ever prunes it back out short of a full
-    /// `refresh()`. Counting it as taken anyway is what let repeated create-then-delete climb the
-    /// number forever: the server had long since finished deleting the note, but this index had
-    /// not caught up and had no reason to before this call ran again.
+    /// The name is sent as given: when it is already taken, the server numbers it (`Name 2`) and
+    /// the returned note carries the name it actually used, so the index and the caller read that
+    /// one rather than what was typed. Only the server knows the collision domain — a create with
+    /// no container lands in its default container, which this index cannot tell apart from a
+    /// container-less note.
     public func createNote(name: String, containerId: String? = nil) async -> NoteSummary? {
-        let free = NoteNaming.freeName(
-            base: name,
-            taken: notes.filter { !$0.pendingDelete && $0.containerId == containerId }
-                .map(\.name))
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            let created = try await api.createNote(name: free, summary: nil, body: nil, containerId: containerId)
+            let created = try await api.createNote(
+                name: trimmed.isEmpty ? NoteNaming.untitled : trimmed, summary: nil, body: nil,
+                containerId: containerId)
             setDetail(created, for: created.id)
             notes.insert(created.summaryRow, at: 0)
             loadError = nil

@@ -21,9 +21,8 @@ struct OpenNotesIntent: AppIntent {
 ///
 /// Creates through a standalone client rather than waiting for the app's own `NotesStore`, the
 /// same reason ``NewSessionLaunchChoice`` does: a shortcut runs before anything holding a live
-/// store necessarily exists. Free-names the note the same way ``NotesStore/createNote(name:
-/// containerId:)`` does, reading the index once to avoid landing on a second copy of today's date
-/// a shortcut fired twice in a row would otherwise produce.
+/// store necessarily exists. A name already taken is numbered by the server, so a shortcut fired
+/// twice in a row lands on `date` and `date 2`.
 struct CreateNoteIntent: AppIntent {
     static var title: LocalizedStringResource { "New Note" }
     static var description: IntentDescription { IntentDescription("Create a new note in PAI.") }
@@ -36,9 +35,7 @@ struct CreateNoteIntent: AppIntent {
         guard let client = await AppEnvironment.standaloneClient() else {
             throw CreateNoteIntentError.notSignedIn
         }
-        let taken = (try? await client.getNotes())?.filter { $0.containerId == nil }.map(\.name) ?? []
-        let name = NoteNaming.freeName(base: NoteNaming.todayName(), taken: taken)
-        guard let created = try? await client.createNote(name: name) else {
+        guard let created = try? await client.createNote(name: NoteNaming.todayName()) else {
             throw CreateNoteIntentError.createFailed
         }
         // Same one-shot signal the note list's own "+" button sends — see
