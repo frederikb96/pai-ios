@@ -437,6 +437,15 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// its own route — either way the session is told, because it is waiting on that message.
     /// `nil` means nothing is waiting, and reads the same from a backend that predates the field.
     public let secretPrompt: SecretPrompt?
+    /// The session this conversation was transferred to on another machine, and when. While set
+    /// (and that session still exists) this one cannot be resumed — the conversation lives on the
+    /// other machine now, so the menu hides the transfer action. On the polled `Session` only:
+    /// the live SSE status event never carries either.
+    ///
+    /// `var` with an internal setter so a successful transfer can mark the source row without a
+    /// third copy of the memberwise initializer call (`withLiveStatus`, `withPinnedAt`).
+    public internal(set) var transferredToSessionId: String?
+    public let transferredAt: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -481,6 +490,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         case activityCounts = "activity_counts"
         case secretGrantable = "secret_grantable"
         case secretPrompt = "secret_prompt"
+        case transferredToSessionId = "transferred_to_session_id"
+        case transferredAt = "transferred_at"
     }
 
     public init(
@@ -530,7 +541,9 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         taskId: String? = nil,
         activityCounts: ActivityCounts? = nil,
         secretGrantable: Bool? = nil,
-        secretPrompt: SecretPrompt? = nil
+        secretPrompt: SecretPrompt? = nil,
+        transferredToSessionId: String? = nil,
+        transferredAt: String? = nil
     ) {
         self.id = id
         self.sessionType = sessionType
@@ -579,6 +592,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.activityCounts = activityCounts
         self.secretGrantable = secretGrantable
         self.secretPrompt = secretPrompt
+        self.transferredToSessionId = transferredToSessionId
+        self.transferredAt = transferredAt
     }
 
     /// A copy with the session-level fields of a live SSE `status` event applied — the same
@@ -611,7 +626,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
             projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName,
             liveModel: liveModel, taskId: taskId,
-            activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt
+            activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
+            transferredToSessionId: transferredToSessionId, transferredAt: transferredAt
         )
     }
 
@@ -637,7 +653,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
             projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName,
             liveModel: liveModel, taskId: taskId,
-            activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt
+            activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
+            transferredToSessionId: transferredToSessionId, transferredAt: transferredAt
         )
     }
 }
@@ -742,6 +759,27 @@ public struct SessionModelsResponse: Codable, Sendable {
         case models
         case fastDefaultModel = "fast_default_model"
         case fastDefaultThinking = "fast_default_thinking"
+    }
+}
+
+// --- Transfer ---
+
+/// `POST /api/session/{id}/transfer` — move the conversation to another machine. `session` is the
+/// new row on the target (new id, same `claude_session_id`). `snapshot` is true for a forced copy
+/// of a running session: the source keeps running and the two copies diverge. A refusal is not
+/// this type: it arrives as the ordinary `{detail}` error body, which the web shows verbatim and
+/// so does this client (`PaiError.userMessage`).
+public struct TransferResponse: Codable, Sendable, Equatable {
+    public let status: String
+    public let snapshot: Bool
+    public let warnings: [String]
+    public let session: Session
+
+    public init(status: String = "transferred", snapshot: Bool, warnings: [String], session: Session) {
+        self.status = status
+        self.snapshot = snapshot
+        self.warnings = warnings
+        self.session = session
     }
 }
 

@@ -16,6 +16,7 @@ struct SessionActionsSheet: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(SessionListStore.self) private var sessionList
     @Environment(MeStore.self) private var me
+    @Environment(MachineStore.self) private var machines
     @Environment(ToastCenter.self) private var toasts
 
     @State private var actions: SessionActionsStore?
@@ -26,7 +27,10 @@ struct SessionActionsSheet: View {
         NavigationStack(path: $path) {
             Group {
                 if let actions {
-                    RootActionsList(actions: actions, isOwner: me.isOwner, toasts: toasts, path: $path) {
+                    RootActionsList(
+                        actions: actions, isOwner: me.isOwner, machines: machines.machines, toasts: toasts,
+                        path: $path
+                    ) {
                         actions.deleteNow()
                         // This is the one moment a deleted session's staged attachments can be
                         // told apart from one merely not yet loaded — `deleteSession` is the
@@ -86,6 +90,9 @@ struct SessionActionsSheet: View {
             guard actions == nil, let client = environment.connection?.apiClient else { return }
             actions = SessionActionsStore(sessionId: sessionId, sessionList: sessionList, api: client)
         }
+        // The transfer entry and its picker read the machine list, and an online flag older than
+        // the sheet would offer a machine that has since gone away.
+        .task { await machines.refresh() }
         .presentationDetents([.medium, .large])
         // A picker chosen here also closes THIS sheet — the web's own menu closes itself before
         // routing to the spec (`SessionActionsMenu.tsx`'s `openArcForSession` call), and leaving
@@ -111,12 +118,21 @@ struct SessionActionsSheet: View {
             ExportActionView(actions: actions)
         case .supervision:
             SupervisionView(sessionId: sessionId)
+        case .transfer:
+            TransferActionView(actions: actions, machines: machines.machines, toasts: toasts) { newSessionId in
+                // Pushed BEFORE this sheet dismisses: a push made while a sheet is dismissing is
+                // dropped silently (`CreateSessionView` has the same ordering and the reason).
+                withTransaction(Transaction(animation: nil)) {
+                    environment.router.push(.session(id: newSessionId))
+                }
+                dismiss()
+            }
         }
     }
 }
 
 private enum ActionsRoute: Hashable {
-    case rename, timeout, export, supervision
+    case rename, timeout, export, supervision, transfer
 }
 
 // MARK: - Root list
@@ -126,6 +142,7 @@ private struct RootActionsList: View {
 
     let actions: SessionActionsStore
     let isOwner: Bool
+    let machines: [Machine]
     let toasts: ToastCenter
     @Binding var path: [ActionsRoute]
     let onDelete: () -> Void
@@ -223,6 +240,14 @@ private struct RootActionsList: View {
                     path.append(.export)
                 } label: {
                     Label("Export transcript…", systemImage: "square.and.arrow.down")
+                }
+
+                if SessionTransfer.isAvailable(for: session, isOwner: isOwner, machines: machines) {
+                    Button {
+                        path.append(.transfer)
+                    } label: {
+                        Label("Transfer to another machine…", systemImage: "paperplane")
+                    }
                 }
 
                 if isOwner {
@@ -394,6 +419,70 @@ private struct IdleTimeoutActionView: View {
         }
         .navigationTitle("Close when idle for")
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - Transfer
+
+/// The picker behind "Transfer to another machine…": every other machine, the offline ones shown
+/// but disabled, the wording and the running-session warning from `SessionTransfer`. The relay can
+/// run for minutes, so the row of the machine being sent to shows a spinner and the rest are inert.
+private struct TransferActionView: View {
+    let actions: SessionActionsStore
+    let machines: [Machine]
+    let toasts: ToastCenter
+    let onTransferred: (String) -> Void
+
+    @State private var sendingTo: String?
+
+    var body: some View {
+        if let session = actions.session {
+            let live = SessionTransfer.isLive(session)
+            List {
+                if live {
+                    Section {
+                        Text(SessionTransfer.liveWarning)
+                            .font(PaiTypography.caption.font)
+                            .foregroundStyle(PaiPalette.Semantic.textPrimary)
+                    }
+                }
+                Section {
+                    ForEach(SessionTransfer.targets(for: session, machines: machines)) { machine in
+                        Button {
+                            Task { await send(to: machine) }
+                        } label: {
+                            HStack {
+                                Text(SessionTransfer.rowTitle(for: machine, live: live))
+                                Spacer()
+                                if sendingTo == machine.slug {
+                                    ProgressView()
+                                } else if !machine.online {
+                                    Text("offline")
+                                        .font(PaiTypography.caption.font)
+                                        .foregroundStyle(PaiPalette.Semantic.textFaint)
+                                }
+                            }
+                        }
+                        .disabled(!SessionTransfer.canChoose(machine, busy: sendingTo != nil))
+                    }
+                } footer: {
+                    Text(SessionTransfer.footer(live: live))
+                }
+            }
+            .navigationTitle("Transfer session")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    private func send(to machine: Machine) async {
+        sendingTo = machine.slug
+        defer { sendingTo = nil }
+        guard let result = await actions.transfer(toAgent: machine.slug) else {
+            toasts.show(actions.errorMessage ?? "Transfer failed", kind: .error)
+            return
+        }
+        for warning in result.warnings { toasts.show(warning) }
+        onTransferred(result.session.id)
     }
 }
 

@@ -345,6 +345,7 @@ actor FakeSessionActionsApi: SessionActionsApiClient {
     private(set) var setTitleLockedCalls: [(sessionId: String, locked: Bool)] = []
     private(set) var setIdleTimeoutCalls: [(sessionId: String, minutes: Int?)] = []
     private(set) var exportCalls: [(sessionId: String, since: String?)] = []
+    private(set) var transferCalls: [(sessionId: String, toAgent: String, force: Bool)] = []
 
     var sessionResult: Result<Session, PaiError> = .success(SessionFixture.make())
     var exportResult: Result<PaiExportResult, PaiError> = .success(
@@ -368,6 +369,13 @@ actor FakeSessionActionsApi: SessionActionsApiClient {
     func exportSession(sessionId: String, since: String?) async throws -> PaiExportResult {
         exportCalls.append((sessionId, since))
         return try unwrap(exportResult)
+    }
+
+    var transferResult: Result<TransferResponse, PaiError> = .failure(.transport("unset"))
+
+    func transferSession(sessionId: String, toAgent: String, force: Bool) async throws -> TransferResponse {
+        transferCalls.append((sessionId, toAgent, force))
+        return try unwrap(transferResult)
     }
 
     private func unwrap<T>(_ result: Result<T, PaiError>) throws -> T {

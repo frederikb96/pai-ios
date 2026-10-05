@@ -7,6 +7,7 @@ public protocol SessionActionsApiClient: Sendable {
     func setTitleLocked(sessionId: String, locked: Bool) async throws -> Session
     func setIdleTimeout(sessionId: String, minutes: Int?) async throws -> Session
     func exportSession(sessionId: String, since: String?) async throws -> PaiExportResult
+    func transferSession(sessionId: String, toAgent: String, force: Bool) async throws -> TransferResponse
 }
 
 extension PaiApiClient: SessionActionsApiClient {}
@@ -128,6 +129,27 @@ public final class SessionActionsStore {
             return result
         } catch {
             errorMessage = (error as? PaiError)?.userMessage ?? "Export failed"
+            return nil
+        }
+    }
+
+    /// Moves the conversation to `machine`. A running session is sent with `force`, which copies a
+    /// snapshot and leaves the source running; a stopped one is moved. On success the new row is
+    /// in the list (and the source row marked transferred when it was a move) and the response is
+    /// returned so the caller can open the new session and show its warnings. A refusal sets
+    /// `errorMessage` to the server's own message, verbatim.
+    public func transfer(toAgent slug: String) async -> TransferResponse? {
+        guard !isBusy, let session else { return nil }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let result = try await api.transferSession(
+                sessionId: sessionId, toAgent: slug, force: SessionTransfer.isLive(session))
+            sessionList.adoptTransferred(result, from: sessionId)
+            errorMessage = nil
+            return result
+        } catch {
+            errorMessage = (error as? PaiError)?.userMessage ?? "Transfer failed"
             return nil
         }
     }

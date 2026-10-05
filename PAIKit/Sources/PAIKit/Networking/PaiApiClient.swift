@@ -228,10 +228,11 @@ public struct PaiApiClient: Sendable {
         method: String = "GET",
         query: [URLQueryItem] = [],
         body: Data? = nil,
-        contentType: String? = "application/json"
+        contentType: String? = "application/json",
+        timeout: TimeInterval? = nil
     ) async throws -> T {
         let (data, _) = try await sendRaw(
-            path: path, method: method, query: query, body: body, contentType: contentType
+            path: path, method: method, query: query, body: body, contentType: contentType, timeout: timeout
         )
         do {
             return try JSONDecoder().decode(T.self, from: data)
@@ -324,11 +325,13 @@ public struct PaiApiClient: Sendable {
         method: String,
         query: [URLQueryItem],
         body: Data?,
-        contentType: String?
+        contentType: String?,
+        timeout: TimeInterval? = nil
     ) async throws -> (Data, URLResponse) {
-        let request = try requestFactory.makeRequest(
+        var request = try requestFactory.makeRequest(
             path: path, method: method, query: query, body: body, contentType: contentType
         )
+        if let timeout { request.timeoutInterval = timeout }
         let (data, response) = try await urlSession.data(for: request)
         try checkStatus(response: response, data: data)
         return (data, response)
@@ -633,6 +636,32 @@ public struct PaiApiClient: Sendable {
 
     public func closeSession(sessionId: String) async throws -> CloseResponse {
         try await send(path: "/api/session/\(sessionId)/close", method: "POST", body: nil, contentType: nil)
+    }
+
+    /// The backend holds a transfer request open while it relays the files and waits for the target
+    /// machine to announce the session (up to its own 150 s discovery window), sending no bytes
+    /// meanwhile — well past `URLSession`'s 60 s idle default, which would give up on a transfer
+    /// that is still going to succeed.
+    private static let transferTimeout: TimeInterval = 600
+
+    /// Moves the conversation to another machine. `force` copies a snapshot of a session that is
+    /// still running (the source keeps running); without it a live session is refused. A refusal
+    /// throws `PaiError.detail` carrying the server's own message.
+    public func transferSession(sessionId: String, toAgent: String, force: Bool) async throws -> TransferResponse {
+        struct Body: Encodable {
+            let toAgent: String
+            let force: Bool
+            enum CodingKeys: String, CodingKey {
+                case toAgent = "to_agent"
+                case force
+            }
+        }
+        return try await send(
+            path: "/api/session/\(sessionId)/transfer",
+            method: "POST",
+            body: try Self.jsonBody(Body(toAgent: toAgent, force: force)),
+            timeout: Self.transferTimeout
+        )
     }
 
     public func deleteSession(sessionId: String) async throws -> DeleteResponse {

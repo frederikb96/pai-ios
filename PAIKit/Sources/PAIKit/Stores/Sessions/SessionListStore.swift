@@ -260,6 +260,23 @@ public final class SessionListStore {
         syncedSessions.sort(by: Self.byActivityDescending)
     }
 
+    /// Puts the row a transfer produced on the target machine into the list, and — for a move,
+    /// not a snapshot — marks the source as transferred so its menu stops offering the action
+    /// before the next poll says so. Swift port of `session.ts`'s `transferSession` upsert.
+    public func adoptTransferred(_ response: TransferResponse, from sourceId: String) {
+        upsertSession(response.session)
+        guard !response.snapshot else { return }
+        if let index = syncedSessions.firstIndex(where: { $0.id == sourceId }) {
+            syncedSessions[index].transferredToSessionId = response.session.id
+        }
+        if let index = serverFilteredResults.firstIndex(where: { $0.session.id == sourceId }) {
+            var marked = serverFilteredResults[index].session
+            marked.transferredToSessionId = response.session.id
+            serverFilteredResults[index] = SessionSearchResult(
+                session: marked, score: serverFilteredResults[index].score)
+        }
+    }
+
     /// Routes a live SSE `status` event's session-level fields into this session's row, so the
     /// list reflects them while its transcript is open rather than waiting for the next poll —
     /// the event already carries them and nothing was reading them here. A no-op for a session

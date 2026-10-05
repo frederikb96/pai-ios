@@ -44,7 +44,7 @@ public final class MachineStore {
 
     /// The pill row — chips or the launch picker alike — only earns its place once there is a
     /// choice to make.
-    public static func hasMultipleAgents(_ machines: [Machine]) -> Bool {
+    public nonisolated static func hasMultipleAgents(_ machines: [Machine]) -> Bool {
         machines.count > 1
     }
 
