@@ -1,19 +1,17 @@
 import PAIKit
 import SwiftUI
 
-/// The supervisor's model choices as checkmark rows — shared by the scheduled-task editor and the
-/// session menu's attach form, which configure the same thing. Rows rather than a pill strip: the
-/// default model's label ("Opus (supervisor default)") does not fit five-across on a phone.
-struct SupervisorModelRows: View {
-    let storedModel: String?
-    let defaultModel: String?
+/// The model choices as checkmark rows — the same list the worker gets (Default, Haiku, Sonnet,
+/// Opus, Fable; Default is `nil`, the plan's own model), shared by the scheduled-task editor's
+/// supervisor section and the session menu's attach form.
+struct ModelRows: View {
+    let selected: String?
     let onSelect: (String?) -> Void
 
     var body: some View {
-        let shown = SupervisorModelChoice.shownModel(stored: storedModel, defaultModel: defaultModel)
-        ForEach(SupervisorModelChoice.options(defaultModel: defaultModel), id: \.label) { option in
-            ChoiceRow(label: option.label, isSelected: shown == option.id) { onSelect(option.id) }
-                .accessibilityIdentifier("supervisor-model-\(option.id ?? "supervisor-default")")
+        ForEach(CreateSessionStore.modelOptions, id: \.label) { option in
+            ChoiceRow(label: option.label, isSelected: selected == option.id) { onSelect(option.id) }
+                .accessibilityIdentifier("model-row-\(option.id ?? "default")")
         }
     }
 }

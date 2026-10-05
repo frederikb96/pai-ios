@@ -93,20 +93,13 @@ public final class TaskEditorStore {
         fields.thinking = catalog.retainedThinking(fields.thinking, model: id)
     }
 
-    /// The model the supervisor launches with, which decides its thinking levels.
-    public var supervisorLaunchedModel: String? {
-        SupervisorModelChoice.launchedModel(
-            stored: fields.supervisionModel, defaultModel: catalog.supervisorDefaultModel)
-    }
+    public var supervisorThinkingLevels: [String] { catalog.levels(for: fields.supervisionModel) }
 
-    public var supervisorThinkingLevels: [String] { catalog.levels(for: supervisorLaunchedModel) }
-
-    /// Same rule for the supervisor, whose "plan default" choice takes no level either.
+    /// Same rule for the supervisor: choosing a model drops a level it does not accept, all of them
+    /// for "Default".
     public func setSupervisionModel(_ id: String?) {
         fields.supervisionModel = id
-        fields.supervisionThinking = catalog.retainedThinking(
-            fields.supervisionThinking,
-            model: SupervisorModelChoice.launchedModel(stored: id, defaultModel: catalog.supervisorDefaultModel))
+        fields.supervisionThinking = catalog.retainedThinking(fields.supervisionThinking, model: id)
     }
 
     /// Toggling the gate checkbox on writes an empty script rather than leaving `gateSource` at

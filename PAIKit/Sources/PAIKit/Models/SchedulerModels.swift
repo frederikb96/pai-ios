@@ -244,12 +244,10 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
     /// never part of ``TaskWriteFields``.
     public let rerunPendingAtMs: Int?
     public let supervisionEnabled: Bool
-    /// `nil` is the supervisor default (`SessionModelCatalog.supervisorDefaultModel`),
-    /// `SupervisorModelChoice.planDefault` the plan's own model, anything else a `claude --model`
-    /// alias.
+    /// A `claude --model` alias; `nil` is the plan's own model (no model flag), as for the worker.
     public let supervisionModel: String?
-    /// The supervisor's `claude --effort` level; `nil` keeps its thinking off. Refused alongside
-    /// `SupervisorModelChoice.planDefault`.
+    /// The supervisor's `claude --effort` level; `nil` keeps its thinking off. Needs a named
+    /// `supervisionModel` — the server refuses a level with the plan's own model.
     public let supervisionThinking: String?
     /// Copied onto the task's `Supervision` when it is created and every time it is re-armed for
     /// a new run.
@@ -420,12 +418,10 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
     /// never part of ``TaskWriteFields``.
     public let rerunPendingAtMs: Int?
     public let supervisionEnabled: Bool
-    /// `nil` is the supervisor default (`SessionModelCatalog.supervisorDefaultModel`),
-    /// `SupervisorModelChoice.planDefault` the plan's own model, anything else a `claude --model`
-    /// alias.
+    /// A `claude --model` alias; `nil` is the plan's own model (no model flag), as for the worker.
     public let supervisionModel: String?
-    /// The supervisor's `claude --effort` level; `nil` keeps its thinking off. Refused alongside
-    /// `SupervisorModelChoice.planDefault`.
+    /// The supervisor's `claude --effort` level; `nil` keeps its thinking off. Needs a named
+    /// `supervisionModel` — the server refuses a level with the plan's own model.
     public let supervisionThinking: String?
     /// Copied onto the task's `Supervision` when it is created and every time it is re-armed for
     /// a new run.
@@ -815,7 +811,7 @@ public struct SupervisionDetail: Codable, Sendable, Equatable, Identifiable {
 public struct SupervisionConfigFields: Codable, Sendable, Equatable {
     public var model: String?
     /// A `claude --effort` level of the model the supervisor launches with; `nil` keeps thinking
-    /// off. Never sent alongside `SupervisorModelChoice.planDefault`, which the server refuses.
+    /// off. Needs a named `model` — the server refuses a level with the plan's own model.
     public var thinking: String?
     public var appendPrompt: String?
     public var compactionThresholdTokens: Int?

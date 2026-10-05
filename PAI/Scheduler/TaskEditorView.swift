@@ -234,10 +234,7 @@ struct TaskEditorView: View {
                 }
                 if store.fields.supervisionEnabled {
                     Section("Supervisor model") {
-                        SupervisorModelRows(
-                            storedModel: store.fields.supervisionModel,
-                            defaultModel: store.catalog.supervisorDefaultModel
-                        ) { store.setSupervisionModel($0) }
+                        ModelRows(selected: store.fields.supervisionModel) { store.setSupervisionModel($0) }
                     }
                     if !store.supervisorThinkingLevels.isEmpty {
                         Section("Supervisor thinking") {

@@ -77,20 +77,13 @@ public final class SupervisionStore {
         catalog = SessionModelCatalog(response)
     }
 
-    /// The model the supervisor would launch with, which decides its thinking levels.
-    public var launchedModel: String? {
-        SupervisorModelChoice.launchedModel(stored: config.model, defaultModel: catalog.supervisorDefaultModel)
-    }
+    public var thinkingLevels: [String] { catalog.levels(for: config.model) }
 
-    public var thinkingLevels: [String] { catalog.levels(for: launchedModel) }
-
-    /// Choosing a model drops a thinking level it does not accept — all of them for the plan's own
-    /// model, which takes none.
+    /// Choosing a model drops a thinking level it does not accept — all of them for "Default",
+    /// which the server refuses a level with.
     public func setModel(_ id: String?) {
         config.model = id
-        config.thinking = catalog.retainedThinking(
-            config.thinking,
-            model: SupervisorModelChoice.launchedModel(stored: id, defaultModel: catalog.supervisorDefaultModel))
+        config.thinking = catalog.retainedThinking(config.thinking, model: id)
     }
 
     /// Attaches (or re-attaches) using the current `config` draft.

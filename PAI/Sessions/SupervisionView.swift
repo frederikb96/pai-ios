@@ -85,9 +85,7 @@ struct SupervisionView: View {
         }
 
         Section("Model") {
-            SupervisorModelRows(
-                storedModel: store.config.model, defaultModel: store.catalog.supervisorDefaultModel
-            ) { store.setModel($0) }
+            ModelRows(selected: store.config.model) { store.setModel($0) }
         }
 
         if !store.thinkingLevels.isEmpty {
@@ -158,14 +156,9 @@ struct SupervisionView: View {
 
     // MARK: - A supervision's own read-only summary — active, degraded, stopped, or ended
 
-    /// `nil` is the supervisor default and `planDefault` the plan's own model — two different
-    /// things that both used to read "default".
+    /// `nil` is the plan's own model, shown as "default" like everywhere else.
     private func modelLabel(_ model: String?) -> String {
-        switch model {
-        case nil: return "supervisor default"
-        case SupervisorModelChoice.planDefault?: return "plan default"
-        case let alias?: return CreateSessionStore.modelDisplayLabels[alias] ?? alias
-        }
+        model.map { CreateSessionStore.modelDisplayLabels[$0] ?? $0 } ?? "default"
     }
 
     @ViewBuilder

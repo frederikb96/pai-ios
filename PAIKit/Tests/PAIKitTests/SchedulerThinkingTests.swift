@@ -7,7 +7,7 @@ private let catalogResponse: SessionModelsResponse = {
         {"models":[{"id":"haiku","effort_levels":[]},
                    {"id":"sonnet","effort_levels":["low","medium","high"]},
                    {"id":"opus","effort_levels":["low","medium","high","xhigh","max"]}],
-         "fast_default_model":"sonnet","fast_default_thinking":"low","supervisor_default_model":"opus"}
+         "fast_default_model":"sonnet","fast_default_thinking":"low"}
         """
     return try! JSONDecoder().decode(SessionModelsResponse.self, from: Data(json.utf8))
 }()
@@ -31,13 +31,11 @@ private func encoded(_ fields: TaskWriteFields) throws -> [String: Any] {
 
 final class SchedulerThinkingWireTests: XCTestCase {
 
-    func testSessionModelsDecodesTheSupervisorDefaultAndToleratesItsAbsence() throws {
-        XCTAssertEqual(catalogResponse.supervisorDefaultModel, "opus")
-        let older = try JSONDecoder().decode(
-            SessionModelsResponse.self,
-            from: Data(
-                #"{"models":[],"fast_default_model":"sonnet","fast_default_thinking":"low"}"#.utf8))
-        XCTAssertNil(older.supervisorDefaultModel)
+    /// A supervisor has no default model of its own: its model is an alias or nil, the plan's own.
+    func testSessionModelsCarriesNoSupervisorDefault() throws {
+        XCTAssertEqual(catalogResponse.models.map(\.id), ["haiku", "sonnet", "opus"])
+        let mirror = Mirror(reflecting: catalogResponse).children.compactMap(\.label)
+        XCTAssertFalse(mirror.contains("supervisorDefaultModel"))
     }
 
     func testTaskDecodesBothThinkingFieldsAndReadsAnOlderBackendAsNil() {
@@ -86,41 +84,9 @@ final class SchedulerThinkingWireTests: XCTestCase {
     }
 }
 
-final class SupervisorModelChoiceTests: XCTestCase {
+final class SessionModelCatalogTests: XCTestCase {
 
     private let catalog = SessionModelCatalog(catalogResponse)
-
-    func testOptionsPutThePlanDefaultFirstAndMarkTheSupervisorDefaultModel() {
-        let options = SupervisorModelChoice.options(defaultModel: "opus")
-        XCTAssertEqual(
-            options.map(\.label),
-            ["Default", "Haiku", "Sonnet", "Opus (supervisor default)", "Fable"])
-        XCTAssertEqual(options.first?.id, SupervisorModelChoice.planDefault)
-        XCTAssertNil(options.first { $0.label.hasPrefix("Opus") }?.id, "nil is the supervisor default")
-        XCTAssertEqual(options.first { $0.label == "Sonnet" }?.id, "sonnet")
-    }
-
-    func testWithoutAKnownDefaultModelAPlainSupervisorDefaultOptionStandsIn() {
-        let options = SupervisorModelChoice.options(defaultModel: nil)
-        XCTAssertEqual(options.last?.label, "Supervisor default")
-        XCTAssertNil(options.last?.id)
-    }
-
-    /// A stored value naming the default explicitly lights the same option as nil.
-    func testAStoredValueEqualToTheDefaultHighlightsTheNilOption() {
-        XCTAssertNil(SupervisorModelChoice.shownModel(stored: "opus", defaultModel: "opus"))
-        XCTAssertEqual(SupervisorModelChoice.shownModel(stored: "sonnet", defaultModel: "opus"), "sonnet")
-        XCTAssertEqual(
-            SupervisorModelChoice.shownModel(stored: SupervisorModelChoice.planDefault, defaultModel: "opus"),
-            SupervisorModelChoice.planDefault)
-    }
-
-    func testTheLaunchedModelIsTheDefaultForNilAndNothingForThePlanDefault() {
-        XCTAssertEqual(SupervisorModelChoice.launchedModel(stored: nil, defaultModel: "opus"), "opus")
-        XCTAssertEqual(SupervisorModelChoice.launchedModel(stored: "sonnet", defaultModel: "opus"), "sonnet")
-        XCTAssertNil(
-            SupervisorModelChoice.launchedModel(stored: SupervisorModelChoice.planDefault, defaultModel: "opus"))
-    }
 
     func testLevelsComeFromTheCatalogAndAreEmptyWithoutANamedModel() {
         XCTAssertEqual(catalog.levels(for: "sonnet"), ["low", "medium", "high"])
@@ -170,22 +136,27 @@ final class SchedulerThinkingStoreTests: XCTestCase {
         XCTAssertNil(store.fields.thinking)
     }
 
-    func testTheSupervisorLevelsFollowItsLaunchedModelAndThePlanDefaultTakesNone() async {
+    /// A supervisor is configured like the worker: nil is the plan's own model, which takes no level.
+    func testTheSupervisorOffersLevelsOnlyOnceAModelIsNamed() async {
         let store = await makeStore()
-        XCTAssertEqual(store.supervisorLaunchedModel, "opus", "nil stored is the supervisor default")
+        XCTAssertNil(store.fields.supervisionModel)
+        XCTAssertEqual(store.supervisorThinkingLevels, [], "Default: no levels, the server refuses one")
+        store.setSupervisionModel("opus")
         XCTAssertEqual(store.supervisorThinkingLevels, ["low", "medium", "high", "xhigh", "max"])
         store.fields.supervisionThinking = "max"
-        store.setSupervisionModel(SupervisorModelChoice.planDefault)
-        XCTAssertEqual(store.supervisorThinkingLevels, [])
-        XCTAssertNil(store.fields.supervisionThinking, "the server refuses a level with the plan default")
+        store.setSupervisionModel(nil)
+        XCTAssertNil(store.fields.supervisionThinking, "choosing Default drops the level")
     }
 
-    func testChoosingTheSupervisorDefaultKeepsALevelItAccepts() async {
+    func testChoosingAnotherSupervisorModelKeepsOnlyALevelItAccepts() async {
         let store = await makeStore()
-        store.setSupervisionModel("sonnet")
+        store.setSupervisionModel("opus")
         store.fields.supervisionThinking = "high"
-        store.setSupervisionModel(nil)
+        store.setSupervisionModel("sonnet")
         XCTAssertEqual(store.fields.supervisionThinking, "high")
+        store.fields.supervisionThinking = "high"
+        store.setSupervisionModel("haiku")
+        XCTAssertNil(store.fields.supervisionThinking)
     }
 
     func testTheAttachFormStoreAppliesTheSameRules() async {
@@ -193,10 +164,11 @@ final class SchedulerThinkingStoreTests: XCTestCase {
         await api.setSessionModelsResult(.success(catalogResponse))
         let store = SupervisionStore(sessionId: "s1", api: api)
         await store.loadCatalog()
-        XCTAssertEqual(store.launchedModel, "opus")
-        store.config.thinking = "max"
-        store.setModel(SupervisorModelChoice.planDefault)
         XCTAssertEqual(store.thinkingLevels, [])
+        store.setModel("opus")
+        store.config.thinking = "max"
+        XCTAssertEqual(store.thinkingLevels.last, "max")
+        store.setModel(nil)
         XCTAssertNil(store.config.thinking)
     }
 }
