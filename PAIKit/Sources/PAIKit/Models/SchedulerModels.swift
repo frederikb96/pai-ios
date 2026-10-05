@@ -963,14 +963,16 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         try c.encode(cadence, forKey: .cadence)
         try c.encode(timezone, forKey: .timezone)
         try c.encode(gateSource, forKey: .gateSource)
-        try c.encode(gateRuntime, forKey: .gateRuntime)
+        // The server takes source and runtime as a pair — both set or both null.
+        try c.encode(gateSource == nil ? nil : gateRuntime, forKey: .gateRuntime)
         try c.encode(gateTimeoutSeconds, forKey: .gateTimeoutSeconds)
         try c.encode(sessionPolicy, forKey: .sessionPolicy)
         try c.encode(quietPeriodMinutes, forKey: .quietPeriodMinutes)
         try c.encode(model, forKey: .model)
         try c.encode(maxRuntimeMinutes, forKey: .maxRuntimeMinutes)
         try c.encode(maxTokenBudget, forKey: .maxTokenBudget)
-        try c.encode(compactionThresholdTokens, forKey: .compactionThresholdTokens)
+        // A one-shot task never reuses its session, and the server refuses a threshold on it.
+        try c.encode(sessionPolicy == .oneShot ? nil : compactionThresholdTokens, forKey: .compactionThresholdTokens)
         try c.encode(sessionUsageGatePercent, forKey: .sessionUsageGatePercent)
         try c.encode(weeklyUsageGatePercent, forKey: .weeklyUsageGatePercent)
         try c.encode(sessionPaceGatePoints, forKey: .sessionPaceGatePoints)
