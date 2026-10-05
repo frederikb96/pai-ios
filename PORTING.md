@@ -423,3 +423,43 @@ interrupted append animation. Keep a session open at its live edge through a few
 load back in with the usual prepend compensation. Also confirm a status event no longer redraws
 the visible rows: `apply`'s `.stickToBottomIfPinned` returns before `applyDelta` when the rebuilt
 rows equal the current ones.
+
+### Verify: the session menu's Transfer picker, its long wait and the new row opening — pai-cloud anchor: `web/src/components/SessionActionsMenu.tsx` (`transfer` view)
+Needs `PAI/` because: `TransferActionView` (in `SessionActionsSheet.swift`) is Mac-compiled and
+nothing has run it. The rule, wording and store are proven in the package
+(`SessionTransfer`, `SessionActionsStore.transfer`, a request with a 600 s timeout). Unverified: a
+real transfer holds the request open for minutes with no bytes, so the spinner on the chosen row
+has to stay put without the sheet looking hung; the new session is pushed before the sheet
+dismisses (the same ordering `CreateSessionView` relies on) and whether that push survives here;
+the refusal text appears as a toast; and the entry is absent on a session already transferred
+once the poll delivers `transferred_to_session_id`.
+
+### Verify: the scheduled-task editor's thinking rows and the supervisor picker — pai-cloud anchor: `web/src/apps/scheduler/TaskEditor.tsx`, `web/src/components/SupervisorConfigForm.tsx`
+Needs `PAI/` because: `SupervisorChoiceRows.swift` and the changed `TaskEditorView`/
+`SupervisionView` sections are Mac-compiled. The level rules (`SessionModelCatalog`,
+`SupervisorModelChoice`, `TaskEditorStore.setModel`/`setSupervisionModel`) are proven in the
+package. To look at: the thinking section appearing only once a model with levels is chosen and
+disappearing again under "Default" or a fast environment; the supervisor list reading
+"Default · Haiku · Sonnet · Opus (supervisor default) · Fable" with the right row ticked for a
+stored `nil`, a stored alias equal to the default, and the plan-default value; the standing
+instructions header and its caption.
+
+### Verify: note sharing — info-tab Sharing section, queue screen, header viewer count, list mark — pai-cloud anchor: `web/src/apps/notes/panels/ShareSection.tsx`, `ShareQueues.tsx`, `useNoteShareStatus.ts`
+Needs `PAI/` because: `NoteInfoTab`'s Sharing section, `NoteShareQueueScreen.swift`, the
+`NotePresenceBadge` in `NoteEditorScreen` and the link mark in `NoteListScreen` are Mac-compiled
+and have never been on a screen. The wire types, store rules (what "Publish all" covers, the
+last-link warning, per-item failure reporting) and presence polling are proven in the package.
+Unverified: several `.bordered` buttons (Copy, Share, Delete) sharing one Form row each acting on
+their own tap; the system share sheet from `ShareLink`; the incoming image preview drawing a real
+upload; the presence badge appearing in the toolbar only while another tab has the note open, and
+not taking toolbar space otherwise; the poll stopping when the app is backgrounded
+(`.task(id: scenePhase)`). A share link opened from the phone is just Safari — the app has no
+public view and no handler for the "Open in PAI" landing (`POST /api/notes/shares/resolve` is
+declared in `PaiApiClient` with no caller).
+
+### Verify: the checkbox and bullet buttons on the keyboard bar keep a multi-line selection selected — pai-cloud anchor: `web/src/apps/notes/noteEditing.ts` (`toggleCheckboxLine`, `toggleBulletLines`)
+Needs `PAI/` because: the transforms (`ListLines` in `MarkdownListLines.swift`) are proven against
+the web's cases, but how the text view applies the single replacement over a multi-line block and
+where its selection lands (so a second tap acts on the same lines) is UIKit behaviour. Tap the
+checkbox button three times on one line and on a three-line selection and watch the selection and
+Undo.
