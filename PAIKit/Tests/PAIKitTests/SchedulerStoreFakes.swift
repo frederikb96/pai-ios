@@ -36,6 +36,16 @@ actor FakeTaskEditorApi: TaskEditorApiClient {
     var resetResult: Result<ScheduledTaskDetail, PaiError>?
     var clearStopResult: Result<ScheduledTaskDetail, PaiError>?
     var testRunResult: Result<SchedulerTestRunResult, PaiError>?
+    var sessionModelsResult: Result<SessionModelsResponse, PaiError> = .success(
+        SessionModelsResponse(models: [], fastDefaultModel: "sonnet", fastDefaultThinking: "low"))
+
+    func setSessionModelsResult(_ result: Result<SessionModelsResponse, PaiError>) {
+        sessionModelsResult = result
+    }
+
+    func getSessionModels() async throws -> SessionModelsResponse {
+        try sessionModelsResult.get()
+    }
 
     func setGetResult(_ result: Result<ScheduledTaskDetail, PaiError>) { getResult = result }
     func setCreateResult(_ result: Result<ScheduledTaskDetail, PaiError>) { createResult = result }

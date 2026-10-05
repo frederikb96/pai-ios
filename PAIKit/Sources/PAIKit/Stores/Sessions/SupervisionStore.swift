@@ -7,6 +7,7 @@ public protocol SupervisionApiClient: Sendable {
     func getSupervision(supervisionId: String) async throws -> SupervisionDetail
     func attachSupervision(sessionId: String, config: SupervisionConfigFields) async throws -> Supervision
     func deleteSupervision(supervisionId: String) async throws -> PaiSupervisionDetachResult
+    func getSessionModels() async throws -> SessionModelsResponse
 }
 
 extension PaiApiClient: SupervisionApiClient {}
@@ -30,6 +31,9 @@ public final class SupervisionStore {
     /// (including an `ended` one, so re-attaching starts from the previous configuration rather
     /// than a blank form), editable from there for a fresh attach.
     public var config: SupervisionConfigFields = .empty
+    /// The models, their thinking levels and the supervisor's default model — what the attach
+    /// form's pickers offer. Empty until `loadCatalog()` lands.
+    public private(set) var catalog = SessionModelCatalog()
     public private(set) var isLoading = true
     public private(set) var isBusy = false
     public private(set) var errorMessage: String?
@@ -68,6 +72,27 @@ public final class SupervisionStore {
         }
     }
 
+    public func loadCatalog() async {
+        guard let response = try? await api.getSessionModels() else { return }
+        catalog = SessionModelCatalog(response)
+    }
+
+    /// The model the supervisor would launch with, which decides its thinking levels.
+    public var launchedModel: String? {
+        SupervisorModelChoice.launchedModel(stored: config.model, defaultModel: catalog.supervisorDefaultModel)
+    }
+
+    public var thinkingLevels: [String] { catalog.levels(for: launchedModel) }
+
+    /// Choosing a model drops a thinking level it does not accept — all of them for the plan's own
+    /// model, which takes none.
+    public func setModel(_ id: String?) {
+        config.model = id
+        config.thinking = catalog.retainedThinking(
+            config.thinking,
+            model: SupervisorModelChoice.launchedModel(stored: id, defaultModel: catalog.supervisorDefaultModel))
+    }
+
     /// Attaches (or re-attaches) using the current `config` draft.
     public func attach() async -> Bool {
         isBusy = true
@@ -78,7 +103,7 @@ public final class SupervisionStore {
             detail = SupervisionDetail(
                 id: created.id, workerSessionId: created.workerSessionId, taskId: created.taskId,
                 state: created.state, memo: created.memo, cursorMessageId: created.cursorMessageId,
-                model: created.model, appendPrompt: created.appendPrompt,
+                model: created.model, thinking: created.thinking, appendPrompt: created.appendPrompt,
                 compactionThresholdTokens: created.compactionThresholdTokens,
                 chunkIntervalSeconds: created.chunkIntervalSeconds,
                 chunkTokenThreshold: created.chunkTokenThreshold,

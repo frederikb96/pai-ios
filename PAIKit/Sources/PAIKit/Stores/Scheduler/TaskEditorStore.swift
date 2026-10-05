@@ -12,6 +12,7 @@ public protocol TaskEditorApiClient: Sendable {
     func testRunSchedulerGate(
         taskId: String, gateSource: String, gateRuntime: TaskGateRuntime
     ) async throws -> SchedulerTestRunResult
+    func getSessionModels() async throws -> SessionModelsResponse
 }
 
 extension PaiApiClient: TaskEditorApiClient {}
@@ -34,6 +35,10 @@ public final class TaskEditorStore {
     public private(set) var isBusy = false
     public private(set) var errorMessage: String?
 
+    /// The models, their thinking levels and the supervisor's default model — what the pickers
+    /// offer. Empty until `loadCatalog()` lands, in which case no thinking row is shown.
+    public private(set) var catalog = SessionModelCatalog()
+
     public let taskId: String?
     private let api: TaskEditorApiClient
 
@@ -47,10 +52,10 @@ public final class TaskEditorStore {
 
     public var isCreating: Bool { taskId == nil }
 
-    /// Applied at launch only — resuming a task's own conversation cannot pick up a changed
-    /// system prompt, so editing it here is a silent no-op until the session is reset. Only
-    /// `reuse` ever resumes; `fresh`/`oneShot` relaunch from scratch every fire, so a change
-    /// there always takes effect.
+    /// Standing instructions go out at the top of a conversation's first fire and again only after
+    /// a compaction drops them, so an edit does not reach a reused conversation until then — or
+    /// until the session is reset. Only `reuse` ever resumes; `fresh`/`oneShot` start a
+    /// conversation every fire, so a change there always takes effect.
     public var promptStaleOnEdit: Bool {
         guard let task else { return false }
         return task.sessionPolicy == .reuse && task.sessionId != nil
@@ -69,6 +74,39 @@ public final class TaskEditorStore {
         } catch {
             errorMessage = (error as? PaiError)?.userMessage ?? "Could not load this task"
         }
+    }
+
+    public func loadCatalog() async {
+        guard let response = try? await api.getSessionModels() else { return }
+        catalog = SessionModelCatalog(response)
+    }
+
+    /// The worker's thinking levels for the chosen model. None under "Default" (the plan's own
+    /// model takes none) and none on a fast session, which always runs Sonnet.
+    public var workerThinkingLevels: [String] {
+        fields.environment == "fast" ? [] : catalog.levels(for: fields.model)
+    }
+
+    /// Choosing a model drops a thinking level it does not accept — all of them for "Default".
+    public func setModel(_ id: String?) {
+        fields.model = id
+        fields.thinking = catalog.retainedThinking(fields.thinking, model: id)
+    }
+
+    /// The model the supervisor launches with, which decides its thinking levels.
+    public var supervisorLaunchedModel: String? {
+        SupervisorModelChoice.launchedModel(
+            stored: fields.supervisionModel, defaultModel: catalog.supervisorDefaultModel)
+    }
+
+    public var supervisorThinkingLevels: [String] { catalog.levels(for: supervisorLaunchedModel) }
+
+    /// Same rule for the supervisor, whose "plan default" choice takes no level either.
+    public func setSupervisionModel(_ id: String?) {
+        fields.supervisionModel = id
+        fields.supervisionThinking = catalog.retainedThinking(
+            fields.supervisionThinking,
+            model: SupervisorModelChoice.launchedModel(stored: id, defaultModel: catalog.supervisorDefaultModel))
     }
 
     /// Toggling the gate checkbox on writes an empty script rather than leaving `gateSource` at

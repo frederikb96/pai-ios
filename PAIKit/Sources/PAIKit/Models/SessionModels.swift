@@ -754,11 +754,17 @@ public struct SessionModelsResponse: Codable, Sendable {
     /// from what actually launches.
     public let fastDefaultModel: String
     public let fastDefaultThinking: String
+    /// What a supervisor whose `supervision_model` is `nil` runs on
+    /// (`pai_cloud.supervision.engine.DEFAULT_SUPERVISOR_MODEL`). Optional because a backend that
+    /// predates it omits it; the pickers then fall back to a plain "Supervisor default" label
+    /// rather than naming a model, and levels for it are unknown until it arrives.
+    public internal(set) var supervisorDefaultModel: String?
 
     enum CodingKeys: String, CodingKey {
         case models
         case fastDefaultModel = "fast_default_model"
         case fastDefaultThinking = "fast_default_thinking"
+        case supervisorDefaultModel = "supervisor_default_model"
     }
 }
 

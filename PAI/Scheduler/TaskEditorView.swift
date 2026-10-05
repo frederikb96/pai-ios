@@ -32,7 +32,9 @@ struct TaskEditorView: View {
             guard store == nil, let client = environment.connection?.apiClient else { return }
             let newStore = TaskEditorStore(taskId: taskId, api: client, timezone: TimeZone.current.identifier)
             store = newStore
+            async let catalog: Void = newStore.loadCatalog()
             await newStore.load()
+            await catalog
         }
         .confirmationDialog("Delete this task?", isPresented: $confirmingDelete, titleVisibility: .visible) {
             Button("Delete", role: .destructive) {
@@ -110,20 +112,25 @@ struct TaskEditorView: View {
                 }
 
                 Section {
+                    Text(
+                        "Sent once, at the top of a conversation's first prompt, and again only after a compaction has dropped it from what the model can see — so on every fire of a task that starts a fresh conversation each time. Not a system prompt."
+                    )
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Semantic.textFaint)
                     if store.promptStaleOnEdit {
                         Label(
-                            "This task reuses its conversation, which already launched — a change here applies only once that conversation is reset.",
+                            "This task reuses its conversation, which already has it — an edit here is not resent until the next compaction; reset the session to apply it immediately instead.",
                             systemImage: "exclamationmark.triangle"
                         )
                         .font(PaiTypography.caption.font)
                         .foregroundStyle(PaiPalette.Semantic.warningText)
-                        Button("Reset session to apply") { Task { await store.reset() } }
+                        Button("Reset session to apply now") { Task { await store.reset() } }
                             .font(PaiTypography.caption.font)
                     }
                     TextEditor(text: appendSystemPromptBinding(store))
                         .frame(minHeight: 60)
                 } header: {
-                    Text("Appended system prompt (optional)")
+                    Text("Standing instructions (optional)")
                 }
 
                 Section("Schedule") {
@@ -147,6 +154,16 @@ struct TaskEditorView: View {
 
                 Section("Model") {
                     modelPicker(store)
+                }
+
+                // Only once a model is named: the plan's own model takes no level.
+                if !store.workerThinkingLevels.isEmpty {
+                    Section("Thinking") {
+                        ThinkingRows(
+                            levels: store.workerThinkingLevels, selected: store.fields.thinking,
+                            nullLabel: "Default"
+                        ) { store.fields.thinking = $0 }
+                    }
                 }
 
                 Section {
@@ -209,8 +226,21 @@ struct TaskEditorView: View {
 
                 Section {
                     Toggle("Supervised", isOn: supervisionEnabledBinding(store))
-                    if store.fields.supervisionEnabled {
-                        supervisionModelPicker(store)
+                }
+                if store.fields.supervisionEnabled {
+                    Section("Supervisor model") {
+                        SupervisorModelRows(
+                            storedModel: store.fields.supervisionModel,
+                            defaultModel: store.catalog.supervisorDefaultModel
+                        ) { store.setSupervisionModel($0) }
+                    }
+                    if !store.supervisorThinkingLevels.isEmpty {
+                        Section("Supervisor thinking") {
+                            ThinkingRows(
+                                levels: store.supervisorThinkingLevels, selected: store.fields.supervisionThinking,
+                                nullLabel: "Off"
+                            ) { store.fields.supervisionThinking = $0 }
+                        }
                     }
                 }
 
@@ -313,18 +343,12 @@ struct TaskEditorView: View {
     private func modelPicker(_ store: TaskEditorStore) -> some View {
         let disabled = store.fields.environment == "fast"
         return VStack(alignment: .leading, spacing: 4) {
-            modelOptionRow(selected: store.fields.model, disabled: disabled) { store.fields.model = $0 }
+            modelOptionRow(selected: store.fields.model, disabled: disabled) { store.setModel($0) }
             if disabled {
                 Text("Fast sessions always run Sonnet.")
                     .font(PaiTypography.caption.font)
                     .foregroundStyle(PaiPalette.Semantic.textMuted)
             }
-        }
-    }
-
-    private func supervisionModelPicker(_ store: TaskEditorStore) -> some View {
-        modelOptionRow(selected: store.fields.supervisionModel, disabled: false) {
-            store.fields.supervisionModel = $0
         }
     }
 

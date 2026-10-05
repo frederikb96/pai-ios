@@ -464,6 +464,16 @@ actor FakeSupervisionApi: SupervisionApiClient {
     private(set) var deleteCalls: [String] = []
 
     var bySessionResult: Result<Supervision?, PaiError> = .success(nil)
+    var sessionModelsResult: Result<SessionModelsResponse, PaiError> = .success(
+        SessionModelsResponse(models: [], fastDefaultModel: "sonnet", fastDefaultThinking: "low"))
+
+    func setSessionModelsResult(_ result: Result<SessionModelsResponse, PaiError>) {
+        sessionModelsResult = result
+    }
+
+    func getSessionModels() async throws -> SessionModelsResponse {
+        try sessionModelsResult.get()
+    }
     var detailResult: Result<SupervisionDetail, PaiError>?
     var attachResult: Result<Supervision, PaiError>?
     var deleteResult: Result<PaiSupervisionDetachResult, PaiError> = .success(

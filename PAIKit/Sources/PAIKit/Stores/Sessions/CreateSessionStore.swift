@@ -65,7 +65,7 @@ public final class CreateSessionStore {
     /// pickers that have no thinking dimension of their own (`SupervisionView`, the scheduler's
     /// `TaskEditorView`) — the model + thinking picker below reads it for display labels only,
     /// never for which models actually exist (that always comes from `sessionModels`).
-    public static let modelOptions: [(id: String?, label: String)] = [
+    public nonisolated static let modelOptions: [(id: String?, label: String)] = [
         (nil, "Default"), ("haiku", "Haiku"), ("sonnet", "Sonnet"), ("opus", "Opus"), ("fable", "Fable"),
     ]
 

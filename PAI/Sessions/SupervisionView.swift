@@ -32,7 +32,9 @@ struct SupervisionView: View {
             guard store == nil, let client = environment.connection?.apiClient else { return }
             let newStore = SupervisionStore(sessionId: sessionId, api: client)
             store = newStore
+            async let catalog: Void = newStore.loadCatalog()
             await newStore.load()
+            await catalog
         }
     }
 
@@ -83,20 +85,16 @@ struct SupervisionView: View {
         }
 
         Section("Model") {
-            ForEach(CreateSessionStore.modelOptions, id: \.label) { option in
-                let isSelected = store.config.model == option.id
-                Button {
-                    store.config.model = option.id
-                } label: {
-                    HStack {
-                        Text(option.label)
-                            .foregroundStyle(PaiPalette.Semantic.textPrimary)
-                        Spacer()
-                        if isSelected {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
+            SupervisorModelRows(
+                storedModel: store.config.model, defaultModel: store.catalog.supervisorDefaultModel
+            ) { store.setModel($0) }
+        }
+
+        if !store.thinkingLevels.isEmpty {
+            Section("Thinking") {
+                ThinkingRows(
+                    levels: store.thinkingLevels, selected: store.config.thinking, nullLabel: "Off"
+                ) { store.config.thinking = $0 }
             }
         }
 
@@ -160,11 +158,24 @@ struct SupervisionView: View {
 
     // MARK: - A supervision's own read-only summary — active, degraded, stopped, or ended
 
+    /// `nil` is the supervisor default and `planDefault` the plan's own model — two different
+    /// things that both used to read "default".
+    private func modelLabel(_ model: String?) -> String {
+        switch model {
+        case nil: return "supervisor default"
+        case SupervisorModelChoice.planDefault?: return "plan default"
+        case let alias?: return CreateSessionStore.modelDisplayLabels[alias] ?? alias
+        }
+    }
+
     @ViewBuilder
     private func attachedInfoSections(_ detail: SupervisionDetail) -> some View {
         Section {
             LabeledContent("State") { Text(stateLabel(detail.state)) }
-            LabeledContent("Model") { Text(detail.model ?? "default") }
+            LabeledContent("Model") { Text(modelLabel(detail.model)) }
+            if let thinking = detail.thinking {
+                LabeledContent("Thinking") { Text(CreateSessionStore.effortLevelLabels[thinking] ?? thinking) }
+            }
             LabeledContent("Compaction threshold") {
                 Text(detail.compactionThresholdTokens.map(String.init) ?? "default")
             }

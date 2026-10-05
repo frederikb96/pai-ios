@@ -196,8 +196,10 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
     public let environment: String
     public let workingDir: String?
     public let prompt: String
-    /// Applied at launch, so it cannot reach a conversation already running — editing it on a
-    /// reusing task changes nothing until the task is reset.
+    /// Standing instructions: sent at the top of a conversation's first fire and again only after
+    /// a compaction has dropped them — so every fire of a `fresh`/`one_shot` task, while an edit
+    /// reaches a `reuse` task's conversation only after its next compaction or a reset. Never a
+    /// system prompt, whatever the wire name says.
     public let appendSystemPrompt: String?
     /// Five-field cron. `nil` means the task only fires by hand.
     public let cadence: String?
@@ -214,6 +216,9 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
     /// The `claude --model` alias the worker session launches with. `nil` lets Claude Code
     /// pick the plan's own default. Absent on a backend that predates it.
     public let model: String?
+    /// The worker's `claude --effort` level. Only valid alongside a named `model`; `nil` is the
+    /// plan's own. A reused session takes a changed `model`/`thinking` on its next fire.
+    public let thinking: String?
     /// A run's own runtime ceiling in minutes, watched at the next reading rather than at an
     /// exact instant. `nil`/absent means no ceiling.
     public let maxRuntimeMinutes: Int?
@@ -234,8 +239,15 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
     /// Whether a gate-percentage skip raises an alert. Off by default.
     public let notifyOnGateSkip: Bool?
     public let supervisionEnabled: Bool
+    /// `nil` is the supervisor default (`SessionModelCatalog.supervisorDefaultModel`),
+    /// `SupervisorModelChoice.planDefault` the plan's own model, anything else a `claude --model`
+    /// alias.
     public let supervisionModel: String?
-    /// Pre-filled onto every `Supervision` this task's own fires create.
+    /// The supervisor's `claude --effort` level; `nil` keeps its thinking off. Refused alongside
+    /// `SupervisorModelChoice.planDefault`.
+    public let supervisionThinking: String?
+    /// Copied onto the task's `Supervision` when it is created and every time it is re-armed for
+    /// a new run.
     public let supervisionAppendPrompt: String?
     public let supervisionCompactionThresholdTokens: Int?
     /// How often the worker's transcript is flushed to the supervisor.
@@ -265,12 +277,12 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         prompt: String, appendSystemPrompt: String?, cadence: String?, timezone: String,
         hasGate: Bool, gateRuntime: TaskGateRuntime?, gateTimeoutSeconds: Int,
         sessionPolicy: TaskSessionPolicy, sessionId: String?, quietPeriodMinutes: Int,
-        model: String? = nil, maxRuntimeMinutes: Int? = nil,
+        model: String? = nil, thinking: String? = nil, maxRuntimeMinutes: Int? = nil,
         maxTokenBudget: Int? = nil, compactionThresholdTokens: Int? = nil,
         sessionUsageGatePercent: Int? = nil, weeklyUsageGatePercent: Int? = nil,
         sessionPaceGatePoints: Int? = nil, weeklyPaceGatePoints: Int? = nil,
         notifyOnGateSkip: Bool? = nil, supervisionEnabled: Bool, supervisionModel: String?,
-        supervisionAppendPrompt: String? = nil, supervisionCompactionThresholdTokens: Int? = nil,
+        supervisionThinking: String? = nil, supervisionAppendPrompt: String? = nil, supervisionCompactionThresholdTokens: Int? = nil,
         supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
         stopped: Bool,
         stoppedReason: String?, lastFireAtMs: Int?, lastSuccessAtMs: Int?, nextFireAtMs: Int?,
@@ -292,6 +304,7 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         self.sessionId = sessionId
         self.quietPeriodMinutes = quietPeriodMinutes
         self.model = model
+        self.thinking = thinking
         self.maxRuntimeMinutes = maxRuntimeMinutes
         self.maxTokenBudget = maxTokenBudget
         self.compactionThresholdTokens = compactionThresholdTokens
@@ -302,6 +315,7 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         self.notifyOnGateSkip = notifyOnGateSkip
         self.supervisionEnabled = supervisionEnabled
         self.supervisionModel = supervisionModel
+        self.supervisionThinking = supervisionThinking
         self.supervisionAppendPrompt = supervisionAppendPrompt
         self.supervisionCompactionThresholdTokens = supervisionCompactionThresholdTokens
         self.supervisionChunkIntervalSeconds = supervisionChunkIntervalSeconds
@@ -317,7 +331,7 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, enabled, environment, prompt, cadence, timezone, stopped, model
+        case id, name, enabled, environment, prompt, cadence, timezone, stopped, model, thinking
         case workingDir = "working_dir"
         case appendSystemPrompt = "append_system_prompt"
         case hasGate = "has_gate"
@@ -336,6 +350,7 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         case notifyOnGateSkip = "notify_on_gate_skip"
         case supervisionEnabled = "supervision_enabled"
         case supervisionModel = "supervision_model"
+        case supervisionThinking = "supervision_thinking"
         case supervisionAppendPrompt = "supervision_append_prompt"
         case supervisionCompactionThresholdTokens = "supervision_compaction_threshold_tokens"
         case supervisionChunkIntervalSeconds = "supervision_chunk_interval_seconds"
@@ -370,6 +385,9 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
     /// The `claude --model` alias the worker session launches with. `nil` lets Claude Code
     /// pick the plan's own default. Absent on a backend that predates it.
     public let model: String?
+    /// The worker's `claude --effort` level. Only valid alongside a named `model`; `nil` is the
+    /// plan's own. A reused session takes a changed `model`/`thinking` on its next fire.
+    public let thinking: String?
     /// A run's own runtime ceiling in minutes, watched at the next reading rather than at an
     /// exact instant. `nil`/absent means no ceiling.
     public let maxRuntimeMinutes: Int?
@@ -390,8 +408,15 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
     /// Whether a gate-percentage skip raises an alert. Off by default.
     public let notifyOnGateSkip: Bool?
     public let supervisionEnabled: Bool
+    /// `nil` is the supervisor default (`SessionModelCatalog.supervisorDefaultModel`),
+    /// `SupervisorModelChoice.planDefault` the plan's own model, anything else a `claude --model`
+    /// alias.
     public let supervisionModel: String?
-    /// Pre-filled onto every `Supervision` this task's own fires create.
+    /// The supervisor's `claude --effort` level; `nil` keeps its thinking off. Refused alongside
+    /// `SupervisorModelChoice.planDefault`.
+    public let supervisionThinking: String?
+    /// Copied onto the task's `Supervision` when it is created and every time it is re-armed for
+    /// a new run.
     public let supervisionAppendPrompt: String?
     public let supervisionCompactionThresholdTokens: Int?
     /// How often the worker's transcript is flushed to the supervisor.
@@ -416,12 +441,12 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         prompt: String, appendSystemPrompt: String?, cadence: String?, timezone: String,
         hasGate: Bool, gateRuntime: TaskGateRuntime?, gateTimeoutSeconds: Int,
         sessionPolicy: TaskSessionPolicy, sessionId: String?, quietPeriodMinutes: Int,
-        model: String? = nil, maxRuntimeMinutes: Int? = nil,
+        model: String? = nil, thinking: String? = nil, maxRuntimeMinutes: Int? = nil,
         maxTokenBudget: Int? = nil, compactionThresholdTokens: Int? = nil,
         sessionUsageGatePercent: Int? = nil, weeklyUsageGatePercent: Int? = nil,
         sessionPaceGatePoints: Int? = nil, weeklyPaceGatePoints: Int? = nil,
         notifyOnGateSkip: Bool? = nil, supervisionEnabled: Bool, supervisionModel: String?,
-        supervisionAppendPrompt: String? = nil, supervisionCompactionThresholdTokens: Int? = nil,
+        supervisionThinking: String? = nil, supervisionAppendPrompt: String? = nil, supervisionCompactionThresholdTokens: Int? = nil,
         supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
         stopped: Bool,
         stoppedReason: String?, lastFireAtMs: Int?, lastSuccessAtMs: Int?, nextFireAtMs: Int?,
@@ -443,6 +468,7 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         self.sessionId = sessionId
         self.quietPeriodMinutes = quietPeriodMinutes
         self.model = model
+        self.thinking = thinking
         self.maxRuntimeMinutes = maxRuntimeMinutes
         self.maxTokenBudget = maxTokenBudget
         self.compactionThresholdTokens = compactionThresholdTokens
@@ -453,6 +479,7 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         self.notifyOnGateSkip = notifyOnGateSkip
         self.supervisionEnabled = supervisionEnabled
         self.supervisionModel = supervisionModel
+        self.supervisionThinking = supervisionThinking
         self.supervisionAppendPrompt = supervisionAppendPrompt
         self.supervisionCompactionThresholdTokens = supervisionCompactionThresholdTokens
         self.supervisionChunkIntervalSeconds = supervisionChunkIntervalSeconds
@@ -469,7 +496,7 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, enabled, environment, prompt, cadence, timezone, stopped, model
+        case id, name, enabled, environment, prompt, cadence, timezone, stopped, model, thinking
         case workingDir = "working_dir"
         case appendSystemPrompt = "append_system_prompt"
         case hasGate = "has_gate"
@@ -488,6 +515,7 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         case notifyOnGateSkip = "notify_on_gate_skip"
         case supervisionEnabled = "supervision_enabled"
         case supervisionModel = "supervision_model"
+        case supervisionThinking = "supervision_thinking"
         case supervisionAppendPrompt = "supervision_append_prompt"
         case supervisionCompactionThresholdTokens = "supervision_compaction_threshold_tokens"
         case supervisionChunkIntervalSeconds = "supervision_chunk_interval_seconds"
@@ -611,6 +639,9 @@ public struct Supervision: Codable, Sendable, Equatable, Identifiable {
     /// `supervision*` fields or from the session-menu configuration UI, and independent of any
     /// task afterwards. Absent on a backend that predates it.
     public let model: String?
+    /// The supervisor's `claude --effort` level, following `ScheduledTask.supervisionThinking` for
+    /// a task-owned binding; `nil` keeps thinking off.
+    public let thinking: String?
     public let appendPrompt: String?
     /// Above this, the supervisor's own conversation is rotated to a fresh thread — never the
     /// worker's, which has no compaction setting here.
@@ -631,7 +662,8 @@ public struct Supervision: Codable, Sendable, Equatable, Identifiable {
 
     public init(
         id: String, workerSessionId: String, taskId: String?, state: SupervisionState,
-        memo: String?, cursorMessageId: Int?, model: String? = nil, appendPrompt: String? = nil,
+        memo: String?, cursorMessageId: Int?, model: String? = nil, thinking: String? = nil,
+        appendPrompt: String? = nil,
         compactionThresholdTokens: Int? = nil, chunkIntervalSeconds: Int? = nil,
         chunkTokenThreshold: Int? = nil, supervisorSessionId: String? = nil, createdAtMs: Int,
         updatedAtMs: Int
@@ -643,6 +675,7 @@ public struct Supervision: Codable, Sendable, Equatable, Identifiable {
         self.memo = memo
         self.cursorMessageId = cursorMessageId
         self.model = model
+        self.thinking = thinking
         self.appendPrompt = appendPrompt
         self.compactionThresholdTokens = compactionThresholdTokens
         self.chunkIntervalSeconds = chunkIntervalSeconds
@@ -653,7 +686,7 @@ public struct Supervision: Codable, Sendable, Equatable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, state, memo, model
+        case id, state, memo, model, thinking
         case workerSessionId = "worker_session_id"
         case taskId = "task_id"
         case cursorMessageId = "cursor_message_id"
@@ -706,6 +739,7 @@ public struct SupervisionDetail: Codable, Sendable, Equatable, Identifiable {
     public let memo: String?
     public let cursorMessageId: Int?
     public let model: String?
+    public let thinking: String?
     public let appendPrompt: String?
     public let compactionThresholdTokens: Int?
     public let chunkIntervalSeconds: Int?
@@ -717,7 +751,8 @@ public struct SupervisionDetail: Codable, Sendable, Equatable, Identifiable {
 
     public init(
         id: String, workerSessionId: String, taskId: String?, state: SupervisionState,
-        memo: String?, cursorMessageId: Int?, model: String? = nil, appendPrompt: String? = nil,
+        memo: String?, cursorMessageId: Int?, model: String? = nil, thinking: String? = nil,
+        appendPrompt: String? = nil,
         compactionThresholdTokens: Int? = nil, chunkIntervalSeconds: Int? = nil,
         chunkTokenThreshold: Int? = nil, supervisorSessionId: String? = nil, createdAtMs: Int,
         updatedAtMs: Int, verdicts: [SupervisionVerdictSummary]? = nil
@@ -729,6 +764,7 @@ public struct SupervisionDetail: Codable, Sendable, Equatable, Identifiable {
         self.memo = memo
         self.cursorMessageId = cursorMessageId
         self.model = model
+        self.thinking = thinking
         self.appendPrompt = appendPrompt
         self.compactionThresholdTokens = compactionThresholdTokens
         self.chunkIntervalSeconds = chunkIntervalSeconds
@@ -740,7 +776,7 @@ public struct SupervisionDetail: Codable, Sendable, Equatable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, state, memo, model, verdicts
+        case id, state, memo, model, thinking, verdicts
         case workerSessionId = "worker_session_id"
         case taskId = "task_id"
         case cursorMessageId = "cursor_message_id"
@@ -762,16 +798,21 @@ public struct SupervisionDetail: Codable, Sendable, Equatable, Identifiable {
 /// than as a deliberate choice to leave it at the default.
 public struct SupervisionConfigFields: Codable, Sendable, Equatable {
     public var model: String?
+    /// A `claude --effort` level of the model the supervisor launches with; `nil` keeps thinking
+    /// off. Never sent alongside `SupervisorModelChoice.planDefault`, which the server refuses.
+    public var thinking: String?
     public var appendPrompt: String?
     public var compactionThresholdTokens: Int?
     public var chunkIntervalSeconds: Int?
     public var chunkTokenThreshold: Int?
 
     public init(
-        model: String? = nil, appendPrompt: String? = nil, compactionThresholdTokens: Int? = nil,
-        chunkIntervalSeconds: Int? = nil, chunkTokenThreshold: Int? = nil
+        model: String? = nil, thinking: String? = nil, appendPrompt: String? = nil,
+        compactionThresholdTokens: Int? = nil, chunkIntervalSeconds: Int? = nil,
+        chunkTokenThreshold: Int? = nil
     ) {
         self.model = model
+        self.thinking = thinking
         self.appendPrompt = appendPrompt
         self.compactionThresholdTokens = compactionThresholdTokens
         self.chunkIntervalSeconds = chunkIntervalSeconds
@@ -784,7 +825,7 @@ public struct SupervisionConfigFields: Codable, Sendable, Equatable {
     /// after a detach starts from the previous configuration rather than a blank form.
     public static func from(_ supervision: Supervision) -> SupervisionConfigFields {
         SupervisionConfigFields(
-            model: supervision.model, appendPrompt: supervision.appendPrompt,
+            model: supervision.model, thinking: supervision.thinking, appendPrompt: supervision.appendPrompt,
             compactionThresholdTokens: supervision.compactionThresholdTokens,
             chunkIntervalSeconds: supervision.chunkIntervalSeconds,
             chunkTokenThreshold: supervision.chunkTokenThreshold)
@@ -795,14 +836,14 @@ public struct SupervisionConfigFields: Codable, Sendable, Equatable {
     /// rather than the two structs sharing one.
     public static func from(_ detail: SupervisionDetail) -> SupervisionConfigFields {
         SupervisionConfigFields(
-            model: detail.model, appendPrompt: detail.appendPrompt,
+            model: detail.model, thinking: detail.thinking, appendPrompt: detail.appendPrompt,
             compactionThresholdTokens: detail.compactionThresholdTokens,
             chunkIntervalSeconds: detail.chunkIntervalSeconds,
             chunkTokenThreshold: detail.chunkTokenThreshold)
     }
 
     enum CodingKeys: String, CodingKey {
-        case model
+        case model, thinking
         case appendPrompt = "append_prompt"
         case compactionThresholdTokens = "compaction_threshold_tokens"
         case chunkIntervalSeconds = "chunk_interval_seconds"
@@ -833,6 +874,7 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
     public var sessionPolicy: TaskSessionPolicy
     public var quietPeriodMinutes: Int
     public var model: String?
+    public var thinking: String?
     public var maxRuntimeMinutes: Int?
     public var maxTokenBudget: Int?
     public var compactionThresholdTokens: Int?
@@ -843,6 +885,7 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
     public var notifyOnGateSkip: Bool
     public var supervisionEnabled: Bool
     public var supervisionModel: String?
+    public var supervisionThinking: String?
     public var supervisionAppendPrompt: String?
     public var supervisionCompactionThresholdTokens: Int?
     public var supervisionChunkIntervalSeconds: Int?
@@ -853,12 +896,12 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         name: String, environment: String, workingDir: String?, prompt: String,
         appendSystemPrompt: String?, cadence: String?, timezone: String, gateSource: String?,
         gateRuntime: TaskGateRuntime?, gateTimeoutSeconds: Int, sessionPolicy: TaskSessionPolicy,
-        quietPeriodMinutes: Int, model: String?, maxRuntimeMinutes: Int? = nil,
+        quietPeriodMinutes: Int, model: String?, thinking: String? = nil, maxRuntimeMinutes: Int? = nil,
         maxTokenBudget: Int? = nil, compactionThresholdTokens: Int? = nil,
         sessionUsageGatePercent: Int = 60, weeklyUsageGatePercent: Int = 80,
         sessionPaceGatePoints: Int? = nil, weeklyPaceGatePoints: Int? = nil,
         notifyOnGateSkip: Bool = false, supervisionEnabled: Bool, supervisionModel: String?,
-        supervisionAppendPrompt: String? = nil, supervisionCompactionThresholdTokens: Int? = nil,
+        supervisionThinking: String? = nil, supervisionAppendPrompt: String? = nil, supervisionCompactionThresholdTokens: Int? = nil,
         supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
         enabled: Bool
     ) {
@@ -875,6 +918,7 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         self.sessionPolicy = sessionPolicy
         self.quietPeriodMinutes = quietPeriodMinutes
         self.model = model
+        self.thinking = thinking
         self.maxRuntimeMinutes = maxRuntimeMinutes
         self.maxTokenBudget = maxTokenBudget
         self.compactionThresholdTokens = compactionThresholdTokens
@@ -885,6 +929,7 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         self.notifyOnGateSkip = notifyOnGateSkip
         self.supervisionEnabled = supervisionEnabled
         self.supervisionModel = supervisionModel
+        self.supervisionThinking = supervisionThinking
         self.supervisionAppendPrompt = supervisionAppendPrompt
         self.supervisionCompactionThresholdTokens = supervisionCompactionThresholdTokens
         self.supervisionChunkIntervalSeconds = supervisionChunkIntervalSeconds
@@ -912,7 +957,7 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
             appendSystemPrompt: task.appendSystemPrompt, cadence: task.cadence, timezone: task.timezone,
             gateSource: task.gateSource, gateRuntime: task.gateRuntime ?? .bun,
             gateTimeoutSeconds: task.gateTimeoutSeconds, sessionPolicy: task.sessionPolicy,
-            quietPeriodMinutes: task.quietPeriodMinutes, model: task.model,
+            quietPeriodMinutes: task.quietPeriodMinutes, model: task.model, thinking: task.thinking,
             maxRuntimeMinutes: task.maxRuntimeMinutes, maxTokenBudget: task.maxTokenBudget,
             compactionThresholdTokens: task.compactionThresholdTokens,
             sessionUsageGatePercent: task.sessionUsageGatePercent ?? 60,
@@ -921,11 +966,16 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
             weeklyPaceGatePoints: task.weeklyPaceGatePoints,
             notifyOnGateSkip: task.notifyOnGateSkip ?? false,
             supervisionEnabled: task.supervisionEnabled, supervisionModel: task.supervisionModel,
+            supervisionThinking: task.supervisionThinking,
+            supervisionAppendPrompt: task.supervisionAppendPrompt,
+            supervisionCompactionThresholdTokens: task.supervisionCompactionThresholdTokens,
+            supervisionChunkIntervalSeconds: task.supervisionChunkIntervalSeconds,
+            supervisionChunkTokenThreshold: task.supervisionChunkTokenThreshold,
             enabled: task.enabled)
     }
 
     enum CodingKeys: String, CodingKey {
-        case name, environment, prompt, cadence, timezone, model, enabled
+        case name, environment, prompt, cadence, timezone, model, thinking, enabled
         case workingDir = "working_dir"
         case appendSystemPrompt = "append_system_prompt"
         case gateSource = "gate_source"
@@ -943,6 +993,7 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         case notifyOnGateSkip = "notify_on_gate_skip"
         case supervisionEnabled = "supervision_enabled"
         case supervisionModel = "supervision_model"
+        case supervisionThinking = "supervision_thinking"
         case supervisionAppendPrompt = "supervision_append_prompt"
         case supervisionCompactionThresholdTokens = "supervision_compaction_threshold_tokens"
         case supervisionChunkIntervalSeconds = "supervision_chunk_interval_seconds"
@@ -969,6 +1020,7 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         try c.encode(sessionPolicy, forKey: .sessionPolicy)
         try c.encode(quietPeriodMinutes, forKey: .quietPeriodMinutes)
         try c.encode(model, forKey: .model)
+        try c.encode(thinking, forKey: .thinking)
         try c.encode(maxRuntimeMinutes, forKey: .maxRuntimeMinutes)
         try c.encode(maxTokenBudget, forKey: .maxTokenBudget)
         // A one-shot task never reuses its session, and the server refuses a threshold on it.
@@ -980,6 +1032,7 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         try c.encode(notifyOnGateSkip, forKey: .notifyOnGateSkip)
         try c.encode(supervisionEnabled, forKey: .supervisionEnabled)
         try c.encode(supervisionModel, forKey: .supervisionModel)
+        try c.encode(supervisionThinking, forKey: .supervisionThinking)
         try c.encode(supervisionAppendPrompt, forKey: .supervisionAppendPrompt)
         try c.encode(supervisionCompactionThresholdTokens, forKey: .supervisionCompactionThresholdTokens)
         try c.encode(supervisionChunkIntervalSeconds, forKey: .supervisionChunkIntervalSeconds)
