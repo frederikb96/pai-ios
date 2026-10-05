@@ -6,7 +6,7 @@ final class SchedulerTaskDisplayTests: XCTestCase {
 
     private func task(stopped: Bool = false, lastRun: TaskRun? = nil) -> ScheduledTask {
         ScheduledTask(
-            id: "t1", name: "t", enabled: true, environment: "default", workingDir: nil, prompt: "p",
+            id: "t1", name: "t", enabled: true, environment: "home", workingDir: nil, prompt: "p",
             appendSystemPrompt: nil, cadence: "0 9 * * *", timezone: "UTC", hasGate: false, gateRuntime: nil,
             gateTimeoutSeconds: 30, sessionPolicy: .fresh, sessionId: nil, quietPeriodMinutes: 60,
             supervisionEnabled: false, supervisionModel: nil, stopped: stopped,

@@ -7,7 +7,7 @@ final class SchedulerListStoreTests: XCTestCase {
 
     private func task(id: String) -> ScheduledTask {
         ScheduledTask(
-            id: id, name: "Task \(id)", enabled: true, environment: "default", workingDir: nil, prompt: "p",
+            id: id, name: "Task \(id)", enabled: true, environment: "home", workingDir: nil, prompt: "p",
             appendSystemPrompt: nil, cadence: nil, timezone: "UTC", hasGate: false, gateRuntime: nil,
             gateTimeoutSeconds: 30, sessionPolicy: .fresh, sessionId: nil, quietPeriodMinutes: 60,
             supervisionEnabled: false, supervisionModel: nil, stopped: false,

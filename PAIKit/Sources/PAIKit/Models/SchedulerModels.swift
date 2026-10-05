@@ -900,7 +900,7 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
     /// field that decides how often a task really runs.
     public static func fresh(timezone: String) -> TaskWriteFields {
         TaskWriteFields(
-            name: "", environment: "default", workingDir: nil, prompt: "", appendSystemPrompt: nil,
+            name: "", environment: "home", workingDir: nil, prompt: "", appendSystemPrompt: nil,
             cadence: nil, timezone: timezone, gateSource: nil, gateRuntime: .bun, gateTimeoutSeconds: 30,
             sessionPolicy: .fresh, quietPeriodMinutes: 60, model: nil, supervisionEnabled: false,
             supervisionModel: nil, enabled: true)

@@ -255,7 +255,7 @@ struct TaskEditorView: View {
     private func environmentSection(_ store: TaskEditorStore) -> some View {
         Section("Environment") {
             Picker("Environment", selection: environmentBinding(store)) {
-                Text("Default").tag("default")
+                Text("Home").tag("home")
                 Text("Fast").tag("fast")
                 Text("Web Search").tag("websearch")
                 Text("Confined").tag("confined")
@@ -263,7 +263,7 @@ struct TaskEditorView: View {
             .pickerStyle(.navigationLink)
 
             switch store.fields.environment {
-            case "default", "confined":
+            case "home", "confined":
                 HStack {
                     Text(store.fields.workingDir ?? "No directory selected")
                         .font(PaiTypography.monoLabel.font)
@@ -296,10 +296,10 @@ struct TaskEditorView: View {
             get: { store.fields.environment },
             set: { newValue in
                 store.fields.environment = newValue
-                // Only "default" and "confined" let Freddy pick a directory — everything else
+                // Only "home" and "confined" let Freddy pick a directory — everything else
                 // clears whatever was carried over from a previous choice rather than silently
                 // keeping a stale value the new environment's own field never shows.
-                if newValue != "default" && newValue != "confined" { store.fields.workingDir = nil }
+                if newValue != "home" && newValue != "confined" { store.fields.workingDir = nil }
             }
         )
     }
