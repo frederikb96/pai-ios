@@ -57,6 +57,11 @@ struct TaskEditorView: View {
     private var toolbar: some ToolbarContent {
         if let store, let task = store.task {
             ToolbarItemGroup(placement: .topBarTrailing) {
+                if task.rerunPendingAtMs != nil {
+                    Text("re-run queued")
+                        .font(PaiTypography.caption.font)
+                        .foregroundStyle(PaiPalette.Semantic.accentText)
+                }
                 if task.stopped {
                     Button("Clear stop") { Task { await store.clearStop() } }
                 }
@@ -594,6 +599,7 @@ private struct RunRow: View {
         case .fired: return "fired"
         case .declined: return "declined"
         case .skipped: return "skipped"
+        case .queued: return "queued"
         case .deferred: return "deferred"
         case .refused: return "refused"
         case .error: return "error"
@@ -614,6 +620,7 @@ private struct RunRow: View {
         switch run.disposition {
         case .fired: return PaiPalette.Semantic.accentText
         case .declined, .skipped: return PaiPalette.Semantic.textMuted
+        case .queued: return PaiPalette.Semantic.accentText
         case .deferred: return PaiPalette.Semantic.warningText
         case .refused, .error: return PaiPalette.Semantic.errorText
         case .unrecognized: return PaiPalette.Semantic.textMuted

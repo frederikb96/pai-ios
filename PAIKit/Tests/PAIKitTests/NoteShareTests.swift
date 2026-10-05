@@ -249,7 +249,10 @@ final class NoteShareStoreTests: XCTestCase {
         let (store, _, flag) = try await make()
         XCTAssertEqual(flag.value, true)
         XCTAssertTrue(store.hasAnyLink)
-        XCTAssertEqual(store.pendingCount, 4, "three outgoing files plus one incoming upload")
+        XCTAssertEqual(
+            store.pendingCount, 3,
+            "two publishable outgoing files (one visitor-requested, still counted) plus one upload; the too-large file is not"
+        )
     }
 
     /// A file a visitor's edit named, and one too big to send, are never swept up by "Publish all".
@@ -351,7 +354,7 @@ final class NoteShareStoreTests: XCTestCase {
         await api.setFailure(.transport("offline"))
         let ok = await store.refresh()
         XCTAssertFalse(ok)
-        XCTAssertEqual(store.pendingCount, 4)
+        XCTAssertEqual(store.pendingCount, 3)
         XCTAssertEqual(store.errorMessage, "offline")
     }
 

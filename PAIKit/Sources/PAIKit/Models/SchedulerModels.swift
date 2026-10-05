@@ -69,13 +69,13 @@ extension TaskGateRuntime: Codable {
 /// Collapsing the two loses the answer: *it ran and found nothing* is not *it checked and
 /// declined* is not *it never fired at all*.
 public enum TaskRunDisposition: Sendable, Hashable {
-    case fired, declined, skipped, deferred, refused, error
+    case fired, declined, skipped, queued, deferred, refused, error
     case unrecognized(String)
 }
 
 extension TaskRunDisposition: Codable {
     private static let knownValues: [String: TaskRunDisposition] = [
-        "fired": .fired, "declined": .declined, "skipped": .skipped,
+        "fired": .fired, "declined": .declined, "skipped": .skipped, "queued": .queued,
         "deferred": .deferred, "refused": .refused, "error": .error,
     ]
 
@@ -90,6 +90,7 @@ extension TaskRunDisposition: Codable {
         case .fired: try container.encode("fired")
         case .declined: try container.encode("declined")
         case .skipped: try container.encode("skipped")
+        case .queued: try container.encode("queued")
         case .deferred: try container.encode("deferred")
         case .refused: try container.encode("refused")
         case .error: try container.encode("error")
@@ -238,6 +239,10 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
     public let weeklyPaceGatePoints: Int?
     /// Whether a gate-percentage skip raises an alert. Off by default.
     public let notifyOnGateSkip: Bool?
+    /// When the task's one remembered re-run may fire: set by a run-now that arrived during an open
+    /// run, fired after that run ends, cleared by any fire; disabling the task drops it. Read-only —
+    /// never part of ``TaskWriteFields``.
+    public let rerunPendingAtMs: Int?
     public let supervisionEnabled: Bool
     /// `nil` is the supervisor default (`SessionModelCatalog.supervisorDefaultModel`),
     /// `SupervisorModelChoice.planDefault` the plan's own model, anything else a `claude --model`
@@ -287,7 +292,7 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
         stopped: Bool,
         stoppedReason: String?, lastFireAtMs: Int?, lastSuccessAtMs: Int?, nextFireAtMs: Int?,
-        createdAtMs: Int, updatedAtMs: Int, lastRun: TaskRun? = nil
+        createdAtMs: Int, updatedAtMs: Int, lastRun: TaskRun? = nil, rerunPendingAtMs: Int? = nil
     ) {
         self.id = id
         self.name = name
@@ -329,6 +334,7 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         self.createdAtMs = createdAtMs
         self.updatedAtMs = updatedAtMs
         self.lastRun = lastRun
+        self.rerunPendingAtMs = rerunPendingAtMs
     }
 
     enum CodingKeys: String, CodingKey {
@@ -363,6 +369,7 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         case createdAtMs = "created_at_ms"
         case updatedAtMs = "updated_at_ms"
         case lastRun = "last_run"
+        case rerunPendingAtMs = "rerun_pending_at_ms"
     }
 }
 
@@ -408,6 +415,10 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
     public let weeklyPaceGatePoints: Int?
     /// Whether a gate-percentage skip raises an alert. Off by default.
     public let notifyOnGateSkip: Bool?
+    /// When the task's one remembered re-run may fire: set by a run-now that arrived during an open
+    /// run, fired after that run ends, cleared by any fire; disabling the task drops it. Read-only —
+    /// never part of ``TaskWriteFields``.
+    public let rerunPendingAtMs: Int?
     public let supervisionEnabled: Bool
     /// `nil` is the supervisor default (`SessionModelCatalog.supervisorDefaultModel`),
     /// `SupervisorModelChoice.planDefault` the plan's own model, anything else a `claude --model`
@@ -452,7 +463,8 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
         stopped: Bool,
         stoppedReason: String?, lastFireAtMs: Int?, lastSuccessAtMs: Int?, nextFireAtMs: Int?,
-        createdAtMs: Int, updatedAtMs: Int, gateSource: String?, lastRun: TaskRun? = nil
+        createdAtMs: Int, updatedAtMs: Int, gateSource: String?, lastRun: TaskRun? = nil,
+        rerunPendingAtMs: Int? = nil
     ) {
         self.id = id
         self.name = name
@@ -495,6 +507,7 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         self.updatedAtMs = updatedAtMs
         self.gateSource = gateSource
         self.lastRun = lastRun
+        self.rerunPendingAtMs = rerunPendingAtMs
     }
 
     enum CodingKeys: String, CodingKey {
@@ -530,6 +543,7 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         case updatedAtMs = "updated_at_ms"
         case gateSource = "gate_source"
         case lastRun = "last_run"
+        case rerunPendingAtMs = "rerun_pending_at_ms"
     }
 }
 

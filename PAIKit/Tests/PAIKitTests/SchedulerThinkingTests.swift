@@ -200,3 +200,24 @@ final class SchedulerThinkingStoreTests: XCTestCase {
         XCTAssertNil(store.config.thinking)
     }
 }
+
+final class SchedulerRerunQueuedTests: XCTestCase {
+
+    func testTheQueuedDispositionDecodesAndRoundTripsInsteadOfFallingIntoUnrecognized() throws {
+        let decoded = try JSONDecoder().decode(TaskRunDisposition.self, from: Data(#""queued""#.utf8))
+        XCTAssertEqual(decoded, .queued)
+        XCTAssertEqual(try JSONEncoder().encode(TaskRunDisposition.queued), Data(#""queued""#.utf8))
+    }
+
+    func testThePendingReRunDecodesAndIsNilWhenAbsentOrNull() {
+        XCTAssertEqual(taskDetail(extra: #","rerun_pending_at_ms":1700000000000"#).rerunPendingAtMs, 1_700_000_000_000)
+        XCTAssertNil(taskDetail(extra: #","rerun_pending_at_ms":null"#).rerunPendingAtMs)
+        XCTAssertNil(taskDetail().rerunPendingAtMs)
+    }
+
+    /// Read-only: the editor writes every key it knows, and the server refuses one it does not.
+    func testTheWriteBodyNeverCarriesIt() throws {
+        let body = try encoded(.from(taskDetail(extra: #","rerun_pending_at_ms":5"#)))
+        XCTAssertNil(body["rerun_pending_at_ms"])
+    }
+}

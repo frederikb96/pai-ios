@@ -49,8 +49,13 @@ public final class NoteShareStore {
 
     public var hasAnyLink: Bool { share?.links.read != nil || share?.links.edit != nil }
 
-    /// Everything waiting on the owner — files to publish and uploads to accept or discard.
-    public var pendingCount: Int { (share?.outgoing.count ?? 0) + (share?.incoming.count ?? 0) }
+    /// What the owner can act on: uploads to accept or discard plus files that can be published. A
+    /// file too large to publish never leaves the queue by any tap, so counting it would keep the
+    /// count lit for good; a file a visitor's edit linked stays counted — it is publishable one at
+    /// a time, only "Publish all" skips it.
+    public var pendingCount: Int {
+        (share?.outgoing.filter { !$0.tooLarge }.count ?? 0) + (share?.incoming.count ?? 0)
+    }
 
     /// What "Publish all" covers. A file a visitor's edit introduced is excluded — naming a file in
     /// the body is not a reason to expose it, so each of those needs its own tap — and so is one too
