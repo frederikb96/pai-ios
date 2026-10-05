@@ -81,12 +81,6 @@ final class MarkdownEditingCommandsTests: XCTestCase {
         XCTAssertEqual(applied(.bulletList, to: "    deep", NSRange(location: 8, length: 0))!.0, "    - deep")
     }
 
-    /// A checked box has to come off too — matching only `- [ ] ` would stack a second checkbox on
-    /// top of a ticked one.
-    func testACheckedBoxIsRemovedByTheCheckboxButton() {
-        XCTAssertEqual(applied(.checkbox, to: "- [x] done", NSRange(location: 6, length: 0))!.0, "done")
-    }
-
     func testACheckboxReplacesAPlainBulletRatherThanStackingOnIt() {
         XCTAssertEqual(applied(.checkbox, to: "- thing", NSRange(location: 3, length: 0))!.0, "- [ ] thing")
     }
@@ -128,12 +122,12 @@ final class MarkdownEditingCommandsTests: XCTestCase {
         XCTAssertEqual(selection, NSRange(location: 7, length: 0))
     }
 
-    /// A real multi-line selection still collapses to a caret rather than a selection spanning
-    /// the freshly-inserted markers — landing where the first line's own content now starts.
-    func testAMultiLineSelectionCollapsesToACaretPastTheFirstMarker() {
+    /// A real multi-line selection stays a selection over the same text, so pressing the button
+    /// again acts on the same lines; its start moves past the marker inserted at its own position.
+    func testAMultiLineSelectionStaysSelectedAcrossTheNewMarkers() {
         let (text, selection) = applied(.bulletList, to: "one\ntwo", NSRange(location: 0, length: 7))!
         XCTAssertEqual(text, "- one\n- two")
-        XCTAssertEqual(selection, NSRange(location: 2, length: 0))
+        XCTAssertEqual(selection, NSRange(location: 2, length: 9))
     }
 
     // MARK: Headings
@@ -240,5 +234,153 @@ final class MarkdownHeadingCycleTests: XCTestCase {
     /// lose its hash to the heading button.
     func testAHashWithNoSpaceIsNotAHeading() {
         XCTAssertEqual(heading("#tag and more"), "# #tag and more")
+    }
+}
+
+/// The bullet and checkbox buttons: the same cases as the web editor's `noteEditing.test.ts`
+/// (`toggleBulletLines`, `toggleCheckboxLine`), because both clients must cycle a line identically.
+final class MarkdownListButtonTests: XCTestCase {
+
+    /// Presses a button the way a tap does: select, run, read the text back.
+    private func press(
+        _ command: MarkdownCommand, _ text: String, _ from: Int = 0, _ to: Int? = nil
+    ) -> (text: String, selection: NSRange) {
+        let selection = NSRange(location: from, length: (to ?? from) - from)
+        let edit = MarkdownEditing.edit(command, in: text, selection: selection)!
+        let mutable = NSMutableString(string: text)
+        mutable.replaceCharacters(in: edit.range, with: edit.replacement)
+        return (mutable as String, edit.selection)
+    }
+
+    private func bullet(_ text: String, _ from: Int = 0, _ to: Int? = nil) -> String {
+        press(.bulletList, text, from, to).text
+    }
+
+    private func checkbox(_ text: String, _ from: Int = 0, _ to: Int? = nil) -> String {
+        press(.checkbox, text, from, to).text
+    }
+
+    // MARK: Bullet
+
+    func testBulletAddsADashToAPlainLine() {
+        XCTAssertEqual(bullet("plain line", 5), "- plain line")
+    }
+
+    func testBulletRemovesAPlainBulletWhicheverMarkerKeepingItsIndentation() {
+        XCTAssertEqual(bullet("- already a bullet", 5), "already a bullet")
+        XCTAssertEqual(bullet("* starred", 3), "starred")
+        XCTAssertEqual(bullet("  - nested", 5), "  nested")
+    }
+
+    func testBulletGoesAfterTheIndentationOfAnIndentedPlainLine() {
+        XCTAssertEqual(bullet("    deep", 6), "    - deep")
+        XCTAssertEqual(bullet("\tdeep", 3), "\t- deep")
+    }
+
+    /// Task -> bullet -> (again) plain, and the bullet keeps the task's own marker character.
+    func testBulletTurnsATaskIntoABulletThenTheNextPressRemovesIt() {
+        let first = bullet("* [x] done", 8)
+        XCTAssertEqual(first, "* done")
+        XCTAssertEqual(bullet(first, 4), "done")
+        XCTAssertEqual(bullet("- [ ] open", 8), "- open")
+    }
+
+    func testBulletSwapsTheNumberOfANumberedLine() {
+        XCTAssertEqual(bullet("1. first", 4), "- first")
+        XCTAssertEqual(bullet("  2) second", 6), "  - second")
+    }
+
+    func testBulletMakesAMixedSelectionUniform() {
+        XCTAssertEqual(bullet("- a\nb\n- [ ] c\n3. d", 0, 18), "- a\n- b\n- c\n- d")
+    }
+
+    func testBulletRoundTripsAMultiLineSelectionAndLeavesBlankLinesAlone() {
+        let value = "a\n\nb"
+        let on = press(.bulletList, value, 0, value.utf16.count)
+        XCTAssertEqual(on.text, "- a\n\n- b")
+        XCTAssertEqual(bullet(on.text, 0, on.text.utf16.count), value)
+    }
+
+    func testBulletOnAnEmptyLineLeavesTheCaretAfterTheMarker() {
+        let result = press(.bulletList, "", 0)
+        XCTAssertEqual(result.text, "- ")
+        XCTAssertEqual(result.selection, NSRange(location: 2, length: 0))
+    }
+
+    func testBulletKeepsTheCaretOnTheSameCharacterWhenItRemovesAMarkerBeforeIt() {
+        let result = press(.bulletList, "- [ ] open", 8)
+        XCTAssertEqual(result.text, "- open")
+        XCTAssertEqual(result.selection, NSRange(location: 4, length: 0))
+    }
+
+    /// A box with no space after it is part of the text, not a task, so the bullet stays plain.
+    func testBulletTreatsABoxGluedToTextAsOrdinaryBulletText() {
+        XCTAssertEqual(bullet("- [ ]x", 3), "[ ]x")
+    }
+
+    // MARK: Checkbox
+
+    func testCheckboxStartsAnEmptyTaskOnAPlainEmptyAndIndentedLine() {
+        XCTAssertEqual(checkbox("buy milk", 3), "- [ ] buy milk")
+        XCTAssertEqual(checkbox("", 0), "- [ ] ")
+        XCTAssertEqual(checkbox("  buy milk", 4), "  - [ ] buy milk")
+    }
+
+    func testCheckboxAddsAnEmptyBoxToABulletWithoutRewritingTheMarker() {
+        XCTAssertEqual(checkbox("- buy milk", 3), "- [ ] buy milk")
+        XCTAssertEqual(checkbox("* buy milk", 3), "* [ ] buy milk")
+    }
+
+    func testCheckboxReplacesTheNumberOfANumberedLine() {
+        XCTAssertEqual(checkbox("3. buy milk", 5), "- [ ] buy milk")
+    }
+
+    func testCheckboxCyclesEmptyCheckedEmptyCheckedAndNeverRemovesTheTask() {
+        var value = "buy milk"
+        var seen: [String] = []
+        for _ in 0..<5 {
+            value = checkbox(value, 3)
+            seen.append(value)
+        }
+        XCTAssertEqual(
+            seen,
+            ["- [ ] buy milk", "- [x] buy milk", "- [ ] buy milk", "- [x] buy milk", "- [ ] buy milk"])
+    }
+
+    func testCheckboxTreatsACapitalXAsChecked() {
+        XCTAssertEqual(checkbox("- [X] done", 3), "- [ ] done")
+    }
+
+    func testCheckboxHandlesATaskWithNoTextAfterTheBox() {
+        XCTAssertEqual(checkbox("- [ ]", 2), "- [x]")
+    }
+
+    /// The first non-blank line decides the step; every line gets the same one.
+    func testCheckboxAppliesTheFirstLinesStepToEverySelectedLine() {
+        let value = "- [ ] one\nplain two\n- [x] three"
+        XCTAssertEqual(
+            checkbox(value, 0, value.utf16.count), "- [x] one\n- [x] plain two\n- [x] three")
+        let mixed = "plain\n- [x] done"
+        XCTAssertEqual(checkbox(mixed, 0, mixed.utf16.count), "- [ ] plain\n- [ ] done")
+    }
+
+    func testCheckboxKeepsTheCaretOnTheSameCharacterOfTheText() {
+        XCTAssertEqual(press(.checkbox, "buy milk", 3).selection, NSRange(location: 9, length: 0))
+        XCTAssertEqual(press(.checkbox, "- [ ] buy", 8).selection, NSRange(location: 8, length: 0))
+    }
+
+    /// The button pair Freddy asked for: task -> bullet -> plain.
+    func testCheckboxThenBulletThenBulletEndsUpPlain() {
+        let task = checkbox("note", 2)
+        let asBullet = bullet(task, 4)
+        XCTAssertEqual(asBullet, "- note")
+        XCTAssertEqual(bullet(asBullet, 3), "note")
+    }
+
+    /// UTF-16 offsets: an emoji before the caret must not shift the marker into the word.
+    func testCheckboxOffsetsAreUtf16() {
+        let result = press(.checkbox, "🎉 party", 3)
+        XCTAssertEqual(result.text, "- [ ] 🎉 party")
+        XCTAssertEqual(result.selection, NSRange(location: 9, length: 0))
     }
 }

@@ -41,10 +41,6 @@ public enum MarkdownEditing {
     /// plain text does not.
     private static let headingCycle = ["# ", "## ", "### "]
 
-    /// Task markers, in the order they must be tested: a plain `- ` is a prefix of all of them, so
-    /// a shorter match found first would strip the dash and leave `[x] ` behind as text.
-    private static let tasks = ["- [ ] ", "- [x] ", "- [X] "]
-
     public static func edit(_ command: MarkdownCommand, in text: String, selection: NSRange) -> MarkdownEdit? {
         let utf16 = Array(text.utf16)
         guard selection.location >= 0, selection.location + selection.length <= utf16.count else { return nil }
@@ -53,12 +49,8 @@ public enum MarkdownEditing {
         case .italic: return wrap(text, selection, with: "*")
         case .inlineCode: return wrap(text, selection, with: "`")
         case .link: return link(text, selection)
-        case .bulletList:
-            return togglePrefix(
-                text, selection, applied: ["- "], strippable: tasks + ["- ", "* ", "+ "], insert: "- ")
-        case .checkbox:
-            return togglePrefix(
-                text, selection, applied: tasks, strippable: tasks + ["- ", "* ", "+ "], insert: "- [ ] ")
+        case .bulletList: return ListLines.toggleBullet(text, selection)
+        case .checkbox: return ListLines.toggleCheckbox(text, selection)
         case .quote:
             return togglePrefix(text, selection, applied: ["> "], strippable: ["> "], insert: "> ")
         case .heading: return cycleHeading(text, selection)
@@ -120,9 +112,9 @@ public enum MarkdownEditing {
     /// already carries this exact marker.
     ///
     /// `applied` is what counts as "already done" and drives the toggle-off decision; `strippable`
-    /// is the wider family that gets replaced rather than stacked on, which is what stops the
-    /// checkbox button turning `- thing` into `- [ ] - thing`. A mixed selection gains the marker,
-    /// so a second press on a half-formatted block finishes the job instead of undoing half of it.
+    /// is the wider family that gets replaced rather than stacked on. A mixed selection gains the
+    /// marker, so a second press on a half-formatted block finishes the job instead of undoing
+    /// half of it. (The bullet and checkbox buttons have their own rules in ``ListLines``.)
     private static func togglePrefix(
         _ text: String, _ selection: NSRange, applied: [String], strippable: [String], insert: String
     ) -> MarkdownEdit? {
