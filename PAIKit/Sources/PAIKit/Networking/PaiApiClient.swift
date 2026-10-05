@@ -348,7 +348,7 @@ public struct PaiApiClient: Sendable {
         }
     }
 
-    private static func jsonBody(_ value: some Encodable) throws -> Data {
+    static func jsonBody(_ value: some Encodable) throws -> Data {
         do {
             return try JSONEncoder().encode(value)
         } catch {

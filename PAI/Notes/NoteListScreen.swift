@@ -525,6 +525,11 @@ private struct NoteRow: View {
                 }
             }
             Spacer(minLength: 0)
+            if note.shared == true {
+                Image(systemName: "link")
+                    .foregroundStyle(PaiPalette.Semantic.textMuted)
+                    .accessibilityLabel("Shared by link")
+            }
             if note.favourite {
                 Image(systemName: "star.fill")
                     .foregroundStyle(PaiPalette.amber500)

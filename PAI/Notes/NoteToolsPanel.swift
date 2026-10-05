@@ -434,14 +434,13 @@ private struct NoteInfoTab: View {
     let notes: NotesStore
     let toasts: ToastCenter
 
+    @Environment(AppEnvironment.self) private var environment
     @State private var summary = ""
     @State private var saveTask: Task<Void, Never>?
+    @State private var shareStore: NoteShareStore?
+    @State private var linkPendingDelete: NoteShareKind?
+    @State private var copiedKind: NoteShareKind?
     @FocusState private var isSummaryFieldFocused: Bool
-
-    private static let sourceLabel: [String: String] = [
-        "ui": "this app", "disk": "the synced folder on disk", "mcp": "an MCP tool call",
-        "rename": "a link rewrite from renaming something else", "restore": "restoring a previous version",
-    ]
 
     var body: some View {
         Form {
@@ -473,12 +472,15 @@ private struct NoteInfoTab: View {
                         scheduleSave()
                     }
                 }
+                if note.containerId != nil, let shareStore {
+                    sharingSections(shareStore)
+                }
                 Section {
                     LabeledContent("Created", value: formatted(note.createdAtMs))
                     LabeledContent("Last modified", value: formatted(note.updatedAtMs))
                     LabeledContent(
                         "Last change from",
-                        value: note.lastWriteSource.flatMap { Self.sourceLabel[$0] }
+                        value: note.lastWriteSource.map(NoteWriteSource.infoLabel)
                             ?? "unknown (written before this was tracked)")
                 }
             } else {
@@ -486,6 +488,124 @@ private struct NoteInfoTab: View {
             }
         }
         .task { summary = notes.detail(for: noteId)?.summary ?? "" }
+        .task {
+            guard shareStore == nil, let client = environment.connection?.apiClient else { return }
+            let store = NoteShareStore(noteId: noteId, api: client) { [notes, noteId] shared in
+                notes.markShared(id: noteId, shared: shared)
+            }
+            shareStore = store
+            await store.load()
+        }
+        .confirmationDialog(
+            deleteDialogTitle,
+            isPresented: Binding(get: { linkPendingDelete != nil }, set: { if !$0 { linkPendingDelete = nil } }),
+            titleVisibility: .visible
+        ) {
+            if let kind = linkPendingDelete, let shareStore {
+                Button("Delete link", role: .destructive) {
+                    Task {
+                        if await shareStore.deleteLink(kind) == nil {
+                            toasts.show(shareStore.errorMessage ?? "Could not delete the link", kind: .error)
+                        }
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let kind = linkPendingDelete {
+                Text(
+                    shareStore?.deleteWarning(for: kind)
+                        ?? "Anyone holding this link loses access to the note.")
+            }
+        }
+    }
+
+    // MARK: Sharing
+
+    private var deleteDialogTitle: String {
+        guard let kind = linkPendingDelete else { return "" }
+        return "Delete the " + kind.label.lowercased() + "?"
+    }
+
+    /// One read-only and one editable link at most, each created, copied and deleted here, and the
+    /// way into the attachment queue once either exists.
+    @ViewBuilder
+    private func sharingSections(_ store: NoteShareStore) -> some View {
+        Section {
+            ForEach(NoteShareKind.allCases, id: \.self) { kind in
+                shareRow(kind, store)
+            }
+            if let error = store.errorMessage {
+                Text(error)
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Semantic.errorText)
+            }
+        } header: {
+            Text("Sharing")
+        } footer: {
+            Text(
+                "Anyone with a link can open this note without signing in. An editable link also lets them change the text."
+            )
+        }
+        if store.hasAnyLink {
+            Section {
+                NavigationLink {
+                    NoteShareQueueScreen(store: store, toasts: toasts)
+                } label: {
+                    LabeledContent("Attachments waiting", value: "\(store.pendingCount)")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func shareRow(_ kind: NoteShareKind, _ store: NoteShareStore) -> some View {
+        if let link = store.link(kind) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(kind.label).foregroundStyle(PaiPalette.Semantic.textPrimary)
+                Text(link.url)
+                    .font(PaiTypography.monoLabel.font)
+                    .foregroundStyle(PaiPalette.Semantic.textMuted)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                HStack(spacing: 12) {
+                    Button {
+                        UIPasteboard.general.string = link.url
+                        copiedKind = kind
+                        Task {
+                            try? await Task.sleep(for: .seconds(1.5))
+                            copiedKind = nil
+                        }
+                    } label: {
+                        Label(
+                            copiedKind == kind ? "Copied" : "Copy",
+                            systemImage: copiedKind == kind ? "checkmark" : "doc.on.doc")
+                    }
+                    ShareLink(item: link.url) {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                    }
+                    Button(role: .destructive) {
+                        linkPendingDelete = kind
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .labelStyle(.titleAndIcon)
+                .font(PaiTypography.caption.font)
+            }
+        } else {
+            Button {
+                Task {
+                    if await store.createLink(kind) == nil {
+                        toasts.show(store.errorMessage ?? "Could not create the link", kind: .error)
+                    }
+                }
+            } label: {
+                Label("Create \(kind.label.lowercased())", systemImage: "link.badge.plus")
+            }
+            .disabled(store.isBusy)
+        }
     }
 
     private func scheduleSave() {
@@ -557,9 +677,11 @@ private struct NoteRevisionsTab: View {
                                             date: .abbreviated, time: .shortened)
                                     )
                                     .foregroundStyle(PaiPalette.Semantic.textPrimary)
-                                    Text("\(revision.source) · \(formatSize(revision.sizeBytes))")
-                                        .font(PaiTypography.caption.font)
-                                        .foregroundStyle(PaiPalette.Semantic.textMuted)
+                                    Text(
+                                        "\(NoteWriteSource.historyLabel(revision.source)) · \(formatSize(revision.sizeBytes))"
+                                    )
+                                    .font(PaiTypography.caption.font)
+                                    .foregroundStyle(PaiPalette.Semantic.textMuted)
                                 }
                                 Spacer()
                                 Button {

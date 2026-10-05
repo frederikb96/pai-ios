@@ -322,6 +322,26 @@ final class NotesStoreTests: XCTestCase {
         XCTAssertNil(store.loadError)
     }
 
+    /// Creating or deleting a link sets the list's share mark at once, on the row and on a loaded
+    /// detail, and a delete of the note afterwards must not drop it.
+    func testMarkSharedSetsTheListMarkAndSurvivesADelete() async {
+        let api = FakeNotesApi()
+        api.getNotesResult = [NoteFixture.summary(id: "n1")]
+        let store = NotesStore(api: api)
+        await store.refresh()
+        await store.loadNote(id: "n1")
+
+        store.markShared(id: "n1", shared: true)
+        XCTAssertEqual(store.notes.first?.shared, true)
+        XCTAssertEqual(store.detail(for: "n1")?.shared, true)
+
+        await store.requestDelete(id: "n1")
+        XCTAssertEqual(store.notes.first?.shared, true, "the delete rebuilds the row and must carry the mark")
+
+        store.markShared(id: "n1", shared: false)
+        XCTAssertEqual(store.notes.first?.shared, false)
+    }
+
     /// A name already in the index is still sent as typed: the server owns numbering, and the
     /// index and caller take the name it answers with rather than the one requested.
     func testCreateNoteSendsTheRequestedNameAndAdoptsTheServersNumberedOne() async {

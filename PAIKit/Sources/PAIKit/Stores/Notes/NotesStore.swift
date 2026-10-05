@@ -241,12 +241,25 @@ public final class NotesStore {
                 let n = notes[index]
                 notes[index] = NoteSummary(
                     id: n.id, name: n.name, summary: n.summary, containerId: n.containerId,
-                    favourite: n.favourite, tags: n.tags, updatedAtMs: n.updatedAtMs, pendingDelete: true)
+                    favourite: n.favourite, tags: n.tags, updatedAtMs: n.updatedAtMs, pendingDelete: true,
+                    shared: n.shared)
             }
             return true
         } catch {
             loadError = (error as? PaiError)?.userMessage ?? "Could not delete the note"
             return false
+        }
+    }
+
+    /// Sets the share mark on a note's list row and on its loaded detail once a link is created or
+    /// deleted, so the list shows it before the next index fetch confirms it. A no-op for a note
+    /// this store has not loaded.
+    public func markShared(id: String, shared: Bool) {
+        if let index = notes.firstIndex(where: { $0.id == id }), notes[index].shared != shared {
+            notes[index] = notes[index].withShared(shared)
+        }
+        if let held = details[id], held.shared != shared {
+            details[id] = held.withShared(shared)
         }
     }
 

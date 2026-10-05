@@ -19,10 +19,13 @@ public struct NoteSummary: Codable, Sendable, Equatable, Identifiable, Hashable 
     /// Marked for deletion and still recoverable. The list keeps showing it, dimmed, because
     /// undelete is a route and a note that vanished has no affordance to bring it back.
     public let pendingDelete: Bool
+    /// At least one share link exists for this note — drives the list's share mark. `nil` from a
+    /// backend that predates sharing, read as not shared.
+    public let shared: Bool?
 
     public init(
         id: String, name: String, summary: String?, containerId: String?, favourite: Bool,
-        tags: [String], updatedAtMs: Int, pendingDelete: Bool
+        tags: [String], updatedAtMs: Int, pendingDelete: Bool, shared: Bool? = nil
     ) {
         self.id = id
         self.name = name
@@ -32,10 +35,19 @@ public struct NoteSummary: Codable, Sendable, Equatable, Identifiable, Hashable 
         self.tags = tags
         self.updatedAtMs = updatedAtMs
         self.pendingDelete = pendingDelete
+        self.shared = shared
+    }
+
+    /// The same row with the share mark set — what creating or deleting a link changes locally,
+    /// before the next index fetch confirms it.
+    public func withShared(_ shared: Bool) -> NoteSummary {
+        NoteSummary(
+            id: id, name: name, summary: summary, containerId: containerId, favourite: favourite,
+            tags: tags, updatedAtMs: updatedAtMs, pendingDelete: pendingDelete, shared: shared)
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, summary, favourite, tags
+        case id, name, summary, favourite, tags, shared
         case containerId = "container_id"
         case updatedAtMs = "updated_at_ms"
         case pendingDelete = "pending_delete"
@@ -64,11 +76,14 @@ public struct NoteDetail: Codable, Sendable, Equatable, Identifiable, Hashable {
     /// Which side wrote this note last (`"ui"`, `"agent"`, …). Nil on a row written before the
     /// column existed; read it as unknown, never as `"ui"`.
     public let lastWriteSource: String?
+    /// See ``NoteSummary/shared``.
+    public let shared: Bool?
 
     public init(
         id: String, name: String, summary: String?, containerId: String?, favourite: Bool,
         tags: [String], updatedAtMs: Int, pendingDelete: Bool, frontmatter: String?, body: String,
-        contentHash: String, createdAt: String?, createdAtMs: Int?, lastWriteSource: String?
+        contentHash: String, createdAt: String?, createdAtMs: Int?, lastWriteSource: String?,
+        shared: Bool? = nil
     ) {
         self.id = id
         self.name = name
@@ -84,6 +99,17 @@ public struct NoteDetail: Codable, Sendable, Equatable, Identifiable, Hashable {
         self.createdAt = createdAt
         self.createdAtMs = createdAtMs
         self.lastWriteSource = lastWriteSource
+        self.shared = shared
+    }
+
+    /// The same note with the share mark set. Every field is passed explicitly for the reason
+    /// ``adoptingHash(_:)`` spells out.
+    public func withShared(_ shared: Bool) -> NoteDetail {
+        NoteDetail(
+            id: id, name: name, summary: summary, containerId: containerId, favourite: favourite,
+            tags: tags, updatedAtMs: updatedAtMs, pendingDelete: pendingDelete, frontmatter: frontmatter,
+            body: body, contentHash: contentHash, createdAt: createdAt, createdAtMs: createdAtMs,
+            lastWriteSource: lastWriteSource, shared: shared)
     }
 
     /// The same note, holding the version the server reported in a conflict rather than the one
@@ -100,11 +126,11 @@ public struct NoteDetail: Codable, Sendable, Equatable, Identifiable, Hashable {
             tags: tags, updatedAtMs: conflict.updatedAtMs, pendingDelete: pendingDelete,
             frontmatter: conflict.frontmatter, body: conflict.body ?? body,
             contentHash: conflict.currentHash, createdAt: createdAt, createdAtMs: createdAtMs,
-            lastWriteSource: lastWriteSource)
+            lastWriteSource: lastWriteSource, shared: shared)
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, summary, favourite, tags, frontmatter, body
+        case id, name, summary, favourite, tags, frontmatter, body, shared
         case containerId = "container_id"
         case updatedAtMs = "updated_at_ms"
         case pendingDelete = "pending_delete"
@@ -119,7 +145,7 @@ public struct NoteDetail: Codable, Sendable, Equatable, Identifiable, Hashable {
     public var summaryRow: NoteSummary {
         NoteSummary(
             id: id, name: name, summary: summary, containerId: containerId, favourite: favourite,
-            tags: tags, updatedAtMs: updatedAtMs, pendingDelete: pendingDelete)
+            tags: tags, updatedAtMs: updatedAtMs, pendingDelete: pendingDelete, shared: shared)
     }
 }
 

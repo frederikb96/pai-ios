@@ -11,6 +11,10 @@ struct NoteEditorScreen: View {
     @Environment(ToastCenter.self) private var toasts
     @Environment(\.scenePhase) private var scenePhase
 
+    /// How many tabs have this note open, for the header. Created with the screen so its client id
+    /// stays one per open editor.
+    @State private var presence: NotePresenceStore?
+
     /// Edit and preview are exclusive modes, as they are on the web. Not a live preview — see
     /// `MarkdownSourceHighlighter` for why the editor styles the markup instead of replacing it.
     /// Seeded from `startsInPreview` at `init` — see `NotesBrowseStore.previewMode` for where
@@ -75,6 +79,16 @@ struct NoteEditorScreen: View {
         .toolbar(removing: .title)
         .toolbar { toolbar }
         .task { await notes.loadNote(id: noteID) }
+        // Polled only while this screen is up, the app is in the foreground and the note is shared;
+        // `scenePhase` as the task id restarts the loop on each change, so backgrounding stops it.
+        .task(id: scenePhase) {
+            guard scenePhase == .active, let client = environment.connection?.apiClient else { return }
+            let store = presence ?? NotePresenceStore(api: client)
+            presence = store
+            await store.run(noteId: noteID) {
+                notes.detail(for: noteID)?.shared == true || notes.summary(for: noteID)?.shared == true
+            }
+        }
         .onAppear {
             if titleText.isEmpty { titleText = title }
             if NoteCreationFocus.shared.consume(id: noteID) {
@@ -179,6 +193,9 @@ struct NoteEditorScreen: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            NotePresenceBadge(viewers: presence?.viewers ?? 0)
+        }
         ToolbarItem(placement: .topBarTrailing) {
             NoteSaveStateBadge(state: notes.saveState(for: noteID))
         }
@@ -303,6 +320,22 @@ private struct NoteConflictBanner: View {
         .background(PaiPalette.Semantic.warningBackground)
         .overlay(alignment: .bottom) {
             Rectangle().fill(PaiPalette.Semantic.warningBorder).frame(height: 1)
+        }
+    }
+}
+
+/// Other people with this shared note open right now. Hidden while the count is the reader's own
+/// tab alone, so an unshared or unvisited note shows nothing.
+private struct NotePresenceBadge: View {
+    let viewers: Int
+
+    var body: some View {
+        if viewers > 1 {
+            Label("\(viewers)", systemImage: "eye")
+                .font(PaiTypography.caption.font)
+                .foregroundStyle(PaiPalette.Semantic.textMuted)
+                .accessibilityLabel("\(viewers) people have this note open")
+                .accessibilityIdentifier("note-presence-badge")
         }
     }
 }

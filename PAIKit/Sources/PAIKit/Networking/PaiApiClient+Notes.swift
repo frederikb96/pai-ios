@@ -417,3 +417,85 @@ extension PaiApiClient {
             .replacingOccurrences(of: "\"", with: "\\\"")
     }
 }
+
+// MARK: - Note sharing (`/api/notes/{id}/share*`, owner only)
+
+extension PaiApiClient {
+
+    public func getNoteShare(noteId: String) async throws -> NoteShare {
+        try await send(path: "/api/notes/\(noteId)/share")
+    }
+
+    /// Creates the link if it does not exist and returns it either way.
+    public func putNoteShare(noteId: String, kind: NoteShareKind) async throws -> NoteShareLink {
+        try await send(path: "/api/notes/\(noteId)/share/\(kind.rawValue)", method: "PUT", body: nil, contentType: nil)
+    }
+
+    public func deleteNoteShare(noteId: String, kind: NoteShareKind) async throws -> NoteShareDeleted {
+        try await send(
+            path: "/api/notes/\(noteId)/share/\(kind.rawValue)", method: "DELETE", body: nil, contentType: nil)
+    }
+
+    /// Vault → sandbox, by container-relative path. One result per path, in the answer.
+    public func publishNoteShareAttachments(noteId: String, relPaths: [String]) async throws
+        -> NoteShareItemResults
+    {
+        struct Body: Encodable {
+            let relPaths: [String]
+            enum CodingKeys: String, CodingKey { case relPaths = "rel_paths" }
+        }
+        return try await send(
+            path: "/api/notes/\(noteId)/share/attachments/publish", method: "POST",
+            body: try Self.jsonBody(Body(relPaths: relPaths)))
+    }
+
+    /// Sandbox → vault, for visitor uploads. One result per blob id.
+    public func acceptNoteShareAttachments(noteId: String, blobIds: [String]) async throws
+        -> NoteShareItemResults
+    {
+        try await sendBlobIds(noteId: noteId, action: "accept", blobIds: blobIds)
+    }
+
+    /// Deletes sandbox blobs: denies an upload, or withdraws a published file. Never touches the
+    /// vault.
+    public func discardNoteShareAttachments(noteId: String, blobIds: [String]) async throws
+        -> NoteShareItemResults
+    {
+        try await sendBlobIds(noteId: noteId, action: "discard", blobIds: blobIds)
+    }
+
+    private func sendBlobIds(noteId: String, action: String, blobIds: [String]) async throws
+        -> NoteShareItemResults
+    {
+        struct Body: Encodable {
+            let blobIds: [String]
+            enum CodingKeys: String, CodingKey { case blobIds = "blob_ids" }
+        }
+        return try await send(
+            path: "/api/notes/\(noteId)/share/attachments/\(action)", method: "POST",
+            body: try Self.jsonBody(Body(blobIds: blobIds)))
+    }
+
+    /// A sandbox file's bytes, to look at before accepting it. `.notFound` when the blob is gone
+    /// (accepted, discarded or withdrawn from another client in the meantime).
+    public func getNoteShareAttachment(noteId: String, blobId: String) async throws -> NoteAttachmentResult {
+        let (status, data) = try await sendPassingThrough(
+            path: "/api/notes/\(noteId)/share/attachments/\(blobId)", method: "GET", body: nil, contentType: nil,
+            passthrough: [404])
+        return status == 404 ? .notFound : .ok(data)
+    }
+
+    /// The owner editor's cheap poll; also counts this tab as a viewer. `clientId` is one uuid per
+    /// open editor, so a poll every few seconds is one viewer rather than many.
+    public func getNoteState(noteId: String, clientId: String) async throws -> NoteState {
+        try await send(
+            path: "/api/notes/\(noteId)/state", query: [URLQueryItem(name: "client_id", value: clientId)])
+    }
+
+    /// Which note a share token opens — where "Open in PAI" lands.
+    public func resolveNoteShare(token: String) async throws -> NoteShareResolved {
+        struct Body: Encodable { let token: String }
+        return try await send(
+            path: "/api/notes/shares/resolve", method: "POST", body: try Self.jsonBody(Body(token: token)))
+    }
+}
