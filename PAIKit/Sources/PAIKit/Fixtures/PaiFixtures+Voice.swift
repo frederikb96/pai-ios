@@ -54,11 +54,14 @@ extension PaiFixtures {
     /// that actually arrives.
     public static let usage: String = #"""
         {
-          "five_hour": { "utilization": 42.5, "resets_at": "2026-08-29T14:00:00.506812+00:00" },
-          "seven_day": { "utilization": 78.1, "resets_at": "2026-09-01T00:00:00.117403+00:00" },
+          "five_hour": { "utilization": 42.5, "resets_at": "2026-08-29T14:00:00.506812+00:00",
+            "pace": { "line_percent": 27.5, "delta_points": 15.0, "level": "over" } },
+          "seven_day": { "utilization": 78.1, "resets_at": "2026-09-01T00:00:00.117403+00:00",
+            "pace": { "line_percent": 85.0, "delta_points": -6.9, "level": "on_pace" } },
           "seven_day_models": [
-            { "model": "claude-opus-5", "utilization": 91.4, "resets_at": "2026-09-01T00:00:00.117403+00:00" },
-            { "model": "claude-sonnet-5", "utilization": 33.0, "resets_at": null }
+            { "model": "Fable", "utilization": 91.4, "resets_at": "2026-09-01T00:00:00.117403+00:00",
+              "pace": { "line_percent": 85.0, "delta_points": 6.4, "level": "over" } },
+            { "model": "claude-sonnet-5", "utilization": 33.0, "resets_at": null, "pace": null }
           ],
           "reported_at": "2026-08-29T09:41:00.884120+00:00"
         }

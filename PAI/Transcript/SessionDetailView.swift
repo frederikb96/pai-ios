@@ -321,8 +321,14 @@ struct SessionDetailView: View {
             }
 
             if let usage {
-                PlanUsageBadge(usage: usage)
-                    .fixedSize(horizontal: true, vertical: false)
+                // Tapping the figure opens the Usage app, as the web's badge does.
+                Button {
+                    environment.router.push(.usage)
+                } label: {
+                    PlanUsageBadge(usage: usage)
+                }
+                .buttonStyle(.plain)
+                .fixedSize(horizontal: true, vertical: false)
             }
         }
         .lineLimit(1)
@@ -444,16 +450,8 @@ private struct PlanUsageBadge: View {
         window?.paceDescription.map { " (\($0))" } ?? ""
     }
 
-    /// Each window is painted by its own distance from its steady-pace line (the server computes
-    /// it and picks the steps); a window with no line is neutral rather than a guessed colour.
     private func color(_ window: UsageWindow?) -> Color {
-        switch window?.paceTone ?? .neutral {
-        case .green: return PaiPalette.green500
-        case .yellow: return .yellow
-        case .orange: return .orange
-        case .red: return PaiPalette.red500
-        case .neutral: return PaiPalette.surface500
-        }
+        (window?.paceTone ?? .neutral).color
     }
 }
 

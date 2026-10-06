@@ -315,6 +315,8 @@ struct RootView: View {
             ComputerCallView()
         case .canteen:
             CanteenView()
+        case .usage:
+            UsageView()
         }
     }
 

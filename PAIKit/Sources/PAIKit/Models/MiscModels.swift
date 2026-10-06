@@ -229,26 +229,17 @@ public enum UsagePaceTone: Sendable, Equatable {
     case green, yellow, orange, red, neutral
 }
 
-public struct UsageWindow: Codable, Sendable, Equatable {
-    /// Percent of the window consumed.
-    public let utilization: Double
-    /// Absent when the window has not started counting.
-    public let resetsAt: String?
-    /// `nil` when the server could not draw a line (no usable reset time) and from a server too
-    /// old to compute one — both read as "unknown", never as a guessed colour.
-    public let pace: UsagePace?
+/// A plan window the server has laid a steady-pace line on. The line, the delta and the level are
+/// the server's (`usage_pace.py`); this only maps them to a tone and a sentence, once for every
+/// window kind.
+public protocol PacedWindow {
+    /// Percent (0-100) of the window consumed.
+    var utilization: Double { get }
+    var resetsAt: String? { get }
+    var pace: UsagePace? { get }
+}
 
-    enum CodingKeys: String, CodingKey {
-        case utilization, pace
-        case resetsAt = "resets_at"
-    }
-
-    public init(utilization: Double, resetsAt: String?, pace: UsagePace? = nil) {
-        self.utilization = utilization
-        self.resetsAt = resetsAt
-        self.pace = pace
-    }
-
+extension PacedWindow {
     public var paceTone: UsagePaceTone {
         switch pace?.level {
         case .onPace: return .green
@@ -270,22 +261,46 @@ public struct UsageWindow: Codable, Sendable, Equatable {
     }
 }
 
+public struct UsageWindow: Codable, Sendable, Equatable, PacedWindow {
+    /// Percent of the window consumed.
+    public let utilization: Double
+    /// Absent when the window has not started counting.
+    public let resetsAt: String?
+    /// `nil` when the server could not draw a line (no usable reset time) and from a server too
+    /// old to compute one — both read as "unknown", never as a guessed colour.
+    public let pace: UsagePace?
+
+    enum CodingKeys: String, CodingKey {
+        case utilization, pace
+        case resetsAt = "resets_at"
+    }
+
+    public init(utilization: Double, resetsAt: String?, pace: UsagePace? = nil) {
+        self.utilization = utilization
+        self.resetsAt = resetsAt
+        self.pace = pace
+    }
+}
+
 /// A weekly cap that applies to one model rather than the whole plan.
-public struct ScopedUsageWindow: Codable, Sendable, Equatable {
+public struct ScopedUsageWindow: Codable, Sendable, Equatable, PacedWindow {
     public let model: String
     public let utilization: Double
     /// Absent while the window has not started counting.
     public let resetsAt: String?
+    /// On the weekly line, like `seven_day`; `nil` reads as "unknown".
+    public let pace: UsagePace?
 
     enum CodingKeys: String, CodingKey {
-        case model, utilization
+        case model, utilization, pace
         case resetsAt = "resets_at"
     }
 
-    public init(model: String, utilization: Double, resetsAt: String?) {
+    public init(model: String, utilization: Double, resetsAt: String?, pace: UsagePace? = nil) {
         self.model = model
         self.utilization = utilization
         self.resetsAt = resetsAt
+        self.pace = pace
     }
 }
 
