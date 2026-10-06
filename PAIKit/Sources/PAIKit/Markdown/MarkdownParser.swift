@@ -249,20 +249,7 @@ public enum MarkdownParser {
     private static let bareUrlPattern = try! NSRegularExpression(
         pattern: #"https?://\S+|(?<![\w.])www\.\S+"#)
 
-    /// GFM's "extended email autolink" grammar, likewise confirmed against `remark-gfm`'s own
-    /// rendering: a local part of alphanumerics plus `+_.-`, an `@`, and a domain of at least two
-    /// dot-separated labels of alphanumerics and internal hyphens. No separate trailing-punctuation
-    /// pass is needed the way the URL branch needs one — the character classes below simply do not
-    /// contain `.`/`,`/`!`/`)` etc. at a position that would trail the match, so GFM's domain-only
-    /// exception ("a period is part of the address only when another label follows it") falls out
-    /// of the grammar for free. Not chasing GFM's own further-out quirks here (a domain ending in a
-    /// digit, or a `.` immediately followed by `-`/`_`, are treated inconsistently even between
-    /// cmark-gfm's own reference implementation and its stated rule) — those are exactly the kind
-    /// of contrived case the URL branch's own trailing-punctuation set also declines to chase.
-    private static let emailPattern = try! NSRegularExpression(
-        pattern:
-            #"[A-Za-z0-9+_.-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+"#
-    )
+    // GFM's "extended email autolink" is found by ``EmailAutolinkScan``, which carries the grammar.
 
     /// GFM's own trimmed trailing-punctuation set — deliberately not the broader "anything that
     /// looks like sentence punctuation" a hand-rolled guess might reach for (no quotes, no square
@@ -308,11 +295,21 @@ public enum MarkdownParser {
             guard let range = Range(match.range, in: text) else { continue }
             candidates.append((range, .url))
         }
-        for match in emailPattern.matches(in: text, range: fullRange) {
-            guard let range = Range(match.range, in: text) else { continue }
+        // Both match lists ascend and neither overlaps itself, so one pass over the URLs answers
+        // every email's overlap question — a check against every candidate so far costs a pass per
+        // email, and a text of nothing but addresses has one per few characters.
+        let urlCount = candidates.count
+        var firstUrlNotBefore = 0
+        for matchRange in EmailAutolinkScan.matches(in: text) {
+            guard let range = Range(matchRange, in: text) else { continue }
             // A URL already covering this span wins — the "user@example.com" inside
             // "https://user@example.com" is not a second, nested autolink.
-            guard !candidates.contains(where: { $0.range.overlaps(range) }) else { continue }
+            while firstUrlNotBefore < urlCount, candidates[firstUrlNotBefore].range.upperBound <= range.lowerBound {
+                firstUrlNotBefore += 1
+            }
+            if firstUrlNotBefore < urlCount, candidates[firstUrlNotBefore].range.lowerBound < range.upperBound {
+                continue
+            }
             candidates.append((range, .email))
         }
         guard !candidates.isEmpty else { return [InlineRun(text: text, style: style)] }
