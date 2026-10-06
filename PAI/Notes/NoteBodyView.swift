@@ -243,7 +243,7 @@ struct NotePreviewBlockView: View {
     private func markerView(for marker: MarkdownList.Marker, index: Int, item: MarkdownListItem, ordinal: Int)
         -> some View
     {
-        let glyph = Text(marker(for: marker, index: index, checkbox: item.checkbox))
+        let glyph = Text(self.marker(for: marker, index: index, checkbox: item.checkbox))
             .font(PaiTypography.markdownBody.font)
             .foregroundStyle(PaiPalette.Notes.accent)
         if item.checkbox != nil, let onToggleTask, taskMarks.indices.contains(ordinal) {
