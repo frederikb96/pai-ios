@@ -104,7 +104,7 @@ struct SupervisionView: View {
         }
 
         Section("Compaction and flushing") {
-            LabeledContent("Compaction threshold (tokens)") {
+            LabeledContent("Fresh supervisor after (tokens)") {
                 TextField("default", text: intFieldBinding(store, \.compactionThresholdTokens))
                     .keyboardType(.numberPad)
                     .multilineTextAlignment(.trailing)
@@ -169,7 +169,7 @@ struct SupervisionView: View {
             if let thinking = detail.thinking {
                 LabeledContent("Thinking") { Text(CreateSessionStore.effortLevelLabels[thinking] ?? thinking) }
             }
-            LabeledContent("Compaction threshold") {
+            LabeledContent("Fresh supervisor after") {
                 Text(detail.compactionThresholdTokens.map(String.init) ?? "default")
             }
             LabeledContent("Flush interval") {
