@@ -39,8 +39,8 @@ public struct NotePreviewDocument: Sendable {
     public let items: [NotePreviewItem]
 
     public init(body: String, nameToId: [String: String], attachmentIndex: AttachmentIndex = .empty) {
-        let links = findWikilinks(body)
         let chars = Array(body)
+        let links = findWikilinks(in: chars)
 
         var built: [NotePreviewItem] = []
         var textParts: [String] = []

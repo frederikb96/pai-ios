@@ -14,17 +14,61 @@ public struct OutlineEntry: Equatable, Sendable, Identifiable {
 /// never produces setext (`===`/`---`) headings, so parsing for them would find headings the
 /// editor itself cannot create.
 public func parseOutline(_ body: String) -> [OutlineEntry] {
-    // Declared locally rather than as a top-level `let`: `Regex` is not `Sendable`, so a shared
-    // global fails Swift 6 strict concurrency — see the `ios` skill's own note on this trap.
-    let headingPattern = /^(#{1,6})\s+(.+?)\s*$/
     var entries: [OutlineEntry] = []
     var offset = 0
     let lines = body.split(separator: "\n", omittingEmptySubsequences: false)
     for line in lines {
-        if let match = try? headingPattern.firstMatch(in: line) {
-            entries.append(OutlineEntry(level: match.output.1.count, text: String(match.output.2), offset: offset))
+        if let heading = atxHeading(in: line) {
+            entries.append(OutlineEntry(level: heading.level, text: String(heading.text), offset: offset))
         }
         offset += line.count + 1
     }
     return entries
+}
+
+/// One ATX heading line: `^(#{1,6})\s+(.+?)\s*$`, read by hand because that pattern is quadratic
+/// on a heading followed by a long whitespace run, and a note body can be written by someone
+/// else. `NoteOutlineScanTests` holds this to the pattern.
+///
+/// The pattern's lazy `.+?` stops at the last non-whitespace character, so the text is everything
+/// between the whitespace after the hashes and the whitespace before the line's end. A line with
+/// nothing but whitespace after the hashes still matches when that run is at least two long,
+/// because `\s+` gives one back for `.+?` to take — the text is then that one whitespace
+/// character, the last one the `.` accepts (it refuses line-break characters).
+private func atxHeading(in line: Substring) -> (level: Int, text: Substring)? {
+    var level = 0
+    var i = line.startIndex
+    while i < line.endIndex, line[i] == "#" {
+        level += 1
+        i = line.index(after: i)
+    }
+    guard (1...6).contains(level), i < line.endIndex, line[i].isWhitespace else { return nil }
+
+    let spaceStart = i
+    var lastNonSpace: Substring.Index?
+    var lastNonBreak: Substring.Index?  // among the whitespace after the first one
+    var firstText: Substring.Index?
+    while i < line.endIndex {
+        let c = line[i]
+        if c.isWhitespace {
+            if i != spaceStart, !c.isNewline { lastNonBreak = i }
+        } else {
+            if firstText == nil { firstText = i }
+            lastNonSpace = i
+        }
+        i = line.index(after: i)
+    }
+
+    guard let firstText, let lastNonSpace else {
+        guard let lastNonBreak else { return nil }
+        return (level, line[lastNonBreak...lastNonBreak])
+    }
+    // `.` refuses a line-break character anywhere in the text it spans.
+    var j = firstText
+    let end = line.index(after: lastNonSpace)
+    while j < end {
+        if line[j].isNewline { return nil }
+        j = line.index(after: j)
+    }
+    return (level, line[firstText..<end])
 }

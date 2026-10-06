@@ -57,51 +57,6 @@ public func buildAttachmentIndex(_ attachments: [NoteAttachmentRecord]) -> Attac
 }
 
 enum Wikilinks {
-    /// Character ranges (fenced code blocks, then inline code spans) to exclude from a wikilink
-    /// scan. Mirrors the web's `codeRanges` — same CommonMark fence-matching rule: a closing
-    /// fence needs the same character and at least the same length as its opener.
-    static func codeRanges(in body: String) -> [Range<Int>] {
-        // Declared locally rather than as top-level `let`s: `Regex` is not `Sendable`, so a
-        // shared global fails Swift 6 strict concurrency — see the `ios` skill's own note.
-        let fencePrefix = /^[ \t]{0,3}(`{3,}|~{3,})/
-        let spanPattern = /(`+)([^`\n]*?)\1/
-        var ranges: [Range<Int>] = []
-        var openFence: (char: Character, len: Int, start: Int)?
-        var offset = 0
-        let lines = body.split(separator: "\n", omittingEmptySubsequences: false)
-        for (index, line) in lines.enumerated() {
-            let hasNewline = index < lines.count - 1
-            if let match = try? fencePrefix.firstMatch(in: line) {
-                let fenceRun = String(match.output.1)
-                let fenceChar = fenceRun.first!
-                let fenceLen = fenceRun.count
-                if let open = openFence {
-                    if fenceChar == open.char, fenceLen >= open.len {
-                        ranges.append(open.start..<(hasNewline ? offset + line.count + 1 : offset + line.count))
-                        openFence = nil
-                    }
-                } else {
-                    openFence = (fenceChar, fenceLen, offset)
-                }
-            }
-            offset += line.count + (hasNewline ? 1 : 0)
-        }
-        if let open = openFence { ranges.append(open.start..<body.count) }
-
-        // Inline code spans: `foo`, ``foo ` bar``, … — a run of backticks, then anything up to a
-        // matching run of the same length.
-        for match in body.matches(of: spanPattern) {
-            let start = body.distance(from: body.startIndex, to: match.range.lowerBound)
-            let end = body.distance(from: body.startIndex, to: match.range.upperBound)
-            ranges.append(start..<end)
-        }
-        return ranges
-    }
-
-    static func isInside(_ pos: Int, _ ranges: [Range<Int>]) -> Bool {
-        ranges.contains { $0.contains(pos) }
-    }
-
     /// Escapes characters that would otherwise be read as markdown syntax inside a generated
     /// link label or strikethrough span — a note title is free text, not markdown source, by the
     /// time it lands here.
@@ -180,22 +135,23 @@ enum WikilinkResolution: Equatable {
 }
 
 /// `[[target]]`, `[[target|alias]]`, `[[target#heading]]` and `![[target]]` in document order.
+///
+/// Linear in the body, whatever it says: ``WikilinkScan`` does the scanning and
+/// `NoteWikilinkScanTests` holds it to the `Regex` it replaced.
 public func findWikilinks(_ body: String) -> [Wikilink] {
-    // Declared locally rather than as a top-level `let`: `Regex` is not `Sendable`, so a shared
-    // global fails Swift 6 strict concurrency — see the `ios` skill's own note on this trap.
-    let wikilinkPattern = /(!)?\[\[([^\]|#\n]+)(#[^\]|\n]+)?(\|[^\]\n]+)?\]\]/
-    let excluded = Wikilinks.codeRanges(in: body)
+    findWikilinks(in: Array(body))
+}
+
+func findWikilinks(in chars: [Character]) -> [Wikilink] {
+    let excluded = WikilinkScan.Excluded(WikilinkScan.codeRanges(in: chars))
     var results: [Wikilink] = []
-    for match in body.matches(of: wikilinkPattern) {
-        let start = body.distance(from: body.startIndex, to: match.range.lowerBound)
-        if Wikilinks.isInside(start, excluded) { continue }
-        let end = body.distance(from: body.startIndex, to: match.range.upperBound)
-        let (_, bang, target, heading, alias) = match.output
+    for match in WikilinkScan.wikilinks(in: chars) where !excluded.contains(match.start) {
         results.append(
             Wikilink(
-                start: start, end: end, isEmbed: bang != nil, target: String(target),
-                heading: heading.map { String($0.dropFirst()) },
-                alias: alias.map { String($0.dropFirst()) }))
+                start: match.start, end: match.end, isEmbed: match.isEmbed,
+                target: String(chars[match.target]),
+                heading: match.anchor.map { String(chars[($0.lowerBound + 1)..<$0.upperBound]) },
+                alias: match.alias.map { String(chars[($0.lowerBound + 1)..<$0.upperBound]) }))
     }
     return results
 }
@@ -229,10 +185,10 @@ public func noteLinkURL(id: String) -> String {
 public func splitBodyForRender(
     _ body: String, nameToId: [String: String], attachmentIndex: AttachmentIndex = .empty
 ) -> [NoteBodySegment] {
-    let links = findWikilinks(body)
+    let chars = Array(body)
+    let links = findWikilinks(in: chars)
     guard !links.isEmpty else { return [.text(body)] }
 
-    let chars = Array(body)
     var segments: [NoteBodySegment] = []
     var textParts: [String] = []
     var cursor = 0
