@@ -437,12 +437,20 @@ once the poll delivers `transferred_to_session_id`.
 ### Verify: the scheduled-task editor's thinking rows and the supervisor picker — pai-cloud anchor: `web/src/apps/scheduler/TaskEditor.tsx`, `web/src/components/SupervisorConfigForm.tsx`
 Needs `PAI/` because: `SupervisorChoiceRows.swift` and the changed `TaskEditorView`/
 `SupervisionView` sections are Mac-compiled. The level rules (`SessionModelCatalog`,
-`SupervisorModelChoice`, `TaskEditorStore.setModel`/`setSupervisionModel`) are proven in the
-package. To look at: the thinking section appearing only once a model with levels is chosen and
-disappearing again under "Default" or a fast environment; the supervisor list reading
-"Default · Haiku · Sonnet · Opus (supervisor default) · Fable" with the right row ticked for a
-stored `nil`, a stored alias equal to the default, and the plan-default value; the standing
-instructions header and its caption.
+`TaskEditorStore.setModel`/`setSupervisionModel`) are proven in the package. To look at: the
+thinking section appearing only once a model with levels is chosen and disappearing again under
+"Default" or a fast environment; the supervisor picker offering the worker's own model list
+(`ModelRows`: Default · Haiku · Sonnet · Opus · Fable) with "Default" ticked for a stored `nil`
+and the stored alias ticked otherwise; the standing instructions header and its caption.
+
+### Verify: the moved marker on a transferred conversation — pai-cloud anchor: `web/src/components/SessionActionsMenu.tsx`, the session list row and the chat header
+Needs `PAI/` because: the pill in `SessionRow`, `movedBanner` in `SessionDetailView` and the
+`.moved` variant of `NonDrivableComposerBar` are Mac-compiled and have never been on a screen.
+The wording, the machine lookup and the rule that only `transferred_to_session_id` marks a
+session are proven in the package (`SessionMoved`). Unverified: the pill sitting beside the
+timestamp without making the row taller; the banner above the transcript shifting its size once
+without moving the reading position; "Open there" pushing the new copy; the composer area showing
+the "Moved to … — open it there" line instead of an input.
 
 ### Verify: note sharing — info-tab Sharing section, queue screen, header viewer count, list mark — pai-cloud anchor: `web/src/apps/notes/panels/ShareSection.tsx`, `ShareQueues.tsx`, `useNoteShareStatus.ts`
 Needs `PAI/` because: `NoteInfoTab`'s Sharing section, `NoteShareQueueScreen.swift`, the

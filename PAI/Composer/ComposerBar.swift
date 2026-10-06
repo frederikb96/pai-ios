@@ -73,7 +73,7 @@ struct ComposerBar: View {
 
     var body: some View {
         Group {
-            if let session = currentSession, !SessionListDomain.isDrivable(session) {
+            if let session = currentSession, SessionMoved.isMoved(session) || !SessionListDomain.isDrivable(session) {
                 NonDrivableComposerBar(session: session, machines: machines)
             } else if let draftStore, let voiceController = environment.connection?.voice {
                 drivableComposer(draftStore: draftStore, voiceController: voiceController)

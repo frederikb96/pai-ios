@@ -11,6 +11,7 @@ import UIKit
 struct SessionDetailView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(SessionListStore.self) private var sessions
+    @Environment(MachineStore.self) private var machines
     @Environment(TranscriptStore.self) private var transcript
     @Environment(SettingsStore.self) private var settings
     @Environment(OutboxStore.self) private var outbox
@@ -54,6 +55,7 @@ struct SessionDetailView: View {
             if let connection = environment.connection {
                 VStack(spacing: 0) {
                     headerStrip
+                    movedBanner
                     TranscriptCollectionView(
                         sessionID: sessionID, store: transcript, apiClient: connection.apiClient, settings: settings,
                         outbox: outbox, requestFactory: connection.requestFactory, searchState: searchState,
@@ -257,6 +259,30 @@ struct SessionDetailView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)
                 .background(PaiPalette.Semantic.panelBackground)
+            }
+        }
+    }
+
+    /// One line above the transcript on a conversation that moved to another machine, with the
+    /// way to its new copy.
+    @ViewBuilder
+    private var movedBanner: some View {
+        if let session = currentSession, let targetId = session.transferredToSessionId {
+            let target = sessions.session(withId: targetId)
+            if let text = SessionMoved.bannerText(for: session, target: target, machines: machines.allMachines) {
+                HStack(spacing: 10) {
+                    Text(text)
+                        .font(PaiTypography.caption.font)
+                        .foregroundStyle(PaiPalette.Semantic.textMuted)
+                    Spacer(minLength: 8)
+                    Button("Open there") { environment.router.push(.session(id: targetId)) }
+                        .font(PaiTypography.captionEmphasized.font)
+                        .accessibilityIdentifier("moved-open-there")
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(PaiPalette.Semantic.raisedSurface)
+                .accessibilityIdentifier("moved-banner")
             }
         }
     }

@@ -7,6 +7,7 @@ import SwiftUI
 /// text field cannot distinguish.
 struct NonDrivableComposerBar: View {
     @Environment(AppEnvironment.self) private var environment
+    @Environment(SessionListStore.self) private var sessions
     let session: Session
     let machines: MachineStore
 
@@ -17,6 +18,12 @@ struct NonDrivableComposerBar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             switch variant {
+            case .moved(let text):
+                Text(text)
+                    .font(PaiTypography.body.font)
+                    .foregroundStyle(PaiPalette.Semantic.textMuted)
+                    .accessibilityIdentifier("moved-composer-text")
+
             case .subagent:
                 Text("This is a subagent's transcript — read-only.")
                     .font(PaiTypography.body.font)
@@ -93,6 +100,7 @@ struct NonDrivableComposerBar: View {
     }
 
     private enum Variant {
+        case moved(String)
         case subagent
         case supervisor
         case computer
@@ -102,6 +110,10 @@ struct NonDrivableComposerBar: View {
     }
 
     private var variant: Variant {
+        let target = session.transferredToSessionId.flatMap { sessions.session(withId: $0) }
+        if let text = SessionMoved.composerText(for: session, target: target, machines: machines.allMachines) {
+            return .moved(text)
+        }
         if session.kind == .subagent { return .subagent }
         if session.kind == .supervisor { return .supervisor }
         if session.kind == .computer { return .computer }

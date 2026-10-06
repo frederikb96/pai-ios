@@ -397,7 +397,14 @@ private enum SessionSearchScope: Hashable {
 /// never taller than an idle one — see `SessionStateIndicator`'s doc comment and the `scrolling`
 /// skill.
 struct SessionRow: View {
+    @Environment(SessionListStore.self) private var sessions
+    @Environment(MachineStore.self) private var machines
     let row: SessionListRow
+
+    private var movedPill: String? {
+        let target = row.session.transferredToSessionId.flatMap { sessions.session(withId: $0) }
+        return SessionMoved.pillText(for: row.session, target: target, machines: machines.allMachines)
+    }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -410,6 +417,15 @@ struct SessionRow: View {
                     .lineLimit(1)
 
                 HStack(spacing: 6) {
+                    if let movedPill {
+                        Text(movedPill)
+                            .font(PaiTypography.captionEmphasized.font)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(PaiPalette.Semantic.raisedSurface, in: Capsule())
+                            .lineLimit(1)
+                            .accessibilityIdentifier("session-moved-pill")
+                    }
                     if let activity = SessionTimeFormat.text(for: row.lastActivityAt) {
                         Text(activity)
                             .lineLimit(1)
