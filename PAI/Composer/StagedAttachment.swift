@@ -39,6 +39,8 @@ struct StagedAttachment: Identifiable, Equatable {
     /// back `.uploaded` when the draft row it became was recorded alongside it — without that,
     /// the send would treat an already-uploaded file as never uploaded and attach it twice.
     var uploadState: AttachmentUploadState?
+    /// When the upload landed in this launch; `nil` for one restored from disk.
+    var uploadedAt: Date?
 
     /// The draft-attachment row this became on the server, or `nil` while it is only local.
     /// What joins a staged file to the row another device would see.

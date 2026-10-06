@@ -225,6 +225,11 @@ final class AppEnvironment {
         let wakeWordSamples = WakeWordSampleCaptureController(
             apiClient: client, storage: defaults, voice: voice, computerCall: computerCall)
 
+        let staging = StagedAttachmentStore()
+        draftStore.serverAttachmentsObserved = { [weak staging] key, ids, requestedAt in
+            staging?.dropVanishedUploads(for: key, serverIds: ids, requestedAt: requestedAt)
+        }
+
         connection = Connection(
             requestFactory: factory,
             apiClient: client,
@@ -241,7 +246,7 @@ final class AppEnvironment {
             },
             notes: NotesStore(api: client),
             notesBrowse: NotesBrowseStore(api: client, storage: defaults),
-            staging: StagedAttachmentStore(),
+            staging: staging,
             outbox: outbox,
             voice: voice,
             computerCall: computerCall,

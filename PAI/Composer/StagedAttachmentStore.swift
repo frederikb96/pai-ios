@@ -52,7 +52,21 @@ final class StagedAttachmentStore {
         var items = attachments(for: sessionID)
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].uploadState = state
+        if case .uploaded = state { items[index].uploadedAt = Date() }
         set(items, for: sessionID)
+    }
+
+    /// Drops this device's uploads the server no longer lists for `sessionID` — the draft was sent
+    /// from another device, which claims the rows. Local only: nothing is deleted on the server.
+    func dropVanishedUploads(for sessionID: String, serverIds: Set<String>, requestedAt: Date) {
+        let uploads = attachments(for: sessionID).compactMap { item -> DraftAttachmentDisplay.StagedUpload? in
+            guard let remoteId = item.remoteAttachmentId else { return nil }
+            return .init(id: item.id, remoteId: remoteId, uploadedAt: item.uploadedAt)
+        }
+        let gone = Set(
+            DraftAttachmentDisplay.vanishedUploads(uploads, serverIds: serverIds, requestedAt: requestedAt))
+        guard !gone.isEmpty else { return }
+        set(attachments(for: sessionID).filter { !gone.contains($0.id) }, for: sessionID)
     }
 
     // MARK: - The lifecycle, in one place

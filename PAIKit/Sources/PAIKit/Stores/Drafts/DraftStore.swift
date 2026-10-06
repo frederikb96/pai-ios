@@ -59,6 +59,11 @@ public final class DraftStore {
     /// decision, here or server-side.
     public let deviceId: String
 
+    /// Told, for every draft a poll lists, which attachment ids the server holds and when that
+    /// request left. The app's staging store uses it to drop an upload another device's send
+    /// already claimed; it lives outside this store because it owns the local bytes.
+    public var serverAttachmentsObserved: ((_ key: String, _ ids: Set<String>, _ requestedAt: Date) -> Void)?
+
     /// The debounce timer for a key's next flush — also where a failed write's retry backoff
     /// lives, so a fresh edit's own debounce naturally cancels and replaces a pending retry rather
     /// than the two racing each other.
@@ -367,6 +372,7 @@ public final class DraftStore {
     /// nothing about that key at all, never "delete the local copy".
     public func syncFromServer() async {
         let revisionsAtRequest = localRevision
+        let requestedAt = clock.now()
         let remote: [Draft]
         do {
             remote = try await api.getDrafts()
@@ -419,6 +425,7 @@ public final class DraftStore {
             if changed {
                 drafts[row.key] = entry
             }
+            serverAttachmentsObserved?(row.key, Set(row.attachments.map(\.id)), requestedAt)
         }
     }
 

@@ -986,6 +986,28 @@ final class DraftStoreTests: XCTestCase {
         XCTAssertEqual(store.draft(for: "s1").attachments, [attachment], "the attachment must still be adopted")
     }
 
+    /// The staging store can only drop a leftover chip if the poll tells it what the server holds
+    /// — including an empty list, which is exactly what a send from another device leaves.
+    func testSyncReportsWhichAttachmentsTheServerHoldsPerDraft() async {
+        let fake = FakeDraftsFetching()
+        let attachment = DraftAttachment(
+            id: "a1", filename: "x.png", path: "/tmp/x.png", size: 10,
+            contentType: "image/png", state: "stored", createdAt: "t1")
+        fake.remoteDrafts = [
+            Draft(
+                key: "s1", text: "", sessionType: nil, workingDir: nil, updatedAt: nil, version: 1,
+                attachments: [attachment]),
+            Draft(key: "s2", text: "", sessionType: nil, workingDir: nil, updatedAt: nil, version: 1),
+        ]
+        let store = DraftStore(api: fake, scheduler: InstantDraftScheduler())
+        var seen: [String: Set<String>] = [:]
+        store.serverAttachmentsObserved = { key, ids, _ in seen[key] = ids }
+
+        await store.syncFromServer()
+
+        XCTAssertEqual(seen, ["s1": ["a1"], "s2": []])
+    }
+
     // MARK: - recordVersionAfterSend
 
     func testRecordVersionAfterSendUpdatesKnownVersionOnAnUntouchedEmptyEntry() async {
