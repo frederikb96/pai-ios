@@ -110,7 +110,11 @@
                 // per-width TextKit measurement rather than the fixed line-count `.codeBlock`
                 // gets. Measured against the SAME soft-broken string `MarkdownContentView`
                 // renders, or the two would disagree about where a long unbroken token breaks and
-                // this height would stop matching what actually draws.
+                // this height would stop matching what actually draws. Same string is not same
+                // layout: this is TextKit 1 and the renderer is SwiftUI `Text` on CoreText, and
+                // nothing compares the two. A text dense with U+200B break opportunities is where
+                // they are most likely to differ by a line, which clips the last line rather than
+                // shortening the cell.
                 let softBroken = LongTokenSoftBreaker.apply(to: text).text
                 return NSAttributedString(
                     string: softBroken,

@@ -84,7 +84,7 @@ final class ArcFixturesTests: XCTestCase {
     /// than over prose, since neither wraps (`MarkdownTableLayout`/`MarkdownCodeBlockLayout` are
     /// both non-wrapping, sideways-scrolling regions). This proves the corpus actually carries a
     /// note whose first block is each shape — the parse-level half of that question, provable on
-    /// Linux; whether it *reads* sensibly truncated stays a rendering judgement PORTING.md tracks.
+    /// Linux; whether it *reads* sensibly truncated is a rendering question only a screen answers.
     func test_arcRecoverFixture_notesCoverTableAndCodeBlockFirst() throws {
         let payload = try JSONDecoder().decode(
             ArcRecoverPayload.self, from: PaiFixtures.data(PaiFixtures.arcRecover))

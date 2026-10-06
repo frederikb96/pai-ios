@@ -1287,8 +1287,12 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                 hasTimeSeparator: rows[index].timeSeparator != nil) ?? 0
         // A row can run to thousands of points and a code block inside it can run to hundreds of
         // lines on its own — landing on the block's own top still leaves a hit on line 300 far
-        // below the viewport. Added only for a hit whose block actually is a code block; every
-        // other block kind wraps, so its own text-layout height already puts the hit on screen.
+        // below the viewport. Added only for a hit whose block actually is a code block. Every
+        // other block lands on its own top, which is close enough for short wrapping blocks but
+        // not for an expanded Thinking card: a `.preformattedText` block running thousands of
+        // characters leaves a hit several screens below where this lands. Closing that needs the
+        // wrapped-line offset of the remapped range at the laid-out width, from the same
+        // attributed string `TextKitBlockMeasurer` builds.
         if let code = codeBlockText(
             forMessage: rows[index].message, cardIndex: hit.cardIndex, blockIndex: hit.blockIndex,
             isRevealed: revealResolver(forMessageId: hit.messageId))

@@ -87,9 +87,7 @@ struct SessionDetailView: View {
                 // code block's or table's horizontal scroll, which is dragged from wherever the
                 // content is, essentially never from the literal screen edge. The width/height
                 // thresholds on the drag itself are what keeps an ordinary vertical scroll from
-                // satisfying it even when it does start in that margin; see PORTING.md for what
-                // remains unverified about how this behaves against the wrapped `UICollectionView`
-                // on a real device.
+                // satisfying it even when it does start in that margin.
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 30)
                         .onEnded { value in
