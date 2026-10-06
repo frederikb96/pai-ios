@@ -61,3 +61,51 @@ final class SessionMovedTests: XCTestCase {
         XCTAssertNil(SessionMoved.composerText(for: SessionFixture.make(), target: nil, machines: machines))
     }
 }
+
+/// The live status event carries the transfer fields, so the marker moves without a poll.
+@MainActor
+final class SessionMovedLiveStatusTests: XCTestCase {
+
+    func testStatusEventDecodesBothTransferFields() async throws {
+        let json = Data(
+            """
+            {"status":"active","state":null,"blocker":null,
+             "transferred_to_session_id":"dst","transferred_at":"2026-10-05T12:30:00.123456+00:00"}
+            """.utf8)
+        let event = try JSONDecoder().decode(SseStatusEvent.self, from: json)
+        XCTAssertEqual(event.transferredToSessionId, "dst")
+        XCTAssertEqual(event.transferredAt, "2026-10-05T12:30:00.123456+00:00")
+    }
+
+    func testStatusEventMovesTheListRowAndReversingClearsIt() async throws {
+        let store = TranscriptStore()
+        let moved = try JSONDecoder().decode(
+            SseStatusEvent.self,
+            from: Data(
+                #"{"status":"active","state":null,"blocker":null,"transferred_to_session_id":"dst","transferred_at":"2026-10-05T12:30:00+00:00"}"#
+                    .utf8))
+        store.applySseStatus(sessionId: "s1", event: moved)
+        let status = try XCTUnwrap(store.liveStatus["s1"])
+        XCTAssertEqual(status.transfer, SessionMoved.Mark(toSessionId: "dst", at: "2026-10-05T12:30:00+00:00"))
+
+        let base = SessionFixture.make(id: "s1")
+        let applied = base.withLiveStatus(
+            state: nil, blocker: nil, turnState: nil, displayState: nil, activityCounts: nil,
+            secretGrantable: nil, secretPrompt: nil, liveModel: nil, transfer: status.transfer)
+        XCTAssertTrue(SessionMoved.isMoved(applied))
+        XCTAssertEqual(applied.transferredAt, "2026-10-05T12:30:00+00:00")
+
+        let reversed = applied.withLiveStatus(
+            state: nil, blocker: nil, turnState: nil, displayState: nil, activityCounts: nil,
+            secretGrantable: nil, secretPrompt: nil, liveModel: nil,
+            transfer: SessionMoved.Mark(toSessionId: nil, at: nil))
+        XCTAssertFalse(SessionMoved.isMoved(reversed))
+        XCTAssertNil(reversed.transferredAt)
+
+        // No mark supplied (a close, a pin) leaves the fields alone.
+        let untouched = applied.withLiveStatus(
+            state: nil, blocker: nil, turnState: nil, displayState: nil, activityCounts: nil,
+            secretGrantable: nil, secretPrompt: nil, liveModel: nil)
+        XCTAssertTrue(SessionMoved.isMoved(untouched))
+    }
+}

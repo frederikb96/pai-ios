@@ -68,6 +68,10 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
     public let secretPrompt: SecretPrompt?
     /// See `Session.liveModel`.
     public let liveModel: String?
+    /// See `Session.transferredToSessionId`.
+    public let transferredToSessionId: String?
+    /// See `Session.transferredAt`.
+    public let transferredAt: String?
     /// Outgoing messages not yet delivered.
     ///
     /// ⚠️ Superseded by `pendingSends`, which the web client reads instead — nothing there
@@ -90,6 +94,8 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
         case secretGrantable = "secret_grantable"
         case secretPrompt = "secret_prompt"
         case liveModel = "live_model"
+        case transferredToSessionId = "transferred_to_session_id"
+        case transferredAt = "transferred_at"
         case queuedTexts = "queued_texts"
         case pendingSends = "pending_sends"
         case lastError = "last_error"
@@ -105,6 +111,8 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
         secretGrantable: Bool? = nil,
         secretPrompt: SecretPrompt? = nil,
         liveModel: String? = nil,
+        transferredToSessionId: String? = nil,
+        transferredAt: String? = nil,
         queued: Int?,
         queuedTexts: [String]?,
         pendingSends: [PendingSend]?,
@@ -119,6 +127,8 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
         self.secretGrantable = secretGrantable
         self.secretPrompt = secretPrompt
         self.liveModel = liveModel
+        self.transferredToSessionId = transferredToSessionId
+        self.transferredAt = transferredAt
         self.queued = queued
         self.queuedTexts = queuedTexts
         self.pendingSends = pendingSends

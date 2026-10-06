@@ -5,6 +5,19 @@ import Foundation
 /// Ported from the web's moved marker so the wording and the rule live here rather than in views.
 public enum SessionMoved {
 
+    /// The two transfer fields as one live status event reports them. A value is the whole
+    /// answer, absent target included: a conversation transferred back reads as "not moved", not
+    /// as "nothing said".
+    public struct Mark: Sendable, Equatable {
+        public let toSessionId: String?
+        public let at: String?
+
+        public init(toSessionId: String?, at: String?) {
+            self.toSessionId = toSessionId
+            self.at = at
+        }
+    }
+
     /// Whether the session was moved: `transferred_to_session_id` is the only signal, and it is
     /// set for a move and never for a snapshot copy.
     public static func isMoved(_ session: Session) -> Bool {

@@ -222,7 +222,7 @@ struct SessionDetailView: View {
                 turnState: newValue.turnState, displayState: newValue.displayState,
                 activityCounts: newValue.activityCounts,
                 secretGrantable: newValue.secretGrantable, secretPrompt: newValue.secretPrompt,
-                liveModel: newValue.liveModel
+                liveModel: newValue.liveModel, transfer: newValue.transfer
             )
         }
         .task {

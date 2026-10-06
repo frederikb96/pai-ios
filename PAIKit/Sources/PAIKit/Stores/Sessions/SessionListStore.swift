@@ -288,20 +288,20 @@ public final class SessionListStore {
     public func applyLiveStatus(
         sessionId: String, state: SessionState?, blocker: Blocker?, turnState: TurnState?,
         displayState: DisplayState?, activityCounts: ActivityCounts?, secretGrantable: Bool?,
-        secretPrompt: SecretPrompt?, liveModel: String?
+        secretPrompt: SecretPrompt?, liveModel: String?, transfer: SessionMoved.Mark? = nil
     ) {
         if let index = syncedSessions.firstIndex(where: { $0.id == sessionId }) {
             syncedSessions[index] = syncedSessions[index].withLiveStatus(
                 state: state, blocker: blocker, turnState: turnState, displayState: displayState,
                 activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
-                liveModel: liveModel
+                liveModel: liveModel, transfer: transfer
             )
         }
         if let index = serverFilteredResults.firstIndex(where: { $0.session.id == sessionId }) {
             let updated = serverFilteredResults[index].session.withLiveStatus(
                 state: state, blocker: blocker, turnState: turnState, displayState: displayState,
                 activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
-                liveModel: liveModel
+                liveModel: liveModel, transfer: transfer
             )
             serverFilteredResults[index] = SessionSearchResult(
                 session: updated, score: serverFilteredResults[index].score

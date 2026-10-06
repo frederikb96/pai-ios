@@ -440,7 +440,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// The session this conversation was transferred to on another machine, and when. While set
     /// (and that session still exists) this one cannot be resumed — the conversation lives on the
     /// other machine now, so the menu hides the transfer action. On the polled `Session` only:
-    /// the live SSE status event never carries either.
+    /// the live SSE status event carries both too (`SseStatusEvent`).
     ///
     /// `var` with an internal setter so a successful transfer can mark the source row without a
     /// third copy of the memberwise initializer call (`withLiveStatus`, `withPinnedAt`).
@@ -608,9 +608,12 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     public func withLiveStatus(
         state: SessionState?, blocker: Blocker?, turnState: TurnState?, displayState: DisplayState?,
         activityCounts: ActivityCounts?, secretGrantable: Bool?, secretPrompt: SecretPrompt?,
-        liveModel: String?
+        liveModel: String?, transfer: SessionMoved.Mark? = nil
     ) -> Session {
-        Session(
+        // A supplied mark replaces both fields, nil members included; without one they carry over.
+        let movedTo = transfer == nil ? transferredToSessionId : transfer?.toSessionId
+        let movedAt = transfer == nil ? transferredAt : transfer?.at
+        return Session(
             id: id, sessionType: sessionType, model: model, thinking: thinking, status: status, state: state,
             blocker: blocker,
             turnState: turnState, displayState: displayState,
@@ -627,7 +630,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName,
             liveModel: liveModel, taskId: taskId,
             activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
-            transferredToSessionId: transferredToSessionId, transferredAt: transferredAt
+            transferredToSessionId: movedTo, transferredAt: movedAt
         )
     }
 
