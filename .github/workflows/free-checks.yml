@@ -53,7 +53,7 @@ jobs:
 
       - uses: swift-actions/setup-swift@v3
         with:
-          swift-version: '6.2'
+          swift-version: '6.4'
 
       # Dependencies are fetched and rebuilt on every run otherwise, which is most of the wall
       # time here. Keyed on the manifest so a dependency change invalidates it.
