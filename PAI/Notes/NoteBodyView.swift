@@ -106,15 +106,17 @@ struct NoteBodyView: View {
             NotePreviewBlockView(block: block, highlightQuery: highlight, isCurrentTarget: isCurrentTarget)
         case .embed(let target, _):
             attachmentView(target: target, mode: .embed)
-        case .attachmentLink(let target):
-            attachmentView(target: target, mode: .link)
+        case .attachmentLink(let target, let label):
+            attachmentView(target: target, mode: .link, label: label)
         }
     }
 
     @ViewBuilder
-    private func attachmentView(target: String, mode: NoteAttachmentEmbedView.Mode) -> some View {
+    private func attachmentView(
+        target: String, mode: NoteAttachmentEmbedView.Mode, label: String? = nil
+    ) -> some View {
         if let containerId {
-            NoteAttachmentEmbedView(containerId: containerId, target: target, mode: mode)
+            NoteAttachmentEmbedView(containerId: containerId, target: target, mode: mode, label: label)
         } else {
             Text("\(target) — this note has no container, so its attachments can't be resolved")
                 .font(PaiTypography.caption.font)
@@ -349,6 +351,8 @@ struct NoteAttachmentEmbedView: View {
     let containerId: String
     let target: String
     var mode: Mode = .embed
+    /// What the link called the file; shown on the chip in place of the stored name.
+    var label: String?
 
     @Environment(NotesStore.self) private var notes
     @State private var state: LoadState = .loading
@@ -385,7 +389,7 @@ struct NoteAttachmentEmbedView: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "doc")
-                            Text(filename)
+                            Text(chipName.shown)
                         }
                         .font(PaiTypography.caption.font)
                         .foregroundStyle(PaiPalette.Notes.accent)
@@ -394,7 +398,7 @@ struct NoteAttachmentEmbedView: View {
                     }
                     .buttonStyle(.plain)
                     .confirmationDialog(
-                        "Download \(filename)?", isPresented: $isConfirmingDownload, titleVisibility: .visible
+                        "Download \(chipName.shown)?", isPresented: $isConfirmingDownload, titleVisibility: .visible
                     ) {
                         Button("Download") { prepareShare(data) }
                         Button("Cancel", role: .cancel) {}
@@ -403,7 +407,7 @@ struct NoteAttachmentEmbedView: View {
             case .loading:
                 HStack(spacing: 6) {
                     ProgressView()
-                    Text(filename)
+                    Text(chipName.shown)
                 }
                 .font(PaiTypography.caption.font)
                 .foregroundStyle(PaiPalette.Notes.muted)
@@ -438,11 +442,15 @@ struct NoteAttachmentEmbedView: View {
     }
 
     private func prepareShare(_ data: Data) {
-        shareFile = AttachmentSharing.stage(data, filename: filename)
+        shareFile = AttachmentSharing.stage(data, filename: chipName.saved)
     }
 
     private var filename: String {
         attachmentFilename(target)
+    }
+
+    private var chipName: AttachmentChipName {
+        AttachmentChipName(storedName: filename, label: label)
     }
 
     private var isImage: Bool {

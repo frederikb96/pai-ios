@@ -8,7 +8,7 @@ import Markdown
 public enum NotePreviewItemKind: Sendable {
     case block(MarkdownBlock)
     case embed(target: String, alias: String?)
-    case attachmentLink(target: String)
+    case attachmentLink(target: String, label: String?)
 }
 
 /// A rendered item plus the 1-based source line its markdown started at — how a jump lands on
@@ -89,7 +89,9 @@ public struct NotePreviewDocument: Sendable {
                 if case .attachment(let relPath) = resolution {
                     flushText()
                     built.append(
-                        NotePreviewItem(id: built.count, kind: .attachmentLink(target: relPath), startLine: line))
+                        NotePreviewItem(
+                            id: built.count, kind: .attachmentLink(target: relPath, label: link.alias), startLine: line)
+                    )
                 } else {
                     let display = Wikilinks.escapeMarkdownText(link.alias ?? link.target)
                     appendChunk(Wikilinks.inlineMarkdown(display: display, resolution: resolution))

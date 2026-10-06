@@ -515,7 +515,7 @@ private struct NoteInfoTab: View {
             if let kind = linkPendingDelete {
                 Text(
                     shareStore?.deleteWarning(for: kind)
-                        ?? "Anyone holding this link loses access to the note.")
+                        ?? "Anyone holding this link loses access, and its address stops working for good.")
             }
         }
     }

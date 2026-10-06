@@ -119,9 +119,31 @@ final class NoteWikilinksTests: XCTestCase {
             segments,
             [
                 .text("before "),
-                .attachmentLink(relPath: "attachments/repo.codelocal"),
+                .attachmentLink(relPath: "attachments/repo.codelocal", label: nil),
                 .text(" after"),
             ])
+    }
+
+    func testAnAttachmentWikilinkAliasBecomesTheChipLabel() {
+        let attachments = [
+            NoteAttachmentRecord(
+                relPath: "attachments/up-ab12cd.pdf", basename: "up-ab12cd.pdf", ext: "pdf",
+                sizeBytes: 1, mtimeMs: 0, linkCount: 1)
+        ]
+        let segments = splitBodyForRender(
+            "[[attachments/up-ab12cd.pdf|Trip budget.pdf]]", nameToId: [:],
+            attachmentIndex: buildAttachmentIndex(attachments))
+        XCTAssertEqual(segments, [.attachmentLink(relPath: "attachments/up-ab12cd.pdf", label: "Trip budget.pdf")])
+    }
+
+    func testAChipSavesUnderItsLabelOnlyWhenTheExtensionSurvives() {
+        let stored = "up-ab12cd.pdf"
+        XCTAssertEqual(AttachmentChipName(storedName: stored, label: "Trip budget.pdf").saved, "Trip budget.pdf")
+        let renamed = AttachmentChipName(storedName: stored, label: "Trip budget")
+        XCTAssertEqual(renamed.shown, "Trip budget")
+        XCTAssertEqual(renamed.saved, stored)
+        XCTAssertEqual(AttachmentChipName(storedName: stored, label: "  ").shown, stored)
+        XCTAssertEqual(AttachmentChipName(storedName: stored, label: nil).shown, stored)
     }
 
     func testBodyWithNoLinksIsOneWholeTextSegment() {

@@ -167,10 +167,25 @@ final class NotePreviewDocumentTests: XCTestCase {
             text.runs.contains { $0.style.contains(.strikethrough) },
             "the attachment link text must not be struck through")
 
-        guard case .attachmentLink(let target) = document.items[1].kind else {
+        guard case .attachmentLink(let target, _) = document.items[1].kind else {
             return XCTFail("expected an attachment link, got \(document.items[1].kind)")
         }
         XCTAssertEqual(target, "attachments/repo.codelocal")
+    }
+
+    func testAnAliasedAttachmentWikilinkCarriesItsLabelIntoThePreviewItem() {
+        let attachments = [
+            NoteAttachmentRecord(
+                relPath: "attachments/up-ab12cd.pdf", basename: "up-ab12cd.pdf", ext: "pdf",
+                sizeBytes: 1, mtimeMs: 0, linkCount: 1)
+        ]
+        let document = NotePreviewDocument(
+            body: "[[attachments/up-ab12cd.pdf|Trip budget.pdf]]", nameToId: [:],
+            attachmentIndex: buildAttachmentIndex(attachments))
+        guard case .attachmentLink(_, let label) = document.items[0].kind else {
+            return XCTFail("expected an attachment link, got \(document.items[0].kind)")
+        }
+        XCTAssertEqual(label, "Trip budget.pdf")
     }
 
     /// A bare filename (no `attachments/` prefix) still resolves — the basename fallback step,
@@ -186,7 +201,7 @@ final class NotePreviewDocumentTests: XCTestCase {
         let document = NotePreviewDocument(
             body: body, nameToId: [:], attachmentIndex: buildAttachmentIndex(attachments))
         XCTAssertEqual(document.items.count, 1)
-        guard case .attachmentLink(let target) = document.items[0].kind else {
+        guard case .attachmentLink(let target, _) = document.items[0].kind else {
             return XCTFail("expected an attachment link, got \(document.items[0].kind)")
         }
         XCTAssertEqual(target, "attachments/repo.codelocal")
@@ -207,7 +222,7 @@ final class NotePreviewDocumentTests: XCTestCase {
             body: body, nameToId: ["shared-name": "note-should-lose"],
             attachmentIndex: buildAttachmentIndex(attachments))
         XCTAssertEqual(document.items.count, 1)
-        guard case .attachmentLink(let target) = document.items[0].kind else {
+        guard case .attachmentLink(let target, _) = document.items[0].kind else {
             return XCTFail("expected an attachment link, got \(document.items[0].kind)")
         }
         XCTAssertEqual(target, "attachments/shared-name")

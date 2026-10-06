@@ -63,7 +63,7 @@ final class NoteShareWireTests: XCTestCase {
         XCTAssertEqual(try decodeShare(json).incoming.first?.origin, .unrecognized("quarantine"))
     }
 
-    func testDeleteAndBatchAndStateAndResolveAnswersDecode() throws {
+    func testDeleteAndBatchAndStateAnswersDecode() throws {
         let deleted = try JSONDecoder().decode(
             NoteShareDeleted.self,
             from: Data(#"{"deleted":true,"sandbox_dropped":true,"discarded_uploads":3}"#.utf8))
@@ -77,9 +77,6 @@ final class NoteShareWireTests: XCTestCase {
         let state = try JSONDecoder().decode(
             NoteState.self, from: Data(#"{"content_hash":"sha256:x","viewers":4}"#.utf8))
         XCTAssertEqual(state, NoteState(contentHash: "sha256:x", viewers: 4))
-        let resolved = try JSONDecoder().decode(
-            NoteShareResolved.self, from: Data(#"{"note_id":"n1","kind":"edit"}"#.utf8))
-        XCTAssertEqual(resolved.kind, .edit)
     }
 
     /// `shared` is on the list row and the detail, and an older backend sends neither.
@@ -149,16 +146,11 @@ final class NoteShareWireTests: XCTestCase {
         XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.url?.path, "/api/notes/n1/share/attachments/discard")
     }
 
-    func testThePresencePollNamesItsTabAndTheResolveBodyCarriesTheToken() async throws {
+    func testThePresencePollNamesItsTab() async throws {
         let client = try makeClient(stub: #"{"content_hash":"h","viewers":1}"#)
         _ = try await client.getNoteState(noteId: "n1", clientId: "abc-123")
         XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.url?.path, "/api/notes/n1/state")
         XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.url?.query, "client_id=abc-123")
-
-        let resolver = try makeClient(stub: #"{"note_id":"n1","kind":"read"}"#)
-        _ = try await resolver.resolveNoteShare(token: "tok")
-        XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.url?.path, "/api/notes/shares/resolve")
-        XCTAssertTrue(capturedBody.contains(#""token":"tok""#), capturedBody)
     }
 
     func testAMissingSandboxFileIsNotFoundRatherThanAnError() async throws {
@@ -301,22 +293,37 @@ final class NoteShareStoreTests: XCTestCase {
         XCTAssertEqual(store.errorMessage, "Could not accept: b1 — the vault already holds it")
     }
 
-    func testDeletingTheLastLinkWarnsOnlyWhileUploadsAreUnaccepted() async throws {
+    func testDeletingTheLastLinkNamesAddressAliasesPublishedFilesAndUploads() async throws {
         let (store, _, _) = try await make()
-        XCTAssertEqual(
-            store.deleteWarning(for: .read),
-            "This is the last link. 1 uploaded file nobody accepted yet will be discarded with it.")
+        let warning = try XCTUnwrap(store.deleteWarning(for: .read))
+        XCTAssertTrue(warning.contains("address stops working for good"), warning)
+        XCTAssertTrue(warning.contains("The old HedgeDoc address that forwards to it stops working too."), warning)
+        XCTAssertTrue(warning.contains("the published file is unshared too"), warning)
+        XCTAssertTrue(warning.contains("1 uploaded file you have not accepted is discarded."), warning)
         XCTAssertNil(store.deleteWarning(for: .edit), "there is no edit link to delete")
     }
 
-    func testNoWarningWhenAnotherLinkRemainsOrNothingIsWaiting() async throws {
+    func testAnotherRemainingLinkKeepsTheSandboxOutOfTheWarning() async throws {
         let base = try decodeShare()
         let edit = NoteShareLink(kind: .edit, url: "u2", createdAtMs: 2)
         let twoLinks = try await make(share: withLinks(base, read: base.links.read, edit: edit))
-        XCTAssertNil(twoLinks.0.deleteWarning(for: .read), "the sandbox survives while a link remains")
+        let warning = try XCTUnwrap(twoLinks.0.deleteWarning(for: .read))
+        XCTAssertTrue(warning.contains("stops working for good"), warning)
+        XCTAssertFalse(warning.contains("last link"), "the sandbox survives while a link remains: \(warning)")
+        XCTAssertFalse(warning.contains("discarded"), warning)
+    }
 
-        let noUploads = try await make(share: withIncoming(base, []))
-        XCTAssertNil(noUploads.0.deleteWarning(for: .read), "nothing unaccepted is lost")
+    func testTheWarningOmitsWhatIsNotAtStake() async throws {
+        let base = try decodeShare()
+        let bare = NoteShareLink(kind: .read, url: "u", createdAtMs: 1)
+        let (store, _) = try await make(
+            share: NoteShare(
+                noteId: base.noteId, links: .init(read: bare, edit: nil), viewers: 0, outgoing: [],
+                incoming: [], sandbox: [], sandboxBytes: 0, limits: base.limits))
+        let warning = try XCTUnwrap(store.deleteWarning(for: .read))
+        XCTAssertFalse(warning.contains("HedgeDoc"), warning)
+        XCTAssertFalse(warning.contains("published"), warning)
+        XCTAssertFalse(warning.contains("uploaded"), warning)
     }
 
     private func make(share: NoteShare) async throws -> (NoteShareStore, FakeNoteShareApi) {

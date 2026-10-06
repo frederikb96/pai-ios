@@ -454,8 +454,7 @@ their own tap; the system share sheet from `ShareLink`; the incoming image previ
 upload; the presence badge appearing in the toolbar only while another tab has the note open, and
 not taking toolbar space otherwise; the poll stopping when the app is backgrounded
 (`.task(id: scenePhase)`). A share link opened from the phone is just Safari — the app has no
-public view and no handler for the "Open in PAI" landing (`POST /api/notes/shares/resolve` is
-declared in `PaiApiClient` with no caller).
+public view and no handler for the "Open in PAI" landing.
 
 ### Verify: the checkbox and bullet buttons on the keyboard bar keep a multi-line selection selected — pai-cloud anchor: `web/src/apps/notes/noteEditing.ts` (`toggleCheckboxLine`, `toggleBulletLines`)
 Needs `PAI/` because: the transforms (`ListLines` in `MarkdownListLines.swift`) are proven against
@@ -463,3 +462,15 @@ the web's cases, but how the text view applies the single replacement over a mul
 where its selection lands (so a second tap acts on the same lines) is UIKit behaviour. Tap the
 checkbox button three times on one line and on a three-line selection and watch the selection and
 Undo.
+
+### Notes: a silently overridden edit is announced — pai-cloud anchor: `web/src/apps/notes/editor/noteConflict.ts` (`keepsOwnChange`)
+Needs `PAI/` because: the notice is a bar in the editor, and where it sits next to the
+conflict banner and the keyboard accessory is a layout question. The web remembers this client's
+last saved change (text before and after) until an external version is adopted; when a version is
+adopted silently — nothing unsaved locally — `keepsOwnChange` checks that the version still
+carries the change, and an amber bar offers to copy the user's version when it does not. The
+phone adopts versions silently in `NotesStore.loadNote` (`setDetail` then `bumpExternalRevision`
+whenever no draft exists), on appear and on a panel refresh rather than on a poll, so the same
+replacement is possible with a narrower window. No wire change is needed; the check is a
+heuristic in both directions (an adjacent edit by the other side can raise it falsely, a short
+change repeated elsewhere can hide it).

@@ -491,11 +491,4 @@ extension PaiApiClient {
         try await send(
             path: "/api/notes/\(noteId)/state", query: [URLQueryItem(name: "client_id", value: clientId)])
     }
-
-    /// Which note a share token opens — where "Open in PAI" lands.
-    public func resolveNoteShare(token: String) async throws -> NoteShareResolved {
-        struct Body: Encodable { let token: String }
-        return try await send(
-            path: "/api/notes/shares/resolve", method: "POST", body: try Self.jsonBody(Body(token: token)))
-    }
 }

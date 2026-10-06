@@ -67,15 +67,38 @@ public final class NoteShareStore {
     /// How many outgoing files "Publish all" leaves for a deliberate tap.
     public var heldBackFromPublishAll: Int { (share?.outgoing.count ?? 0) - publishAllCandidates.count }
 
-    /// The line to show before deleting `kind`, or nil when nothing is at stake: only removing the
-    /// last link drops the sandbox, and only uploads nobody accepted are lost with it.
+    /// What dies with `kind`'s link, for the confirmation before deleting it; nil when there is no
+    /// such link. The address always stops working for good and takes its HedgeDoc aliases along.
+    /// Removing the last link also drops the sandbox: published files are unshared and uploads
+    /// nobody accepted are discarded.
     public func deleteWarning(for kind: NoteShareKind) -> String? {
-        guard let share, share.links[kind] != nil else { return nil }
+        guard let share, let link = share.links[kind] else { return nil }
+        var lines = [
+            "Anyone holding this link loses access, and its address stops working for good. A new link would get a new address."
+        ]
+        let aliases = link.aliases.count
+        if aliases == 1 {
+            lines.append("The old HedgeDoc address that forwards to it stops working too.")
+        } else if aliases > 1 {
+            lines.append("The \(aliases) old HedgeDoc addresses that forward to it stop working too.")
+        }
         let isLast = NoteShareKind.allCases.filter { share.links[$0] != nil }.count == 1
-        let unaccepted = share.incoming.count
-        guard isLast, unaccepted > 0 else { return nil }
-        let files = unaccepted == 1 ? "1 uploaded file" : "\(unaccepted) uploaded files"
-        return "This is the last link. \(files) nobody accepted yet will be discarded with it."
+        if isLast {
+            let waitingIds = Set(share.incoming.map(\.id))
+            let published = share.sandbox.filter { !waitingIds.contains($0.id) }.count
+            if published == 1 {
+                lines.append("This is the last link, so the published file is unshared too.")
+            } else if published > 1 {
+                lines.append("This is the last link, so the \(published) published files are unshared too.")
+            }
+            let waiting = share.incoming.count
+            if waiting == 1 {
+                lines.append("1 uploaded file you have not accepted is discarded.")
+            } else if waiting > 1 {
+                lines.append("\(waiting) uploaded files you have not accepted are discarded.")
+            }
+        }
+        return lines.joined(separator: " ")
     }
 
     // MARK: Reading

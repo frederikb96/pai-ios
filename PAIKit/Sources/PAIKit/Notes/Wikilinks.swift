@@ -164,7 +164,29 @@ func findWikilinks(in chars: [Character]) -> [Wikilink] {
 public enum NoteBodySegment: Equatable, Sendable {
     case text(String)
     case embed(target: String, alias: String?)
-    case attachmentLink(relPath: String)
+    /// `label` is the link's alias — what the note calls the file, which a chip shows instead of
+    /// the stored name (an upload is stored under a generated one).
+    case attachmentLink(relPath: String, label: String?)
+}
+
+/// What a file chip shows and what it saves under, given the stored path and the link's label.
+///
+/// The label is shown whenever it is non-blank. It is also the saved name, but only when it keeps
+/// the stored file's extension — a label such as "Q3 numbers" must not turn a PDF into a file the
+/// system cannot open.
+public struct AttachmentChipName: Equatable, Sendable {
+    public let shown: String
+    public let saved: String
+
+    public init(storedName: String, label: String?) {
+        let trimmed = label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        shown = trimmed.isEmpty ? storedName : trimmed
+        saved = Self.extensionOf(shown) == Self.extensionOf(storedName) ? shown : storedName
+    }
+
+    private static func extensionOf(_ name: String) -> String {
+        (name as NSString).pathExtension.lowercased()
+    }
 }
 
 /// The URL a resolved wikilink is turned into: the app's own deep link to that note.
@@ -209,7 +231,7 @@ public func splitBodyForRender(
                 link.target, nameToId: nameToId, attachmentIndex: attachmentIndex)
             if case .attachment(let relPath) = resolution {
                 flushText()
-                segments.append(.attachmentLink(relPath: relPath))
+                segments.append(.attachmentLink(relPath: relPath, label: link.alias))
             } else {
                 let display = Wikilinks.escapeMarkdownText(link.alias ?? link.target)
                 textParts.append(Wikilinks.inlineMarkdown(display: display, resolution: resolution))

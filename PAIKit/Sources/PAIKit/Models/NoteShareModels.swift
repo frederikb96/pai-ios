@@ -293,19 +293,3 @@ public struct NoteState: Codable, Sendable, Equatable {
         case contentHash = "content_hash"
     }
 }
-
-/// `POST /api/notes/shares/resolve` — where "Open in PAI" lands.
-public struct NoteShareResolved: Codable, Sendable, Equatable {
-    public let noteId: String
-    public let kind: NoteShareKind
-
-    public init(noteId: String, kind: NoteShareKind) {
-        self.noteId = noteId
-        self.kind = kind
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case kind
-        case noteId = "note_id"
-    }
-}
