@@ -294,13 +294,18 @@ public enum MarkdownSourceHighlighter {
         /// One left-to-right pass with a fixed priority order. Code spans come first because
         /// their contents are literal — `` `**not bold**` `` must stay unstyled inside — and the
         /// pass jumps past whatever it matched, so nothing is styled twice.
+        ///
+        /// A failed opener must not rescan the line for its closer, or a line made of openers is
+        /// quadratic and the note typed into freezes: every closer search is answered from an
+        /// ``InlineIndex`` built in one pass over the line.
         mutating func highlightInline(_ range: Range<Int>) {
+            let index = InlineIndex(characters: characters, range: range)
             var cursor = range.lowerBound
             while cursor < range.upperBound {
-                if let next = matchCodeSpan(at: cursor, limit: range.upperBound)
-                    ?? matchWikilink(at: cursor, limit: range.upperBound)
-                    ?? matchLink(at: cursor, limit: range.upperBound)
-                    ?? matchDelimited(at: cursor, limit: range.upperBound)
+                if let next = matchCodeSpan(at: cursor, limit: range.upperBound, index: index)
+                    ?? matchWikilink(at: cursor, limit: range.upperBound, index: index)
+                    ?? matchLink(at: cursor, limit: range.upperBound, index: index)
+                    ?? matchDelimited(at: cursor, limit: range.upperBound, index: index)
                 {
                     cursor = next
                 } else {
@@ -309,50 +314,33 @@ public enum MarkdownSourceHighlighter {
             }
         }
 
-        mutating func matchCodeSpan(at start: Int, limit: Int) -> Int? {
+        mutating func matchCodeSpan(at start: Int, limit: Int, index: InlineIndex) -> Int? {
             guard characters[start] == "`" else { return nil }
-            var openEnd = start
-            while openEnd < limit, characters[openEnd] == "`" { openEnd += 1 }
+            let openEnd = index.runEnd(at: start)
             let width = openEnd - start
-            var cursor = openEnd
-            while cursor < limit {
-                guard characters[cursor] == "`" else {
-                    cursor += 1
-                    continue
-                }
-                var closeEnd = cursor
-                while closeEnd < limit, characters[closeEnd] == "`" { closeEnd += 1 }
-                if closeEnd - cursor == width {
-                    emit(start..<openEnd, .marker)
-                    emit(openEnd..<cursor, .inlineCode)
-                    emit(cursor..<closeEnd, .marker)
-                    return closeEnd
-                }
-                cursor = closeEnd
-            }
-            return nil
+            // The closer is the first whole run of exactly this many backticks after the opener.
+            guard let cursor = index.backtickRuns[width]?.first(atLeast: openEnd) else { return nil }
+            let closeEnd = cursor + width
+            emit(start..<openEnd, .marker)
+            emit(openEnd..<cursor, .inlineCode)
+            emit(cursor..<closeEnd, .marker)
+            return closeEnd
         }
 
-        mutating func matchWikilink(at start: Int, limit: Int) -> Int? {
+        mutating func matchWikilink(at start: Int, limit: Int, index: InlineIndex) -> Int? {
             guard start + 1 < limit, characters[start] == "[", characters[start + 1] == "[" else { return nil }
-            var cursor = start + 2
-            while cursor + 1 < limit {
-                if characters[cursor] == "]", characters[cursor + 1] == "]" {
-                    emit(start..<(start + 2), .marker)
-                    emit((start + 2)..<cursor, .wikilink)
-                    emit(cursor..<(cursor + 2), .marker)
-                    return cursor + 2
-                }
-                cursor += 1
-            }
-            return nil
+            guard let cursor = index.wikilinkCloses.first(atLeast: start + 2) else { return nil }
+            emit(start..<(start + 2), .marker)
+            emit((start + 2)..<cursor, .wikilink)
+            emit(cursor..<(cursor + 2), .marker)
+            return cursor + 2
         }
 
-        mutating func matchLink(at start: Int, limit: Int) -> Int? {
+        mutating func matchLink(at start: Int, limit: Int, index: InlineIndex) -> Int? {
             guard characters[start] == "[" else { return nil }
-            guard let closeBracket = find("]", from: start + 1, limit: limit) else { return nil }
+            guard let closeBracket = index.closeBrackets.first(atLeast: start + 1) else { return nil }
             guard closeBracket + 1 < limit, characters[closeBracket + 1] == "(" else { return nil }
-            guard let closeParen = find(")", from: closeBracket + 2, limit: limit) else { return nil }
+            guard let closeParen = index.closeParens.first(atLeast: closeBracket + 2) else { return nil }
             emit(start..<(start + 1), .marker)
             emit((start + 1)..<closeBracket, .linkText)
             emit(closeBracket..<(closeBracket + 2), .marker)
@@ -362,11 +350,10 @@ public enum MarkdownSourceHighlighter {
         }
 
         /// `**strong**`, `__strong__`, `*em*`, `_em_`, `~~strike~~`.
-        mutating func matchDelimited(at start: Int, limit: Int) -> Int? {
+        mutating func matchDelimited(at start: Int, limit: Int, index: InlineIndex) -> Int? {
             let character = characters[start]
             guard character == "*" || character == "_" || character == "~" else { return nil }
-            var runEnd = start
-            while runEnd < limit, characters[runEnd] == character { runEnd += 1 }
+            let runEnd = index.runEnd(at: start)
             let width = runEnd - start
             let style: MarkdownSourceStyle
             switch (character, width) {
@@ -379,32 +366,102 @@ public enum MarkdownSourceHighlighter {
             // An opener must be followed by content, or `** ` in prose swallows the rest of the
             // line looking for a partner it will not find.
             guard runEnd < limit, characters[runEnd] != " " else { return nil }
-            var cursor = runEnd
-            while cursor < limit {
-                guard characters[cursor] == character else {
-                    cursor += 1
-                    continue
-                }
-                var closeEnd = cursor
-                while closeEnd < limit, characters[closeEnd] == character { closeEnd += 1 }
-                if closeEnd - cursor >= width, characters[cursor - 1] != " " {
-                    emit(start..<runEnd, .marker)
-                    emit(runEnd..<cursor, style)
-                    emit(cursor..<(cursor + width), .marker)
-                    return cursor + width
-                }
-                cursor = closeEnd
-            }
-            return nil
+            // The closer is the first whole run of the character, at least as long as the opener,
+            // that does not follow a space.
+            guard
+                let cursor = index.delimiterRuns[DelimiterKey(character: character, width: width)]?
+                    .first(atLeast: runEnd)
+            else { return nil }
+            emit(start..<runEnd, .marker)
+            emit(runEnd..<cursor, style)
+            emit(cursor..<(cursor + width), .marker)
+            return cursor + width
         }
+    }
+}
 
-        func find(_ character: Character, from start: Int, limit: Int) -> Int? {
-            var cursor = start
-            while cursor < limit {
-                if characters[cursor] == character { return cursor }
-                cursor += 1
+private struct DelimiterKey: Hashable {
+    let character: Character
+    let width: Int
+}
+
+extension Array where Element == Int {
+    /// The first element at or after `position`, for an ascending array.
+    fileprivate func first(atLeast position: Int) -> Int? {
+        var low = 0
+        var high = count
+        while low < high {
+            let mid = (low + high) / 2
+            if self[mid] < position { low = mid + 1 } else { high = mid }
+        }
+        return low < count ? self[low] : nil
+    }
+}
+
+/// Where each kind of closer sits on one line, found in a single pass, so that asking for the
+/// closer of an opener is a binary search rather than a scan to the end of the line. Every list
+/// is ascending and covers only the line's own range.
+private struct InlineIndex {
+    /// Starts of whole backtick runs, by run length.
+    var backtickRuns: [Int: [Int]] = [:]
+    /// Starts of `]]`.
+    var wikilinkCloses: [Int] = []
+    var closeBrackets: [Int] = []
+    var closeParens: [Int] = []
+    /// Starts of whole runs of `*`, `_` or `~` that follow a character other than a space, listed
+    /// under every opener width they can close: a run of `n` closes a width-1 and a width-2 opener
+    /// when `n >= 2`, a width-1 one when `n == 1`.
+    var delimiterRuns: [DelimiterKey: [Int]] = [:]
+
+    /// Where the run of equal characters containing each position ends, relative to the range.
+    /// An opener that fails sits at every position of a long run in turn, so rereading the run
+    /// from each of them would be quadratic.
+    private var runEnds: [Int]
+    private let lowerBound: Int
+
+    func runEnd(at position: Int) -> Int { runEnds[position - lowerBound] }
+
+    init(characters: [Character], range: Range<Int>) {
+        lowerBound = range.lowerBound
+        runEnds = Array(repeating: range.upperBound, count: range.count)
+        var position = range.upperBound - 1
+        while position >= range.lowerBound {
+            if position + 1 < range.upperBound, characters[position] == characters[position + 1] {
+                runEnds[position - range.lowerBound] = runEnds[position + 1 - range.lowerBound]
+            } else {
+                runEnds[position - range.lowerBound] = position + 1
             }
-            return nil
+            position -= 1
+        }
+        var index = range.lowerBound
+        while index < range.upperBound {
+            let character = characters[index]
+            switch character {
+            case "`":
+                let end = runEnds[index - range.lowerBound]
+                backtickRuns[end - index, default: []].append(index)
+                index = end
+                continue
+            case "*", "_", "~":
+                let end = runEnds[index - range.lowerBound]
+                // A run at the very start of the line has no character before it, and no opener
+                // can lie before it either, so it is never asked for.
+                if index > 0, characters[index - 1] != " " {
+                    for width in 1...min(end - index, 2) {
+                        delimiterRuns[DelimiterKey(character: character, width: width), default: []].append(index)
+                    }
+                }
+                index = end
+                continue
+            case "]":
+                closeBrackets.append(index)
+                if index + 1 < range.upperBound, characters[index + 1] == "]" { wikilinkCloses.append(index) }
+            case ")":
+                closeParens.append(index)
+            default:
+                break
+            }
+            index += 1
         }
     }
 }
