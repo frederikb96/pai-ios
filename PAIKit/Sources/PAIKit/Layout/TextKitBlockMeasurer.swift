@@ -111,10 +111,12 @@
                 // gets. Measured against the SAME soft-broken string `MarkdownContentView`
                 // renders, or the two would disagree about where a long unbroken token breaks and
                 // this height would stop matching what actually draws. Same string is not same
-                // layout: this is TextKit 1 and the renderer is SwiftUI `Text` on CoreText, and
-                // nothing compares the two. A text dense with U+200B break opportunities is where
-                // they are most likely to differ by a line, which clips the last line rather than
-                // shortening the cell.
+                // layout: this is TextKit 1 and the renderer is SwiftUI `Text` on CoreText. The
+                // row-agreement check cannot see a difference (the card's frame pins the height
+                // it draws), so only the debug route `POST /markdown/measure?block=preformatted`
+                // compares the two, on the Mac run's own sample texts. A text dense with U+200B
+                // break opportunities is where they are most likely to differ by a line, which
+                // clips the last line rather than shortening the cell.
                 let softBroken = LongTokenSoftBreaker.apply(to: text).text
                 return NSAttributedString(
                     string: softBroken,
@@ -185,6 +187,31 @@
         }
 
         // MARK: - Non-text blocks
+
+        /// How far below the top of a ``MarkdownBlock/preformattedText(_:)`` block the wrapped
+        /// line holding `range.location` starts, at `width`. Laid out from the same soft-broken
+        /// attributed string ``height(of:width:environment:)`` measures, so a search hit inside a
+        /// long expanded Thinking card can be landed on instead of on the card's top.
+        public static func preformattedLineOffset(
+            of range: NSRange, in text: String, width: Double, environment: MeasurementEnvironment
+        ) -> Double {
+            let category = UIContentSizeCategory(rawValue: environment.sizeCategoryToken)
+            let (softBroken, insertions) = LongTokenSoftBreaker.apply(to: text)
+            let attributed = NSAttributedString(
+                string: softBroken, attributes: attributes(for: PaiTypography.markdownCodeBlock, category: category))
+            guard attributed.length > 0 else { return 0 }
+            let storage = NSTextStorage(attributedString: attributed)
+            let manager = NSLayoutManager()
+            storage.addLayoutManager(manager)
+            let container = NSTextContainer(size: CGSize(width: width, height: .greatestFiniteMagnitude))
+            container.lineFragmentPadding = 0
+            manager.addTextContainer(container)
+            manager.ensureLayout(for: container)
+            let remapped = LongTokenSoftBreaker.remap(range, insertionOffsets: insertions)
+            let character = max(0, min(remapped.location, attributed.length - 1))
+            let glyph = manager.glyphIndexForCharacter(at: character)
+            return Double(manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY)
+        }
 
         /// One row's text height, header or data — `GfmTableView` adds no padding of its own
         /// around a cell's text, only the spacing and divider ``MarkdownTableLayout`` takes as

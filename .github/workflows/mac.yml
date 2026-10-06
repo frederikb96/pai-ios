@@ -252,6 +252,23 @@ jobs:
               -o "artifacts/measure-$m.json" || true
           done
 
+          # The Thinking card's block wraps through TextKit when measured and through SwiftUI `Text`
+          # when drawn, and nothing else compares the two. A plain paragraph, a long unbroken
+          # token and a run of short words are the shapes where the two wrap differently; a
+          # non-zero `delta` in these reports is a Thinking card clipping or leaving a gap.
+          python3 -c "
+          open('/tmp/t1.txt', 'w').write(
+              'Thinking through the plan step by step, weighing each option against the others. ' * 40)
+          open('/tmp/t2.txt', 'w').write(
+              'before ' + '/very/long/path/with/no/break/opportunities/' * 12 + ' after ' + 'x' * 300)
+          open('/tmp/t3.txt', 'w').write(' '.join('w%d' % i for i in range(600)))
+          "
+          for t in 1 2 3; do
+            curl -sS --max-time 5 --data-binary "@/tmp/t$t.txt" \
+              "http://127.0.0.1:8765/markdown/measure?width=360&block=preformatted" \
+              -o "artifacts/measure-thinking-$t.json" || true
+          done
+
           # Measured on this device rather than reasoned about: how much a debounced repaint
           # costs with the note-editor gutter and hanging indent on, against the same note with
           # them off. A large note — dozens of list items long enough to wrap, the shape that

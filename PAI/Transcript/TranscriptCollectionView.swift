@@ -1285,25 +1285,45 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                 environment: environment, isRevealed: revealResolver(forMessageId: hit.messageId),
                 measurer: measurer, cache: cache, metrics: metrics,
                 hasTimeSeparator: rows[index].timeSeparator != nil) ?? 0
-        // A row can run to thousands of points and a code block inside it can run to hundreds of
+        // A row can run to thousands of points and one block inside it can run to hundreds of
         // lines on its own — landing on the block's own top still leaves a hit on line 300 far
-        // below the viewport. Added only for a hit whose block actually is a code block. Every
-        // other block lands on its own top, which is close enough for short wrapping blocks but
-        // not for an expanded Thinking card: a `.preformattedText` block running thousands of
-        // characters leaves a hit several screens below where this lands. Closing that needs the
-        // wrapped-line offset of the remapped range at the laid-out width, from the same
-        // attributed string `TextKitBlockMeasurer` builds.
+        // below the viewport. A code block (never wraps) adds its hit line's offset; an expanded
+        // Thinking card (`.preformattedText`, wraps) adds the offset of the wrapped line holding
+        // the hit, laid out at the width the block draws at. Every other block lands on its own
+        // top, which is close enough for short wrapping blocks.
+        let isRevealed = revealResolver(forMessageId: hit.messageId)
         if let code = codeBlockText(
             forMessage: rows[index].message, cardIndex: hit.cardIndex, blockIndex: hit.blockIndex,
-            isRevealed: revealResolver(forMessageId: hit.messageId))
+            isRevealed: isRevealed)
         {
             let position = CodeBlockHitGeometry.position(of: hit.range, in: code)
             let lineHeight = TextKitBlockMeasurer.codeLineHeight(for: environment)
             blockOffset += MarkdownCodeBlockLayout.lineOffset(
                 line: position.line, lineHeight: lineHeight, padding: TranscriptRowMetrics.codeBlockPadding)
+        } else if let wrapped = preformattedBlock(
+            forMessage: rows[index].message, cardIndex: hit.cardIndex, blockIndex: hit.blockIndex,
+            isRevealed: isRevealed)
+        {
+            blockOffset += TextKitBlockMeasurer.preformattedLineOffset(
+                of: hit.range, in: wrapped.text,
+                width: TranscriptRowLayout.contentWidth(for: wrapped.register, cellWidth: width),
+                environment: environment)
         }
         scrollToTarget(messageId: hit.messageId, blockOffset: blockOffset, animated: animated)
         reconfigureVisibleCells()
+    }
+
+    /// The wrapping text inside `cardIndex`/`blockIndex`'s block and the register its card draws
+    /// in (which sets the width it wraps at), or `nil` when that block is not a
+    /// `.preformattedText` block — the expanded Thinking card's body.
+    private func preformattedBlock(
+        forMessage message: Message, cardIndex: Int, blockIndex: Int, isRevealed: (Int) -> Bool
+    ) -> (text: String, register: TranscriptCardPlan.Register)? {
+        let cards = TranscriptRowPlan.cards(for: message, isRevealed: isRevealed)
+        guard cards.indices.contains(cardIndex), cards[cardIndex].blocks.indices.contains(blockIndex),
+            case .preformattedText(let text) = cards[cardIndex].blocks[blockIndex]
+        else { return nil }
+        return (text, cards[cardIndex].register)
     }
 
     /// The code inside `cardIndex`/`blockIndex`'s block, or `nil` when that block is not a code

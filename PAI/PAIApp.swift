@@ -102,9 +102,12 @@ struct PAIApp: App {
             router.register("POST", "/markdown/measure") { request in
                 let source = String(decoding: request.body, as: UTF8.self)
                 let width = request.query["width"].flatMap(Double.init) ?? 360
+                // `?block=preformatted` measures and draws the body as the Thinking card's own
+                // wrapping block, which the markdown parser never produces.
+                let preformatted = request.query["block"] == "preformatted"
                 return DispatchQueue.main.sync {
                     MainActor.assumeIsolated {
-                        DebugMarkdownMeasurement.compare(source: source, width: width)
+                        DebugMarkdownMeasurement.compare(source: source, width: width, preformatted: preformatted)
                     }
                 }
             }
@@ -237,8 +240,8 @@ struct PAIApp: App {
         /// runs the calling thread already *is* the main thread — `assumeIsolated` documents that
         /// rather than hopping again.
         @MainActor
-        static func compare(source: String, width: Double) -> DebugRouter.Response {
-            let blocks = MarkdownParser.parse(source)
+        static func compare(source: String, width: Double, preformatted: Bool = false) -> DebugRouter.Response {
+            let blocks = preformatted ? [MarkdownBlock.preformattedText(source)] : MarkdownParser.parse(source)
             let environment = MeasurementEnvironment(
                 sizeCategoryToken: UITraitCollection.current.preferredContentSizeCategory.rawValue)
             let metrics = MessageLayoutMetrics(

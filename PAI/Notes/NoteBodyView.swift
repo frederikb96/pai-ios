@@ -24,6 +24,8 @@ struct NoteBodyView: View {
     let containerId: String?
     let jump: NoteJumpRequest?
     let highlight: String?
+    /// Ticks a task box. `nil` where the page is read-only; the boxes then stay plain glyphs.
+    let onToggleTask: ((NoteTaskMark) -> Void)?
 
     @Environment(AppEnvironment.self) private var environment
     @Environment(NotesStore.self) private var notes
@@ -36,13 +38,14 @@ struct NoteBodyView: View {
 
     init(
         body: String, nameToId: [String: String], containerId: String?,
-        jump: NoteJumpRequest? = nil, highlight: String? = nil
+        jump: NoteJumpRequest? = nil, highlight: String? = nil, onToggleTask: ((NoteTaskMark) -> Void)? = nil
     ) {
         self.noteBody = body
         self.nameToId = nameToId
         self.containerId = containerId
         self.jump = jump
         self.highlight = highlight
+        self.onToggleTask = onToggleTask
     }
 
     var body: some View {
@@ -62,7 +65,7 @@ struct NoteBodyView: View {
                 // off-screen rows is deferred.
                 LazyVStack(alignment: .leading, spacing: NotePreviewMetrics.blockSpacing) {
                     ForEach(document.items) { item in
-                        itemView(item, isCurrentTarget: item.id == currentItemIndex)
+                        itemView(item, taskMarks: document.taskMarks, isCurrentTarget: item.id == currentItemIndex)
                             .id(item.id)
                     }
                 }
@@ -100,10 +103,12 @@ struct NoteBodyView: View {
     }
 
     @ViewBuilder
-    private func itemView(_ item: NotePreviewItem, isCurrentTarget: Bool) -> some View {
+    private func itemView(_ item: NotePreviewItem, taskMarks: [NoteTaskMark], isCurrentTarget: Bool) -> some View {
         switch item.kind {
         case .block(let block):
-            NotePreviewBlockView(block: block, highlightQuery: highlight, isCurrentTarget: isCurrentTarget)
+            NotePreviewBlockView(
+                block: block, highlightQuery: highlight, isCurrentTarget: isCurrentTarget,
+                taskBase: item.firstTask, taskMarks: taskMarks, onToggleTask: onToggleTask)
         case .embed(let target, _):
             attachmentView(target: target, mode: .embed)
         case .attachmentLink(let target, let label):
@@ -145,6 +150,12 @@ struct NotePreviewBlockView: View {
     let block: MarkdownBlock
     var highlightQuery: String?
     var isCurrentTarget: Bool = false
+    /// The ordinal of the first task box this block draws, and the marks those ordinals index
+    /// (``NotePreviewDocument/taskMarks``). A box is tappable only when a mark exists for its
+    /// ordinal and a handler was given.
+    var taskBase: Int = 0
+    var taskMarks: [NoteTaskMark] = []
+    var onToggleTask: ((NoteTaskMark) -> Void)?
 
     var body: some View {
         switch block {
@@ -185,22 +196,27 @@ struct NotePreviewBlockView: View {
             HStack(spacing: 10) {
                 Rectangle().fill(PaiPalette.Notes.rule).frame(width: 3)
                 VStack(alignment: .leading, spacing: NotePreviewMetrics.blockSpacing) {
-                    ForEach(Array(nested.enumerated()), id: \.offset) { _, block in
-                        NotePreviewBlockView(block: block)
+                    let starts = NoteTasks.starts(of: nested, from: taskBase)
+                    ForEach(Array(nested.enumerated()), id: \.offset) { index, block in
+                        NotePreviewBlockView(
+                            block: block, taskBase: starts[index], taskMarks: taskMarks, onToggleTask: onToggleTask)
                     }
                 }
             }
 
         case .list(let list):
             VStack(alignment: .leading, spacing: 8) {
+                let itemStarts = NoteTasks.starts(of: list.items, from: taskBase)
                 ForEach(Array(list.items.enumerated()), id: \.offset) { index, item in
                     HStack(alignment: .top, spacing: 8) {
-                        Text(marker(for: list.marker, index: index, checkbox: item.checkbox))
-                            .font(PaiTypography.markdownBody.font)
-                            .foregroundStyle(PaiPalette.Notes.accent)
+                        markerView(for: list.marker, index: index, item: item, ordinal: itemStarts[index])
                         VStack(alignment: .leading, spacing: NotePreviewMetrics.blockSpacing) {
-                            ForEach(Array(item.blocks.enumerated()), id: \.offset) { _, block in
-                                NotePreviewBlockView(block: block)
+                            let childStarts = NoteTasks.starts(
+                                of: item.blocks, from: itemStarts[index] + (item.checkbox == nil ? 0 : 1))
+                            ForEach(Array(item.blocks.enumerated()), id: \.offset) { blockIndex, block in
+                                NotePreviewBlockView(
+                                    block: block, taskBase: childStarts[blockIndex], taskMarks: taskMarks,
+                                    onToggleTask: onToggleTask)
                             }
                         }
                     }
@@ -218,6 +234,32 @@ struct NotePreviewBlockView: View {
                 raw, font: PaiTypography.markdownCodeBlock.font, highlights: highlightSpans(in: raw)
             )
             .foregroundStyle(PaiPalette.Notes.muted)
+        }
+    }
+
+    /// A task item's box is a button when the page can tick it — a mark exists for it and a
+    /// handler was given — and a plain glyph otherwise.
+    @ViewBuilder
+    private func markerView(for marker: MarkdownList.Marker, index: Int, item: MarkdownListItem, ordinal: Int)
+        -> some View
+    {
+        let glyph = Text(marker(for: marker, index: index, checkbox: item.checkbox))
+            .font(PaiTypography.markdownBody.font)
+            .foregroundStyle(PaiPalette.Notes.accent)
+        if item.checkbox != nil, let onToggleTask, taskMarks.indices.contains(ordinal) {
+            let mark = taskMarks[ordinal]
+            Button {
+                onToggleTask(mark)
+            } label: {
+                glyph.frame(minWidth: 32, minHeight: 32)
+            }
+            .buttonStyle(.plain)
+            .padding(.vertical, -6)
+            .accessibilityLabel(mark.checked ? "Done task" : "Open task")
+            .accessibilityHint("Double tap to toggle")
+            .accessibilityIdentifier("note-task-box")
+        } else {
+            glyph
         }
     }
 

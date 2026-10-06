@@ -506,6 +506,19 @@ public final class NotesStore {
         scheduleSave(id: id)
     }
 
+    /// A task box ticked in the rendered note: an ordinary edit of the body, saved like typing
+    /// (so a conflict surfaces through the same banner). `renderedBody` is the text the page was
+    /// drawn from; a body that has moved since drops the tap rather than ticking whatever
+    /// shifted under it. Returns whether an edit was made.
+    @discardableResult
+    public func toggleTask(id: String, renderedBody: String, mark: NoteTaskMark) -> Bool {
+        guard body(for: id) == renderedBody, let next = NoteTasks.toggled(renderedBody, mark: mark) else {
+            return false
+        }
+        edit(id: id, body: next)
+        return true
+    }
+
     private func scheduleSave(id: String) {
         saveTasks[id]?.cancel()
         saveTasks[id] = Task { [weak self] in

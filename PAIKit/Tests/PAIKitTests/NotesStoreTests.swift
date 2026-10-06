@@ -586,4 +586,28 @@ final class NotesStoreTests: XCTestCase {
             store.detail(for: "n1")?.name, "Saved by the autosave",
             "a load that started before the save must not roll the baseline back once it returns after it")
     }
+
+    // MARK: - Ticking a task box in the rendered note
+
+    /// A tick is an ordinary edit: the draft changes and the save goes out against the current
+    /// hash like typing. A page drawn from an older body must not tick anything.
+    func testTickingATaskBoxEditsTheBodyAndSavesItLikeTyping() async {
+        let api = FakeNotesApi()
+        let store = NotesStore(api: api)
+        let drawn = "- [ ] a\n- [ ] b\n"
+        api.getNoteResult = NoteFixture.detail(id: "n1", body: drawn)
+        await store.loadNote(id: "n1")
+        let marks = NoteTasks.marks(in: drawn, drawn: [false, false])
+        api.patchNoteResult = .saved(NoteFixture.detail(id: "n1", body: "- [ ] a\n- [x] b\n", contentHash: "h2"))
+
+        XCTAssertTrue(store.toggleTask(id: "n1", renderedBody: drawn, mark: marks[1]))
+        XCTAssertEqual(store.body(for: "n1"), "- [ ] a\n- [x] b\n")
+        await store.flush(id: "n1")
+        XCTAssertEqual(api.patchNoteBodies.last, "- [ ] a\n- [x] b\n")
+
+        XCTAssertFalse(
+            store.toggleTask(id: "n1", renderedBody: drawn, mark: marks[0]),
+            "the page was drawn before that edit, so its tap is dropped")
+        XCTAssertEqual(store.body(for: "n1"), "- [ ] a\n- [x] b\n")
+    }
 }

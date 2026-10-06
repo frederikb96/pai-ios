@@ -56,6 +56,7 @@ struct SessionDetailView: View {
                 VStack(spacing: 0) {
                     headerStrip
                     movedBanner
+                    deliveryFailureBanner
                     TranscriptCollectionView(
                         sessionID: sessionID, store: transcript, apiClient: connection.apiClient, settings: settings,
                         outbox: outbox, requestFactory: connection.requestFactory, searchState: searchState,
@@ -282,6 +283,36 @@ struct SessionDetailView: View {
                 .background(PaiPalette.Semantic.raisedSurface)
                 .accessibilityIdentifier("moved-banner")
             }
+        }
+    }
+
+    /// A send that failed for good must say so — a pending bubble and silence reads as working
+    /// normally. The reason is the server's own (`last_error` on the status event); the terminal
+    /// is where the cause usually shows, as on the web.
+    @ViewBuilder
+    private var deliveryFailureBanner: some View {
+        if let reason = transcript.delivery(for: sessionID).failureReason {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Message not delivered")
+                    .font(PaiTypography.bodyEmphasized.font)
+                    .foregroundStyle(PaiPalette.Semantic.errorBannerText)
+                Text(reason)
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Semantic.errorText)
+                Button("Open terminal") { environment.router.push(.terminal(sessionID: sessionID)) }
+                    .font(PaiTypography.captionEmphasized.font)
+                    .foregroundStyle(PaiPalette.Semantic.errorBannerText)
+                    .accessibilityIdentifier("delivery-failure-open-terminal")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(PaiPalette.Semantic.errorBackground)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(PaiPalette.Semantic.errorBorder).frame(height: 1)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("delivery-failure-banner")
         }
     }
 

@@ -116,6 +116,23 @@ final class TranscriptSendTests: XCTestCase {
         XCTAssertEqual(store.pendingMessages["s1"]?.map(\.localId), [1])
     }
 
+    /// The banner follows the latest status event: a reason shows, a blank one never draws an
+    /// empty red block, and the next event without one takes it away again.
+    func testFailureReasonFollowsTheLatestStatusEvent() {
+        let store = TranscriptStore()
+        XCTAssertNil(store.delivery(for: "s1").failureReason)
+
+        store.setDelivery(sessionId: "s1", pendingSends: [], lastError: "Session is not running")
+        XCTAssertEqual(store.delivery(for: "s1").failureReason, "Session is not running")
+
+        store.setDelivery(sessionId: "s1", pendingSends: [], lastError: "  \n")
+        XCTAssertNil(store.delivery(for: "s1").failureReason)
+
+        store.setDelivery(sessionId: "s1", pendingSends: [], lastError: "boom")
+        store.setDelivery(sessionId: "s1", pendingSends: [], lastError: nil)
+        XCTAssertNil(store.delivery(for: "s1").failureReason)
+    }
+
     // MARK: - pendingBubbleTexts (the bridging composition)
 
     /// While a bubble's send has not yet answered (`outboxId == nil`), the server's list is held

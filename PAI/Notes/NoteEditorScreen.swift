@@ -154,7 +154,8 @@ struct NoteEditorScreen: View {
                 NoteBodyView(
                     body: body, nameToId: buildNameToId(notes.notes),
                     containerId: notes.detail(for: noteID)?.containerId,
-                    jump: jump, highlight: highlight)
+                    jump: jump, highlight: highlight,
+                    onToggleTask: { notes.toggleTask(id: noteID, renderedBody: body, mark: $0) })
             } else {
                 NoteEditorSurface(
                     noteID: noteID, text: body, revision: notes.externalRevision(for: noteID), jump: jump,

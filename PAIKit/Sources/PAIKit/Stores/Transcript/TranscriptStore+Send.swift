@@ -40,6 +40,14 @@ public struct TranscriptDelivery: Equatable, Sendable {
 
     public static let empty = TranscriptDelivery(pendingSends: [], lastError: nil)
 
+    /// Why a send permanently failed, when the banner naming it should show. A blank reason is
+    /// no reason — the web's banner is gated on a truthy string for the same cause, so an empty
+    /// `last_error` never draws a red block with nothing in it.
+    public var failureReason: String? {
+        guard let lastError, !lastError.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return lastError
+    }
+
     public init(pendingSends: [PendingSend], lastError: String?) {
         self.pendingSends = pendingSends
         self.lastError = lastError

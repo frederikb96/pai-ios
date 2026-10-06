@@ -1161,7 +1161,8 @@ struct MarkdownContentView: View {
             // remapped onto the same soft-broken string or a hit would paint a few characters
             // off. `TextKitBlockMeasurer`'s own `.preformattedText` case measures the identical
             // soft-broken string, which is what keeps this in step with the row height the
-            // transcript already precomputed for it.
+            // transcript already precomputed for it — the same string, not the same layout:
+            // `POST /markdown/measure?block=preformatted` is what compares the two.
             let (softBroken, insertions) = LongTokenSoftBreaker.apply(to: text)
             let remappedHighlights = highlights.map { span in
                 (range: LongTokenSoftBreaker.remap(span.range, insertionOffsets: insertions), isCurrent: span.isCurrent)

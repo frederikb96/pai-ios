@@ -18,6 +18,9 @@ public struct NotePreviewItem: Identifiable, Sendable {
     public let id: Int
     public let kind: NotePreviewItemKind
     public let startLine: Int
+    /// The ordinal of the first task box this item draws, counting every box on the page in
+    /// drawing order — an index into ``NotePreviewDocument/taskMarks``.
+    public let firstTask: Int
 }
 
 /// A note body parsed once for a read-only page: wikilinks resolved the same way
@@ -37,6 +40,10 @@ public struct NotePreviewItem: Identifiable, Sendable {
 /// silently misalign every item after the gap rather than only the one that vanished.
 public struct NotePreviewDocument: Sendable {
     public let items: [NotePreviewItem]
+    /// Where each drawn task box lives in the body, by the ordinal it is drawn in; empty when the
+    /// body's own parse and the drawn page do not agree on every box, which makes nothing
+    /// tickable (see ``NoteTasks``).
+    public let taskMarks: [NoteTaskMark]
 
     public init(body: String, nameToId: [String: String], attachmentIndex: AttachmentIndex = .empty) {
         let chars = Array(body)
@@ -64,7 +71,8 @@ public struct NotePreviewDocument: Sendable {
                 else { continue }
                 let localLine = child.range?.lowerBound.line ?? 1
                 built.append(
-                    NotePreviewItem(id: built.count, kind: .block(block), startLine: textStartLine + localLine - 1))
+                    NotePreviewItem(
+                        id: built.count, kind: .block(block), startLine: textStartLine + localLine - 1, firstTask: 0))
             }
         }
 
@@ -78,7 +86,8 @@ public struct NotePreviewDocument: Sendable {
                 flushText()
                 built.append(
                     NotePreviewItem(
-                        id: built.count, kind: .embed(target: link.target, alias: link.alias), startLine: line))
+                        id: built.count, kind: .embed(target: link.target, alias: link.alias), startLine: line,
+                        firstTask: 0))
             } else {
                 // A wikilink's own source text never contains a newline (the grammar excludes it),
                 // so it stays part of the segment currently accumulating rather than starting a
@@ -90,7 +99,8 @@ public struct NotePreviewDocument: Sendable {
                     flushText()
                     built.append(
                         NotePreviewItem(
-                            id: built.count, kind: .attachmentLink(target: relPath, label: link.alias), startLine: line)
+                            id: built.count, kind: .attachmentLink(target: relPath, label: link.alias), startLine: line,
+                            firstTask: 0)
                     )
                 } else {
                     let display = Wikilinks.escapeMarkdownText(link.alias ?? link.target)
@@ -102,7 +112,13 @@ public struct NotePreviewDocument: Sendable {
         if cursor < chars.count { appendChunk(String(chars[cursor...])) }
         flushText()
 
-        items = built
+        var drawn: [Bool] = []
+        items = built.map { item in
+            let first = drawn.count
+            if case .block(let block) = item.kind { drawn += NoteTasks.drawnStates(in: [block]) }
+            return NotePreviewItem(id: item.id, kind: item.kind, startLine: item.startLine, firstTask: first)
+        }
+        taskMarks = NoteTasks.marks(in: body, drawn: drawn)
     }
 
     /// The index into ``items`` a Character offset — from ``parseOutline(_:)`` or

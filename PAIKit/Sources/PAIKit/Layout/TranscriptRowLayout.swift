@@ -347,7 +347,7 @@ public enum TranscriptRowLayout {
     /// The width `card`'s own text wraps at — the cell width minus whichever horizontal chrome the
     /// view draws that register inside, so a wrap this measures and a wrap the view lays out can
     /// never be computed from two different widths.
-    private static func contentWidth(for register: TranscriptCardPlan.Register, cellWidth: Double) -> Double {
+    public static func contentWidth(for register: TranscriptCardPlan.Register, cellWidth: Double) -> Double {
         switch register {
         case .activity:
             return max(
