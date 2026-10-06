@@ -36,7 +36,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Swift's own documented Ubuntu dependency list, plus curl/file/ca-certificates for the
       # setup action itself — it downloads a toolchain, verifies its signature, and identifies
@@ -51,13 +51,13 @@ jobs:
             libgcc-13-dev libncurses-dev libpython3-dev libsqlite3-0 libstdc++-13-dev \
             libxml2-dev libz3-dev pkg-config tzdata unzip zlib1g-dev
 
-      - uses: swift-actions/setup-swift@v2
+      - uses: swift-actions/setup-swift@v3
         with:
           swift-version: '6.2'
 
       # Dependencies are fetched and rebuilt on every run otherwise, which is most of the wall
       # time here. Keyed on the manifest so a dependency change invalidates it.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: PAIKit/.build
           key: spm-${{ runner.os }}-${{ hashFiles('PAIKit/Package.swift') }}
@@ -110,7 +110,7 @@ jobs:
           swift format --in-place --recursive PAIKit
           git diff > format.patch
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: format-patch

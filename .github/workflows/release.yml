@@ -43,7 +43,7 @@ jobs:
 
     steps:
       # Empty unless refreshing, which checks out the triggering ref as usual.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.refresh_tag }}
 
@@ -127,7 +127,7 @@ jobs:
       - name: GitHub release
         if: github.ref_type == 'tag'
         continue-on-error: true
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           files: build/*.dSYM.zip
@@ -148,7 +148,7 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - run: pip install --quiet 'pyjwt[crypto]'
 
