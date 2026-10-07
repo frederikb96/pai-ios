@@ -446,6 +446,9 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// third copy of the memberwise initializer call (`withLiveStatus`, `withPinnedAt`).
     public internal(set) var transferredToSessionId: String?
     public let transferredAt: String?
+    /// The namespace this session belongs to, by slug; `nil` is Freddy's own default namespace.
+    /// Set at creation and never changed, so the SSE status event does not carry it.
+    public let namespace: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -492,6 +495,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         case secretPrompt = "secret_prompt"
         case transferredToSessionId = "transferred_to_session_id"
         case transferredAt = "transferred_at"
+        case namespace
     }
 
     public init(
@@ -543,7 +547,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         secretGrantable: Bool? = nil,
         secretPrompt: SecretPrompt? = nil,
         transferredToSessionId: String? = nil,
-        transferredAt: String? = nil
+        transferredAt: String? = nil,
+        namespace: String? = nil
     ) {
         self.id = id
         self.sessionType = sessionType
@@ -594,6 +599,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.secretPrompt = secretPrompt
         self.transferredToSessionId = transferredToSessionId
         self.transferredAt = transferredAt
+        self.namespace = namespace
     }
 
     /// A copy with the session-level fields of a live SSE `status` event applied — the same
@@ -630,7 +636,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName,
             liveModel: liveModel, taskId: taskId,
             activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
-            transferredToSessionId: movedTo, transferredAt: movedAt
+            transferredToSessionId: movedTo, transferredAt: movedAt, namespace: namespace
         )
     }
 
@@ -657,7 +663,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName,
             liveModel: liveModel, taskId: taskId,
             activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
-            transferredToSessionId: transferredToSessionId, transferredAt: transferredAt
+            transferredToSessionId: transferredToSessionId, transferredAt: transferredAt,
+            namespace: namespace
         )
     }
 }

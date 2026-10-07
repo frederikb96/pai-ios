@@ -571,28 +571,52 @@ public struct ClaudeLoginCodeResponse: Codable, Sendable, Equatable {
 
 // MARK: - Auth
 
-/// There is one user, and every route is owner-only — sharing a session with another person
-/// comes back as access for sandboxed agents, never as a guest role, so this carries no second
-/// case to guard against. See `pai-cloud/.claude/CLAUDE.md` "There is one user, and every route
-/// is owner-only".
+/// `owner` is Freddy; `guest` is a member of one or more namespaces and reaches only their
+/// sessions. Guests use the web UI only, so this app never acts on `.guest` beyond decoding it;
+/// an unknown role still fails the decode, since a wrong guess about who is looking is the
+/// costly direction.
 public enum UserRole: String, Codable, Sendable, Equatable {
     case owner
+    case guest
+}
+
+/// One namespace as its member sees it.
+public struct NamespaceSummary: Codable, Sendable, Equatable {
+    public let slug: String
+    public let displayName: String
+
+    enum CodingKeys: String, CodingKey {
+        case slug
+        case displayName = "display_name"
+    }
+
+    public init(slug: String, displayName: String) {
+        self.slug = slug
+        self.displayName = displayName
+    }
 }
 
 public struct MeResponse: Codable, Sendable, Equatable {
     public let identity: String
     public let role: UserRole
     public let allowedSessionIds: [String]
+    /// The namespaces a guest belongs to; empty for the owner. `nil` from a backend that
+    /// predates namespaces.
+    public let namespaces: [NamespaceSummary]?
 
     enum CodingKeys: String, CodingKey {
-        case identity, role
+        case identity, role, namespaces
         case allowedSessionIds = "allowed_session_ids"
     }
 
-    public init(identity: String, role: UserRole, allowedSessionIds: [String]) {
+    public init(
+        identity: String, role: UserRole, allowedSessionIds: [String],
+        namespaces: [NamespaceSummary]? = nil
+    ) {
         self.identity = identity
         self.role = role
         self.allowedSessionIds = allowedSessionIds
+        self.namespaces = namespaces
     }
 }
 

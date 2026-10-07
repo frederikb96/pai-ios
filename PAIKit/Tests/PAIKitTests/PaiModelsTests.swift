@@ -375,6 +375,31 @@ final class PaiModelsTests: XCTestCase {
         XCTAssertNil(session.liveModel)
     }
 
+    /// `namespace` arrives only on the polled session, never on a status frame, so the two
+    /// rebuild-from-self copies must carry it through rather than reset it to `nil`.
+    func testNamespaceSurvivesALiveStatusUpdateAndAPinToggle() throws {
+        let json = Data(
+            """
+            {"id":"s1","session_type":"ns-anja","status":"active","state":null,"blocker":null,
+             "title":null,"title_locked":null,"initial_message":null,
+             "session_tokens":0,"claude_session_id":null,
+             "idle_timeout_minutes":null,"effective_idle_timeout_minutes":null,"cse_id":null,
+             "created_at":null,"updated_at":null,"last_activity_at":null,"working_dir":null,
+             "agent":null,"kind":null,"parent_session_id":null,"subagent_name":null,
+             "subagent_type":null,"subagent_description":null,"remote_control":null,
+             "discovered":null,"project_id":null,"phase_id":null,"project_name":null,
+             "namespace":"anja"}
+            """.utf8)
+        var session = try JSONDecoder().decode(Session.self, from: json)
+        XCTAssertEqual(session.namespace, "anja")
+        session = session.withLiveStatus(
+            state: .ready, blocker: nil, turnState: .working, displayState: .working, activityCounts: nil,
+            secretGrantable: nil, secretPrompt: nil, liveModel: nil)
+        XCTAssertEqual(session.namespace, "anja")
+        session = session.withPinnedAt("2026-01-01T00:00:00Z")
+        XCTAssertEqual(session.namespace, "anja")
+    }
+
     /// Same guard as `SessionStatus`: a session list must not go empty just because one row
     /// carries a `kind` this build predates.
     func testSessionKindRoundTripsAnUnrecognizedValueRatherThanDroppingIt() throws {
@@ -649,12 +674,21 @@ final class PaiModelsTests: XCTestCase {
 
     // MARK: - UserRole
 
-    /// The backend removed guest access; `UserRole` carries only `.owner` now — this pins that a
-    /// value from before that removal (or any other unexpected role) genuinely fails the decode
-    /// rather than silently degrading, since a wrong guess about who is looking at the app is a
-    /// security-relevant one to get loudly wrong.
+    /// A namespace member signs in as `guest`; their `/api/me` must decode, namespaces included.
+    func testMeResponseDecodesAGuestWithTheirNamespaces() throws {
+        let json = Data(
+            (#"{"identity":"anja","role":"guest","allowed_session_ids":[],"#
+                + #""namespaces":[{"slug":"anja","display_name":"Anja"}]}"#).utf8
+        )
+        let me = try JSONDecoder().decode(MeResponse.self, from: json)
+        XCTAssertEqual(me.role, .guest)
+        XCTAssertEqual(me.namespaces, [NamespaceSummary(slug: "anja", displayName: "Anja")])
+    }
+
+    /// Any role this build has never heard of still fails the decode rather than silently
+    /// degrading — a wrong guess about who is looking at the app is the costly direction.
     func testMeResponseThrowsOnAnUnrecognizedRoleRatherThanGuessing() throws {
-        let json = Data(#"{"identity":"freddy","role":"guest","allowed_session_ids":[]}"#.utf8)
+        let json = Data(#"{"identity":"freddy","role":"admin","allowed_session_ids":[]}"#.utf8)
         XCTAssertThrowsError(try JSONDecoder().decode(MeResponse.self, from: json))
     }
 }
