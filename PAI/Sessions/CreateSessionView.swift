@@ -120,8 +120,9 @@ struct CreateSessionView: View {
             } else if let sessionType = persisted.sessionType {
                 store.selectSessionType(sessionType)
             }
-            store.selectModel(persisted.model)
-            store.selectThinking(persisted.thinking)
+            // Model and effort belong to one creation: every opening starts on Default, and the
+            // persisted pair is cleared (which also drops the effort) so the previous session's choice cannot come back.
+            drafts.selectModel(nil)
             // The point of this screen is the text field — true whether it was reached by tapping
             // "+" or by a home-screen shortcut built to land here ready to type.
             isComposerFocused = true
