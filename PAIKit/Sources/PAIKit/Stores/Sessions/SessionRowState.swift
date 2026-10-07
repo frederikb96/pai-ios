@@ -151,13 +151,4 @@ public enum SessionListDomain {
         let typeName = machine?.sessionTypes.first { $0.id == session.sessionType }?.name ?? session.sessionType
         return "\(sessionHeaderTitle(for: session)) · \(typeName) on \(machineName)"
     }
-
-    /// The claude.ai/code deep link for this session's Remote Control registration, or `nil`
-    /// before one exists. Swift port of `claudeSession.ts`'s `claudeCodeUrl`.
-    public static func claudeCodeUrl(cseId: String?) -> URL? {
-        guard let cseId, !cseId.isEmpty else { return nil }
-        let prefix = "cse_"
-        let ulid = cseId.hasPrefix(prefix) ? String(cseId.dropFirst(prefix.count)) : cseId
-        return URL(string: "https://claude.ai/code/session_\(ulid)")
-    }
 }

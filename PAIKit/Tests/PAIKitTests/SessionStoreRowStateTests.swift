@@ -272,18 +272,4 @@ final class SessionStoreRowStateTests: XCTestCase {
             "Untitled work · custom-type on vm"
         )
     }
-
-    // MARK: - claudeCodeUrl
-
-    func testClaudeCodeUrlStripsTheCsePrefix() {
-        XCTAssertEqual(
-            SessionListDomain.claudeCodeUrl(cseId: "cse_01ABCXYZ")?.absoluteString,
-            "https://claude.ai/code/session_01ABCXYZ"
-        )
-    }
-
-    func testClaudeCodeUrlIsNilWithoutACseId() {
-        XCTAssertNil(SessionListDomain.claudeCodeUrl(cseId: nil))
-        XCTAssertNil(SessionListDomain.claudeCodeUrl(cseId: ""))
-    }
 }

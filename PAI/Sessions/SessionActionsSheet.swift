@@ -205,12 +205,6 @@ private struct RootActionsList: View {
                     Label("Spec", systemImage: "shippingbox")
                 }
 
-                if let url = SessionListDomain.claudeCodeUrl(cseId: session.cseId) {
-                    Link(destination: url) {
-                        Label("Open in Claude Code", systemImage: "arrow.up.forward.app")
-                    }
-                }
-
                 if let conversationId = session.claudeSessionId {
                     Button {
                         UIPasteboard.general.string = conversationId
