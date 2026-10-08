@@ -41,7 +41,9 @@ final class NoteShareWireTests: XCTestCase {
     }
 
     func testAnEditLinkHandsOutItsEditingAddressOnlyWhenAsked() throws {
-        let json = #"{"kind":"edit","url":"https://h/n/#t","editing_url":"https://h/n/#t?edit","created_at_ms":1,"aliases":[]}"#
+        let json = #"""
+            {"kind":"edit","url":"https://h/n/#t","editing_url":"https://h/n/#t?edit","created_at_ms":1,"aliases":[]}
+            """#
         let link = try JSONDecoder().decode(NoteShareLink.self, from: Data(json.utf8))
         XCTAssertEqual(link.address(opensEditing: false), "https://h/n/#t")
         XCTAssertEqual(link.address(opensEditing: true), "https://h/n/#t?edit")
