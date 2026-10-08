@@ -78,19 +78,29 @@ public struct NoteShareLink: Codable, Sendable, Equatable {
     public let kind: NoteShareKind
     /// The full link to hand out, token in the fragment.
     public let url: String
+    /// An edit link's address that opens straight in the editor instead of the reader; nil on a
+    /// read link.
+    public let editingUrl: String?
     public let createdAtMs: Int
     /// Legacy ids that redirect to this link (imported HedgeDoc notes).
     public let aliases: [String]
 
-    public init(kind: NoteShareKind, url: String, createdAtMs: Int, aliases: [String] = []) {
+    public init(kind: NoteShareKind, url: String, editingUrl: String? = nil, createdAtMs: Int, aliases: [String] = []) {
         self.kind = kind
         self.url = url
+        self.editingUrl = editingUrl
         self.createdAtMs = createdAtMs
         self.aliases = aliases
     }
 
+    /// The address to hand out: the editing one when asked for and this link has one.
+    public func address(opensEditing: Bool) -> String {
+        opensEditing ? editingUrl ?? url : url
+    }
+
     enum CodingKeys: String, CodingKey {
         case kind, url, aliases
+        case editingUrl = "editing_url"
         case createdAtMs = "created_at_ms"
     }
 }

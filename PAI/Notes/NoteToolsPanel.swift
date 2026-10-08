@@ -440,6 +440,8 @@ private struct NoteInfoTab: View {
     @State private var shareStore: NoteShareStore?
     @State private var linkPendingDelete: NoteShareKind?
     @State private var copiedKind: NoteShareKind?
+    /// Whether the editable link handed out opens in the editor or in the reader.
+    @State private var editLinkOpensEditing = false
     @FocusState private var isSummaryFieldFocused: Bool
 
     var body: some View {
@@ -561,16 +563,17 @@ private struct NoteInfoTab: View {
     @ViewBuilder
     private func shareRow(_ kind: NoteShareKind, _ store: NoteShareStore) -> some View {
         if let link = store.link(kind) {
+            let address = link.address(opensEditing: editLinkOpensEditing)
             VStack(alignment: .leading, spacing: 6) {
                 Text(kind.label).foregroundStyle(PaiPalette.Semantic.textPrimary)
-                Text(link.url)
+                Text(address)
                     .font(PaiTypography.monoLabel.font)
                     .foregroundStyle(PaiPalette.Semantic.textMuted)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 HStack(spacing: 12) {
                     Button {
-                        UIPasteboard.general.string = link.url
+                        UIPasteboard.general.string = address
                         copiedKind = kind
                         Task {
                             try? await Task.sleep(for: .seconds(1.5))
@@ -581,7 +584,7 @@ private struct NoteInfoTab: View {
                             copiedKind == kind ? "Copied" : "Copy",
                             systemImage: copiedKind == kind ? "checkmark" : "doc.on.doc")
                     }
-                    ShareLink(item: link.url) {
+                    ShareLink(item: address) {
                         Label("Share", systemImage: "square.and.arrow.up")
                     }
                     Button(role: .destructive) {
@@ -593,6 +596,10 @@ private struct NoteInfoTab: View {
                 .buttonStyle(.bordered)
                 .labelStyle(.titleAndIcon)
                 .font(PaiTypography.caption.font)
+                if link.editingUrl != nil {
+                    Toggle("Opens in the editor", isOn: $editLinkOpensEditing)
+                        .font(PaiTypography.caption.font)
+                }
             }
         } else {
             Button {

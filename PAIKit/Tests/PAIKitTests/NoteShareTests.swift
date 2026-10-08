@@ -6,7 +6,7 @@ import XCTest
 /// (`notes_share_api.get_note_share_route`, `share_store.blob_to_dict`/`limits_to_dict`).
 private let shareJSON = """
     {"note_id":"n1",
-     "links":{"read":{"kind":"read","url":"https://text.example.net/n/#r-token","created_at_ms":1700000000000,"aliases":["oldId"]},
+     "links":{"read":{"kind":"read","url":"https://text.example.net/n/#r-token","editing_url":null,"created_at_ms":1700000000000,"aliases":["oldId"]},
               "edit":null},
      "viewers":2,
      "outgoing":[
@@ -38,6 +38,15 @@ final class NoteShareWireTests: XCTestCase {
     override func tearDown() {
         PaiStubURLProtocol.reset()
         super.tearDown()
+    }
+
+    func testAnEditLinkHandsOutItsEditingAddressOnlyWhenAsked() throws {
+        let json = #"{"kind":"edit","url":"https://h/n/#t","editing_url":"https://h/n/#t?edit","created_at_ms":1,"aliases":[]}"#
+        let link = try JSONDecoder().decode(NoteShareLink.self, from: Data(json.utf8))
+        XCTAssertEqual(link.address(opensEditing: false), "https://h/n/#t")
+        XCTAssertEqual(link.address(opensEditing: true), "https://h/n/#t?edit")
+        let read = try decodeShare().links.read
+        XCTAssertEqual(read?.address(opensEditing: true), "https://text.example.net/n/#r-token")
     }
 
     func testTheShareAnswerDecodesEveryNestedShape() throws {
