@@ -6,12 +6,14 @@ import SwiftUI
 /// style a note-to-note wikilink already has in ``NoteBodyView``, rather than opening immediately.
 ///
 /// `onNoteLink` lets a caller keep its own handling for an in-app note deep link — confirmed here
-/// too, with its own wording, before the closure runs. Passed `nil`, a note link falls through to
-/// `.systemAction` exactly like any other URL that is not `http`/`https`.
+/// too, with its own wording, before the closure runs. A link to a heading of the page it is read
+/// on (`NoteLinkTarget.id` empty) is a scroll, not a navigation, so it runs the closure at once.
+/// Passed `nil`, a note link falls through to `.systemAction` exactly like any other URL that is
+/// not `http`/`https`.
 struct ConfirmedLinkOpening: ViewModifier {
-    var onNoteLink: ((String) -> Void)?
+    var onNoteLink: ((NoteLinkTarget) -> Void)?
 
-    @State private var pendingNoteLink: String?
+    @State private var pendingNoteLink: NoteLinkTarget?
     @State private var pendingExternalURL: URL?
 
     func body(content: Content) -> some View {
@@ -19,8 +21,12 @@ struct ConfirmedLinkOpening: ViewModifier {
             .environment(
                 \.openURL,
                 OpenURLAction { url in
-                    if let onNoteLink, case .note(let id)? = DeepLink.from(url: url) {
-                        pendingNoteLink = id
+                    if let onNoteLink, let target = NoteLinkTarget.parse(url) {
+                        if target.id.isEmpty {
+                            onNoteLink(target)
+                        } else {
+                            pendingNoteLink = target
+                        }
                         return .handled
                     }
                     guard url.scheme == "http" || url.scheme == "https" else { return .systemAction }
@@ -34,7 +40,7 @@ struct ConfirmedLinkOpening: ViewModifier {
                 titleVisibility: .visible
             ) {
                 Button("Open") {
-                    if let id = pendingNoteLink { onNoteLink?(id) }
+                    if let target = pendingNoteLink { onNoteLink?(target) }
                     pendingNoteLink = nil
                 }
                 Button("Cancel", role: .cancel) { pendingNoteLink = nil }
@@ -56,7 +62,7 @@ struct ConfirmedLinkOpening: ViewModifier {
 
 extension View {
     /// See ``ConfirmedLinkOpening``.
-    func confirmingExternalLinks(onNoteLink: ((String) -> Void)? = nil) -> some View {
+    func confirmingExternalLinks(onNoteLink: ((NoteLinkTarget) -> Void)? = nil) -> some View {
         modifier(ConfirmedLinkOpening(onNoteLink: onNoteLink))
     }
 }

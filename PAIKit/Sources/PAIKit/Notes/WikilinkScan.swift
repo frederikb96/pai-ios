@@ -103,6 +103,58 @@ enum WikilinkScan {
         }
     }
 
+    /// One link to a heading of the note it sits in: `[[#Heading]]` or `[[#Heading|alias]]`.
+    /// `alias` includes its leading `|`.
+    struct HeadingMatch: Equatable {
+        let start: Int
+        let end: Int
+        let heading: Range<Int>
+        let alias: Range<Int>?
+    }
+
+    /// Heading links in `text`, in document order: what `matches(of:)` over
+    /// `\[\[#([^\]|\n]+)(\|[^\]\n]+)?\]\]` finds. The heading runs to the first `]`, `|` or newline,
+    /// the alias to the first `]` or newline, and a failure there fails every later start before
+    /// that stop the same way. Mirrors `scanHeadingLinks` in the web's `wikilinks.ts`.
+    static func headingLinks(in text: [Character]) -> [HeadingMatch] {
+        var out: [HeadingMatch] = []
+        let n = text.count
+        var headingStop = NextOf(text, stops: ["]", "|", "\n"])
+        var aliasStop = NextOf(text, stops: ["]", "\n"])
+        var pos = 0
+        while true {
+            guard let i = nextHeadingOpen(text, from: pos) else { return out }
+            let h1 = headingStop.find(i + 3) ?? n
+            var k = h1
+            var alias: Range<Int>?
+            var ok = h1 > i + 3
+            if ok, k < n, text[k] == "|" {
+                let a1 = aliasStop.find(k + 1) ?? n
+                if a1 > k + 1 {
+                    alias = k..<a1
+                    k = a1
+                } else {
+                    ok = false
+                }
+            }
+            guard ok, k + 1 < n, text[k] == "]", text[k + 1] == "]" else {
+                pos = i + 1
+                continue
+            }
+            out.append(HeadingMatch(start: i, end: k + 2, heading: (i + 3)..<h1, alias: alias))
+            pos = k + 2
+        }
+    }
+
+    private static func nextHeadingOpen(_ text: [Character], from pos: Int) -> Int? {
+        var i = pos
+        while i + 2 < text.count {
+            if text[i] == "[", text[i + 1] == "[", text[i + 2] == "#" { return i }
+            i += 1
+        }
+        return nil
+    }
+
     private static func nextDoubleBracket(_ text: [Character], from pos: Int) -> Int? {
         var i = pos
         while i + 1 < text.count {

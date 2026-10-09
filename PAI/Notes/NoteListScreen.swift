@@ -171,7 +171,8 @@ struct NoteListScreen: View {
                 NavigationStack {
                     NoteBodyView(
                         body: notes.detail(for: target.value)?.body ?? "",
-                        nameToId: buildNameToId(notes.notes), containerId: notes.detail(for: target.value)?.containerId
+                        nameToId: buildNameToId(notes.notes), containerId: notes.detail(for: target.value)?.containerId,
+                        selfName: notes.summary(for: target.value)?.name
                     )
                     .navigationTitle(
                         notes.summary(for: target.value)?.name.isEmpty == false

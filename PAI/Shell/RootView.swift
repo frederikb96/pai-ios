@@ -275,13 +275,13 @@ struct RootView: View {
                 .id(id)
         case .noteContainers:
             NoteContainersScreen()
-        case .notePreview(let id):
+        case .notePreview(let id, let heading):
             // Reached by an ordinary `push`, from `NoteBodyView` and from the fixture screenshot
             // workflow — never through `replace(with:)`, so this never hits the *same-depth*
             // reuse the two cases above guard against. Identity forced anyway, for the same
             // reason `.note` is: free, and it keeps every note-scoped destination consistent
             // rather than leaving one exception someone has to remember.
-            NoteEditorScreen(noteID: id, startsInPreview: true)
+            NoteEditorScreen(noteID: id, startsInPreview: true, startsAtHeading: heading)
                 .id(id)
         case .notifications:
             NotificationCenterScreen()

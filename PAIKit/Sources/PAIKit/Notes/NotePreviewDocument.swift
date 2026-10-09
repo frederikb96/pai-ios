@@ -45,9 +45,12 @@ public struct NotePreviewDocument: Sendable {
     /// tickable (see ``NoteTasks``).
     public let taskMarks: [NoteTaskMark]
 
-    public init(body: String, nameToId: [String: String], attachmentIndex: AttachmentIndex = .empty) {
+    public init(
+        body: String, nameToId: [String: String], attachmentIndex: AttachmentIndex = .empty,
+        selfName: String? = nil
+    ) {
         let chars = Array(body)
-        let links = findWikilinks(in: chars)
+        let links = Wikilinks.bodyLinks(in: chars)
 
         var built: [NotePreviewItem] = []
         var textParts: [String] = []
@@ -76,38 +79,40 @@ public struct NotePreviewDocument: Sendable {
             }
         }
 
-        for link in links {
-            if link.start > cursor {
-                let chunk = String(chars[cursor..<link.start])
+        for item in links {
+            if item.start < cursor { continue }
+            if item.start > cursor {
+                let chunk = String(chars[cursor..<item.start])
                 appendChunk(chunk)
                 line += chunk.reduce(0) { $1 == "\n" ? $0 + 1 : $0 }
             }
-            if link.isEmbed {
+            // A link's own source text never contains a newline (the grammar excludes it), so it
+            // stays part of the segment currently accumulating and `line` needs no adjustment —
+            // except an embed or an attachment link, which becomes its own item.
+            switch item {
+            case .heading(_, _, let anchor, let alias):
+                appendChunk(Wikilinks.headingLinkMarkdown(anchor: anchor, alias: alias))
+            case .wikilink(let link) where link.isEmbed:
                 flushText()
                 built.append(
                     NotePreviewItem(
                         id: built.count, kind: .embed(target: link.target, alias: link.alias), startLine: line,
                         firstTask: 0))
-            } else {
-                // A wikilink's own source text never contains a newline (the grammar excludes it),
-                // so it stays part of the segment currently accumulating rather than starting a
-                // new one, and `line` needs no adjustment for it — except when it resolves to an
-                // attachment, which (like an embed) becomes its own item rather than inline text.
-                let resolution = Wikilinks.resolveWikilinkTarget(
-                    link.target, nameToId: nameToId, attachmentIndex: attachmentIndex)
-                if case .attachment(let relPath) = resolution {
+            case .wikilink(let link):
+                switch Wikilinks.rendering(
+                    of: link, nameToId: nameToId, attachmentIndex: attachmentIndex, selfName: selfName)
+                {
+                case .attachment(let relPath, let label):
                     flushText()
                     built.append(
                         NotePreviewItem(
-                            id: built.count, kind: .attachmentLink(target: relPath, label: link.alias), startLine: line,
-                            firstTask: 0)
-                    )
-                } else {
-                    let display = Wikilinks.escapeMarkdownText(link.alias ?? link.target)
-                    appendChunk(Wikilinks.inlineMarkdown(display: display, resolution: resolution))
+                            id: built.count, kind: .attachmentLink(target: relPath, label: label), startLine: line,
+                            firstTask: 0))
+                case .markdown(let markdown):
+                    appendChunk(markdown)
                 }
             }
-            cursor = link.end
+            cursor = item.end
         }
         if cursor < chars.count { appendChunk(String(chars[cursor...])) }
         flushText()

@@ -46,7 +46,11 @@ public enum Route: Hashable, Sendable {
     /// there is the point, since reading is what that tap was doing — and by the fixture
     /// screenshot workflow, for the same reason it always has been: the preview is otherwise only
     /// a toggle inside the editor, and it is the screen whose *rendering* most needs photographing.
-    case notePreview(id: String)
+    ///
+    /// `heading` is the heading a link to `[[Note#Heading]]` names, which the page opens scrolled
+    /// to. Like `session`'s `messageID` it is where to land, not which screen this is, and is
+    /// ignored by equality.
+    case notePreview(id: String, heading: String? = nil)
     /// The notification centre (row 5.27) — every alert transition and every agent push, as a
     /// persistent, filterable log.
     case notifications
@@ -116,7 +120,7 @@ public enum Route: Hashable, Sendable {
     /// session's header. Carries no identity concern of its own.
     case usage
 
-    /// Ignores `session`'s `messageID` — see that case's doc comment. Everything else is a plain
+    /// Ignores `session`'s `messageID` and `notePreview`'s `heading` — see those cases. Everything else is a plain
     /// per-case comparison, same as the synthesized version this replaces.
     public static func == (lhs: Route, rhs: Route) -> Bool {
         switch (lhs, rhs) {
@@ -128,7 +132,7 @@ public enum Route: Hashable, Sendable {
         case (.notes, .notes): return true
         case (.note(let a), .note(let b)): return a == b
         case (.noteContainers, .noteContainers): return true
-        case (.notePreview(let a), .notePreview(let b)): return a == b
+        case (.notePreview(let a, _), .notePreview(let b, _)): return a == b
         case (.notifications, .notifications): return true
         case (.recordings, .recordings): return true
         case (.arcSpec(let a), .arcSpec(let b)): return a == b
@@ -170,7 +174,7 @@ public enum Route: Hashable, Sendable {
             hasher.combine(id)
         case .noteContainers:
             hasher.combine(7)
-        case .notePreview(let id):
+        case .notePreview(let id, _):
             hasher.combine(8)
             hasher.combine(id)
         case .notifications:
@@ -442,7 +446,7 @@ public final class Router {
     public var openNoteID: String? {
         for route in path.reversed() {
             switch route {
-            case .note(let id), .notePreview(let id): return id
+            case .note(let id), .notePreview(let id, _): return id
             case .session, .terminal, .settings, .createSession, .subagents, .notes, .noteContainers,
                 .notifications, .recordings, .arcSpec, .apps, .arcSpecList, .arcReport, .arcOverview,
                 .schedulerList, .schedulerTask, .quickActions, .computerCall, .canteen, .usage:

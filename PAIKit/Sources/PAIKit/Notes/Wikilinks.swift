@@ -17,6 +17,10 @@ import Foundation
 /// attachment target — only the `[[wikilink]]` forms above; see the module's own note on this
 /// narrower scope where ``resolveWikilinkTarget(_:nameToId:attachmentIndex:)`` is declared.
 ///
+/// A link to a heading — `[[#Heading]]`, `[[#Heading|alias]]`, or `[[Note#Heading]]` naming the note
+/// it sits in — is a jump within the page; `[[Other#Heading]]` opens that note at the heading. See
+/// ``NoteHeading`` and ``NoteLinkTarget``.
+///
 /// `start`/`end` are Character offsets into the body (not UTF-8 or UTF-16 byte offsets) — the
 /// same convention ``parseOutline(_:)`` and ``findOccurrences(body:query:)`` use, so an offset
 /// from any of the three names the same position.
@@ -113,17 +117,98 @@ enum Wikilinks {
         return .dead
     }
 
-    /// The inline markdown a resolved-to-note or dead wikilink becomes: a real link to the
-    /// resolved note, or a strikethrough span. An attachment resolution is never turned into
-    /// inline markdown text — it becomes its own item/segment instead, since rendering it needs a
-    /// live fetch; callers branch on ``WikilinkResolution`` before reaching here.
-    static func inlineMarkdown(display: String, resolution: WikilinkResolution) -> String {
-        switch resolution {
-        case .note(let id):
-            return "[\(display)](\(noteLinkURL(id: id)))"
-        case .attachment, .dead:
-            return "~~\(display)~~"
+    /// Only unreserved characters stay literal in a link's heading: a `)` would end the markdown
+    /// destination it is written into, and a space or `#` would end the URL.
+    static let fragmentAllowed = CharacterSet(
+        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+
+    /// A link to a heading of the note it sits in, as markdown. A block reference (`[[#^id]]`)
+    /// names no heading and stays as its text.
+    static func headingLinkMarkdown(anchor: String, alias: String?) -> String {
+        let heading = NoteHeading.linkText(anchor)
+        let display = escapeMarkdownText(alias ?? heading ?? anchor)
+        guard let heading else { return display }
+        return "[\(display)](\(noteLinkURL(id: "", heading: heading)))"
+    }
+
+    /// What a non-embed wikilink becomes. An attachment is never inline markdown — it becomes its
+    /// own item/segment, since rendering it needs a live fetch; anything else is a real link to
+    /// the resolved note (at its heading, when the link names one) or a strikethrough span.
+    ///
+    /// A link naming the note it sits in (`selfName`) is a heading of this page, whatever the
+    /// index says — the same order as the web's `splitBodyForRender`.
+    static func rendering(
+        of link: Wikilink, nameToId: [String: String], attachmentIndex: AttachmentIndex, selfName: String?
+    ) -> BodyLinkRendering {
+        let headingText = link.heading.flatMap(NoteHeading.linkText)
+        let shown = link.alias ?? headingText.map { "\(link.target) > \($0)" } ?? link.target
+        if let headingText, let selfName,
+            classifyLocalTarget(link.target).baseTarget.lowercased() == selfName.lowercased()
+        {
+            return .markdown(headingLinkMarkdown(anchor: headingText, alias: shown))
         }
+        switch resolveWikilinkTarget(link.target, nameToId: nameToId, attachmentIndex: attachmentIndex) {
+        case .attachment(let relPath):
+            return .attachment(relPath: relPath, label: link.alias)
+        case .note(let id):
+            return .markdown("[\(escapeMarkdownText(shown))](\(noteLinkURL(id: id, heading: headingText)))")
+        case .dead:
+            return .markdown("~~\(escapeMarkdownText(shown))~~")
+        }
+    }
+}
+
+/// What a wikilink is drawn as — see ``Wikilinks/rendering(of:nameToId:attachmentIndex:selfName:)``.
+enum BodyLinkRendering: Equatable {
+    case attachment(relPath: String, label: String?)
+    case markdown(String)
+}
+
+/// A link in a note body that the renderer rewrites: an Obsidian wikilink, or a link to a heading
+/// of the same note (`[[#Heading]]`, which names no note and so is no wikilink).
+enum BodyLink {
+    case wikilink(Wikilink)
+    case heading(start: Int, end: Int, anchor: String, alias: String?)
+
+    var start: Int {
+        switch self {
+        case .wikilink(let link): return link.start
+        case .heading(let start, _, _, _): return start
+        }
+    }
+
+    var end: Int {
+        switch self {
+        case .wikilink(let link): return link.end
+        case .heading(_, let end, _, _): return end
+        }
+    }
+}
+
+extension Wikilinks {
+    /// Every rewritable link in `chars`, in document order, outside code.
+    static func bodyLinks(in chars: [Character]) -> [BodyLink] {
+        let excluded = WikilinkScan.Excluded(WikilinkScan.codeRanges(in: chars))
+        var links: [BodyLink] = []
+        for match in WikilinkScan.wikilinks(in: chars) where !excluded.contains(match.start) {
+            links.append(
+                .wikilink(
+                    Wikilink(
+                        start: match.start, end: match.end, isEmbed: match.isEmbed,
+                        target: String(chars[match.target]),
+                        heading: match.anchor.map { String(chars[($0.lowerBound + 1)..<$0.upperBound]) },
+                        alias: match.alias.map { String(chars[($0.lowerBound + 1)..<$0.upperBound]) })))
+        }
+        let wikilinkCount = links.count
+        for match in WikilinkScan.headingLinks(in: chars) where !excluded.contains(match.start) {
+            links.append(
+                .heading(
+                    start: match.start, end: match.end, anchor: String(chars[match.heading]),
+                    alias: match.alias.map { String(chars[($0.lowerBound + 1)..<$0.upperBound]) }))
+        }
+        // Both runs are already in document order; sorting is only needed when both exist.
+        if wikilinkCount > 0, links.count > wikilinkCount { links.sort { $0.start < $1.start } }
+        return links
     }
 }
 
@@ -134,7 +219,9 @@ enum WikilinkResolution: Equatable {
     case dead
 }
 
-/// `[[target]]`, `[[target|alias]]`, `[[target#heading]]` and `![[target]]` in document order.
+/// `[[target]]`, `[[target|alias]]`, `[[target#heading]]` and `![[target]]` in document order. A link
+/// to a heading of the note it sits in (`[[#Heading]]`) names no target and is no wikilink here;
+/// ``Wikilinks/bodyLinks(in:)`` carries both.
 ///
 /// Linear in the body, whatever it says: ``WikilinkScan`` does the scanning and
 /// `NoteWikilinkScanTests` holds it to the `Regex` it replaced.
@@ -195,8 +282,14 @@ public struct AttachmentChipName: Equatable, Sendable {
 /// of its own. The note body renderer intercepts it and navigates in place — but if one ever
 /// escapes to the system, it round-trips back through `onOpenURL` and lands on the right note,
 /// which a private scheme could not do.
-public func noteLinkURL(id: String) -> String {
-    DeepLink.note(id: id).url?.absoluteString ?? ""
+///
+/// A `heading` rides in the fragment, which the deep link's own parser ignores, so a link that
+/// escapes to the system still opens the right note. An empty `id` is a heading of the note the
+/// link sits in (`pai://note#Heading`). Read back with ``NoteLinkTarget/parse(_:)``.
+public func noteLinkURL(id: String, heading: String? = nil) -> String {
+    let base = id.isEmpty ? "pai://note" : (DeepLink.note(id: id).url?.absoluteString ?? "")
+    guard !base.isEmpty, let heading, !heading.isEmpty else { return base }
+    return base + "#" + (heading.addingPercentEncoding(withAllowedCharacters: Wikilinks.fragmentAllowed) ?? heading)
 }
 
 /// `nameToId` keys are lowercased note names; a target is matched by its last path component,
@@ -205,10 +298,10 @@ public func noteLinkURL(id: String) -> String {
 /// `note_links_resolved`) — defaults to empty, so a caller with no attachments loaded yet still
 /// gets note/dead resolution rather than every wikilink reading as dead.
 public func splitBodyForRender(
-    _ body: String, nameToId: [String: String], attachmentIndex: AttachmentIndex = .empty
+    _ body: String, nameToId: [String: String], attachmentIndex: AttachmentIndex = .empty, selfName: String? = nil
 ) -> [NoteBodySegment] {
     let chars = Array(body)
-    let links = findWikilinks(in: chars)
+    let links = Wikilinks.bodyLinks(in: chars)
     guard !links.isEmpty else { return [.text(body)] }
 
     var segments: [NoteBodySegment] = []
@@ -221,23 +314,27 @@ public func splitBodyForRender(
         textParts = []
     }
 
-    for link in links {
-        if link.start > cursor { textParts.append(String(chars[cursor..<link.start])) }
-        if link.isEmbed {
+    for item in links {
+        if item.start < cursor { continue }
+        if item.start > cursor { textParts.append(String(chars[cursor..<item.start])) }
+        switch item {
+        case .heading(_, _, let anchor, let alias):
+            textParts.append(Wikilinks.headingLinkMarkdown(anchor: anchor, alias: alias))
+        case .wikilink(let link) where link.isEmbed:
             flushText()
             segments.append(.embed(target: link.target, alias: link.alias))
-        } else {
-            let resolution = Wikilinks.resolveWikilinkTarget(
-                link.target, nameToId: nameToId, attachmentIndex: attachmentIndex)
-            if case .attachment(let relPath) = resolution {
+        case .wikilink(let link):
+            switch Wikilinks.rendering(
+                of: link, nameToId: nameToId, attachmentIndex: attachmentIndex, selfName: selfName)
+            {
+            case .attachment(let relPath, let label):
                 flushText()
-                segments.append(.attachmentLink(relPath: relPath, label: link.alias))
-            } else {
-                let display = Wikilinks.escapeMarkdownText(link.alias ?? link.target)
-                textParts.append(Wikilinks.inlineMarkdown(display: display, resolution: resolution))
+                segments.append(.attachmentLink(relPath: relPath, label: label))
+            case .markdown(let markdown):
+                textParts.append(markdown)
             }
         }
-        cursor = link.end
+        cursor = item.end
     }
     if cursor < chars.count { textParts.append(String(chars[cursor...])) }
     flushText()

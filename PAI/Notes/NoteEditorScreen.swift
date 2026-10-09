@@ -52,9 +52,14 @@ struct NoteEditorScreen: View {
     /// control.
     @ScaledMetric(relativeTo: .headline) private var titleRowHeight: CGFloat = 44
 
-    init(noteID: String, startsInPreview: Bool = false) {
+    /// The heading a link to `[[Note#Heading]]` opened this note for, until the body has loaded and
+    /// there is somewhere to find it.
+    @State private var pendingHeading: String?
+
+    init(noteID: String, startsInPreview: Bool = false, startsAtHeading: String? = nil) {
         self.noteID = noteID
         _isPreviewing = State(initialValue: startsInPreview)
+        _pendingHeading = State(initialValue: startsAtHeading)
     }
     /// Outlives each presentation of the tools sheet, so reopening it lands where it was left.
     @State private var toolsState = NoteToolsPanelState()
@@ -100,6 +105,13 @@ struct NoteEditorScreen: View {
                 // an act of writing, and this is the one entry point that knows that.
                 isPreviewing = false
             }
+        }
+        .onChange(of: notes.body(for: noteID) != nil, initial: true) { _, hasBody in
+            guard hasBody, let heading = pendingHeading, let body = notes.body(for: noteID) else { return }
+            pendingHeading = nil
+            guard let offset = NoteHeading.offset(of: heading, in: body) else { return }
+            jumpToken += 1
+            jump = NoteJumpRequest(token: jumpToken, characterOffset: offset)
         }
         .onChange(of: title) { _, newValue in
             // Only while nobody is mid-rename here — the same reason `NoteEditorSurface` only
@@ -154,7 +166,7 @@ struct NoteEditorScreen: View {
                 NoteBodyView(
                     body: body, nameToId: buildNameToId(notes.notes),
                     containerId: notes.detail(for: noteID)?.containerId,
-                    jump: jump, highlight: highlight,
+                    selfName: selfName, jump: jump, highlight: highlight,
                     onToggleTask: { notes.toggleTask(id: noteID, renderedBody: body, mark: $0) })
             } else {
                 NoteEditorSurface(
@@ -233,6 +245,12 @@ struct NoteEditorScreen: View {
             .accessibilityLabel("Note actions")
             .accessibilityIdentifier("open-note-actions")
         }
+    }
+
+    /// The note's own name, unlike ``title`` empty rather than "Untitled" when it has none.
+    private var selfName: String? {
+        let name = notes.detail(for: noteID)?.name ?? notes.summary(for: noteID)?.name ?? ""
+        return name.isEmpty ? nil : name
     }
 
     private var title: String {

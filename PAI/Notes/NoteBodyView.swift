@@ -24,6 +24,9 @@ struct NoteBodyView: View {
     let containerId: String?
     let jump: NoteJumpRequest?
     let highlight: String?
+    /// The note's own name, so a link that names it (`[[Name#Heading]]`) reads as a jump within
+    /// this page.
+    let selfName: String?
     /// Ticks a task box. `nil` where the page is read-only; the boxes then stay plain glyphs.
     let onToggleTask: ((NoteTaskMark) -> Void)?
 
@@ -35,21 +38,30 @@ struct NoteBodyView: View {
     // even though the file exists, because a wikilink target that isn't a note name would
     // otherwise never be checked against anything else.
     @State private var attachmentIndex = AttachmentIndex.empty
+    /// Whether the index above has been fetched (or there is nothing to fetch). The document is
+    /// built from it, so a jump that ran before it landed was aimed at items that have since
+    /// moved — see ``reapplyJumpAfterAttachmentsLoad(proxy:document:)``.
+    @State private var attachmentsLoaded = false
+    /// The last jump this page scrolled to, so only a jump that actually ran is re-aimed.
+    @State private var scrolledJumpToken: Int?
 
     init(
         body: String, nameToId: [String: String], containerId: String?,
-        jump: NoteJumpRequest? = nil, highlight: String? = nil, onToggleTask: ((NoteTaskMark) -> Void)? = nil
+        selfName: String? = nil, jump: NoteJumpRequest? = nil, highlight: String? = nil,
+        onToggleTask: ((NoteTaskMark) -> Void)? = nil
     ) {
         self.noteBody = body
         self.nameToId = nameToId
         self.containerId = containerId
+        self.selfName = selfName
         self.jump = jump
         self.highlight = highlight
         self.onToggleTask = onToggleTask
     }
 
     var body: some View {
-        let document = NotePreviewDocument(body: noteBody, nameToId: nameToId, attachmentIndex: attachmentIndex)
+        let document = NotePreviewDocument(
+            body: noteBody, nameToId: nameToId, attachmentIndex: attachmentIndex, selfName: selfName)
         let currentItemIndex = jump.flatMap {
             document.itemIndex(forCharacterOffset: $0.characterOffset, in: noteBody)
         }
@@ -78,21 +90,24 @@ struct NoteBodyView: View {
             // mechanism for both rather than a duplicate scroll call in `.onAppear`.
             .onChange(of: jump, initial: true) { _, request in
                 guard let request,
-                    let index = document.itemIndex(forCharacterOffset: request.characterOffset, in: noteBody)
+                    scroll(toCharacterOffset: request.characterOffset, document: document, proxy: proxy, animated: true)
                 else { return }
-                withAnimation {
-                    proxy.scrollTo(document.items[index].id, anchor: UnitPoint(x: 0.5, y: 0.33))
-                }
+                scrolledJumpToken = request.token
             }
+            .onChange(of: attachmentsLoaded) {
+                reapplyJumpAfterAttachmentsLoad(proxy: proxy, document: document)
+            }
+            // Pushed as `.notePreview`, not `.note`: a link tapped from this page is by definition
+            // read while previewing, and following it should land on the same rendered page
+            // rather than dropping into the target note's editor. A link to a heading of this very
+            // page scrolls instead.
+            .confirmingExternalLinks(onNoteLink: { follow($0, document: document, proxy: proxy) })
         }
         .background(PaiPalette.Notes.background)
-        // Pushed as `.notePreview`, not `.note`: a link tapped from this page is by definition
-        // read while previewing, and following it should land on the same rendered page rather
-        // than dropping into the target note's editor.
-        .confirmingExternalLinks(onNoteLink: { id in environment.router.push(.notePreview(id: id)) })
         // Reloads whenever the container changes (a different note opened in place) or is nil
         // (nothing to resolve against, matching the initial `.empty` state).
         .task(id: containerId) {
+            defer { attachmentsLoaded = true }
             guard let containerId else {
                 attachmentIndex = .empty
                 return
@@ -100,6 +115,39 @@ struct NoteBodyView: View {
             attachmentIndex =
                 (try? await buildAttachmentIndex(notes.listAttachments(containerId: containerId))) ?? .empty
         }
+    }
+
+    /// Scrolls so the item holding a Character offset lands about a third of the way down the
+    /// page, where a reader looks for the thing they just asked for. `false` for an empty page.
+    private func scroll(
+        toCharacterOffset offset: Int, document: NotePreviewDocument, proxy: ScrollViewProxy, animated: Bool
+    ) -> Bool {
+        guard let index = document.itemIndex(forCharacterOffset: offset, in: noteBody) else { return false }
+        let anchor = UnitPoint(x: 0.5, y: 0.33)
+        if animated {
+            withAnimation { proxy.scrollTo(document.items[index].id, anchor: anchor) }
+        } else {
+            proxy.scrollTo(document.items[index].id, anchor: anchor)
+        }
+        return true
+    }
+
+    /// A page opened on a jump scrolls before its attachment index has loaded, and an attachment
+    /// resolving turns inline text into an item of its own — so the item that jump named is no
+    /// longer the one at that position. Aims the same jump again once the index is in, without
+    /// animating.
+    private func reapplyJumpAfterAttachmentsLoad(proxy: ScrollViewProxy, document: NotePreviewDocument) {
+        guard let request = jump, scrolledJumpToken == request.token else { return }
+        _ = scroll(toCharacterOffset: request.characterOffset, document: document, proxy: proxy, animated: false)
+    }
+
+    private func follow(_ target: NoteLinkTarget, document: NotePreviewDocument, proxy: ScrollViewProxy) {
+        guard target.id.isEmpty else {
+            environment.router.push(.notePreview(id: target.id, heading: target.heading))
+            return
+        }
+        guard let heading = target.heading, let offset = NoteHeading.offset(of: heading, in: noteBody) else { return }
+        _ = scroll(toCharacterOffset: offset, document: document, proxy: proxy, animated: true)
     }
 
     @ViewBuilder
