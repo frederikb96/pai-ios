@@ -9,11 +9,21 @@ import Foundation
 /// ``MarkdownCommand`` uses for every case here that drives one — see ``command``.
 public enum NoteToolbarActionId: String, Codable, Sendable, CaseIterable, Hashable {
     case undo, redo, attach
-    case heading, bold, italic, bulletList, checkbox, outdent, indent, inlineCode, quote, link
+    case heading, bold, italic, bulletList, checkbox, outdent, indent, inlineCode, codeBlock, quote, link
 
-    /// The markdown command this action drives, or `nil` for the three that are not one:
-    /// undo/redo delegate to the text view's own undo manager, and attach opens a file picker.
+    /// The markdown command this action drives, or `nil` for the four that are not one:
+    /// undo/redo delegate to the text view's own undo manager, attach opens a file picker and link
+    /// opens its form (see ``MarkdownLinkEditing``).
     public var command: MarkdownCommand? { MarkdownCommand(rawValue: rawValue) }
+
+    /// Whether the action writes markup into the note — everything but undo, redo and attach —
+    /// and so is withheld while the caret is inside a fenced code block.
+    public var editsMarkup: Bool {
+        switch self {
+        case .undo, .redo, .attach: return false
+        default: return true
+        }
+    }
 
     /// Shown in the settings list and as the bar button's accessible name.
     public var label: String {
@@ -29,6 +39,7 @@ public enum NoteToolbarActionId: String, Codable, Sendable, CaseIterable, Hashab
         case .outdent: return "Outdent"
         case .indent: return "Indent"
         case .inlineCode: return "Code"
+        case .codeBlock: return "Code block"
         case .quote: return "Quote"
         case .link: return "Link"
         }
@@ -48,6 +59,7 @@ public enum NoteToolbarActionId: String, Codable, Sendable, CaseIterable, Hashab
         case .outdent: return "decrease.indent"
         case .indent: return "increase.indent"
         case .inlineCode: return "chevron.left.forwardslash.chevron.right"
+        case .codeBlock: return "curlybraces.square"
         case .quote: return "text.quote"
         case .link: return "link"
         }
@@ -62,19 +74,25 @@ public enum NoteToolbarActionId: String, Codable, Sendable, CaseIterable, Hashab
 /// "disabled" list, so the settings screen derives one by subtracting from ``allActionsInDefaultOrder``.
 public enum NoteToolbarLayout {
 
-    /// Every action, in the order the settings screen lists a disabled one — the web's own
-    /// tap-order comment in `NoteEditorKeyboardBar` before this became configurable.
+    /// Every action, in the order the settings screen lists a disabled one.
     public static let allActionsInDefaultOrder: [NoteToolbarActionId] = [
-        .undo, .redo, .attach,
-        .heading, .bold, .italic, .bulletList, .checkbox, .outdent, .indent, .inlineCode, .quote, .link,
+        .undo, .redo, .link, .attach,
+        .heading, .bold, .italic, .bulletList, .checkbox, .outdent, .indent, .inlineCode, .codeBlock, .quote,
     ]
 
     /// Matches the web editor's own default (`toolbarConfig.ts`'s `DEFAULT_TOOLBAR_LAYOUT`):
-    /// undo, redo, attach, bullet, checkbox, outdent, indent, heading — every one of which this
-    /// editor already has an equivalent action for. Freddy's own chosen order there, not a set
-    /// this file should grow on its own.
+    /// undo, redo, link, attach, bullet, checkbox, outdent, indent, heading, bold, italic, inline
+    /// code, code block.
     public static let defaultLayout: [NoteToolbarActionId] = [
-        .undo, .redo, .attach, .bulletList, .checkbox, .outdent, .indent, .heading,
+        .undo, .redo, .link, .attach, .bulletList, .checkbox, .outdent, .indent, .heading, .bold, .italic,
+        .inlineCode, .codeBlock,
+    ]
+
+    /// Defaults an earlier build shipped, as stored ids. A saved layout identical to one of them
+    /// was the default rather than a choice, so it reads as the current default; the web does the
+    /// same (`toolbarConfig.ts`'s `PREVIOUS_DEFAULT_LAYOUTS`).
+    private static let previousDefaultLayouts: [[String]] = [
+        ["undo", "redo", "attach", "bulletList", "checkbox", "outdent", "indent", "heading"]
     ]
 
     /// Turns whatever was read back from storage into a safe layout. Total, the way the web's
@@ -93,6 +111,7 @@ public enum NoteToolbarLayout {
             seen.insert(id)
             result.append(id)
         }
-        return result.isEmpty ? defaultLayout : result
+        if result.isEmpty { return defaultLayout }
+        return previousDefaultLayouts.contains(result.map(\.rawValue)) ? defaultLayout : result
     }
 }

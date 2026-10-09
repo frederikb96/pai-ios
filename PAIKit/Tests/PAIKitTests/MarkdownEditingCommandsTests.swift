@@ -53,10 +53,33 @@ final class MarkdownEditingCommandsTests: XCTestCase {
         XCTAssertEqual(applied(.inlineCode, to: "run ls now", NSRange(location: 4, length: 2))!.0, "run `ls` now")
     }
 
-    func testALinkPutsTheCaretWhereTheUrlGoes() {
-        let (text, selection) = applied(.link, to: "see docs", NSRange(location: 4, length: 4))!
-        XCTAssertEqual(text, "see [docs]()")
-        XCTAssertEqual(selection, NSRange(location: 11, length: 0))
+    // MARK: Code block (the same cases as the web's `wrapCodeBlock`)
+
+    func testCodeBlockOpensAnEmptyBlockWithTheCaretInside() {
+        let (text, selection) = applied(.codeBlock, to: "", NSRange(location: 0, length: 0))!
+        XCTAssertEqual(text, "```\n\n```")
+        XCTAssertEqual(selection, NSRange(location: 4, length: 0))
+    }
+
+    func testCodeBlockFencesWholeSelectedLinesAndKeepsThemSelected() {
+        let (text, selection) = applied(.codeBlock, to: "a\nls -l\npwd\nb", NSRange(location: 2, length: 9))!
+        XCTAssertEqual(text, "a\n```\nls -l\npwd\n```\nb")
+        XCTAssertEqual((text as NSString).substring(with: selection), "ls -l\npwd")
+    }
+
+    /// A fence glued to prose is not a fence, so a selection that starts or ends mid-line gets a
+    /// break added on that side.
+    func testCodeBlockPutsTheFencesOnTheirOwnLinesForAMidLineSelection() {
+        let (text, _) = applied(.codeBlock, to: "run ls now", NSRange(location: 4, length: 2))!
+        XCTAssertEqual(text, "run \n```\nls\n```\n now")
+    }
+
+    /// UTF-16 offsets: an astral character before the selection counts as two units, and a
+    /// replacement computed in Characters would land inside it.
+    func testCodeBlockOffsetsAreUtf16AfterAnAstralCharacter() {
+        let (text, selection) = applied(.codeBlock, to: "😀 ls", NSRange(location: 3, length: 2))!
+        XCTAssertEqual(text, "😀 \n```\nls\n```")
+        XCTAssertEqual((text as NSString).substring(with: selection), "ls")
     }
 
     // MARK: Line prefixes

@@ -8,6 +8,8 @@ enum NoteEditorBarItem: Equatable {
     case redo
     /// Put a photo or a file into the note, at the caret.
     case attach
+    /// Open the link form, prefilled from the selection.
+    case link
     case dismissKeyboard
 }
 
@@ -28,8 +30,9 @@ extension NoteToolbarActionId {
         case .outdent: return .command(.outdent)
         case .indent: return .command(.indent)
         case .inlineCode: return .command(.inlineCode)
+        case .codeBlock: return .command(.codeBlock)
         case .quote: return .command(.quote)
-        case .link: return .command(.link)
+        case .link: return .link
         }
     }
 }
@@ -49,9 +52,9 @@ final class NoteEditorKeyboardBar: UIView {
     private let onItem: (NoteEditorBarItem) -> Void
     private let stack = UIStackView()
     private var currentLayout: [NoteToolbarActionId] = []
-    /// The buttons currently in `stack` whose action drives a markdown command — hidden together
-    /// while the caret is inside a fenced code block, where tapping one would splice markup into
-    /// code rather than markup. Undo, redo and attach stay visible in that state. Rebuilt whenever
+    /// The buttons currently in `stack` whose action writes markup — hidden together while the
+    /// caret is inside a fenced code block, where tapping one would splice markup into code
+    /// rather than markup. Undo, redo and attach stay visible in that state. Rebuilt whenever
     /// `applyLayout` runs, since a layout change replaces every button.
     private var commandButtons: [UIButton] = []
     private var showsFormatting: Bool
@@ -122,7 +125,7 @@ final class NoteEditorKeyboardBar: UIView {
         for id in layout {
             let button = button(symbol: id.symbolName, label: id.label, item: id.barItem)
             stack.addArrangedSubview(button)
-            if id.command != nil {
+            if id.editsMarkup {
                 commands.append(button)
             }
         }

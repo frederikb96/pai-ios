@@ -14,7 +14,7 @@ public enum MarkdownCommand: String, Equatable, Sendable, CaseIterable {
     case bulletList
     case checkbox
     case quote
-    case link
+    case codeBlock
     case indent
     case outdent
 }
@@ -48,7 +48,7 @@ public enum MarkdownEditing {
         case .bold: return wrap(text, selection, with: "**")
         case .italic: return wrap(text, selection, with: "*")
         case .inlineCode: return wrap(text, selection, with: "`")
-        case .link: return link(text, selection)
+        case .codeBlock: return codeBlock(text, selection)
         case .bulletList: return ListLines.toggleBullet(text, selection)
         case .checkbox: return ListLines.toggleCheckbox(text, selection)
         case .quote:
@@ -94,16 +94,21 @@ public enum MarkdownEditing {
                 : NSRange(location: selection.location + markerLength, length: selection.length))
     }
 
-    /// `[selected](  )` with the caret between the brackets that still need filling in — the URL,
-    /// or the text when nothing was selected.
-    private static func link(_ text: String, _ selection: NSRange) -> MarkdownEdit {
-        let selected = string(Array(text.utf16), selection)
-        let replacement = "[\(selected)]()"
-        let caret =
-            selected.isEmpty
-            ? selection.location + 1 : selection.location + replacement.utf16.count - 1
+    /// Fences the selection as a code block, or — with nothing selected — opens an empty one with
+    /// the caret inside. The fences always sit on lines of their own, so a selection starting or
+    /// ending mid-line gets a break added there. The inner text stays selected.
+    private static func codeBlock(_ text: String, _ selection: NSRange) -> MarkdownEdit {
+        let utf16 = Array(text.utf16)
+        let newline = UInt16(UnicodeScalar("\n").value)
+        let end = selection.location + selection.length
+        let before = selection.location > 0 && utf16[selection.location - 1] != newline ? "\n" : ""
+        let after = end < utf16.count && utf16[end] != newline ? "\n" : ""
+        var selected = string(utf16, selection)
+        if selected.utf16.last == newline { selected = String(decoding: selected.utf16.dropLast(), as: UTF16.self) }
+        let open = before + "```\n"
         return MarkdownEdit(
-            range: selection, replacement: replacement, selection: NSRange(location: caret, length: 0))
+            range: selection, replacement: open + selected + "\n```" + after,
+            selection: NSRange(location: selection.location + open.utf16.count, length: selected.utf16.count))
     }
 
     // MARK: Line-based

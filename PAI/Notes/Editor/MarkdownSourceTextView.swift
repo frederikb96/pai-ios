@@ -163,7 +163,9 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         // of the keyboard rather than merely skipping the next reclaim — a view that already is
         // first responder stays one under an `if isFocused` with no `else`, sheet or not.
         if isFocused {
-            if !view.isFirstResponder { view.becomeFirstResponder() }
+            // Not while the link form is up: it holds the keyboard, and reclaiming it here would
+            // pull the keyboard out from under the form's own fields.
+            if !view.isFirstResponder, !context.coordinator.isPresentingLinkForm { view.becomeFirstResponder() }
         } else if view.isFirstResponder {
             view.resignFirstResponder()
         }
@@ -232,6 +234,9 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         var parent: MarkdownSourceTextView
         /// The last caret request actually applied — see ``CaretRequest``.
         var appliedCaretToken = Int.min
+        /// Whether the link form is on screen. It is a UIKit alert presented from here, so SwiftUI
+        /// does not know it covers the editor — see ``updateUIView(_:context:)``.
+        var isPresentingLinkForm = false
         /// What the storage was last painted for, so a changed query repaints and an unchanged one
         /// does not.
         var paintedHighlight: String?
@@ -383,6 +388,12 @@ struct MarkdownSourceTextView: UIViewRepresentable {
                 textView.resignFirstResponder()
             case .attach:
                 parent.onAttach(textView.selectedRange.location)
+            case .link:
+                guard
+                    !MarkdownFenceState.isInsideFence(
+                        text: textView.text ?? "", caretUtf16: textView.selectedRange.location)
+                else { return }
+                presentLinkForm(for: textView)
             case .undo:
                 textView.undoManager?.undo()
             case .redo:
@@ -395,6 +406,65 @@ struct MarkdownSourceTextView: UIViewRepresentable {
                 else { return }
                 apply(edit, to: textView)
             }
+        }
+
+        /// The link button's form: a name and an address, prefilled from the selection (see
+        /// ``MarkdownLinkEditing/draft(in:selection:)``). A UIKit alert rather than a SwiftUI sheet
+        /// because it opens with the keyboard already up and has to hand it straight back: OK
+        /// writes the link through ``apply(_:to:)`` — so Undo takes back just the link — and leaves
+        /// the caret after it, Cancel restores the selection it found.
+        private func presentLinkForm(for textView: UITextView) {
+            guard !isPresentingLinkForm, var presenter = textView.window?.rootViewController else { return }
+            while let next = presenter.presentedViewController { presenter = next }
+            let selection = textView.selectedRange
+            let draft = MarkdownLinkEditing.draft(in: textView.text ?? "", selection: selection)
+
+            let alert = UIAlertController(title: "Link", message: nil, preferredStyle: .alert)
+            alert.addTextField { field in
+                field.placeholder = "Name"
+                field.text = draft.text
+                field.autocapitalizationType = .sentences
+                field.clearButtonMode = .whileEditing
+            }
+            alert.addTextField { field in
+                field.placeholder = "URL"
+                field.text = draft.url
+                field.keyboardType = .URL
+                field.textContentType = .URL
+                field.autocapitalizationType = .none
+                field.autocorrectionType = .no
+                field.clearButtonMode = .whileEditing
+            }
+            let ok = UIAlertAction(title: "OK", style: .default) { [weak self, weak alert, weak textView] _ in
+                guard let self, let textView else { return }
+                let edit = MarkdownLinkEditing.edit(
+                    replacing: draft, text: alert?.textFields?.first?.text ?? "",
+                    url: alert?.textFields?.last?.text ?? "")
+                self.finishLinkForm(in: textView, selection: selection, edit: edit)
+            }
+            let cancel = UIAlertAction(title: "Cancel", style: .cancel) { [weak self, weak textView] _ in
+                guard let self, let textView else { return }
+                self.finishLinkForm(in: textView, selection: selection, edit: nil)
+            }
+            alert.addAction(cancel)
+            alert.addAction(ok)
+            alert.preferredAction = ok
+            ok.isEnabled = MarkdownLinkEditing.hasAddress(draft.url)
+            if let urlField = alert.textFields?.last {
+                urlField.addAction(
+                    UIAction { [weak ok, weak urlField] _ in
+                        ok?.isEnabled = MarkdownLinkEditing.hasAddress(urlField?.text)
+                    }, for: .editingChanged)
+            }
+            isPresentingLinkForm = true
+            presenter.present(alert, animated: true)
+        }
+
+        private func finishLinkForm(in textView: UITextView, selection: NSRange, edit: MarkdownEdit?) {
+            isPresentingLinkForm = false
+            textView.becomeFirstResponder()
+            textView.selectedRange = selection
+            if let edit { apply(edit, to: textView) }
         }
 
         /// Put an edit through the text view's own editing path rather than assigning its text.

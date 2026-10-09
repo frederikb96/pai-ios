@@ -53,13 +53,37 @@ final class NoteToolbarLayoutTests: XCTestCase {
     func testDefaultLayoutActionsAllMapToARealMarkdownCommandOrAKnownNonCommandAction() {
         for id in NoteToolbarLayout.defaultLayout {
             switch id {
-            case .undo, .redo, .attach:
+            case .undo, .redo, .attach, .link:
                 continue
             default:
                 XCTAssertNotNil(
-                    id.command, "\(id) has no MarkdownCommand and is not one of the three non-command actions")
+                    id.command, "\(id) has no MarkdownCommand and is not one of the four non-command actions")
             }
         }
+    }
+
+    /// The default is a promise that new buttons reach everyone who never customised: a layout
+    /// stored from the previous default is not a choice, so it must read as the current default.
+    func testTheLayoutOfThePreviousDefaultReadsAsTheCurrentDefault() {
+        let previous = ["undo", "redo", "attach", "bulletList", "checkbox", "outdent", "indent", "heading"]
+        XCTAssertEqual(NoteToolbarLayout.sanitize(rawIds: previous), NoteToolbarLayout.defaultLayout)
+    }
+
+    /// Anything else is a person's choice, even one button short of the previous default.
+    func testAnyOtherSavedLayoutStays() {
+        let oneShort = ["undo", "redo", "attach", "bulletList", "checkbox", "outdent", "indent"]
+        XCTAssertEqual(NoteToolbarLayout.sanitize(rawIds: oneShort).map(\.rawValue), oneShort)
+        let reordered = ["redo", "undo", "attach", "bulletList", "checkbox", "outdent", "indent", "heading"]
+        XCTAssertEqual(NoteToolbarLayout.sanitize(rawIds: reordered).map(\.rawValue), reordered)
+    }
+
+    func testTheDefaultLayoutOrder() {
+        XCTAssertEqual(
+            NoteToolbarLayout.defaultLayout.map(\.rawValue),
+            [
+                "undo", "redo", "link", "attach", "bulletList", "checkbox", "outdent", "indent", "heading", "bold",
+                "italic", "inlineCode", "codeBlock",
+            ])
     }
 
     /// `allActionsInDefaultOrder` is the settings screen's exhaustive catalogue — silently
