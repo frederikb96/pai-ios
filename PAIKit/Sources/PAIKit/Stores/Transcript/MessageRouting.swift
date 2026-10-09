@@ -106,17 +106,27 @@ public enum MessageRouting {
     /// with no `"\n\n"` at all (an images-only send, whose prompt is just the paths with no
     /// leading text) is itself "the last block", so this still recognises it: splitting on the
     /// separator yields one element, and the returned text is correctly empty.
+    ///
+    /// Two shapes are accepted, because stored messages keep the shape they were sent in: the
+    /// paths alone, space-separated, and the paths one per line under the exact line
+    /// ``attachmentsLabel``. The label never reaches the displayed text, and a block carrying it
+    /// above anything but attachment paths is plain text.
     public static func extractAttachmentPaths(_ content: String) -> (text: String, paths: [String]) {
         let parts = content.components(separatedBy: "\n\n")
         guard let lastBlock = parts.last else { return (content, []) }
 
-        let tokens = lastBlock.split(whereSeparator: \.isWhitespace).map(String.init)
+        var list = Substring(lastBlock)
+        if list.hasPrefix(attachmentsLabel + "\n") { list = list.dropFirst(attachmentsLabel.count + 1) }
+        let tokens = list.split(whereSeparator: \.isWhitespace).map(String.init)
         guard !tokens.isEmpty, tokens.allSatisfy(isAttachmentPathToken) else {
             return (content, [])
         }
 
         return (parts.dropLast().joined(separator: "\n\n"), tokens)
     }
+
+    /// The line the backend writes above a message's attachment paths.
+    static let attachmentsLabel = "Attachments referenced in this message:"
 
     /// `\.claude/attachments/[^/\s]+/[^/\s]+$` — recognised by directory shape, never by
     /// extension, so any file at all can be attached.

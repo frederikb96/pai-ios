@@ -136,6 +136,43 @@ final class TranscriptMessageRoutingTests: XCTestCase {
         XCTAssertEqual(paths, [content])
     }
 
+    func testLabelledAttachmentBlockIsStrippedAndTheLabelNeverShows() {
+        let content =
+            "here you go\n\nAttachments referenced in this message:\n.claude/attachments/s/a.png\n.claude/attachments/s/b.pdf"
+        let (text, paths) = MessageRouting.extractAttachmentPaths(content)
+        XCTAssertEqual(text, "here you go")
+        XCTAssertEqual(paths, [".claude/attachments/s/a.png", ".claude/attachments/s/b.pdf"])
+    }
+
+    func testLabelledAttachmentsWithoutTextLeaveEmptyText() {
+        let content = "Attachments referenced in this message:\n.claude/attachments/s/a.png"
+        let (text, paths) = MessageRouting.extractAttachmentPaths(content)
+        XCTAssertEqual(text, "")
+        XCTAssertEqual(paths, [".claude/attachments/s/a.png"])
+    }
+
+    /// The label is only the new shape's header when everything under it is a path; otherwise
+    /// the block is the author's own words and stays visible whole.
+    func testLabelAboveANonAttachmentTokenStaysPlainText() {
+        let content = "hi\n\nAttachments referenced in this message:\n.claude/attachments/s/a.png oops"
+        let (text, paths) = MessageRouting.extractAttachmentPaths(content)
+        XCTAssertEqual(text, content)
+        XCTAssertEqual(paths, [])
+    }
+
+    /// Only the exact label line counts: the label with no paths, or a different caption, is text.
+    func testLabelAloneOrAMisspelledLabelIsPlainText() {
+        for content in [
+            "Attachments referenced in this message:",
+            "hi\n\nAttachments referenced in this message:\n",
+            "hi\n\nAttachments:\n.claude/attachments/s/a.png",
+        ] {
+            let (text, paths) = MessageRouting.extractAttachmentPaths(content)
+            XCTAssertEqual(text, content)
+            XCTAssertEqual(paths, [])
+        }
+    }
+
     func testPlainTextWithNoAttachmentShapedTokensIsReturnedUnchanged() {
         let content = "just a normal message\n\nwith two paragraphs"
         let (text, paths) = MessageRouting.extractAttachmentPaths(content)
