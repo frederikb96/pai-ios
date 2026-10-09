@@ -412,7 +412,8 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         /// ``MarkdownLinkEditing/draft(in:selection:)``). A UIKit alert rather than a SwiftUI sheet
         /// because it opens with the keyboard already up and has to hand it straight back: OK
         /// writes the link through ``apply(_:to:)`` — so Undo takes back just the link — and leaves
-        /// the caret after it, Cancel restores the selection it found.
+        /// the caret after it, Cancel restores the selection it found, and Remove link (offered on an
+        /// existing markdown link only) replaces it with its plain label.
         private func presentLinkForm(for textView: UITextView) {
             guard !isPresentingLinkForm, var presenter = textView.window?.rootViewController else { return }
             while let next = presenter.presentedViewController { presenter = next }
@@ -447,6 +448,14 @@ struct MarkdownSourceTextView: UIViewRepresentable {
                 self.finishLinkForm(in: textView, selection: selection, edit: nil)
             }
             alert.addAction(cancel)
+            // Only on an existing `[text](url)`: a bare URL or a new link has nothing to remove.
+            if let unlink = MarkdownLinkEditing.unlinkEdit(replacing: draft, in: textView.text ?? "") {
+                alert.addAction(
+                    UIAlertAction(title: "Remove link", style: .destructive) { [weak self, weak textView] _ in
+                        guard let self, let textView else { return }
+                        self.finishLinkForm(in: textView, selection: selection, edit: unlink)
+                    })
+            }
             alert.addAction(ok)
             alert.preferredAction = ok
             ok.isEnabled = MarkdownLinkEditing.hasAddress(draft.url)

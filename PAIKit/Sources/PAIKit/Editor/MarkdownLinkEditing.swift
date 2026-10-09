@@ -92,6 +92,36 @@ public enum MarkdownLinkEditing {
         return "[\(label)](\(target))"
     }
 
+    /// The plain label a link unlinks to: its text with the `\\[`/`\\]` escapes ``format(text:url:)``
+    /// writes undone, or the URL when the label is empty.
+    public static func unlinkedLabel(of draft: MarkdownLinkDraft) -> String {
+        let label = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\[", with: "[")
+            .replacingOccurrences(of: "\\]", with: "]")
+        return label.isEmpty ? draft.url : label
+    }
+
+    /// Replaces the whole `[text](url)` with just its label, caret after it. `nil` unless the draft
+    /// is an existing markdown link — a bare URL or a new link has nothing to remove.
+    public static func unlinkEdit(replacing draft: MarkdownLinkDraft, in text: String) -> MarkdownEdit? {
+        guard isMarkdownLink(draft, in: text) else { return nil }
+        let label = unlinkedLabel(of: draft)
+        return MarkdownEdit(
+            range: draft.range, replacement: label,
+            selection: NSRange(location: draft.range.location + label.utf16.count, length: 0))
+    }
+
+    /// Whether the draft's range holds a `[text](url)` rather than a bare URL or an insertion
+    /// point — what decides whether the form offers "Remove link".
+    public static func isMarkdownLink(_ draft: MarkdownLinkDraft, in text: String) -> Bool {
+        let source = text as NSString
+        guard draft.range.length > 0, NSMaxRange(draft.range) <= source.length else { return false }
+        let covered = source.substring(with: draft.range)
+        let whole = NSRange(location: 0, length: (covered as NSString).length)
+        guard let match = markdownLink.firstMatch(in: covered, range: whole) else { return false }
+        return match.range == whole && match.range(at: 1).length == 0
+    }
+
     /// Whether the form's address field holds something to link to — what OK waits for.
     public static func hasAddress(_ url: String?) -> Bool {
         !(url ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

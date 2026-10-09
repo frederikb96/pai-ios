@@ -12,16 +12,28 @@ public struct OutlineEntry: Equatable, Sendable, Identifiable {
 
 /// ATX-style markdown headings only (`# `..`###### `) — the toolbar this app's editor offers
 /// never produces setext (`===`/`---`) headings, so parsing for them would find headings the
-/// editor itself cannot create.
+/// editor itself cannot create. Lines inside a fenced code block (``` or ~~~, CommonMark's
+/// opening/closing rules; an unclosed fence runs to the end) are code, never headings — the web
+/// outline reads a real parse tree and agrees.
 public func parseOutline(_ body: String) -> [OutlineEntry] {
     var entries: [OutlineEntry] = []
     var offset = 0
+    var openFence: String?
     let lines = body.split(separator: "\n", omittingEmptySubsequences: false)
     for line in lines {
+        defer { offset += line.count + 1 }
+        let text = String(line)
+        if let fence = openFence {
+            if MarkdownLineSyntax.closesFence(text, opener: fence) { openFence = nil }
+            continue
+        }
+        if let fence = MarkdownLineSyntax.openingFence(in: text) {
+            openFence = fence
+            continue
+        }
         if let heading = atxHeading(in: line) {
             entries.append(OutlineEntry(level: heading.level, text: String(heading.text), offset: offset))
         }
-        offset += line.count + 1
     }
     return entries
 }

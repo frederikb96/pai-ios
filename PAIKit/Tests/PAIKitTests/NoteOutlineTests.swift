@@ -45,4 +45,26 @@ final class NoteOutlineTests: XCTestCase {
     func testEmptyBodyProducesNoEntries() {
         XCTAssertTrue(parseOutline("").isEmpty)
     }
+
+    func testHashLinesInsideBacktickAndTildeFencesAreNotHeadings() {
+        XCTAssertEqual(parseOutline("```bash\n# comment\n```\n# Real").map(\.text), ["Real"])
+        XCTAssertEqual(parseOutline("~~~\n# fake\n~~~\n## Real").map(\.text), ["Real"])
+    }
+
+    /// A closing fence must match the opener's character and be at least as long, so a shorter or
+    /// different run inside the block does not end it.
+    func testOnlyAMatchingFenceClosesTheBlock() {
+        let body = "````\n```\n# a\n~~~~\n# b\n````\n# c"
+        XCTAssertEqual(parseOutline(body).map(\.text), ["c"])
+    }
+
+    func testAnUnclosedFenceRunsToTheEnd() {
+        XCTAssertEqual(parseOutline("# a\n```\n# b\n# c").map(\.text), ["a"])
+    }
+
+    func testOffsetsAfterAFenceStillPointAtTheirLine() {
+        let body = "```\n# x\n```\n# Real"
+        let entry = parseOutline(body)[0]
+        XCTAssertEqual(String(body.dropFirst(entry.offset)), "# Real")
+    }
 }

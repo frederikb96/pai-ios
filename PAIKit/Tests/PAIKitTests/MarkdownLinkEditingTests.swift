@@ -108,4 +108,36 @@ final class MarkdownLinkEditingTests: XCTestCase {
     func testEditWithoutAnAddressMakesNoEdit() {
         XCTAssertNil(MarkdownLinkEditing.edit(replacing: draft("abc", 1), text: "a", url: "  "))
     }
+
+    // MARK: unlink
+
+    func testUnlinkReplacesTheWholeLinkWithItsLabelAndLeavesTheCaretAfterIt() throws {
+        let text = "x [Photos](https://p.example/s) y"
+        let edit = try XCTUnwrap(MarkdownLinkEditing.unlinkEdit(replacing: draft(text, 5), in: text))
+        XCTAssertEqual((text as NSString).replacingCharacters(in: edit.range, with: edit.replacement), "x Photos y")
+        XCTAssertEqual(edit.selection, NSRange(location: 2 + "Photos".utf16.count, length: 0))
+    }
+
+    /// Only `\\[` can appear: the link pattern ends a label at the first `]`, so a link whose label
+    /// holds an escaped `\\]` is never recognised as one (the web's pattern is the same).
+    func testUnlinkUndoesTheEscapeFormatWrites() throws {
+        let text = MarkdownLinkEditing.format(text: "a [b", url: "u")
+        XCTAssertEqual(text, "[a \\[b](u)")
+        let edit = try XCTUnwrap(MarkdownLinkEditing.unlinkEdit(replacing: draft(text, 2), in: text))
+        XCTAssertEqual(edit.replacement, "a [b")
+    }
+
+    func testUnlinkFallsBackToTheUrlForAnEmptyLabel() throws {
+        let text = "[](https://p.example)"
+        let edit = try XCTUnwrap(MarkdownLinkEditing.unlinkEdit(replacing: draft(text, 1), in: text))
+        XCTAssertEqual(edit.replacement, "https://p.example")
+    }
+
+    func testUnlinkIsOfferedOnlyOnAnExistingMarkdownLink() {
+        let text = "see https://p.example and [a](b)"
+        XCTAssertNil(MarkdownLinkEditing.unlinkEdit(replacing: draft(text, 8), in: text), "bare URL")
+        XCTAssertNil(MarkdownLinkEditing.unlinkEdit(replacing: draft(text, 0), in: text), "new link")
+        XCTAssertNil(MarkdownLinkEditing.unlinkEdit(replacing: draft(text, 0, 3), in: text), "selected text")
+        XCTAssertNotNil(MarkdownLinkEditing.unlinkEdit(replacing: draft(text, 28), in: text))
+    }
 }
