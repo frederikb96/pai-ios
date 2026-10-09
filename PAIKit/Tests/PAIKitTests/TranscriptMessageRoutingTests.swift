@@ -173,6 +173,15 @@ final class TranscriptMessageRoutingTests: XCTestCase {
         }
     }
 
+    func testLabelAboveALookalikePathOrADeeperPathStaysPlainText() {
+        for tail in ["/home/frederik/notes/plan.png", "/home/frederik/.claude/attachments/s1/nested/x.png"] {
+            let content = "look\n\nAttachments referenced in this message:\n" + tail
+            let (text, paths) = MessageRouting.extractAttachmentPaths(content)
+            XCTAssertEqual(text, content)
+            XCTAssertEqual(paths, [])
+        }
+    }
+
     func testPlainTextWithNoAttachmentShapedTokensIsReturnedUnchanged() {
         let content = "just a normal message\n\nwith two paragraphs"
         let (text, paths) = MessageRouting.extractAttachmentPaths(content)
