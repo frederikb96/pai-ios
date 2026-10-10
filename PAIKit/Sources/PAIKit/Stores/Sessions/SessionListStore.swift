@@ -67,7 +67,7 @@ public enum SessionListEmptyState: Sendable, Equatable {
 /// - **A — the synced list** (`syncedSessions`): live, polled every 10s via `startPolling()`, the
 ///   only source that receives push-shaped updates at all — SSE-driven live updates arrive
 ///   outside this store's scope (the transcript/chat layer owns that connection) and are not
-///   wired here; see the row 55 report for why they must land only on this list, never on B/C.
+///   wired here; they must land only on this list, never on B/C.
 /// - **B — server browse** (`serverFilteredResults` when a machine chip is active and no text
 ///   query): paged, no live updates.
 /// - **C — server search** (`serverFilteredResults` when a text query is active): ranked, **no

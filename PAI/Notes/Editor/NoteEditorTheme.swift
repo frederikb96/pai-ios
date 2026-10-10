@@ -53,8 +53,7 @@ enum NoteEditorTheme {
     /// Build the attributed string a text view shows for the whole note.
     ///
     /// `showsHangingIndent` gates the one pass that is not always-on — the gutter and the
-    /// wrap indent are one visual feature behind one settings toggle (spec row 16's own
-    /// "BLOCK" framing), so a reader who has not turned the gutter on gets no extra
+    /// wrap indent are one visual feature behind one settings toggle, so a reader who has not turned the gutter on gets no extra
     /// measurement work either.
     static func attributedText(
         for source: String, highlight: String? = nil, showsHangingIndent: Bool = false

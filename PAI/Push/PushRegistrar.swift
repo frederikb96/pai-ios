@@ -149,7 +149,7 @@ final class PushRegistrar: NSObject, UIApplicationDelegate, UNUserNotificationCe
 
     /// Sweeps the system's currently-delivered notification banners against the account's own
     /// read state, removing whichever ones a read change elsewhere has already caught up with
-    /// (row 24.7). Called from every place this app can actually run code: `RootView` on every
+    /// them. Called from every place this app can actually run code: `RootView` on every
     /// foreground and every live `read` event, and — the case this alone could not reach —
     /// `application(_:didReceiveRemoteNotification:fetchCompletionHandler:)` below, when a
     /// silent push wakes a backgrounded app specifically to run this.
@@ -171,7 +171,7 @@ final class PushRegistrar: NSObject, UIApplicationDelegate, UNUserNotificationCe
 
     /// A silent (`content-available`) push (`pai_cloud.push.send_silent_read_sync_push`) — the
     /// one payload shape that can reach this app while it is fully backgrounded, specifically to
-    /// let it correct itself (row 24.5/24.7's backgrounded half). Reads the true unread count
+    /// let it correct itself (the backgrounded half of that self-heal). Reads the true unread count
     /// fresh rather than trusting anything the push itself carried — a silent push's own `aps`
     /// dictionary is deliberately empty of everything but `content-available` (Apple's contract
     /// for this push type forbids a badge riding along), so there is nothing to trust here even

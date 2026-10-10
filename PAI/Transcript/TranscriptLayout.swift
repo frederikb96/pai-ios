@@ -5,7 +5,7 @@ import UIKit
 ///
 /// Not `UICollectionViewCompositionalLayout` — a hand-rolled `UICollectionViewLayout` gives full
 /// control over `targetContentOffset(forProposedContentOffset:)`, which is where prepend and
-/// expand/collapse compensation both live (per the `scrolling` skill: "belongs in the layout …
+/// expand/collapse compensation both live ("belongs in the layout …
 /// not after `performBatchUpdates`, which shows a visible jump on the frame between").
 ///
 /// Row heights are supplied from outside, already measured — this layout never asks a cell for
@@ -99,7 +99,7 @@ final class TranscriptLayout: UICollectionViewLayout {
     /// this is correct whether the reader is mid-gesture or not, and correct whether the change
     /// was a prepend (the anchor moves down), an append below the reader (the anchor does not
     /// move, so the delta is zero and nothing shifts), or an expansion above versus below the
-    /// anchor (only the first moves it). See the `scrolling` skill's central law.
+    /// anchor (only the first moves it). See the no-jump rule.
     override func targetContentOffset(forProposedContentOffset proposedContentOffset: CGPoint) -> CGPoint {
         defer { pendingAnchor = nil }
         guard let anchor = pendingAnchor, let newTop = offsetsById[anchor.id] else { return proposedContentOffset }

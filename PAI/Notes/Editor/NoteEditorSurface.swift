@@ -55,7 +55,7 @@ struct NoteEditorSurface: View {
     /// this view's own state survives the round trip — and this binding is the first-party
     /// mechanism for carrying a position across exactly that. A raw point rather than an anchored
     /// id: nothing above the reader can change height while this note is off screen, unlike the
-    /// feed the ``scrolling`` skill warns against pixel offsets for, so "the exact position it
+    /// feed, where a pixel offset is unsafe, so "the exact position it
     /// was left" is literally what a raw offset captures here.
     @State private var scrollPosition = ScrollPosition()
     /// The live vertical offset, updated on every scroll — this is what survives being covered

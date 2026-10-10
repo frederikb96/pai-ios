@@ -34,7 +34,7 @@ AuthKey_*.p8
 # macOS
 .DS_Store
 
-# Its own git repo, per the PAI convention
+# Its own git repo
 .claude/
 
 # Wake word trainer scratch space — make-config.py's config.yaml defaults data_dir/output_dir

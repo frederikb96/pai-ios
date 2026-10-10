@@ -42,7 +42,7 @@ extension NoteToolbarActionId {
 /// A phone keyboard covers the toolbar at the top of the screen, so every formatting control the
 /// editor offers has to live here or be unreachable while typing. The bar's own actions —
 /// everything but the pinned "hide keyboard" control — come from Settings' formatting-bar layout
-/// (spec row 6.5): which of them are enabled, and in what order. It scrolls, because the full
+/// — which of them are enabled, and in what order. It scrolls, because the full
 /// action set is longer than a phone is wide. The way down out of the keyboard is pinned instead —
 /// it is the one control that must never require a scroll to find, and the composer's own bar puts
 /// it in the same place for the same reason. It has no equivalent action id of its own: nothing

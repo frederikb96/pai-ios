@@ -17,7 +17,7 @@ public enum DeepLink: Equatable, Sendable, Hashable {
     case createSession
     /// The Action Button's landing screen — see ``Route/quickActions``.
     case quickActions
-    /// A tapped push notification (row 5.28), named only by its own id — at send time the backend
+    /// A tapped push notification, named only by its own id — at send time the backend
     /// does not yet know which transcript message it will resolve to (`notifications.py`'s anchor
     /// is filled in lazily), so the payload can only ever carry the notification's own id. Unlike
     /// every other case, ``routes`` cannot answer this one without a network round trip: resolving

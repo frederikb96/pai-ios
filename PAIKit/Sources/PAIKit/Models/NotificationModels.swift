@@ -5,7 +5,7 @@ import Foundation
 /// `backend/src/pai_cloud/api.py`'s `_notification_to_dict` actually serialises, per this repo's
 /// own rule that the backend, not `types.ts`, is the ground truth for a shape.
 ///
-/// One log unifying two very different kinds of event (row 5.21): an agent calling
+/// One log unifying two very different kinds of event: an agent calling
 /// `notify`, and an alert transition. `alert` is non-nil only for `kind == .alert`; `sessionId`/
 /// `sessionTitle`/`anchor` only ever populate for `kind == .agent`.
 

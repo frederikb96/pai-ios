@@ -1,10 +1,10 @@
 import PAIKit
 import SwiftUI
 
-/// The notification centre (row 5.27): every alert transition and every agent push, newest
+/// The notification centre: every alert transition and every agent push, newest
 /// first, filterable, with unread state and mark-all-read. A plain `List` rather than the
 /// transcript's `UICollectionView` — rows here are clamped to two lines of body text, so per the
-/// `scrolling` skill's own "before writing any of it" checklist this needs no virtualization or
+/// scroll-stability checklist this needs no virtualization or
 /// measurement machinery, and `List` gives swipe actions for free besides.
 struct NotificationCenterScreen: View {
     @Environment(AppEnvironment.self) private var environment
@@ -13,7 +13,7 @@ struct NotificationCenterScreen: View {
     /// Guards against a second `loadInitialNotifications()` on return from a pushed session —
     /// that call replaces `rows` wholesale, which would silently discard the scroll position
     /// `NavigationStack` would otherwise restore for free. Mirrors `SessionListView`'s own guard
-    /// verbatim, per row 5.27 note 6.
+    /// verbatim.
     @State private var hasLoadedInitialNotifications = false
     /// Which alert row, if any, is expanded in place. A tap on a session row navigates instead —
     /// see `open(_:)` — so only one of these can ever be non-nil-equivalent per screen.
@@ -112,7 +112,7 @@ struct NotificationCenterScreen: View {
                 // Leading, not trailing — matching `SessionListView`'s own reasoning for why
                 // Delete sits behind a sheet rather than a swipe: the destructive direction stays
                 // out of reach of a thumb scrolling past. There is no destructive action here at
-                // all (row 5.27 note 5 — no delete, this is a log), so the one swipe action that
+                // all (no delete — this is a log), so the one swipe action that
                 // exists gets the safer edge.
                 .swipeActions(edge: .leading) {
                     if notification.isUnread {
@@ -139,7 +139,7 @@ struct NotificationCenterScreen: View {
     // MARK: - Actions
 
     /// A session row marks itself read and navigates; an alert row marks itself read and expands
-    /// in place, leaving every other row untouched (row 5.28 note 3) — no navigation, so the
+    /// in place, leaving every other row untouched — no navigation, so the
     /// unread state of the rest of the feed is simply whatever it already was.
     private func open(_ notification: PaiNotification) async {
         await store.markRead(notification.id)
@@ -153,7 +153,7 @@ struct NotificationCenterScreen: View {
             // comment for why that is the common case, not an edge case.
             let messageID = await store.resolvedAnchorMessageID(for: notification.id)
             // Pushed, not replaced: the centre is already on the stack, so this alone gives Back
-            // the "return to the list at the position it was left" behaviour row 5.27 asks for —
+            // the "return to the list at the position it was left" behaviour wanted here —
             // no extra bookkeeping needed the way a cold push (`RootView`) does need.
             environment.router.push(.session(id: sessionId, messageID: messageID))
         case .alert:

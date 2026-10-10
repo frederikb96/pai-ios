@@ -37,27 +37,35 @@ views are thin, and anything a unit test could catch lives in the package.
 | `Tooling/` | checks that catch macOS-only compile errors without a Mac |
 | `fastlane/` | build, sign, upload — the same lanes locally and in CI |
 
-## Building
+## Building and checks
 
 The package needs only a Swift 6.2 toolchain, on any platform:
 
 ```
-swift build --package-path PAIKit --build-tests
-swift test  --package-path PAIKit --skip-build
+swift build --package-path PAIKit --build-tests && \
+  swift test --package-path PAIKit --skip-build
+swift format lint --recursive --strict PAIKit PAI
 ```
+
+Two scans cover the app target without an iOS SDK: `./Tooling/parse-swift.sh` checks syntax (it stops
+before name resolution), and `./Tooling/swift6-lint.py` flags the few Swift 6 constructs that compile
+on Linux and fail on a Mac.
 
 The app target needs Xcode. CI builds it on a macOS runner; there is no way around that, and no
 attempt here to pretend otherwise.
 
 ## CI
 
-| Workflow | Answers | Runner |
-|---|---|---|
-| `Free checks` | compiles, tests pass, formatted | Linux |
-| `Mac` | does it actually run — boots it, screenshots it, queries the debug bridge | macOS |
-| `Release` | signs and ships to TestFlight | macOS |
+Checks run on pull requests only; `main` runs nothing, and the `Validation` job of `Free checks` is
+the required gate.
 
-`Mac` publishes the screenshot and the device log as artifacts, because every automated assertion
+| Workflow | Answers | Runner | Runs on |
+|---|---|---|---|
+| `Free checks` | compiles, tests pass, formatted | Linux | pull requests, manual dispatch |
+| `Mac` | the app target compiles and the built bundle declares what it needs; on dispatch it also boots the app, screenshots it and queries the debug bridge | macOS | pull requests that change the app, package, project or config (through `Free checks`), manual dispatch |
+| `Release` | signs and ships to TestFlight | macOS | a `v*.*.*` tag, manual dispatch |
+
+`Mac` publishes the screenshots and the device log as artifacts, because every automated assertion
 in that job can pass while the screen renders nothing.
 
 ## Releasing

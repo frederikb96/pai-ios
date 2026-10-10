@@ -9,7 +9,7 @@ import SwiftUI
 ///
 /// A fixed height (``TranscriptRowMetrics/attachmentChipHeight``) in every state, on purpose —
 /// the transcript's row height is precomputed before this cell is ever laid out (see
-/// `docs/ARCHITECTURE.md` "Reading the transcript" and the `scrolling` skill), so nothing here
+/// `docs/ARCHITECTURE.md` "Reading the transcript"), so nothing here
 /// may grow to show a loaded image inline. An image goes straight to
 /// ``FullScreenImageViewer`` instead once it loads, which Freddy asked for explicitly as the
 /// right call on iOS when inline expansion would cost a row a height nobody measured.

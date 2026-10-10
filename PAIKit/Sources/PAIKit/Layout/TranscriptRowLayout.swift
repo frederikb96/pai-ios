@@ -86,7 +86,7 @@ public enum TranscriptRowMetrics {
     /// A generous stand-in for a list marker's own intrinsic width — a bullet is narrower than
     /// this, an ordered marker past two digits is wider. Deliberately erring wide: reserving more
     /// than a marker needs wraps the measured text a line earlier than the view does (a blank gap,
-    /// the safe direction per the `scrolling` skill), where reserving too little would clip.
+    /// the safe direction), where reserving too little would clip.
     public static let listMarkerReservedWidth: Double = 24
     /// A fixed reserved gap on the leading edge of every right-aligned bubble — what stops a long
     /// message going edge-to-edge and gives the eye a gutter to read which side it is addressed
@@ -148,7 +148,7 @@ public struct MeasuredCard: Sendable, Equatable {
 }
 
 /// The exact height one transcript row (one `Message`) occupies — nothing here is ever an
-/// estimate a view corrects once it is on screen; see the `scrolling` skill's central rule.
+/// estimate a view corrects once it is on screen — the no-jump rule.
 ///
 /// Deliberately ignorant of ``MarkdownTableLayout``: a `.table` block's height is the real
 /// measurer's problem (``BlockMeasuring/height(of:width:environment:)``'s doc comment says so

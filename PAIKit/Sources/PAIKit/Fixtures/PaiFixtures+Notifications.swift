@@ -1,6 +1,6 @@
 import Foundation
 
-/// The notification centre's corpus (row 5.27/5.28 in the pai-cloud spec): one unread agent
+/// The notification centre's corpus: one unread agent
 /// notification anchored to a real message in `PaiFixtures.transcript` — `9003`, an assistant
 /// row — so a screenshot run can exercise the jump end to end; one unresolvable agent
 /// notification (no session, no anchor — the graceful "open normally, no jump" degrade); one

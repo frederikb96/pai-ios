@@ -132,7 +132,7 @@ jobs:
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
           xcrun simctl boot "$udid" || true
           xcrun simctl bootstatus "$udid" -b
-          # Freddy runs the app in dark mode, and every design judgement made from a light
+          # The app is used in dark mode, and every design judgement made from a light
           # screenshot is a judgement about a screen nobody looks at. The palette carries a
           # genuine light appearance too, so this is a choice about which one gets photographed,
           # not about which one works.

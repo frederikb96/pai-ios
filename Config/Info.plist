@@ -5,7 +5,7 @@
 	<!-- Keeps the microphone running after the app leaves the screen, so a take started here
 	     survives the Home button, another app, and the lock screen. iOS suspends an ordinary app
 	     within seconds of backgrounding regardless of what it has open, so without this a
-	     recording ends the moment Freddy looks at something else — which is the entire reason
+	     recording ends the moment the user looks at something else — which is the entire reason
 	     recording on the phone beats recording in the browser.
 
 	     Declared in a real Info.plist rather than as an INFOPLIST_KEY_ build setting: that

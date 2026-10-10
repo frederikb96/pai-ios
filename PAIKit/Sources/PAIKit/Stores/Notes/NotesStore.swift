@@ -231,8 +231,8 @@ public final class NotesStore {
     /// Starts the confirm-then-undo window — the row, its embedding and its file are all
     /// untouched on the server until the finalizer fires (some seconds after the caller's own
     /// undo window closes; see ``undelete(id:)``). Marks the row `pendingDelete` locally rather
-    /// than removing it, matching what the server itself did: the list still holds the row (spec
-    /// row 5.4's "you get a moment to undo it").
+    /// than removing it, matching what the server itself did: the list still holds the row ("you get a moment to
+    /// undo it").
     @discardableResult
     public func requestDelete(id: String) async -> Bool {
         do {

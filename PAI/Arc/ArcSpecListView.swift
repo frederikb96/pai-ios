@@ -2,8 +2,8 @@ import PAIKit
 import SwiftUI
 
 /// Every ARC spec — the "Arc" entry under Apps. Row anatomy and list mechanics mirror
-/// `SessionListView` on purpose ("the same picker style the session list uses", row 87's note):
-/// a plain `List` giving fixed-height rows the virtualization the `scrolling` skill asks for, the
+/// `SessionListView` on purpose ("the same picker style the session list uses"):
+/// a plain `List` giving fixed-height rows the virtualization a long list needs, the
 /// system search field rather than a hand-rolled one, and the same near-the-end pagination
 /// trigger — scaled down from that screen's many sources to `ArcSpecListStore`'s single one,
 /// since there is no synced list, no machine filter and no semantic mode here.

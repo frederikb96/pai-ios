@@ -31,7 +31,7 @@ private struct JumpToLatestButton: View {
                 .overlay(alignment: .topTrailing) {
                     // "N new" (web's `ChatView.tsx` jump-to-latest badge) — the count of live
                     // messages held aside in `pendingNewerIds` while the window is not at the
-                    // tail, otherwise invisible (row 4's own finding: built, tested, and shown
+                    // tail, otherwise invisible (once built and tested but shown
                     // nowhere).
                     if pendingCount > 0 {
                         Text(pendingCount > 99 ? "99+" : "\(pendingCount)")
@@ -61,8 +61,8 @@ private struct TranscriptRow: Equatable {
 }
 
 /// The transcript list: a `UICollectionView` on ``TranscriptLayout``, owning the bootstrap/SSE
-/// lifecycle, the measured-height pipeline, and the scroll mechanics the `scrolling` skill lays
-/// out — the edge-follow latch, the hold, identity-based anchoring, and older-page paging.
+/// lifecycle, the measured-height pipeline, and the scroll mechanics:
+/// the edge-follow latch, the hold, identity-based anchoring, and older-page paging.
 ///
 /// Row heights are computed synchronously on the main actor whenever the loaded window changes,
 /// using the real ``TextKitBlockMeasurer`` and a ``BlockHeightCache`` owned by this controller.
@@ -217,7 +217,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     private var lastSearchedQuery: String?
     private var lastSearchedKind: MessageKind?
 
-    /// Where to jump once bootstrap has loaded — row 5.28. Consumed once: bootstrap resolves it
+    /// Where to jump once bootstrap has loaded. Consumed once: bootstrap resolves it
     /// into this open's first landing (`TranscriptStore.deepLinkLanding`) and clears it, so a
     /// later reconnect or width change never re-triggers the jump.
     private var initialJumpMessageID: Int?
@@ -505,7 +505,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         // no longer the session's, and resuming the stream from there replays everything after it.
         let streamCursor = store.maxMessageId(for: sessionID)
 
-        // A notification deep link (row 5.28) is this open's first landing, not a jump made after
+        // A notification deep link is this open's first landing, not a jump made after
         // it. Landing at the bottom and jumping once the target loads is a visible jump, and a
         // jump issued before the first layout has no rows to land on, so it does nothing and the
         // pending bottom landing wins. Resolved into a restore target instead, which
@@ -807,7 +807,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// `onSettled` runs once the layout this call produces has actually landed — honoured only
     /// by `.compensateFromTopVisibleRow`, which is the only intent `reveal(_:)` ever recomputes
     /// under. That is what lets a locate-and-reveal expand a collapsed card and scroll to it
-    /// with no settle hold at all (design row 25's own note): the layout precomputes every
+    /// with no settle hold at all: the layout precomputes every
     /// height synchronously, so this one completion, timed to the actual layout pass rather than
     /// to when the call returns, is all a caller needs.
     private func recomputeRows(applying intent: UpdateIntent, onSettled: (() -> Void)? = nil) {
@@ -1231,7 +1231,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// `replaced` tells the caller whether the window was replaced outright rather than merged —
     /// every row on screen is then fresh and unmeasured a moment ago, so `scrollToTarget` must
     /// write the landing absolutely rather than animate a 20,000pt scroll across content that
-    /// just changed out from under it (the flicker the `scrolling` skill's second law forbids).
+    /// just changed out from under it (the flicker of content changing under the reader).
     private func locate(_ messageId: Int, retryLadder: [Duration] = []) async -> (loaded: Bool, replaced: Bool) {
         let outcome = await store.locate(
             messageId, sessionId: sessionID, retryLadder: retryLadder, fetchAround: fetchAroundPage)
@@ -1247,8 +1247,8 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     }
 
     /// Recomputes rows and waits for the layout it produces to actually land, rather than
-    /// returning as soon as the call is made — `reveal`'s whole "no settle hold" claim (design
-    /// row 25's own note) depends on the caller seeing FRESH `rows`/`layout` the instant this
+    /// returning as soon as the call is made — `reveal`'s whole "no settle hold" claim
+    /// depends on the caller seeing FRESH `rows`/`layout` the instant this
     /// returns, not a moment later on some other run-loop turn.
     private func settleRows() async {
         guard measurementWidth() > 0 else { return }
@@ -1265,7 +1265,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     ///
     /// `animated` is `false` after a `locate` that replaced the window (see `locate`'s own doc
     /// comment) — every row on screen is fresh a moment after `reloadData()`, so animating across
-    /// it is the flicker the `scrolling` skill's second law forbids, not a smooth scroll.
+    /// it is a flicker, not a smooth scroll.
     private func revealHit(_ hit: TranscriptSearchHit, animated: Bool = true) async {
         // A hit past the preview is not in the DOM until its own card is open, so reveal it
         // first and let the row settle at its new height before anything is positioned.
@@ -1828,7 +1828,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         ///
         /// The transcript places every row from an analytic height and never asks a cell its
         /// size, so a disagreement is invisible to every other check here and shows up only as
-        /// the reader being dragged around — the failure the `scrolling` skill's central rule
+        /// the reader being dragged around — the failure the no-jump rule
         /// exists to rule out. `/markdown/measure` proves this for a markdown block; this proves
         /// it for a whole row, which is where the register's own chrome, the visual clamp and the
         /// trailer live.
@@ -1904,7 +1904,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         readerMotion.beganDragging()
         holdController.release()
         // The deep-link ring's other release path — "fading out after ~4s or on the first
-        // deliberate gesture" (row 5.28's design). A drag is exactly that gesture.
+        // deliberate gesture". A drag is exactly that gesture.
         clearDeepLinkHighlight()
     }
 
@@ -2003,7 +2003,7 @@ struct TranscriptCollectionView: UIViewControllerRepresentable {
     let outbox: OutboxStore
     let requestFactory: PaiRequestFactory
     let searchState: TranscriptSearchState
-    /// Where to jump once the transcript is open — row 5.28. `nil` for an ordinary open.
+    /// Where to jump once the transcript is open. `nil` for an ordinary open.
     var initialJumpMessageID: Int? = nil
     /// Reaches this screen for a push notification's jump while it is already on top — see
     /// `TranscriptJumpRequests`'s own doc comment for why `initialJumpMessageID` alone cannot.

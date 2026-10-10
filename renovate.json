@@ -54,5 +54,5 @@
       "groupName": "swift packages"
     }
   ],
-  "//": "Concurrency is unlimited per the repository-setup standard, which relies on the Saturday schedule plus minimumReleaseAge tiers to stagger updates rather than on caps. Noting a real counter-example: pai-android runs the same unlimited config and had ten PRs land in one batch on 2026-03-19, needing a follow-up commit to resolve conflicts they created in a shared lockfile. If that recurs here, the fix belongs in the shared standard, not as a silent per-repo deviation."
+  "//": "Concurrency is unlimited: the Saturday schedule plus minimumReleaseAge tiers stagger updates instead of caps."
 }

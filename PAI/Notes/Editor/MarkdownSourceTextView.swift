@@ -60,7 +60,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
     /// which is what makes "find in note" usable without leaving the editor.
     let highlight: String?
     /// Which actions the keyboard bar offers, and in which order — Settings'
-    /// `noteToolbarLayout` (spec row 6.5), read fresh on every update so a change made while this
+    /// `noteToolbarLayout`, read fresh on every update so a change made while this
     /// editor is open reaches the already-built bar rather than only a freshly opened one.
     let toolbarLayout: [NoteToolbarActionId]
 

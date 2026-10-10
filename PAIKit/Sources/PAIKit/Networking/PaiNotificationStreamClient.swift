@@ -7,8 +7,7 @@ import Foundation
 #endif
 
 /// The account-wide notification stream (`GET /api/notifications/stream`) — a new row arriving
-/// anywhere, or the unread count moving because something was marked read anywhere (row 5.27
-/// note 1, row 24.5). Reuses the same framing pieces `PaiSseClient` does
+/// anywhere, or the unread count moving because something was marked read anywhere. Reuses the same framing pieces `PaiSseClient` does
 /// (`PaiHttpByteStream`/`LineSplitter`/`SseEventAccumulator`), and its own tested
 /// `shouldReconnectAfterStreamEnded` rule, but is a separate, simpler client rather than a second
 /// mode of that one: this stream carries no cursor and no terminal status — the backend replays
