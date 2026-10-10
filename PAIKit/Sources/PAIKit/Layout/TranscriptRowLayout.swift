@@ -412,8 +412,9 @@ public enum TranscriptRowLayout {
                 // regardless of which children are text or chips.
                 let hasText = !text.isEmpty
                 let textHeight = hasText ? content + TranscriptRowMetrics.bubbleVerticalPadding : 0
-                let chips = Double(attachmentPaths.count) * TranscriptRowMetrics.attachmentChipHeight
-                let childCount = (hasText ? 1 : 0) + attachmentPaths.count
+                let attachmentRows = AttachmentListBound.transcriptRowCount(total: attachmentPaths.count)
+                let chips = Double(attachmentRows) * TranscriptRowMetrics.attachmentChipHeight
+                let childCount = (hasText ? 1 : 0) + attachmentRows
                 let gaps = childCount > 1 ? Double(childCount - 1) * TranscriptRowMetrics.attachmentChipSpacing : 0
                 return TranscriptRowMetrics.meRowPadding * 2 + textHeight + chips + gaps
 
@@ -427,8 +428,9 @@ public enum TranscriptRowLayout {
                 // plain attachment-only send — no bubble, no label.
                 let hasText = !text.isEmpty
                 let bubbleHeight = hasText ? content + labelChrome + TranscriptRowMetrics.bubbleVerticalPadding : 0
-                let chips = Double(attachmentPaths.count) * TranscriptRowMetrics.attachmentChipHeight
-                let childCount = (hasText ? 1 : 0) + attachmentPaths.count
+                let attachmentRows = AttachmentListBound.transcriptRowCount(total: attachmentPaths.count)
+                let chips = Double(attachmentRows) * TranscriptRowMetrics.attachmentChipHeight
+                let childCount = (hasText ? 1 : 0) + attachmentRows
                 let gaps = childCount > 1 ? Double(childCount - 1) * TranscriptRowMetrics.attachmentChipSpacing : 0
                 return TranscriptRowMetrics.meRowPadding * 2 + bubbleHeight + chips + gaps
 

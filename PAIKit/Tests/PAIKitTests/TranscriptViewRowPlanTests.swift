@@ -346,6 +346,25 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         XCTAssertTrue(code.contains("Prevented continuation"))
     }
 
+    // MARK: - What a compaction restored
+
+    /// Thirty file lines are a list to skim, not a body to show whole: eight lines and a tap for
+    /// the rest, the same budget a tool result gets.
+    func testACompactContextRowShowsABudgetedPreviewAndRevealsTheRest() {
+        let body = (0..<30).map { "Referenced file notes/\($0).md" }.joined(separator: "\n")
+        let msg = message(type: .system, subtype: "compact_context", content: body)
+
+        let closed = TranscriptRowPlan.cards(for: msg, isRevealed: revealNone)[0]
+        let open = TranscriptRowPlan.cards(for: msg, isRevealed: revealAll)[0]
+
+        XCTAssertEqual(closed.preview.hiddenLines, 22)
+        guard case .codeBlock(_, let shown) = closed.blocks.first else { return XCTFail("expected a body") }
+        XCTAssertEqual(shown.split(separator: "\n").count, 8)
+        XCTAssertEqual(open.preview.hiddenLines, 0)
+        guard case .codeBlock(_, let all) = open.blocks.first else { return XCTFail("expected a body") }
+        XCTAssertEqual(all.split(separator: "\n").count, 30)
+    }
+
     // MARK: - Commands
 
     func testACommandWithNoArgumentsCarriesNoBlocksAndNilArgs() {

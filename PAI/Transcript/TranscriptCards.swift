@@ -327,6 +327,7 @@ struct TranscriptCardKindView: View {
         case "command", "command_output": return "terminal"
         case "image": return "photo"
         case "compact", "compact_summary": return "quote.opening"
+        case "compact_context": return "folder"
         case "hook": return "bolt"
         case "duration": return "info.circle"
         case "interrupt": return "stop.circle"
@@ -904,12 +905,7 @@ struct UserBubbleView: View {
                         bubbleFill(light: PaiPalette.primary500, dark: PaiPalette.primary600, colorScheme: colorScheme),
                         in: .ownBubbleTail)
             }
-            // Freddy's own file, already known to him — no confirmation before it is fetched,
-            // unlike a `pai-file:` marker (see `AssistantProseView`).
-            ForEach(attachmentPaths, id: \.self) { path in
-                SessionAttachmentChipView(
-                    sessionID: sessionID, apiClient: apiClient, path: path, requiresConfirmation: false)
-            }
+            SessionAttachmentListView(paths: attachmentPaths, sessionID: sessionID, apiClient: apiClient)
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.leading, TranscriptRowMetrics.bubbleGutter)
@@ -995,10 +991,7 @@ struct ResentBubbleView: View {
                     in: .ownBubbleTail
                 )
             }
-            ForEach(attachmentPaths, id: \.self) { path in
-                SessionAttachmentChipView(
-                    sessionID: sessionID, apiClient: apiClient, path: path, requiresConfirmation: false)
-            }
+            SessionAttachmentListView(paths: attachmentPaths, sessionID: sessionID, apiClient: apiClient)
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.leading, TranscriptRowMetrics.bubbleGutter)

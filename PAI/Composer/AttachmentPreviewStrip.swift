@@ -24,18 +24,66 @@ struct AttachmentPreviewStrip: View {
     let onRemove: (ComposerAttachment) -> Void
     var onRetry: (ComposerAttachment) -> Void = { _ in }
 
+    @State private var showingAll = false
+
+    private var hiddenCount: Int {
+        AttachmentListBound.hiddenCount(total: attachments.count, limit: AttachmentListBound.composerVisible)
+    }
+
+    /// Any number of files can be attached; the strip draws a few and a "+N" tile opens the rest,
+    /// so the composer stays one row tall however many there are.
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: 8) {
-                ForEach(attachments) { attachment in
-                    AttachmentChip(
-                        attachment: attachment, onRemove: { onRemove(attachment) },
-                        onRetry: { onRetry(attachment) })
+                ForEach(attachments.prefix(AttachmentListBound.composerVisible)) { attachment in
+                    chip(attachment)
+                }
+                if hiddenCount > 0 {
+                    Button {
+                        showingAll = true
+                    } label: {
+                        Text("+\(hiddenCount)")
+                            .font(PaiTypography.caption.font)
+                            .frame(width: 64, height: 64)
+                            .background(PaiPalette.Semantic.raisedSurface)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Show all \(attachments.count) attachments")
+                    .accessibilityIdentifier("attachment-more")
                 }
             }
             .padding(.horizontal, 4)
         }
         .accessibilityIdentifier("attachment-preview-strip")
+        .sheet(isPresented: $showingAll) {
+            NavigationStack {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 12, alignment: .top)], spacing: 16) {
+                        ForEach(attachments) { attachment in
+                            chip(attachment)
+                        }
+                    }
+                    .padding()
+                }
+                .navigationTitle("Attachments (\(attachments.count))")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { showingAll = false }
+                    }
+                }
+            }
+        }
+        // Removals can bring the count back inside the strip; the sheet has nothing left to list.
+        .onChange(of: hiddenCount) { _, hidden in
+            if hidden == 0 { showingAll = false }
+        }
+    }
+
+    private func chip(_ attachment: ComposerAttachment) -> some View {
+        AttachmentChip(
+            attachment: attachment, onRemove: { onRemove(attachment) }, onRetry: { onRetry(attachment) })
     }
 }
 
@@ -70,6 +118,8 @@ private struct StagedAttachmentChip: View {
 
     private var showsRetry: Bool { attachment.uploadState == .failed }
 
+    @State private var fullScreenTarget: FullScreenImageTarget?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             ZStack(alignment: .topTrailing) {
@@ -99,11 +149,21 @@ private struct StagedAttachmentChip: View {
     @ViewBuilder
     private var thumbnail: some View {
         if let previewImage = attachment.previewImage {
-            Image(uiImage: previewImage)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 64, height: 64)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+            // The shared full-screen viewer, shown the bytes that will be sent rather than the
+            // thumbnail's own decode.
+            Button {
+                fullScreenTarget = FullScreenImageTarget(
+                    image: UIImage(data: attachment.data) ?? previewImage, filename: attachment.filename)
+            } label: {
+                Image(uiImage: previewImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 64, height: 64)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("View \(attachment.filename)")
+            .fullScreenImageViewer($fullScreenTarget)
         } else {
             HStack(spacing: 4) {
                 Image(systemName: "doc")
