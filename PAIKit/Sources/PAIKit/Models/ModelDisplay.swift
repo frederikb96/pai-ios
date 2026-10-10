@@ -9,7 +9,7 @@ import Foundation
 /// and never sees a real wire id. Conflating the two would mean every current and future wire id
 /// needs its own alias entry there, for a table that exists for an unrelated purpose.
 public enum ModelDisplay {
-    /// Short labels for the ids the `claude-api` skill's model table names as current. Not
+    /// Short labels for the ids of the current models. Not
     /// exhaustive by design — `fallbackLabel` covers everything else — so a newly released model
     /// shows a readable, if slightly rougher, label rather than nothing at all.
     private static let knownLabels: [String: String] = [

@@ -1,5 +1,5 @@
 /// Which of the system's currently-delivered notification banners are safe to remove because the
-/// account has since marked them read — anywhere, not just on this device (row 24.7).
+/// account has since marked them read — anywhere, not just on this device.
 ///
 /// A pure function over already-fetched state (`NotificationCenterStore.readStatus(forIDs:)`),
 /// kept separate from that fetch so the decision itself — which ids to actually hand to

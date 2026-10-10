@@ -91,7 +91,7 @@ final class AppEnvironment {
         /// The wake-word sample recorder and the queue that gets its takes to the backend —
         /// app-wide so a queued upload keeps draining whatever screen is open.
         let wakeWordSamples: WakeWordSampleCaptureController
-        /// The notification feed (row 5.27) — app-wide rather than scoped to its own screen,
+        /// The notification feed — app-wide rather than scoped to its own screen,
         /// since the unread count drives a badge visible from the session list's toolbar and the
         /// springboard, neither of which is that screen.
         let notifications: NotificationCenterStore
@@ -324,8 +324,8 @@ final class AppEnvironment {
 
     /// Keeps the bell badge honest while the app is in front of the reader — the same
     /// self-healing role `getNotificationsSummary()`'s doc comment already describes, just driven
-    /// on a schedule rather than only at launch. There is no SSE stream on this client (row 5.27
-    /// needs no live centre, only a live count), so this poll is what stands in for one; APNs's
+    /// on a schedule rather than only at launch. There is no SSE stream on this client (the centre
+    /// needs no live feed, only a live count), so this poll is what stands in for one; APNs's
     /// own `aps.badge` already covers the count while the app is not running at all.
     func pollNotificationSummary() async {
         guard let connection else { return }

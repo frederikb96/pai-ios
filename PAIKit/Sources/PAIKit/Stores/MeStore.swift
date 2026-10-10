@@ -9,8 +9,7 @@ public protocol MeApiClient: Sendable {
 extension PaiApiClient: MeApiClient {}
 
 /// Who is signed in, fetched once and held for the life of the connection — every session-action
-/// route is owner-only (`MeResponse.role`; see `pai-cloud/.claude/CLAUDE.md` "There is one user,
-/// and every route is owner-only"), and nothing in the app called `getMe()` before this, so a
+/// route is owner-only (`MeResponse.role`), and nothing in the app called `getMe()` before this, so a
 /// non-owner credential saw every action and got a 403 back for each one instead of never seeing
 /// it at all.
 @MainActor

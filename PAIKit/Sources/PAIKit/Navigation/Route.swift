@@ -17,7 +17,7 @@ public enum Route: Hashable, Sendable {
     /// `messageID` is where to jump once the transcript is open, never part of the route's
     /// identity — two pushes of the same session that differ only in where they jump to are the
     /// same screen, so equality and hashing below ignore it deliberately. Nil for an ordinary
-    /// open; set when arrived at from a notification (row 5.28).
+    /// open; set when arrived at from a notification.
     case session(id: String, messageID: Int? = nil)
     case terminal(sessionID: String)
     case settings
@@ -51,7 +51,7 @@ public enum Route: Hashable, Sendable {
     /// to. Like `session`'s `messageID` it is where to land, not which screen this is, and is
     /// ignored by equality.
     case notePreview(id: String, heading: String? = nil)
-    /// The notification centre (row 5.27) — every alert transition and every agent push, as a
+    /// The notification centre — every alert transition and every agent push, as a
     /// persistent, filterable log.
     case notifications
     /// Past Recordings. Reached only from the fixture screenshot workflow, the same way
@@ -66,7 +66,7 @@ public enum Route: Hashable, Sendable {
     /// concern: nothing ever replaces one `.arcSpec` destination with a different one at the
     /// same stack depth.
     case arcSpec(specUuid: String)
-    /// The Apps section (row 87/88) — reached only from the fixture screenshot workflow, the
+    /// The Apps section — reached only from the fixture screenshot workflow, the
     /// same way `.createSession`/`.recordings` are: real usage presents `AppsHomeSheet` from the
     /// session list's toolbar button, never by pushing a route. `RootView` reproduces that sheet
     /// presentation here for the same reason those two do.

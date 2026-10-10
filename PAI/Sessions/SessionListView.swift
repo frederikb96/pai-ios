@@ -6,7 +6,7 @@ import SwiftUI
 /// The search field is `.searchable`, not a hand-rolled one — the platform gives scroll-to-reveal
 /// and a Cancel button for free, which is exactly what the web has to build by hand because it
 /// has no such control to reach for. A plain `List` already gives fixed-height rows the
-/// virtualization the `scrolling` skill asks for, so nothing beyond that is needed here.
+/// virtualization a long list needs, so nothing beyond that is needed here.
 struct SessionListView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(SessionListStore.self) private var sessions
@@ -24,7 +24,7 @@ struct SessionListView: View {
     @State private var actionsSheetTarget: SessionActionsTarget?
 
     /// How many rows before the end trigger the next page — a screen or so at this row's fixed
-    /// height, never at the last row itself, per the `scrolling` skill.
+    /// height, never at the last row itself.
     private static let loadMoreLeadRows = 8
 
     var body: some View {
@@ -37,7 +37,7 @@ struct SessionListView: View {
         // The system search field: scroll-to-reveal and a Cancel button for free, rather than
         // the hand-rolled field the web needs (it has no such control to reach for).
         .searchable(text: filterTextBinding, prompt: filterPlaceholder)
-        // Semantic search moved here from its own title-bar icon (row 89) — `.searchScopes` is
+        // Semantic search moved here from its own title-bar icon — `.searchScopes` is
         // the native element for exactly this shape (Mail's "Current Mailbox"/"All Mailboxes" is
         // the same primitive), and it appears only while the search field itself is active,
         // which a toolbar icon cannot do. A button living inside `.searchable`'s own field is not
@@ -394,8 +394,7 @@ private enum SessionSearchScope: Hashable {
 /// One row: state dot (or a working spinner in its place), warnings, title, when it last did
 /// anything, token count, and what it has running — matching what the web's row shows, denser
 /// than the row this replaces. 🚨 The spinner is sized to the dot it replaces so a working row is
-/// never taller than an idle one — see `SessionStateIndicator`'s doc comment and the `scrolling`
-/// skill.
+/// never taller than an idle one — see `SessionStateIndicator`'s doc comment.
 struct SessionRow: View {
     @Environment(SessionListStore.self) private var sessions
     @Environment(MachineStore.self) private var machines

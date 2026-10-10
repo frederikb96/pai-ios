@@ -43,7 +43,7 @@ end
 # repo — that costs an extra repository, a push credential and a passphrase to hold one file,
 # where a secret store already exists here.
 #
-# Mint or renew with the ios skill's setup-signing.sh; both expire two years from issue.
+# Both expire two years from issue.
 def asc_key
   app_store_connect_api_key(
     key_id:      ENV.fetch("ASC_KEY_ID"),

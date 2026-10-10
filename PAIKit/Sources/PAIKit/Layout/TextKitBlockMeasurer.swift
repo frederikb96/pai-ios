@@ -13,8 +13,7 @@
     /// `NSAttributedString` and asks TextKit how tall it lays out at a given width.
     ///
     /// Classic TextKit (`NSLayoutManager`/`NSTextContainer`/`NSTextStorage`), not TextKit 2 —
-    /// deliberately the boring, long-proven path rather than the newer one. Per the `scrolling`
-    /// skill's third law, the sturdy mechanism is worth more than the clever one exactly when
+    /// deliberately the boring, long-proven path rather than the newer one. The sturdy mechanism is worth more than the clever one exactly when
     /// nothing here can be proven by a compiler running this file (`Tooling/parse-swift.sh` checks
     /// only syntax); classic TextKit's `usedRect(for:)` has been the standard way to measure text
     /// without drawing it since iOS 7, with no compiler feedback in this session to catch a subtler

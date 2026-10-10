@@ -9,7 +9,7 @@ struct RootView: View {
     /// than continuously, since nothing after launch can change what already happened before it.
     @State private var pendingCrash: CrashRecord?
     @Environment(\.scenePhase) private var scenePhase
-    /// The account-wide notification stream (row 24.5) — live only while the phone is actually
+    /// The account-wide notification stream — live only while the phone is actually
     /// in front of the reader. Rebuilt on every foreground rather than reused across a
     /// background/foreground cycle: `PaiNotificationStreamClient.disconnect()` is a one-shot stop
     /// for the whole instance, matching `PaiSseClient`'s own lifetime, so "resume" here means a
@@ -35,7 +35,7 @@ struct RootView: View {
                 if let unread = environment.connection?.notifications.unread {
                     try? await UNUserNotificationCenter.current().setBadgeCount(unread)
                 }
-                // The delivered-notification half of the same self-heal (row 24.7): a banner
+                // The delivered-notification half of the same self-heal: a banner
                 // read from elsewhere while this app was not running yet has no earlier moment
                 // to have been cleared at.
                 if let connection = environment.connection {
@@ -159,7 +159,7 @@ struct RootView: View {
                     // still reporting notifications as on, which is the worst way to fail.
                     await PushRegistrar.registerForRemoteNotificationsIfAuthorized(store: connection.push)
                     await connection.push.registerWithBackendIfNeeded()
-                    // Where a silent read-sync push (row 24.5/24.7) actually reaches app code —
+                    // Where a silent read-sync push actually reaches app code —
                     // `PushRegistrar.application(_:didReceiveRemoteNotification:fetchCompletionHandler:)`
                     // has no environment of its own to read `connection.notifications` from, since
                     // it can fire before this screen — or any screen — is on top. Set once here,
@@ -173,7 +173,7 @@ struct RootView: View {
                         callbacks: callbacks
                     )
                 }
-                // Mirrors the unread count into the springboard badge (row 5.27 note 7) — the
+                // Mirrors the unread count into the springboard badge — the
                 // half `aps.badge` cannot cover, since that only ever updates the badge when a
                 // push actually arrives, not when a swipe or a mark-all-read changes the count
                 // from inside the running app.
@@ -343,7 +343,7 @@ struct RootView: View {
         OverlayDismissal.dismissAll { environment.router.replace(with: link.routes) }
     }
 
-    /// What a tapped push notification does once the app can act on it (row 5.28). The payload
+    /// What a tapped push notification does once the app can act on it. The payload
     /// only ever carries the notification's own id — the anchor is not resolved at send time —
     /// so this fetches it fresh and routes on what comes back, rather than trusting anything
     /// stale the push itself might have carried.
@@ -382,8 +382,8 @@ struct RootView: View {
 
     /// Builds and connects a fresh notification stream client, replacing whatever was there —
     /// safe to call more than once for the same reason `PushRegistrar.registerForRemoteNotificationsIfAuthorized`
-    /// is: idempotent bookkeeping rather than a user-facing action. `onRead` is where rows 24.5
-    /// and 24.7 actually meet — a read event both corrects the badge count immediately (through
+    /// is: idempotent bookkeeping rather than a user-facing action. `onRead` is where the live stream
+    /// and the silent push actually meet — a read event both corrects the badge count immediately (through
     /// `applyLiveUnread`, which `.onChange(of: connection.notifications.unread)` above already
     /// mirrors into the springboard) and sweeps whatever delivered banners that same change just
     /// caught up with. `onNotification` only ever updates the count: the row itself is not

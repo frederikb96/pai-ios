@@ -1,7 +1,7 @@
 import PAIKit
 import SwiftUI
 
-/// Enables, disables and reorders the note editor's formatting bar (spec row 6.5), reached from
+/// Enables, disables and reorders the note editor's formatting bar, reached from
 /// the note index's "…" menu, beside Containers and Sort by.
 ///
 /// A sheet with its own `NavigationStack` rather than a pushed route, the same shape

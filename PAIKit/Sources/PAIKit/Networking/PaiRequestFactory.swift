@@ -8,10 +8,9 @@ import Foundation
 
 /// Builds every request the app sends.
 ///
-/// pai-android constructs the `Authorization` header independently in three places — the REST
-/// client, the transcript stream and the terminal stream — each carrying its own copy of the URL
-/// scheme check. Three transports, three copies of the same two rules, and a change has to find
-/// all three. This type exists so there is one.
+/// Three transports — the REST client, the transcript stream and the terminal stream — share the
+/// `Authorization` header and the URL scheme check. They are built here once, so a change to either
+/// rule is made in one place.
 public struct PaiRequestFactory: Sendable {
 
     public enum ConfigurationError: Error, Equatable {

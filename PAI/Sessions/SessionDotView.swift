@@ -35,7 +35,7 @@ struct SessionDotView: View {
 }
 
 /// A working session shows a spinner in the dot's own slot rather than beside it — sized to
-/// match, so a working row is never taller than an idle one (the `scrolling` skill's constraint
+/// match, so a working row is never taller than an idle one (the constraint
 /// on this list, ported from the web's identical 8px rule).
 struct SessionStateIndicator: View {
     let dotState: SessionDotState

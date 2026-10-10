@@ -1468,7 +1468,7 @@ public struct PaiApiClient: Sendable {
     /// than folding onto the old one. `ids` is always sent explicitly and never empty — the
     /// backend reads an *absent* `ids` field as "clear every active alert", which is exactly the
     /// destructive default this app's one caller (the notification centre's per-row Clear
-    /// button, row 5.27) must never trigger by accident.
+    /// button) must never trigger by accident.
     @discardableResult
     public func clearAlerts(ids: [String]) async throws -> Int {
         struct Body: Encodable { let ids: [String] }

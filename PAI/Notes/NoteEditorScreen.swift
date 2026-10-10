@@ -264,7 +264,7 @@ struct NoteEditorScreen: View {
     ///
     /// Unconditional rather than gated on the local check: the field may still read invalid at
     /// the moment editing ends, and silently dropping the request there would be exactly the
-    /// silent failure spec row 17.3 asks not to happen. A rejection reverts the field to the
+    /// silent failure to avoid. A rejection reverts the field to the
     /// name actually on the note, so the reader is never left looking at a title that was not
     /// saved.
     private func commitTitle() async {

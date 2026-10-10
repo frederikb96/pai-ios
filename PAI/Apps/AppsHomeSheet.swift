@@ -7,7 +7,7 @@ import SwiftUI
 /// minus Memory and Notifications: PAI Cloud's Memory app is notes plus projects/phases/search,
 /// and this repo never built a separate Memory screen — the note index (`.notes`) is the one
 /// entry point this app already has for it, so it is what "memory, reachable under Apps" means
-/// here. Notifications keeps its own always-visible top bar icon (row 87's note): unlike the
+/// here. Notifications keeps its own always-visible top bar icon: unlike the
 /// three apps here, it carries a live unread badge that would otherwise be hidden a tap deeper.
 struct AppsHomeSheet: View {
     @Environment(AppEnvironment.self) private var environment

@@ -721,7 +721,7 @@ private enum CodeBlockScrollGeometry {
     /// A generous stand-in for "half the code block's own visible width". The real viewport width
     /// needs a `GeometryReader`, which would then also govern the view's own measurement — and
     /// this package's row heights are computed independently of what any view reports (the
-    /// `scrolling` skill's central rule), so nothing here may become a second source of that
+    /// no-jump rule), so nothing here may become a second source of that
     /// number. Erring wide only ever undershoots the centring; `ScrollView` already clamps past
     /// the text's end.
     static let viewportEstimate: Double = 320

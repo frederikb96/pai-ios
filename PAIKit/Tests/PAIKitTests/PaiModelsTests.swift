@@ -104,7 +104,7 @@ final class PaiModelsTests: XCTestCase {
 
     // MARK: - PaiJSONValue number precision (Decimal, not Double)
 
-    /// The bug row 37 named: an id or count above 2^53 loses precision the moment it passes
+    /// The bug: an id or count above 2^53 loses precision the moment it passes
     /// through `Double`. `Decimal` decodes straight from the JSON literal's text, so this must
     /// survive exactly rather than landing on the nearest representable `Double`.
     func testToolCallInputPreservesIntegerPrecisionBeyondDoubleSafeRange() throws {

@@ -1,8 +1,8 @@
 import Foundation
 import Observation
 
-/// Which segment of the feed is showing — mirrors the web's three-segment control (row 5.27's
-/// verification: "the same filters and unread semantics as the web").
+/// Which segment of the feed is showing — mirrors the web's three-segment control (the same filters and unread
+/// semantics as the web).
 public enum NotificationFilter: String, CaseIterable, Sendable, Equatable {
     case all
     case agent
@@ -47,7 +47,7 @@ public protocol NotificationCenterApiClient: Sendable {
 
 extension PaiApiClient: NotificationCenterApiClient {}
 
-/// The notification centre's list, paging and unread state (row 5.27).
+/// The notification centre's list, paging and unread state.
 ///
 /// Owns exactly what the screen shows and the rules for changing it, per this package's own
 /// layering — the view stays thin enough to need no unit test of its own. Paging is a plain
@@ -85,7 +85,7 @@ public final class NotificationCenterStore {
     /// The first page, replacing whatever was loaded. Call this on first entry and when the
     /// filter changes — never on every re-entry to the screen, which is what would discard a
     /// reader's scroll position; see `NotificationCenterScreen`'s own loaded-once guard, which
-    /// mirrors `SessionListView`'s for the same reason (row 5.27 note 6).
+    /// mirrors `SessionListView`'s for the same reason.
     public func loadInitialNotifications() async {
         loadError = nil
         do {

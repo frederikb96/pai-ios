@@ -112,7 +112,7 @@ struct PAIApp: App {
                 }
             }
 
-            // Spec row 16.2's own ask, answered as a number rather than a guess: how long a
+            // Answered as a number rather than a guess: how long a
             // debounced repaint takes on this note, with the gutter and hanging indent on versus
             // off — the exact cost the toggle can add to every keystroke's catch-up pass.
             router.register("POST", "/markdown/note-editor-timing") { request in
@@ -231,7 +231,7 @@ struct PAIApp: App {
             let renderedHeight: Double
             /// `measuredHeight - renderedHeight`. Zero is the only value that means the row this
             /// content sits in is neither too short (content clips or overdraws) nor wastefully
-            /// tall — see the `scrolling` skill's central rule.
+            /// tall — see the no-jump rule.
             let delta: Double
         }
 
@@ -278,7 +278,7 @@ struct PAIApp: App {
             let width: Double
             /// A debounced repaint with the gutter and hanging indent off — today's baseline.
             let repaintMsBaseline: Double
-            /// The same repaint with both on — what spec row 16.2 asks to see measured rather
+            /// The same repaint with both on — measured rather
             /// than assumed.
             let repaintMsWithLineNumbers: Double
             /// The gutter's own added geometry read, on top of the repaint above — piggybacked

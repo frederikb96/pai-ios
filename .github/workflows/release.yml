@@ -1,9 +1,8 @@
 name: Release
 
-# Tag-triggered like pai-android, PLUS workflow_dispatch — pai-android has only the tag trigger,
-# and because a pushed tag cannot be reused a failed release build there produced a tag literally
-# named "v0.15.0-fix". Being able to exercise this workflow without minting throwaway tags is
-# worth the extra trigger, and keeps the tag list honest.
+# Tag-triggered, plus workflow_dispatch: a pushed tag cannot be reused, so exercising this
+# workflow must not require minting throwaway tags such as "v0.15.0-fix". Dispatching keeps the
+# tag list honest.
 on:
   push:
     tags: ['v*.*.*']
@@ -58,10 +57,9 @@ jobs:
         with:
           bundler-cache: true
 
-      # The git tag is the single source of truth for the marketing version. pai-android keeps
-      # versionName/versionCode hand-edited in build.gradle.kts and uses the tag only to name the
-      # artifact — 75 tags meant 75 manual bumps of a monotonic counter, with nothing verifying
-      # the two agreed. run_number gives a monotonic build number for free.
+      # The git tag is the single source of truth for the marketing version; nothing is
+      # hand-bumped, so nothing can disagree with it. run_number gives a monotonic build number
+      # for free.
       - name: Resolve version
         id: version
         env:

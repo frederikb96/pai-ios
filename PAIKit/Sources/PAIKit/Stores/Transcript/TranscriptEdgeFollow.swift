@@ -33,8 +33,7 @@ public struct EdgeFollowLatch: Equatable, Sendable {
 
     /// A deliberate gesture away from the bottom — wheel scrolling up, a touch drag that moves
     /// content down, or a keyboard scroll toward the top. Un-pins immediately regardless of the
-    /// current position; classifying which raw gesture counts is the view's job (see
-    /// `references/native.md` in the `scrolling` skill).
+    /// current position; classifying which raw gesture counts is the view's job.
     public mutating func recordScrollAway() {
         isPinned = false
     }

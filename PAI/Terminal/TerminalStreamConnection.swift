@@ -4,9 +4,9 @@ import SwiftUI
 /// How `TerminalScreen` obtains a live stream connection for a session.
 ///
 /// `PaiTerminalStreamClient` needs a `PaiRequestFactory`, and `AppEnvironment` is the only place
-/// that is supposed to own one — the repo's own architecture note is explicit that a second
+/// that is supposed to own one — a second
 /// construction site is how the "one request factory owns base URL and auth" guarantee gets
-/// lost (`pai-ios/.claude/CLAUDE.md`, "Where the truth lives"). This view has no legitimate way
+/// lost. This view has no legitimate way
 /// to build a second `PaiRequestFactory` on its own, so the connection is injected through the
 /// environment instead of constructed here.
 private struct TerminalStreamClientFactoryKey: EnvironmentKey {

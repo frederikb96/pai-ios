@@ -6,8 +6,8 @@ import UIKit
 /// A session's transcript, and the composer under it.
 ///
 /// The list is a `UICollectionView` wrapped for SwiftUI (``TranscriptCollectionView``) — not a
-/// plain SwiftUI `List` — with row heights precomputed and cached, never self-sized. See the
-/// `scrolling` skill for why.
+/// plain SwiftUI `List` — with row heights precomputed and cached, never self-sized — what keeps the
+/// reader from being moved.
 struct SessionDetailView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(SessionListStore.self) private var sessions
@@ -46,7 +46,7 @@ struct SessionDetailView: View {
 
     let sessionID: String
     /// Where to jump once the transcript is open — set only when this screen was reached from a
-    /// notification (row 5.28). `nil` for an ordinary open, which restores the last-read position
+    /// notification. `nil` for an ordinary open, which restores the last-read position
     /// exactly as before.
     var initialJumpMessageID: Int? = nil
 
@@ -526,7 +526,7 @@ private struct TranscriptLoadState: View {
 ///
 /// Pinned to the top edge and deliberately outside the collection view itself: a supplementary
 /// header there would need its own height in the row-measurement/anchoring arithmetic the
-/// `scrolling` skill governs, and nothing here needs to move a single row to say what is
+/// anchoring rules govern, and nothing here needs to move a single row to say what is
 /// happening above the reader's current position. No retry action — `checkOlderPageTrigger()`
 /// already retries the next time the reader scrolls back near the top, which the error text says
 /// plainly rather than duplicating with a button that would do the same thing.
@@ -573,7 +573,7 @@ private struct TranscriptOlderPageState: View {
 ///
 /// An overlay on the transcript, not a sibling row in its `VStack` — a sibling resizes the
 /// collection view every time the banner appears or disappears, which is exactly the kind of
-/// content jump the `scrolling` skill prohibits outright. An overlay never changes the collection
+/// content jump a transcript must never show. An overlay never changes the collection
 /// view's own frame, so toggling this costs nothing there regardless of how the threshold below
 /// is tuned. `.background(.bar)` is load-bearing now that this floats over scrollable content
 /// rather than sitting in its own row with the page ground already behind it.
