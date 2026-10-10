@@ -12,7 +12,8 @@ name: Mac
 # One job, one checkout, one build. An earlier split into "compile it" and "run it" workflows
 # built the app twice on every push, for nothing.
 on:
-  pull_request:
+  # Called from `free-checks.yml` on pull requests that change the app; concurrency is set there.
+  workflow_call:
   workflow_dispatch:
     inputs:
       run_app:
@@ -24,10 +25,6 @@ on:
         type: choice
         options: [Debug, Release]
         default: Debug
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   build:
