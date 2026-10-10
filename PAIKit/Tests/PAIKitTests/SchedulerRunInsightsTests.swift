@@ -75,6 +75,18 @@ final class SchedulerRunInsightsTests: XCTestCase {
         XCTAssertTrue(store.shouldLoadMore(onAppearing: page[RunHistoryStore.pageSize - 1]))
     }
 
+    func testRoutineRowsAreHiddenUnlessAsked() async {
+        let hidden = FakeRunHistoryApi()
+        await RunHistoryStore(taskId: "t1", api: hidden).loadMore()
+        let shown = FakeRunHistoryApi()
+        await RunHistoryStore(taskId: "t1", api: shown, showRoutine: true).loadMore()
+
+        let hiddenCalls = await hidden.calls
+        let shownCalls = await shown.calls
+        XCTAssertEqual(hiddenCalls.first?.dispositions, ["fired", "error", "refused"])
+        XCTAssertNil(shownCalls.first?.dispositions)
+    }
+
     // MARK: display
 
     func testBerlinTimeFollowsDaylightSaving() async {

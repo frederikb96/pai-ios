@@ -123,7 +123,7 @@ actor FakeTaskEditorApi: TaskEditorApiClient {
 }
 
 actor FakeRunHistoryApi: RunHistoryApiClient {
-    private(set) var calls: [(taskId: String, limit: Int?, offset: Int?)] = []
+    private(set) var calls: [(taskId: String, limit: Int?, offset: Int?, dispositions: [String]?)] = []
     /// Pages returned in order, one per call — lets a test script exactly what each successive
     /// `loadMore()` sees without re-deriving offsets itself.
     var pages: [Result<SchedulerTaskRunsResponse, PaiError>] = []
@@ -132,8 +132,10 @@ actor FakeRunHistoryApi: RunHistoryApiClient {
         self.pages = pages
     }
 
-    func listSchedulerTaskRuns(taskId: String, limit: Int?, offset: Int?) async throws -> SchedulerTaskRunsResponse {
-        calls.append((taskId: taskId, limit: limit, offset: offset))
+    func listSchedulerTaskRuns(
+        taskId: String, limit: Int?, offset: Int?, dispositions: [String]?
+    ) async throws -> SchedulerTaskRunsResponse {
+        calls.append((taskId: taskId, limit: limit, offset: offset, dispositions: dispositions))
         guard !pages.isEmpty else { return SchedulerTaskRunsResponse(runs: [], nextOffset: nil) }
         switch pages.removeFirst() {
         case let .success(page): return page

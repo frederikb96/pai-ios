@@ -958,9 +958,12 @@ public struct PaiApiClient: Sendable {
     }
 
     public func listSchedulerTaskRuns(
-        taskId: String, limit: Int? = nil, offset: Int? = nil
+        taskId: String, limit: Int? = nil, offset: Int? = nil, dispositions: [String]? = nil
     ) async throws -> SchedulerTaskRunsResponse {
         var query: [URLQueryItem] = []
+        if let dispositions {
+            query.append(URLQueryItem(name: "dispositions", value: dispositions.joined(separator: ",")))
+        }
         if let limit { query.append(URLQueryItem(name: "limit", value: String(limit))) }
         if let offset { query.append(URLQueryItem(name: "offset", value: String(offset))) }
         return try await send(path: "/api/scheduler/tasks/\(taskId)/runs", query: query)
