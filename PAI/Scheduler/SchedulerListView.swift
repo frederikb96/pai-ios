@@ -21,6 +21,15 @@ struct SchedulerListView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
+                    environment.router.push(.schedulerInsights)
+                } label: {
+                    Image(systemName: "chart.bar")
+                }
+                .accessibilityLabel("Insights")
+                .accessibilityIdentifier("scheduler-insights")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
                     environment.router.push(.schedulerTask(id: nil))
                 } label: {
                     Image(systemName: "plus")

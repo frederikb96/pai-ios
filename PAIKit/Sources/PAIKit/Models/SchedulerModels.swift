@@ -566,12 +566,30 @@ public struct TaskRun: Codable, Sendable, Equatable, Identifiable {
     public let budgetWarned: Bool
     public let startedAtMs: Int
     public let finishedAtMs: Int?
+    /// The same two instants as UTC ISO strings with an offset; the app shows them in
+    /// Europe/Berlin.
+    public let startedAt: String?
+    public let finishedAt: String?
+    /// `nil` while the run is open.
+    public let durationMs: Int?
+    /// Context size at the run's first model call and at its last one before any compaction.
+    /// `nil` until the run has finished with a model call.
+    public let tokensStart: Int?
+    public let tokensEnd: Int?
+    /// The end reading.
+    public let tokensAbsolute: Int?
+    /// End minus start.
+    public let tokensRelative: Int?
+    /// Whether the run's session raised a notification while the run was open.
+    public let notified: Bool
 
     public init(
         id: String, taskId: String, trigger: TaskRunTrigger, disposition: TaskRunDisposition,
         reason: String?, sessionId: String?, gateStdout: String?, gateExitCode: Int?,
         gateSkipped: Bool = false, runtimeWarned: Bool, budgetWarned: Bool, startedAtMs: Int,
-        finishedAtMs: Int?
+        finishedAtMs: Int?, startedAt: String? = nil, finishedAt: String? = nil,
+        durationMs: Int? = nil, tokensStart: Int? = nil, tokensEnd: Int? = nil,
+        tokensAbsolute: Int? = nil, tokensRelative: Int? = nil, notified: Bool = false
     ) {
         self.id = id
         self.taskId = taskId
@@ -586,10 +604,25 @@ public struct TaskRun: Codable, Sendable, Equatable, Identifiable {
         self.budgetWarned = budgetWarned
         self.startedAtMs = startedAtMs
         self.finishedAtMs = finishedAtMs
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.durationMs = durationMs
+        self.tokensStart = tokensStart
+        self.tokensEnd = tokensEnd
+        self.tokensAbsolute = tokensAbsolute
+        self.tokensRelative = tokensRelative
+        self.notified = notified
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, trigger, disposition, reason
+        case id, trigger, disposition, reason, notified
+        case startedAt = "started_at"
+        case finishedAt = "finished_at"
+        case durationMs = "duration_ms"
+        case tokensStart = "tokens_start"
+        case tokensEnd = "tokens_end"
+        case tokensAbsolute = "tokens_absolute"
+        case tokensRelative = "tokens_relative"
         case taskId = "task_id"
         case runtimeWarned = "runtime_warned"
         case budgetWarned = "budget_warned"
@@ -1069,11 +1102,95 @@ public struct SchedulerTaskListResponse: Codable, Sendable, Equatable {
 /// `GET /api/scheduler/tasks/{id}/runs` — one page of a task's own fire history.
 public struct SchedulerTaskRunsResponse: Codable, Sendable, Equatable {
     public let runs: [TaskRun]
+    /// Every run the task has ever recorded — the history is never pruned.
+    public let total: Int?
     public let nextOffset: Int?
 
+    public init(runs: [TaskRun], total: Int? = nil, nextOffset: Int?) {
+        self.runs = runs
+        self.total = total
+        self.nextOffset = nextOffset
+    }
+
     enum CodingKeys: String, CodingKey {
-        case runs
+        case runs, total
         case nextOffset = "next_offset"
+    }
+}
+
+/// One task's share of `SchedulerInsights`' window.
+public struct SchedulerInsightsTask: Codable, Sendable, Equatable, Identifiable {
+    public let taskId: String
+    public let name: String
+    public let runs: Int
+    public let tokensAbsolute: Int
+    public let tokensRelative: Int
+    public let runSeconds: Double
+
+    public var id: String { taskId }
+
+    public init(
+        taskId: String, name: String, runs: Int, tokensAbsolute: Int, tokensRelative: Int,
+        runSeconds: Double
+    ) {
+        self.taskId = taskId
+        self.name = name
+        self.runs = runs
+        self.tokensAbsolute = tokensAbsolute
+        self.tokensRelative = tokensRelative
+        self.runSeconds = runSeconds
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name, runs
+        case taskId = "task_id"
+        case tokensAbsolute = "tokens_absolute"
+        case tokensRelative = "tokens_relative"
+        case runSeconds = "run_seconds"
+    }
+}
+
+/// `GET /api/scheduler/insights?days=N` — sums over the window's finished fired runs.
+public struct SchedulerInsights: Codable, Sendable, Equatable {
+    public struct Totals: Codable, Sendable, Equatable {
+        public let runs: Int
+        public let tokensAbsolute: Int
+        public let tokensRelative: Int
+        public let runSeconds: Double
+        public let notified: Int
+
+        public init(runs: Int, tokensAbsolute: Int, tokensRelative: Int, runSeconds: Double, notified: Int) {
+            self.runs = runs
+            self.tokensAbsolute = tokensAbsolute
+            self.tokensRelative = tokensRelative
+            self.runSeconds = runSeconds
+            self.notified = notified
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case runs, notified
+            case tokensAbsolute = "tokens_absolute"
+            case tokensRelative = "tokens_relative"
+            case runSeconds = "run_seconds"
+        }
+    }
+
+    public let days: Int
+    public let sinceMs: Int
+    public let totals: Totals
+    /// Most expensive first, by relative tokens.
+    public let tasks: [SchedulerInsightsTask]
+
+    public init(days: Int, sinceMs: Int, totals: Totals, tasks: [SchedulerInsightsTask]) {
+        self.days = days
+        self.sinceMs = sinceMs
+        self.totals = totals
+        self.tasks = tasks
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case days, totals, tasks
+        case sinceMs = "since_ms"
     }
 }
 
