@@ -2,7 +2,9 @@ import Foundation
 import Observation
 
 public protocol RunHistoryApiClient: Sendable {
-    func listSchedulerTaskRuns(taskId: String, limit: Int?, offset: Int?) async throws -> SchedulerTaskRunsResponse
+    func listSchedulerTaskRuns(
+        taskId: String, limit: Int?, offset: Int?, dispositions: [String]?
+    ) async throws -> SchedulerTaskRunsResponse
 }
 
 extension PaiApiClient: RunHistoryApiClient {}
@@ -24,7 +26,13 @@ public final class RunHistoryStore {
     public private(set) var total: Int?
     public private(set) var errorMessage: String?
 
+    /// What the list keeps while declined, skipped, deferred and queued rows are hidden: a
+    /// frequent gate writes those by the hundred a day and they are the scheduler working as
+    /// designed. A fire that ran, or went wrong, always shows.
+    public static let noteworthyDispositions = ["fired", "error", "refused"]
+
     private let taskId: String
+    private let showRoutine: Bool
     private let api: RunHistoryApiClient
     private var offset = 0
 
@@ -35,8 +43,9 @@ public final class RunHistoryStore {
         return index >= runs.count - Self.loadAheadRows
     }
 
-    public init(taskId: String, api: RunHistoryApiClient) {
+    public init(taskId: String, api: RunHistoryApiClient, showRoutine: Bool = false) {
         self.taskId = taskId
+        self.showRoutine = showRoutine
         self.api = api
     }
 
@@ -45,7 +54,9 @@ public final class RunHistoryStore {
         isLoading = true
         defer { isLoading = false }
         do {
-            let page = try await api.listSchedulerTaskRuns(taskId: taskId, limit: Self.pageSize, offset: offset)
+            let page = try await api.listSchedulerTaskRuns(
+                taskId: taskId, limit: Self.pageSize, offset: offset,
+                dispositions: showRoutine ? nil : Self.noteworthyDispositions)
             runs.append(contentsOf: page.runs)
             offset += page.runs.count
             total = page.total

@@ -499,9 +499,13 @@ private struct RunHistorySection: View {
 
     @Environment(AppEnvironment.self) private var environment
     @State private var store: RunHistoryStore?
+    /// Declined, skipped and deferred rows stay hidden until asked for.
+    @State private var showRoutine = false
 
     var body: some View {
         Group {
+            Toggle("Show declined, skipped and deferred", isOn: $showRoutine)
+                .font(PaiTypography.caption.font)
             if let store {
                 ForEach(store.runs) { run in
                     RunRow(run: run)
@@ -525,9 +529,9 @@ private struct RunHistorySection: View {
                 ProgressView()
             }
         }
-        .task {
-            guard store == nil, let client = environment.connection?.apiClient else { return }
-            let newStore = RunHistoryStore(taskId: taskId, api: client)
+        .task(id: showRoutine) {
+            guard let client = environment.connection?.apiClient else { return }
+            let newStore = RunHistoryStore(taskId: taskId, api: client, showRoutine: showRoutine)
             store = newStore
             await newStore.loadMore()
         }
