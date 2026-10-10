@@ -70,7 +70,8 @@ final class SchedulerRunInsightsTests: XCTestCase {
         await store.loadMore()
 
         XCTAssertFalse(store.shouldLoadMore(onAppearing: page[0]))
-        XCTAssertFalse(store.shouldLoadMore(onAppearing: page[RunHistoryStore.pageSize - RunHistoryStore.loadAheadRows - 1]))
+        XCTAssertFalse(
+            store.shouldLoadMore(onAppearing: page[RunHistoryStore.pageSize - RunHistoryStore.loadAheadRows - 1]))
         XCTAssertTrue(store.shouldLoadMore(onAppearing: page[RunHistoryStore.pageSize - RunHistoryStore.loadAheadRows]))
         XCTAssertTrue(store.shouldLoadMore(onAppearing: page[RunHistoryStore.pageSize - 1]))
     }

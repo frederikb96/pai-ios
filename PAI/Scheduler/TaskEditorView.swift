@@ -610,9 +610,10 @@ private struct RunRow: View {
 
     private var timeSpanText: String {
         let start = SchedulerRunDisplay.formatBerlin(ms: run.startedAtMs)
-        let end = run.finishedAtMs.map {
-            SchedulerRunDisplay.formatBerlinEnd(ms: $0, sinceMs: run.startedAtMs)
-        } ?? "running"
+        let end =
+            run.finishedAtMs.map {
+                SchedulerRunDisplay.formatBerlinEnd(ms: $0, sinceMs: run.startedAtMs)
+            } ?? "running"
         return "\(start) → \(end)"
     }
 
