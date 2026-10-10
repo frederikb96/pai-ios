@@ -25,7 +25,7 @@ public enum MarkdownSourceStyle: Equatable, Sendable, Hashable {
     case quote
     case listMarker
     case thematicBreak
-    /// The YAML block at the top of a note. Freddy's own vault metadata — styled as a unit and
+    /// The YAML block at the top of a note. The user's own vault metadata — styled as a unit and
     /// never parsed, since anything that parsed it could rewrite it.
     case frontmatter
 }

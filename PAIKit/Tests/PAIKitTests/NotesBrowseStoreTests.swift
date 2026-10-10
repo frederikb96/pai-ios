@@ -40,7 +40,7 @@ final class NotesBrowseStoreTests: XCTestCase {
     }
 
     /// The reading-mode equivalent of `testSortOrderPersistsAcrossStoreInstances` — this is what
-    /// makes a note opened with no mode of its own (`Route.note`) fall back to what Freddy last
+    /// makes a note opened with no mode of its own (`Route.note`) fall back to what the user last
     /// chose rather than always resetting to edit.
     func testPreviewModePersistsAcrossStoreInstances() {
         let storage = SettingsInMemoryKeyValueStore()

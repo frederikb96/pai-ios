@@ -3,7 +3,7 @@ import UserNotifications
 
 /// The connection-health half of the design: turns every `FeedbackEvent` a take produces into an
 /// earcon and, through `FeedbackPolicy`, into a local notification — one per take, updated in
-/// place rather than stacking on a bad ride. This is what tells Freddy the moment anything flaky
+/// place rather than stacking on a bad ride. This is what tells the user the moment anything flaky
 /// happens, even when recovery is fully automatic and nothing else on screen would show it.
 ///
 /// Covers every reason a take can end or hit trouble — the tap, silence, a give-up, an

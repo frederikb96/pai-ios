@@ -688,7 +688,7 @@ final class PaiModelsTests: XCTestCase {
     /// Any role this build has never heard of still fails the decode rather than silently
     /// degrading — a wrong guess about who is looking at the app is the costly direction.
     func testMeResponseThrowsOnAnUnrecognizedRoleRatherThanGuessing() throws {
-        let json = Data(#"{"identity":"freddy","role":"admin","allowed_session_ids":[]}"#.utf8)
+        let json = Data(#"{"identity":"owner-demo","role":"admin","allowed_session_ids":[]}"#.utf8)
         XCTAssertThrowsError(try JSONDecoder().decode(MeResponse.self, from: json))
     }
 }

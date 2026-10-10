@@ -6,7 +6,7 @@ import SwiftUI
 /// levels, read from `CreateSessionStore.sessionModels` (`GET /api/session-models`) rather than
 /// a hand-mirrored copy of the vocabulary.
 ///
-/// A model is always known here even before Freddy picks one: `createSession.resolvedModel`
+/// A model is always known here even before the user picks one: `createSession.resolvedModel`
 /// already falls back to the fast sandbox's own default (`createSession.fastDefaultModel`/
 /// `fastDefaultThinking`, read from `GET /api/session-models`) on a fast session, so the row
 /// that default resolves to reads as selected without either flag ever being written until he

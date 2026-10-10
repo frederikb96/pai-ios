@@ -4,7 +4,7 @@ import UIKit
 import UniformTypeIdentifiers
 
 /// Whether a staged attachment has reached the draft on the server yet — uploaded the instant it
-/// is picked, per Freddy's own ask (compose one message from several devices, adding images from
+/// is picked, so one message can be composed from several devices (adding images from
 /// a laptop while dictating on a phone), rather than only at send. `.uploaded` is what lets
 /// `postMessage` skip re-sending the bytes: the backend's own `_claim_draft_attachments` already
 /// moves anything staged under this draft key onto the session at send time.
@@ -19,7 +19,7 @@ enum AttachmentUploadState: Equatable {
 /// A photo, file or temporary note staged in the composer, not yet sent. The bytes themselves
 /// stay local until sent (or until the background upload below succeeds) — but unlike before,
 /// every staged attachment now uploads onto the draft immediately, which is what makes it visible
-/// on Freddy's other devices while he is still composing.
+/// on the user's other devices while they are still composing.
 struct StagedAttachment: Identifiable, Equatable {
     /// Settable so a restore from disk can keep the id it was stored under. Left to itself it
     /// would be given a fresh one, and the data file named after the old id would be treated as

@@ -30,7 +30,7 @@ struct ComposerActionMenu: View {
     /// mid-creation would abandon the message being written.
     var offersComputer: Bool = false
     /// Whether the live call is inside *this* session. The composer of the session a call is
-    /// actually in is where Freddy is most likely to be looking when he wants to get back to it,
+    /// actually in is where the user is most likely to be looking when they want to get back to it,
     /// so that entry says so rather than reading like an offer to start a second call.
     var isOnTheCall: Bool = false
     /// Whether a call is running at all, anywhere.
@@ -42,7 +42,7 @@ struct ComposerActionMenu: View {
     var onCallThisSession: () -> Void = {}
     /// False for an ultra-fast session or draft, which has no attachment path on the pod worker
     /// — the backend 400s a file on one regardless, but hiding the entries here is what keeps
-    /// Freddy from discovering that by trying.
+    /// the user from discovering that by trying.
     var offersAttachments: Bool = true
     var onPastRecordings: () -> Void
     var onPastMessages: () -> Void

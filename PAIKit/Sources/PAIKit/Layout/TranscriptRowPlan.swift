@@ -22,7 +22,7 @@ public struct TranscriptCardPlan: Equatable, Sendable {
         /// Claude's own reply. Not a bubble — a bubble around the longest text on screen is a
         /// container that only narrows it.
         case prose
-        /// Something a person said: Freddy's own message, a relayed prompt, a command he invoked.
+        /// Something a person said: the user's own message, a relayed prompt, a command they invoked.
         case me
     }
 
@@ -85,12 +85,12 @@ public struct TranscriptCardPlan: Equatable, Sendable {
         case notifyReply(title: String, body: String)
         case userBubble(text: String, attachmentPaths: [String])
         /// A genuine prompt relayed from another session (`subtype: "pai_message"`), drawn like
-        /// Freddy's own bubble but coloured differently so a reader can tell it was not him.
+        /// the user's own bubble but coloured differently so a reader can tell it was not them.
         /// `group` is only ever set when `origin == "agent"` — the view needs nothing else to
         /// decide whether to show the "sender · group" pill.
         case relayedBubble(text: String, sender: String, group: String?)
-        /// The second copy of a prompt Freddy sent, resent after an interrupt cut off the first
-        /// (`subtype: "resent"`) — his own bubble, subdued, with a small label above it saying
+        /// The second copy of a prompt the user sent, resent after an interrupt cut off the first
+        /// (`subtype: "resent"`) — the user's own bubble, subdued, with a small label above it saying
         /// why it is there.
         case resentUserBubble(text: String, attachmentPaths: [String])
         /// `filePaths` is every `pai-file:` marker in `text` — `text` itself is the message's

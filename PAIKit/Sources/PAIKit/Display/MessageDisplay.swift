@@ -588,7 +588,7 @@ public enum MessageDisplay {
 
     /// A plain user message whose content is actually a raw `<local-command-…>` wrapper, from a
     /// window where the parser did not classify that tag. Permanent for whatever landed then, so
-    /// a caller must reroute it rather than draw it as Freddy's own bubble.
+    /// a caller must reroute it rather than draw it as the user's own bubble.
     ///
     /// Matched by scanning rather than by regex: the original's pattern closes on a backreference
     /// to its own opening tag, and expressing that faithfully matters more than expressing it

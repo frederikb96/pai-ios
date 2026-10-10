@@ -190,7 +190,7 @@ extension Message {
     ///
     /// A synthesised `Message` rather than a row kind of its own, so it flows through the single
     /// measured layout every other row uses: `TranscriptRowPlan` routes it to a `.userBubble`
-    /// exactly like something Freddy typed, and it gets a real measured height rather than an
+    /// exactly like something the user typed, and it gets a real measured height rather than an
     /// estimate. The no-jump rule is what makes that the only acceptable
     /// shape here — a bubble whose height nobody measured moves every row above it when the send
     /// lands and it is replaced by the real entry.

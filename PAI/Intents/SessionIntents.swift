@@ -4,7 +4,7 @@ import PAIKit
 
 /// Writes a launch choice into the shared `DraftKey.newSession` draft ahead of navigating there —
 /// the same draft `CreateSessionView` restores from on appear, so a shortcut arrives exactly as
-/// if Freddy had tapped the picker himself, and text he was already composing survives it.
+/// if the user had tapped the picker themselves, and text they were already composing survives it.
 ///
 /// Reads through a standalone client rather than `AppEnvironment.Connection`, the same way
 /// ``NoteEntityQuery`` does: an intent can run while the app is not in the foreground yet, before
@@ -73,7 +73,7 @@ struct NewHomeSessionIntent: AppIntent {
     }
 }
 
-/// Start a new session of a type Freddy configures once, at shortcut-creation time — Shortcuts
+/// Start a new session of a type the user configures once, at shortcut-creation time — Shortcuts
 /// asks ``SessionTypeEntityQuery`` for the list and remembers the id chosen, the same shape
 /// ``OpenNoteIntent`` uses for a single note.
 struct NewCustomSessionIntent: AppIntent {

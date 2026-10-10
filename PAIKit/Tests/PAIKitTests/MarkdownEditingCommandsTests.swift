@@ -392,7 +392,7 @@ final class MarkdownListButtonTests: XCTestCase {
         XCTAssertEqual(press(.checkbox, "- [ ] buy", 8).selection, NSRange(location: 8, length: 0))
     }
 
-    /// The button pair Freddy asked for: task -> bullet -> plain.
+    /// The button pair cycles task -> bullet -> plain.
     func testCheckboxThenBulletThenBulletEndsUpPlain() {
         let task = checkbox("note", 2)
         let asBullet = bullet(task, 4)

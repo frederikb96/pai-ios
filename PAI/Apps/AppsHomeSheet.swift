@@ -60,7 +60,7 @@ struct AppsHomeSheet: View {
     // Push before dismissing, in both handlers below — the same order `CreateSessionView` uses
     // and documents on itself: a push onto the stack behind a sheet that is mid-dismissal is
     // dropped often enough to be a known iOS trap, and the failure is silent. Reversing the order
-    // would leave Freddy looking at the session list with the Apps sheet merely closed, having to
+    // would leave the user looking at the session list with the Apps sheet merely closed, having to
     // tap the destination a second time.
     private func openQuickActions() {
         environment.router.push(.quickActions)

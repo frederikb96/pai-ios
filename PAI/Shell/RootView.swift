@@ -268,7 +268,7 @@ struct RootView: View {
             // that one field.
             //
             // `startsInPreview` reads the stored preference rather than defaulting to edit: this
-            // route names no mode of its own, so the last mode Freddy actively chose (the
+            // route names no mode of its own, so the last mode the user actively chose (the
             // editor's own toggle — see `NotesBrowseStore.previewMode`) decides, the same way the
             // web falls back to its stored preference whenever the address says nothing.
             NoteEditorScreen(noteID: id, startsInPreview: environment.connection?.notesBrowse.previewMode ?? false)
@@ -453,7 +453,7 @@ struct RootView: View {
 
 /// What `.createSession` pushes to — reproduces the real presentation (a sheet from the session
 /// list) rather than pushing `CreateSessionView` directly, so the fixture screenshot workflow
-/// photographs the exact thing Freddy sees rather than that view's own `NavigationStack` nested
+/// photographs the exact thing the user sees rather than that view's own `NavigationStack` nested
 /// inside this one with different, misleading chrome. See `Route.createSession`'s doc comment.
 ///
 /// A home-screen shortcut reaches this same route (`DeepLink.createSession`), where — unlike the

@@ -1,8 +1,8 @@
 import PAIKit
 import SwiftUI
 
-/// One attachment reference inside a transcript row — a file Freddy attached when composing, or
-/// a `pai-file:` marker an agent wrote to show him one of its own. Loads on tap, never on
+/// One attachment reference inside a transcript row — a file the user attached when composing, or
+/// a `pai-file:` marker an agent wrote to show the user one of its own. Loads on tap, never on
 /// appearance: a session transcript can carry far more of these than a note ever does (see
 /// ``NoteAttachmentEmbedView``'s own doc comment on that asymmetry), so scrolling past one must
 /// cost nothing.
@@ -11,15 +11,15 @@ import SwiftUI
 /// the transcript's row height is precomputed before this cell is ever laid out (see
 /// `docs/ARCHITECTURE.md` "Reading the transcript"), so nothing here
 /// may grow to show a loaded image inline. An image goes straight to
-/// ``FullScreenImageViewer`` instead once it loads, which Freddy asked for explicitly as the
-/// right call on iOS when inline expansion would cost a row a height nobody measured.
+/// ``FullScreenImageViewer`` instead once it loads, which is the right call on iOS when
+/// inline expansion would cost a row a height nobody measured.
 struct SessionAttachmentChipView: View {
     let sessionID: String
     let apiClient: PaiApiClient
     let path: String
     /// True for a `pai-file:` marker the agent offered from its own machine — a non-image needs
-    /// an explicit confirmation before anything is fetched. False for a file Freddy attached
-    /// himself when composing, which he already knows about and chose to send.
+    /// an explicit confirmation before anything is fetched. False for a file the user attached
+    /// when composing, which they already know about and chose to send.
     let requiresConfirmation: Bool
 
     private enum LoadState {

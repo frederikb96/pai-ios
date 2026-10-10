@@ -266,8 +266,8 @@ enum ArcCardID: Hashable {
 /// parallel", one card at a time doesn't need to repeat it. A connector only ever draws between
 /// two things that are actually there: the TOP one only when `segment.marker` is set (so
 /// segment 0 gets none above it), the BOTTOM one only when `isLast` is false (so the final
-/// segment gets none dangling below it into nothing). Freddy's own report of "odd lines coming
-/// from the top" was exactly the unconditional version of this on the web — the per-card stubs
+/// segment gets none dangling below it into nothing). The "odd lines coming
+/// from the top" symptom was exactly the unconditional version of this on the web — the per-card stubs
 /// had the identical bug one level down, which is the other half of why they're gone rather than
 /// merely re-gated.
 private struct ArcFlowSegmentView: View {

@@ -38,7 +38,7 @@ public enum DraftAttachmentDisplay {
     /// claimed the row (or it was removed there), so the local chip is a leftover.
     ///
     /// An upload that landed after `requestedAt` is kept: a response produced before it cannot
-    /// know the row, and reading that absence as "gone" would drop a file Freddy just added.
+    /// know the row, and reading that absence as "gone" would drop a file the user just added.
     public static func vanishedUploads(
         _ staged: [StagedUpload], serverIds: Set<String>, requestedAt: Date
     ) -> [UUID] {

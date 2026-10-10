@@ -46,7 +46,7 @@ public final class CreateSessionStore {
 
     /// Session types built into the pod rather than the ConfigMap (see
     /// `backend/src/pai_cloud/config.py`'s `WEBSEARCH_SESSION_TYPE_ID`) sink under Custom rather
-    /// than sitting at the top level next to home and fast — Freddy's own wording: the top-level
+    /// than sitting at the top level next to home and fast, so the top-level
     /// list stays short as environments are added, and Custom's directory browser gets a section
     /// below Favourites listing these instead. A deny list rather than an allow list, mirroring
     /// the web's own `sessionTypes.ts` exactly: every ConfigMap-defined type (not just `home`)

@@ -92,7 +92,7 @@ public struct MessageBoundary: Codable, Sendable, Equatable {
     public enum Kind: String, Codable, Sendable, Equatable {
         /// The offline command engine heard "stop".
         case stop
-        /// Recovery closed a stretch on Freddy's behalf after a call-mode take crashed mid-take;
+        /// Recovery closed a stretch on the user's behalf after a call-mode take crashed mid-take;
         /// never sent automatically.
         case crashCut
         /// Reserved for a boundary this design does not yet create automatically.
@@ -112,7 +112,7 @@ public struct MessageBoundary: Codable, Sendable, Equatable {
 
 /// The diagnostic record of one pipeline occurrence — a drop, a reconnect, a gap opening, a
 /// backfill finishing. Kept for the recordings report JSON and for reconstructing a bad ride
-/// without asking Freddy to remember it.
+/// without asking the user to remember it.
 public struct PipelineEvent: Codable, Sendable, Equatable {
     public enum Kind: String, Codable, Sendable, Equatable {
         case drop, reconnect, mintFailed, serverNotice, gapOpened, backfillDone, paused, resumed

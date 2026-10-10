@@ -40,7 +40,7 @@ struct SupervisionView: View {
 
     /// One list combining whatever applies: a finished or active supervision's own read-only
     /// summary (state, configuration, verdict history, conversation link — shown for `.ended`
-    /// too, not just while active, so the record Freddy would go looking for after a run stays
+    /// too, not just while active, so the record the user would go looking for after a run stays
     /// reachable) plus the attach form, which only ever offers a NEW attach and renders whenever
     /// there is nothing currently watching (`needsAttach`) — never both branches collapsed into
     /// one, which is what previously made `.ended` show only the form and lose the history.

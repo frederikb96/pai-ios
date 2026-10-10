@@ -11,7 +11,7 @@ import PAIKit
 /// backend does.
 ///
 /// One instance for the app's life, exactly like `VoiceRecorderController` and for the same
-/// reason: the microphone is a single exclusive resource, and a call is a thing Freddy starts
+/// reason: the microphone is a single exclusive resource, and a call is a thing the user starts
 /// and then stops looking at. `ComputerCallView` is a window onto this, never its owner — so
 /// backing out of that screen to read a session or a note leaves the call running, which is the
 /// whole point of it. What ends a call is the End control, a sign-out, or the backend closing

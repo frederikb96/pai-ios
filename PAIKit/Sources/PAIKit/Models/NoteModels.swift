@@ -55,7 +55,7 @@ public struct NoteSummary: Codable, Sendable, Equatable, Identifiable, Hashable 
 }
 
 /// One note with its content. `frontmatter` is the raw YAML block as stored, opaque to this app:
-/// it is Freddy's vault metadata, and a round trip through any parser rewrites it. Carry the
+/// it is the user's vault metadata, and a round trip through any parser rewrites it. Carry the
 /// string through a save unchanged unless the user is editing that block itself.
 public struct NoteDetail: Codable, Sendable, Equatable, Identifiable, Hashable {
     public let id: String
@@ -262,7 +262,7 @@ public struct NoteContainerPathCheck: Codable, Sendable, Equatable {
     public let ok: Bool
     /// The path after symlinks and `..` are resolved — never the one sent.
     public let resolvedPath: String?
-    /// Why not, in words meant for Freddy rather than for a log.
+    /// Why not, in words meant for the user rather than for a log.
     public let reason: String?
     /// Markdown files already there, so attaching is not a blind act.
     public let existingNotes: Int?

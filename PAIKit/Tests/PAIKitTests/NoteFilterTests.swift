@@ -67,7 +67,7 @@ final class NoteFilterTests: XCTestCase {
         XCTAssertTrue(noteHasAllTags(makeNote(name: "a", tags: []), selected: []))
     }
 
-    /// Freddy was explicit that multiple selected tags narrow by AND, never OR.
+    /// Multiple selected tags narrow by AND, never OR.
     func testSelectionRequiresEveryTagPresent() {
         let note = makeNote(name: "a", tags: ["work", "urgent"])
         XCTAssertTrue(noteHasAllTags(note, selected: ["work", "urgent"]))

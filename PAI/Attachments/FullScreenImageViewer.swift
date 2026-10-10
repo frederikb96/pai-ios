@@ -4,8 +4,8 @@ import SwiftUI
 /// it came from a session attachment, a `pai-file:` marker, or a note's own embed.
 ///
 /// Unlike the web's version, this carries a share button rather than relying on a long-press:
-/// Freddy asked for it explicitly, since the web's "the browser's own right-click already gives
-/// copy and save" has no equivalent gesture affordance on a touchscreen.
+/// The web's "the browser's own right-click already gives copy and save" has no equivalent
+/// gesture affordance on a touchscreen.
 struct FullScreenImageViewer: View {
     let image: UIImage
     let filename: String

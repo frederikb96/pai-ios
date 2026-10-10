@@ -42,7 +42,7 @@ extension PaiFixtures {
           },
           {
             "slug": "laptop",
-            "display_name": "Freddy's Laptop",
+            "display_name": "Demo Laptop",
             "online": false,
             "last_seen_at": "2026-08-29T02:03:44Z",
             "ingest_enabled": true,
@@ -69,7 +69,7 @@ extension PaiFixtures {
 
     // MARK: - Identity and health
 
-    /// `GET /api/me`. `identity` is a synthetic value, not Freddy's real one — nothing about
+    /// `GET /api/me`. `identity` is a synthetic value, not a real one — nothing about
     /// this corpus should be able to leak a real address into a screenshot or a committed file.
     public static let me: String = #"""
         { "identity": "owner@pai.local", "role": "owner", "allowed_session_ids": ["305df4d3-1554-4fc3-be04-39a354a9e619"] }
@@ -159,7 +159,7 @@ extension PaiFixtures {
         """#
 
     /// `blocked` on `vm`, a numbered menu with three options — the blocker case the app has to
-    /// let Freddy answer without opening the terminal.
+    /// let the user answer without opening the terminal.
     public static let sessionBlockedChoice: String = #"""
         {
           "id": "aed4e04d-5a7c-48ee-b3a0-2805ce4e08cc",
@@ -264,7 +264,7 @@ extension PaiFixtures {
     /// `blocked` on `vm` — `login_required`. Carries no options by design: pressing a key
     /// mid-sign-in would race the account-level Claude auth flow, so the UI only says what the
     /// session is waiting for. `display_state` is `"error"`, not `"blocked"` — a lapsed Claude
-    /// login is something Freddy has to go fix outside this session, matching
+    /// login is something the user has to go fix outside this session, matching
     /// `_derive_display_state`'s own precedence.
     public static let sessionBlockedLogin: String = #"""
         {

@@ -986,7 +986,7 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
     /// The default a brand-new, not-yet-saved task starts from — mirrors the web's own
     /// `defaultFields()`, including the 60-minute quiet period and the 60/80 usage gates: these
     /// must keep mirroring the server's own defaults (`ScheduledTask.sessionUsageGatePercent`/
-    /// `weeklyUsageGatePercent` — Freddy's own numbers), since a value that disagreed would
+    /// `weeklyUsageGatePercent` — the user's own numbers), since a value that disagreed would
     /// silently make a phone-made task behave differently from an API-made one at exactly the
     /// field that decides how often a task really runs.
     public static func fresh(timezone: String) -> TaskWriteFields {

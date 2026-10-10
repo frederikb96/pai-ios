@@ -71,7 +71,7 @@ public enum SessionListDomain {
     /// false, so it would stay true long after the terminal that set it is gone. A subagent is
     /// never drivable, whatever its state, and nor is a spoken Computer conversation — a record
     /// of something that already happened. A supervisor DOES have its own process, but is
-    /// deliberately never drivable either — Freddy reads its verdicts, he never types into it.
+    /// deliberately never drivable either — the user reads its verdicts and never types into it.
     ///
     /// A pod-resident kind (`sessionKindsPodResident`) is read like any other: the pod answers
     /// it, but its `state` is still open (`ready`) or `closed`, and resuming a closed one only
@@ -82,7 +82,7 @@ public enum SessionListDomain {
         return state != .closed
     }
 
-    /// Grey is a normal, frequent state — a session Freddy runs himself in a terminal, or one PAI
+    /// Grey is a normal, frequent state — a session the user runs themselves in a terminal, or one PAI
     /// closed when it went idle — not a fault.
     public static func isGrey(_ session: Session) -> Bool { !isDrivable(session) }
 

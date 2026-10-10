@@ -767,7 +767,7 @@ final class DraftStoreTests: XCTestCase {
     // MARK: - Surviving a relaunch
 
     /// A draft typed and never sent is still there after the app is relaunched — the one place a
-    /// version of Freddy's text would otherwise exist nowhere but in memory.
+    /// version of the user's text would otherwise exist nowhere but in memory.
     func testADraftSurvivesBeingConstructedAgainstTheSamePersistedStorage() async {
         let storage = SettingsInMemoryKeyValueStore()
         let fake = FakeDraftsFetching()

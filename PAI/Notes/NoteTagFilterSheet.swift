@@ -2,7 +2,7 @@ import PAIKit
 import SwiftUI
 
 /// Multi-select tag filter, as a sheet rather than a `Menu` — a `Menu` dismisses on every tap,
-/// and Freddy wants to pick several tags without it closing between taps. `.searchable` finds one
+/// and the user wants to pick several tags without it closing between taps. `.searchable` finds one
 /// by name in a large vocabulary; AND semantics across the selection are `NoteFilter.swift`'s
 /// `noteHasAllTags`, unchanged by this view.
 struct NoteTagFilterSheet: View {

@@ -173,7 +173,7 @@ public enum MarkdownEditing {
 
     // MARK: Indent / outdent
 
-    /// A tab at the start of every line the selection touches — Freddy's own convention, matching
+    /// A tab at the start of every line the selection touches — the user's own convention, matching
     /// the web editor (`noteEditing.ts`'s `indentLines`).
     private static func indent(_ text: String, _ selection: NSRange) -> MarkdownEdit {
         let utf16 = Array(text.utf16)

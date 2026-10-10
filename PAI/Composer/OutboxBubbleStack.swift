@@ -3,7 +3,7 @@ import SwiftUI
 
 /// This device's own outbound sends for a session, shown outside the transcript's own measured
 /// `UICollectionView` — the mechanism that list guarantees for scrolling has no need to also carry
-/// a bubble that changes shape while Freddy is looking at it. `OutboxStore.entries` is the single
+/// a bubble that changes shape while the user is looking at it. `OutboxStore.entries` is the single
 /// source of truth: it exists before any request leaves and survives a reload, exactly the
 /// property `ChatView.tsx`'s own `OutboxBubble` was built for.
 ///
@@ -35,7 +35,7 @@ struct OutboxBubbleStack: View {
 }
 
 /// One outbox entry, drawn as itself rather than folded into an ordinary chat bubble — matching
-/// `OutboxBubble.tsx`'s own reasoning: a queued or failed send is something Freddy can act on, not
+/// `OutboxBubble.tsx`'s own reasoning: a queued or failed send is something the user can act on, not
 /// a bubble that silently sits there or disappears.
 ///
 /// No animation for `.sending`: a queued send can sit here for as long as the link is down, and a
@@ -106,7 +106,7 @@ private struct OutboxEntryBubbleView: View {
 
     /// Mirrors the web's own `putBackInComposer`: the destroyed text goes back in front of
     /// whatever is already there, and the entry is gone either way — there is nothing left to
-    /// retry once its words are back in Freddy's own hands.
+    /// retry once its words are back in the user's own hands.
     private func putBackInComposer() {
         let key = entry.draftKey
         let current = drafts.draft(for: key).text

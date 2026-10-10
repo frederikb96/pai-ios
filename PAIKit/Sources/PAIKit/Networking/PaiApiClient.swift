@@ -592,7 +592,7 @@ public struct PaiApiClient: Sendable {
         body.append("\r\n".data(using: .utf8)!)
     }
 
-    /// A filename Freddy picked (an attachment from the camera roll, say) can contain `"`, which
+    /// A filename the user picked (an attachment from the camera roll, say) can contain `"`, which
     /// would otherwise close the quoted `filename` parameter early and let the rest of the name
     /// spill into the header as unintended `Content-Disposition` parameters.
     private static func escapeContentDispositionValue(_ value: String) -> String {
@@ -721,7 +721,7 @@ public struct PaiApiClient: Sendable {
         )
     }
 
-    /// Persists where Freddy stopped reading this session's transcript — debounced client-side,
+    /// Persists where the user stopped reading this session's transcript — debounced client-side,
     /// see `TranscriptAnchor.readPositionPayload(for:)`. `messageId`/`offsetPx` are `nil`
     /// together when `atBottom` is true: the reader is caught up, nothing to pin a message at.
     @discardableResult
@@ -808,7 +808,7 @@ public struct PaiApiClient: Sendable {
         )
     }
 
-    /// Uploads one file onto a draft immediately — so it appears on every one of Freddy's devices
+    /// Uploads one file onto a draft immediately — so it appears on every one of the user's devices
     /// as soon as it is added, not only once the message is sent. `POST /api/messages` claims
     /// whatever a draft's own attachments are for that same key at send time on its own; this
     /// route is the only one a client ever needs to call to get a file there.
@@ -1412,7 +1412,7 @@ public struct PaiApiClient: Sendable {
         return String(header[group])
     }
 
-    /// Fetches an image Freddy attached, by its VM path. Never called just because a message
+    /// Fetches an image the user attached, by its VM path. Never called just because a message
     /// mounts — only on the viewer's own request, so scrolling past a session full of photos
     /// costs nothing.
     public func getAttachment(sessionId: String, path: String) async throws -> PaiAttachmentResult {

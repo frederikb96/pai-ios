@@ -225,7 +225,7 @@ final class PaiFixturesTests: XCTestCase {
 
     /// The two "permanent legacy row" shapes `messageDisplay.ts` still guards against — content
     /// nobody re-parses, so a renderer that stops handling either shows raw XML/wrapper tags as
-    /// if Freddy had typed them.
+    /// if the user had typed them.
     func testTranscriptCoversBothLegacyRowShapes() {
         let messages = jsonArray(PaiFixtures.transcript)
 

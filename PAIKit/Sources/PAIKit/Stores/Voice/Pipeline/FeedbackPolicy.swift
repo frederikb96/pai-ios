@@ -115,7 +115,7 @@ public struct FeedbackPolicy: Sendable, Equatable {
         case .captureGaveUp:
             return causeGated("captureGaveUp", event: event)
         case .recordingStartFailed:
-            // Never deduped: each is a separate recording Freddy believes is live.
+            // Never deduped: each is a separate recording the user believes is live.
             return FeedbackAction(
                 cue: .error,
                 notify: .init(disposition: .post, key: "recordingStartFailed", event: event, episodeDropCount: 0))
@@ -133,7 +133,7 @@ public struct FeedbackPolicy: Sendable, Equatable {
         case .interruptionResumed:
             return FeedbackAction(cue: .reconnect)
         case .callEndedUnexpectedly:
-            // Never deduped: each is a separate call Freddy believes is still running.
+            // Never deduped: each is a separate call the user believes is still running.
             return FeedbackAction(
                 cue: .error,
                 notify: .init(disposition: .post, key: "callEndedUnexpectedly", event: event, episodeDropCount: 0))

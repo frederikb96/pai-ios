@@ -9,9 +9,8 @@ import SwiftUI
 /// checkout. `agent` is threaded in from the caller rather than read from anywhere shared.
 ///
 /// Below the favourites it also lists whatever `environments` names — every session type beyond
-/// the top-level home/fast pair (`CreateSessionStore.environmentSessionTypes`), per Freddy's own
-/// wording: tapping Custom shows the directory favourites first, then a section for "other custom
-/// environments where I can click on." Picking one is not a directory choice at all, so it routes
+/// the top-level home/fast pair (`CreateSessionStore.environmentSessionTypes`): tapping Custom shows the directory favourites first, then a section for the other
+/// environments. Picking one is not a directory choice at all, so it routes
 /// through `onSelectEnvironment` rather than `onSelect`.
 struct DirectoryBrowserView: View {
     @Environment(\.dismiss) private var dismiss

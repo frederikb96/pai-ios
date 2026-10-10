@@ -271,7 +271,7 @@ final class AppEnvironment {
         await connection.me.refresh()
         await connection.staging.loadPersisted()
         await connection.notifications.refreshSummary()
-        // Synchronous and disk-only — no reason to make a take Freddy is trying to find wait on
+        // Synchronous and disk-only — no reason to make a take the user is trying to find wait on
         // anything above it. See `VoiceRecorderController.reconcileTakes()`.
         connection.voice.reconcileTakes()
         // Session polling belongs to the app, not to the list screen. Tied to a view it stops

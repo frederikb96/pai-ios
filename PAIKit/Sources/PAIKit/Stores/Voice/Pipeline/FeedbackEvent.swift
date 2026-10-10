@@ -32,9 +32,9 @@ public enum FeedbackEvent: Sendable, Equatable {
     case sendFailed
     /// A call ended for a reason other than a deliberate End tap — Computer hanging up, or a
     /// teardown neither channel asked for. Worth its own cue and notification: the whole point of
-    /// call mode is running hands-free with the phone out of sight, so an ending Freddy did not
+    /// call mode is running hands-free with the phone out of sight, so an ending the user did not
     /// just watch happen on screen needs telling about, especially when `hadUnsentText` — the
-    /// draft now holds words he never got to review before they stopped being collected.
+    /// draft now holds words the user never got to review before they stopped being collected.
     case callEndedUnexpectedly(hadUnsentText: Bool)
 }
 

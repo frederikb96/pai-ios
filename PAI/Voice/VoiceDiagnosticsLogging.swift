@@ -2,7 +2,7 @@ import Foundation
 import PAIKit
 
 /// The app's one `VoiceDiagnosticsLog`, backed by a sandboxed Application Support directory —
-/// present in every build including release, so a device test that goes wrong on a phone Freddy
+/// present in every build including release, so a device test that goes wrong on a phone the user
 /// is actually holding leaves something to read afterwards, not just a debugger nobody attached.
 enum AppVoiceDiagnosticsLog {
     static let shared: VoiceDiagnosticsLog = {

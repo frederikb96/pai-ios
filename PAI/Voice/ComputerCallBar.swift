@@ -8,7 +8,7 @@ import SwiftUI
 /// backend's own absolute ceiling hours later — so a screen backed out of leaves a live,
 /// metered microphone with nothing on screen saying so. The system's own in-call bar is the
 /// precedent, and the reason it is a permanent strip rather than a badge somewhere: it has to be
-/// impossible to miss from a screen Freddy navigated to for some entirely unrelated reason.
+/// impossible to miss from a screen the user navigated to for some entirely unrelated reason.
 ///
 /// Draws nothing at all while the voice screen itself is on top, where it would only repeat what
 /// is already filling the screen.

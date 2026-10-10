@@ -54,8 +54,8 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         XCTAssertEqual(filePaths, [])
     }
 
-    /// The marker line is never stripped from `text` — `filePaths` is purely additive, per
-    /// Freddy's own rule that a `pai-file:` chip renders below the message, not in place of it.
+    /// The marker line is never stripped from `text` — `filePaths` is purely additive, so
+    /// a `pai-file:` chip renders below the message, not in place of it.
     func testAssistantBubbleCarriesFilePathsAlongsideTheUnmodifiedText() {
         let content = "Here's the screenshot.\n\npai-file: /tmp/shot.png"
         let msg = message(type: .assistant, content: content)
@@ -227,8 +227,8 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         XCTAssertNil(group)
     }
 
-    /// The complaint this route exists to fix: a resend must render as Freddy's own bubble, never
-    /// a generic system card captioned with his own words.
+    /// The complaint this route exists to fix: a resend must render as the user's own bubble, never
+    /// a generic system card captioned with their own words.
     func testAResentMessageProducesAResentUserBubbleNotAGenericSystemCard() {
         let msg = message(type: .user, subtype: "resent", content: "let's try that again")
 
@@ -376,7 +376,7 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         XCTAssertTrue(cards[0].blocks.isEmpty)
     }
 
-    /// A command's own arguments are what Freddy typed, so they render unconditionally — this is
+    /// A command's own arguments are what the user typed, so they render unconditionally — this is
     /// the one bubble-shaped card that ignores the expand-preference closure entirely.
     func testACommandWithArgumentsShowsThemEvenWhenNothingIsExpanded() {
         let msg = message(type: .user, subtype: "command", content: "/loop\n\n5m /babysit-prs")

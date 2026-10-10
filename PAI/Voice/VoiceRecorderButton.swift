@@ -89,8 +89,8 @@ struct VoiceRecorderButton: View {
 /// progress — the same live feedback `MessageInput.tsx` renders beside the offline-agent notice.
 ///
 /// `.paused`/`.reconnecting` render their own label rather than folding into "Rec" — the entire
-/// point of a durable recording is that Freddy is not meant to be staring at this, but on the one
-/// occasion he does glance at it, "Rec" while the mic is actually off (paused) would be exactly
+/// point of a durable recording is that the user is not meant to be staring at this, but on the one
+/// occasion the user does glance at it, "Rec" while the mic is actually off (paused) would be exactly
 /// the false liveness claim the design this replaces was built to avoid.
 struct VoiceRecordingIndicator: View {
     let controller: VoiceRecorderController

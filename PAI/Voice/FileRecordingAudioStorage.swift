@@ -6,7 +6,7 @@ import PAIKit
 /// concept a Linux toolchain cannot exercise (`RecordingsStore.swift`'s own doc comment).
 ///
 /// One WAV file per (id, kind) under Application Support rather than Documents: these are app
-/// data Freddy is not meant to browse in the Files app, the same way the web keeps them in
+/// data the user is not meant to browse in the Files app, the same way the web keeps them in
 /// IndexedDB rather than a downloads folder.
 struct FileRecordingAudioStorage: RecordingAudioStorage, LedgerStorage, TakeAudioReader {
     private let directory: URL
@@ -22,7 +22,7 @@ struct FileRecordingAudioStorage: RecordingAudioStorage, LedgerStorage, TakeAudi
         // A deliberate answer, not an accidental default: unlike a note or a draft, a recording
         // has no server copy at all (`RecordingAudioLibrary`'s own doc comment — "past recordings
         // are strictly client-local"), so device backup is the only redundancy this data ever
-        // gets. For exactly Freddy's stated fear — losing an hour of dictation to a crash or a
+        // gets. For the worst case — losing an hour of dictation to a crash or a
         // dead phone — an iCloud/iTunes backup restoring these files is a second safety net, not
         // a leak to plug. Left included on purpose; see `StagedAttachmentStore` for the matching
         // decision on staged attachments, which answers the same question the same way.

@@ -256,7 +256,7 @@ struct ComposerBar: View {
             }
         }
         // Leaving mid-drain must not leave the wait running unattended behind a screen nobody is
-        // looking at — the same escape a tap or typing gives Freddy while he is still looking.
+        // looking at — the same escape a tap or typing gives the user while they are still looking.
         .onDisappear {
             guard isRecordingHere(voiceController), voiceController.state == .stopping else { return }
             Task { await voiceController.abandonCurrentTake() }
@@ -322,9 +322,9 @@ struct ComposerBar: View {
                 draftStore.setDraftText(key: sessionID, text: newValue)
                 // Only `ComposerTextEditor` reaches this setter — the live take writes its own
                 // words straight through `DraftStore` without going through this binding at all —
-                // so landing here IS Freddy typing, unambiguously. Typed straight into a Finishing
+                // so landing here IS the user typing, unambiguously. Typed straight into a Finishing
                 // composer means the same thing tapping the button now does: stop waiting on it,
-                // since the next arriving segment would otherwise heal right back over what he
+                // since the next arriving segment would otherwise heal right back over what the user
                 // just typed.
                 if isRecordingHere(voiceController), voiceController.state == .stopping {
                     Task { await voiceController.abandonCurrentTake() }
@@ -353,7 +353,7 @@ struct ComposerBar: View {
     }
 
     /// Whether the live call is inside this session — the third of the three ways back to the
-    /// voice screen, and the one that has to be visible from where Freddy already is. Read off
+    /// voice screen, and the one that has to be visible from where the user already is. Read off
     /// the call's own reported session id rather than anything this screen records, since the
     /// backend is what decides which session a bus is in.
     private var callIsInThisSession: Bool {
@@ -381,7 +381,7 @@ struct ComposerBar: View {
     }
 
     /// What tapping the mic in this session's composer does to whatever else is claiming the one
-    /// shared microphone — Freddy's "the new one wins, the old one stops cleanly" rule
+    /// shared microphone — the "new one wins, the old one stops cleanly" rule
     /// (`VoiceHandover.forMicrophoneTap`), never applicable while this session already owns the
     /// running take (`isRecordingHere` handles that tap as an ordinary stop instead).
     private func microphoneHandoverAction(_ controller: VoiceRecorderController) -> VoiceHandoverAction {
@@ -486,7 +486,7 @@ struct ComposerBar: View {
             // Cleared before the request even leaves — the whole point of the outbox is that the
             // bubble it drives (`OutboxBubbleStack`) exists, and survives a kill, before any
             // network call has started. Nothing here waits on the network: the queue delivers it,
-            // exactly once, whenever the link allows, and its own state is what Freddy sees from
+            // exactly once, whenever the link allows, and its own state is what the user sees from
             // here on — queued, sending, or failed with Retry/Put back in composer/Discard.
             draftStore.setDraftText(key: sessionID, text: "")
             staging.set([], for: sessionID)

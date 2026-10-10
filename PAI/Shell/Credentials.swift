@@ -44,7 +44,7 @@ struct KeychainTokenStore {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             // Explicit, not inherited. This is a work-owned device and a backend credential has no
-            // business on Freddy's other hardware.
+            // business on the user's other hardware.
             kSecAttrSynchronizable as String: false,
         ]
     }

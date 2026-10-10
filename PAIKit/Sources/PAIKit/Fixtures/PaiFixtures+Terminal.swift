@@ -17,7 +17,7 @@ extension PaiFixtures {
     /// missing entirely.
     public static let terminalFrames: [String] = [
         #"""
-        { "data": "\u001b[32mfreddy@vm\u001b[0m:\u001b[34m~/wt/pai-ios-fixtures\u001b[0m$ ", "live": true }
+        { "data": "\u001b[32muser@vm\u001b[0m:\u001b[34m~/wt/pai-ios-fixtures\u001b[0m$ ", "live": true }
         """#,
         #"""
         { "data": "swift test --package-path PAIKit --skip-build\r\n", "live": true }
@@ -29,7 +29,7 @@ extension PaiFixtures {
         { "data": "\u001b[33m--- scrolled back 40 lines ---\u001b[0m\r\nswift build --package-path PAIKit --build-tests\r\n", "live": false }
         """#,
         #"""
-        { "data": "\u001b[32mfreddy@vm\u001b[0m:\u001b[34m~/wt/pai-ios-fixtures\u001b[0m$ " }
+        { "data": "\u001b[32muser@vm\u001b[0m:\u001b[34m~/wt/pai-ios-fixtures\u001b[0m$ " }
         """#,
     ]
 }

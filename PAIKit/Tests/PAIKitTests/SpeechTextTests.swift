@@ -46,7 +46,7 @@ final class SpeechTextTests: XCTestCase {
         XCTAssertEqual(SpeechText.speakable(blocks), "Table, 2 rows, 3 columns.")
     }
 
-    /// Freddy's own instruction: nothing is ever silently dropped, code blocks and tables
+    /// Nothing is ever silently dropped, code blocks and tables
     /// included — they are announced instead of read, never skipped outright.
     func testNeitherACodeBlockNorATableProducesEmptyText() {
         let codeBlocks = MarkdownParser.parse("```\nsome code\n```")

@@ -225,7 +225,7 @@ struct SessionDetailView: View {
             )
         }
         .task {
-            // The account's plan usage — not per-session, but this header is where Freddy is
+            // The account's plan usage — not per-session, but this header is where the user is
             // already looking to decide whether to keep going or wait for the window to reset.
             guard let client = environment.connection?.apiClient else { return }
             while !Task.isCancelled {
@@ -425,7 +425,7 @@ struct SessionDetailView: View {
 /// `usage` being non-nil, so this only ever formats real data).
 ///
 /// All three earn their place for different reasons. The five-hour figure is the one that moves
-/// while Freddy works. The reset time is what decides whether to start something now or wait —
+/// while the user works. The reset time is what decides whether to start something now or wait —
 /// the web keeps it even on its narrowest layout for that reason. The seven-day figure moves
 /// slowly but is the one that ends a week early when it runs out, and a percentage with no window
 /// named beside it is ambiguous about which of the two it is.

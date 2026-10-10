@@ -38,7 +38,7 @@ struct ArcBlockDetailView: View {
                         }
                     }
                     .padding(.vertical, 4)
-                    // Freddy, from a screenshot: a leader's own verification and notes must both
+                    // A leader's own verification and notes must both
                     // be reachable, truncated up front and expandable on demand — nothing a row
                     // carries may be unreachable.
                     if let check = leader.v, !check.isEmpty {

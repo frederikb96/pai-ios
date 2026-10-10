@@ -8,7 +8,7 @@ import PAIKit
 /// `.voiceChat` mode is what enables the platform's own built-in acoustic echo cancellation —
 /// dictation's `.measurement` mode (`VoiceRecorderController.configureAudioSession`) deliberately
 /// disables exactly this kind of processing, which is right for a transcriber and wrong here,
-/// where the speaker and the microphone are both live at once. Freddy's own instruction against
+/// where the speaker and the microphone are both live at once. The rule against
 /// ANY app-level echo arbitration ("the transports Computer runs on all handle it in hardware",
 /// `pai_cloud.computer.engine`'s own doc comment) is read here as "use the platform's hardware/OS
 /// echo cancellation, never build a software one" — `.voiceChat` is the one lever this app's own

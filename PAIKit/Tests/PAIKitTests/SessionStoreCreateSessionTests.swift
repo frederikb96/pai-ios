@@ -134,7 +134,7 @@ final class SessionStoreCreateSessionTests: XCTestCase {
 
     // MARK: - primary vs. environment session types
 
-    /// Freddy's own wording: the top-level picker keeps only home/fast; everything else a
+    /// The top-level picker keeps only home/fast; everything else a
     /// machine offers surfaces inside the Custom directory browser instead.
     func testPrimaryTypesAreOnlyHomeAndFastEverythingElseIsAnEnvironment() async {
         let machineApi = FakeMachineDirectoryApi()
@@ -404,7 +404,7 @@ final class SessionStoreCreateSessionTests: XCTestCase {
 
     /// A fast session's own default — mid-sized model, low effort — must be what a picker shows
     /// pre-selected, without ever being written into `selectedModel`/`selectedThinking` unless
-    /// Freddy actually picks it: "a fast session created with no choice still runs as it does
+    /// the user actually picks it: "a fast session created with no choice still runs as it does
     /// today" depends on the launch flags staying omitted.
     func testResolvedModelAndThinkingFallBackToTheFastDefaultOnAFastSessionWithNoChoiceMade() {
         let store = CreateSessionStore(

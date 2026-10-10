@@ -73,7 +73,7 @@ public struct TagOption: Equatable, Sendable, Identifiable {
 
 /// The distinct tags across the given notes, commonest first. Folded case-insensitively — `#SVA`
 /// and `#sva` are one tag, as they are in Obsidian — keeping the first spelling seen so the list
-/// reads the way Freddy writes rather than flattened to lower case.
+/// reads the way the user writes rather than flattened to lower case.
 public func collectTags(_ notes: [NoteSummary]) -> [TagOption] {
     var order: [String] = []
     var counts: [String: Int] = [:]
@@ -144,7 +144,7 @@ public func sortNotes(_ notes: [NoteSummary], order: NoteSortOrder) -> [NoteSumm
 /// ordered — "the closest match first" is the only order a search has, and leaving a scored
 /// result in modified-date order hides the note that was typed for behind ones that merely
 /// mention a word from it. Ties break on recency, so the order is total. An empty query is not
-/// a search at all and keeps whichever order Freddy chose.
+/// a search at all and keeps whichever order the user chose.
 ///
 /// Takes prepared notes rather than raw ones so the folding and tokenising survive between
 /// keystrokes — see ``NoteSearchCorpus``.

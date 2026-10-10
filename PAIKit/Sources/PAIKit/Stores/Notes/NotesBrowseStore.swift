@@ -9,7 +9,7 @@ public protocol NotesBrowseApiClient: Sendable {
 extension PaiApiClient: NotesBrowseApiClient {}
 
 /// List-browsing state that sits beside `NotesStore`'s index rather than inside it: the persisted
-/// sort order, whether Freddy was last reading rendered or as source, and the one call semantic
+/// sort order, whether the user was last reading rendered or as source, and the one call semantic
 /// search needs.
 ///
 /// Semantic search answers with a note id and a score only — `embed_note`'s job handler stores
@@ -54,7 +54,7 @@ public final class NotesBrowseStore {
         storage.setValue(order, forKey: Keys.sortOrder)
     }
 
-    /// Called from the editor's own toggle — the one place Freddy actively chooses a mode, as
+    /// Called from the editor's own toggle — the one place the user actively chooses a mode, as
     /// opposed to merely landing on one via `Route.notePreview`. See `previewMode`'s own doc
     /// comment for why only the toggle updates this.
     public func setPreviewMode(_ preview: Bool) {
