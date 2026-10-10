@@ -282,7 +282,7 @@ final class NotesStoreTests: XCTestCase {
         await firstSave.value
         await secondSave.value
 
-        // The outcome Freddy sees, rather than a count taken mid-flight: a count is satisfied
+        // The outcome the user sees, rather than a count taken mid-flight: a count is satisfied
         // just as well by a second save that had not started yet, which is a fact about the test
         // scheduler and not about the guard.
         if case .conflict = store.saveState(for: "n1") {

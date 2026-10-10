@@ -82,7 +82,7 @@ final class TranscriptMessageRoutingTests: XCTestCase {
     }
 
     /// The exact complaint this route exists to fix: a resend must never draw as system chrome
-    /// captioned with Freddy's own words. `resent` sits between `pai_message` and `command` in
+    /// captioned with the user's own words. `resent` sits between `pai_message` and `command` in
     /// the branch order and must not fall through to the generic system fallback like every
     /// other unrecognised user subtype does just below.
     func testResentSubtypeRoutesToResentUserAndExtractsAttachments() {

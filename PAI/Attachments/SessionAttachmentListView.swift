@@ -22,7 +22,7 @@ struct SessionAttachmentListView: View {
 
     var body: some View {
         ForEach(paths.prefix(AttachmentListBound.transcriptVisible), id: \.self) { path in
-            // Freddy's own file, already known to him — no confirmation before it is fetched,
+            // The user's own file, already known to them — no confirmation before it is fetched,
             // unlike a `pai-file:` marker (see `AssistantProseView`).
             SessionAttachmentChipView(
                 sessionID: sessionID, apiClient: apiClient, path: path, requiresConfirmation: false)

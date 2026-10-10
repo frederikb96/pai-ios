@@ -23,7 +23,7 @@ public enum MessageRouting {
         /// A legacy `<local-command-…>` wrapper carrying real stdout, from a window before the
         /// parser classified that tag — a permanent shape; nothing re-parses an ingested row.
         case legacyCommandOutput(content: String)
-        /// An ordinary message Freddy (or a device on his behalf) typed, with any trailing VM
+        /// An ordinary message the user (or a device on their behalf) typed, with any trailing VM
         /// attachment paths already split out of the displayed text.
         case user(text: String, attachmentPaths: [String])
         case agentMessage
@@ -32,10 +32,10 @@ public enum MessageRouting {
         /// plumbing, because that is what it is — someone said it, just not into this session.
         /// Falling through to a system card would file a real instruction under machinery.
         case relayedUser
-        /// The second copy of a prompt Freddy sent, resent after an interrupt cut off the first
-        /// (`subtype: "resent"`). Both copies are real; neither is redundant — it renders as his
+        /// The second copy of a prompt the user sent, resent after an interrupt cut off the first
+        /// (`subtype: "resent"`). Both copies are real; neither is redundant — it renders as the user's
         /// own bubble, visually subdued, with a small affordance saying why it is there, never as
-        /// system chrome captioned with his own words. Carries pre-extracted attachment paths,
+        /// system chrome captioned with their own words. Carries pre-extracted attachment paths,
         /// same as ``user(text:attachmentPaths:)``.
         case resentUser(text: String, attachmentPaths: [String])
         /// A slash command or skill invocation, already in the clean `"{name}\n\n{args}"` shape.
@@ -142,12 +142,12 @@ public enum MessageRouting {
     // MARK: - File markers
 
     /// The VM paths on every `pai-file: /absolute/path` line in `content` — a marker an agent
-    /// writes, on its own line, to show Freddy a file it made on its own machine. Mirrors the
+    /// writes, on its own line, to show the user a file it made on its own machine. Mirrors the
     /// backend's `extract_file_markers` in `parser.py` and the web's `fileMarkers.ts`, so all
     /// three agree on what counts as a marker; `_resolve_marker_path` in `api.py` is what
     /// actually decides whether the file may be fetched at all.
     ///
-    /// Deliberately does not touch `content` itself: per Freddy's own rule, a message is never
+    /// Deliberately does not touch `content` itself: a message is never
     /// rewritten for this — whatever a caller shows for a returned path is an addition rendered
     /// below the message, never a replacement for what the agent actually said. Order-preserving
     /// and deduplicated, matching a line-anchored scan rather than a whole-string regex so a

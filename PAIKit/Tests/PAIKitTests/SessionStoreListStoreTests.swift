@@ -318,7 +318,7 @@ final class SessionStoreListStoreTests: XCTestCase {
                         SessionFixture.make(id: "sub", kind: .subagent),
                         SessionFixture.make(id: "sup", kind: .supervisor),
                         // Not excluded: a spoken Computer conversation belongs in this list
-                        // exactly like any other conversation of Freddy's — it simply cannot be
+                        // exactly like any other conversation of the user's — it simply cannot be
                         // typed into once opened.
                         SessionFixture.make(id: "spoken", kind: .computer),
                     ], nextCursor: nil

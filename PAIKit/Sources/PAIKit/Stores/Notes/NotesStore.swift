@@ -121,7 +121,7 @@ public final class NotesStore {
 
     // MARK: The link index, per note — a snapshot rather than something kept live, matching the
     // web's own choice (`RightPanel.tsx`): cutting and pasting a link around should not disturb
-    // this list while Freddy types, so it only ever refreshes on an explicit reload.
+    // this list while the user types, so it only ever refreshes on an explicit reload.
 
     public private(set) var linkGraphs: [String: NoteLinkGraph] = [:]
     public private(set) var linkGraphErrors: [String: String] = [:]

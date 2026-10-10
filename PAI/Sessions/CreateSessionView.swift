@@ -721,7 +721,7 @@ struct CreateSessionView: View {
 
     /// See `ComposerBar.textBinding`'s own doc comment for why the draft store is the field's
     /// only storage, and for why landing in this setter at all is what makes it safe to read as
-    /// Freddy typing rather than the take's own live text arriving.
+    /// The user typing rather than the take's own live text arriving.
     private func textBinding(voiceController: VoiceRecorderController) -> Binding<String> {
         Binding(
             get: { drafts.draft(for: DraftKey.newSession).text },

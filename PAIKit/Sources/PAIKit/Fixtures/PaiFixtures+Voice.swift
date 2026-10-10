@@ -79,7 +79,7 @@ extension PaiFixtures {
         {
           "host": "smtp.posteo.de", "port": 587, "security": "starttls",
           "username": "alerts@example.invalid", "from_address": "alerts@example.invalid",
-          "recipient": "freddy@example.invalid", "enabled": true,
+          "recipient": "user@example.invalid", "enabled": true,
           "updated_at": "2026-07-02T09:00:00Z"
         }
         """#

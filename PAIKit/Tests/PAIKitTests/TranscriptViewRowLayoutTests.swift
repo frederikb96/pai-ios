@@ -28,7 +28,7 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
     /// (the bubble's own padding): a bubble sits inside a row that has already spent both insets,
     /// and only then pays its own gutter and horizontal padding. A bubble takes the whole trailing
     /// edge — it is the one register with no content gutter. The content width every bubble
-    /// asserts on — a command's own arguments, a relayed prompt. Not Freddy's own prompt, which
+    /// asserts on — a command's own arguments, a relayed prompt. Not the user's own prompt, which
     /// this file has no test for since `UserBubbleView` shares the identical formula.
     private lazy var bubbleSensitiveText = text(linesAtWidth: 400 - 92)
     /// Sized against 362 = 400 − 8 (leading inset) − 8 (trailing inset) − 22 (the content
@@ -505,7 +505,7 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         XCTAssertEqual(actual, 12 + 16 + 10)
     }
 
-    /// A command with arguments renders unconditionally in Freddy's own bubble, with its own name
+    /// A command with arguments renders unconditionally in the user's own bubble, with its own name
     /// as a label line above the arguments — `RelayedBubbleAddsItsOwnLabelLine` below is the same
     /// shape for a relayed prompt's "sender · group" line.
     func testACommandWithArgumentsAddsItsLabelLineAboveTheBubble() {

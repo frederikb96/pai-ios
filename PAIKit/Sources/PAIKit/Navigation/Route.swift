@@ -26,7 +26,7 @@ public enum Route: Hashable, Sendable {
     /// workflow, and a real home-screen shortcut/Siri intent (`DeepLink.createSession`,
     /// `SessionIntents.swift`), which is why `RootView` still has to reproduce the real
     /// presentation (a sheet over a blank screen) rather than pushing the view directly — what
-    /// gets shown is what Freddy actually sees, not a second `NavigationStack` nested inside the
+    /// gets shown is what the user actually sees, not a second `NavigationStack` nested inside the
     /// first with its own, different chrome.
     case createSession
     /// One conversation's own subagents — reached from its actions menu, never from a subagent

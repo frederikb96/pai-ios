@@ -7,7 +7,7 @@ final class NoteNamingTests: XCTestCase {
 
     // MARK: Today's date
 
-    /// Fixed instants either side of the day boundary, both read in Freddy's own zone rather
+    /// Fixed instants either side of the day boundary, both read in the user's own zone rather
     /// than UTC — the whole point of the function is getting this backwards for two hours a day.
     func testTodayNameUsesTheBerlinDateNotUTC() {
         // 2026-03-15T23:30:00Z is already 2026-03-16 00:30 in Berlin (CET, +1 in March).

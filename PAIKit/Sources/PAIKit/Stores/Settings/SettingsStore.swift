@@ -183,7 +183,7 @@ public final class SettingsStore {
         storage.setValue(recordings, forKey: Keys.recordings)
     }
 
-    /// Removes one recording by id — Freddy's own Delete in the recordings screen, distinct from
+    /// Removes one recording by id — the user's own Delete in the recordings screen, distinct from
     /// the cap's automatic eviction above, though both end by calling `onRecordingEvicted`, since
     /// either way the actual bytes still have to go with it.
     public func removeRecording(id: String) {

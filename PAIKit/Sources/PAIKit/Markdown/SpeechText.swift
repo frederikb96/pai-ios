@@ -8,7 +8,7 @@ import Foundation
 ///
 /// Never truncates and never drops a block silently — a code block or a table is announced by
 /// what it is rather than being skipped, because losing a stretch of a reply without saying so is
-/// the one failure Freddy asked this feature never to have.
+/// the one failure this feature must never have.
 public enum SpeechText {
 
     /// The full spoken form of a reply: one sentence-terminated phrase per block, joined with a

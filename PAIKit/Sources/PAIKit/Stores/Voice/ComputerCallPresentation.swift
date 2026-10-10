@@ -72,7 +72,7 @@ public struct ComputerCallPresentation: Equatable, Sendable {
         case .reconnecting:
             // Nothing is enabled while the socket is down: a `command` frame sent into a dead
             // transport is dropped by the session itself, so an enabled control here would be one
-            // that silently does nothing at exactly the moment Freddy most wants confirmation.
+            // that silently does nothing at exactly the moment the user most wants confirmation.
             return ComputerCallPresentation(face: face, status: "Reconnecting…", enabledCommands: [])
         case .active:
             break

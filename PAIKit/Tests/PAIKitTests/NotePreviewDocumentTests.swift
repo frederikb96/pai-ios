@@ -110,7 +110,7 @@ final class NotePreviewDocumentTests: XCTestCase {
         XCTAssertEqual(text.plainText, "Heading")
     }
 
-    /// The exact shape that reached Freddy's own vault: a checklist item with an image pasted
+    /// The exact shape that reached the user's own vault: a checklist item with an image pasted
     /// directly below it, no blank line in between — Obsidian's lazy continuation would otherwise
     /// fold the embed into the list item's own paragraph, where nothing downstream ever looks for
     /// one, and it rendered as the literal placeholder text instead of an image.

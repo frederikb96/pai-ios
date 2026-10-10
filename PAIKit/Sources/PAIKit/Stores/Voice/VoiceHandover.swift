@@ -1,7 +1,7 @@
 import Foundation
 
 /// What claiming the one shared microphone for `sessionID` should do to whatever already holds
-/// it, elsewhere or here. Freddy's own rule: "the new one wins, the old one stops cleanly." A
+/// it, elsewhere or here. The rule is "the new one wins, the old one stops cleanly." A
 /// pure decision over ids, with no pipeline access of its own, so every branch is provable
 /// without a real take running.
 public enum VoiceHandoverAction: Equatable, Sendable {

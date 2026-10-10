@@ -181,19 +181,19 @@ extension BlockerKind: Codable {
 public enum SessionKind: Sendable, Hashable {
     case conversation, subagent
     /// A session watching another one — a real process and a real conversation, but deliberately
-    /// never drivable: Freddy reads its verdicts, he never types into it. Attached from any
+    /// never drivable: the user reads its verdicts and never types into it. Attached from any
     /// session's own menu, and excluded from the session list and every one of its filters the
     /// same way a subagent already is.
     case supervisor
-    /// A conversation Freddy had with Computer out loud. Unlike the two above it DOES belong in
-    /// the session list — it is one of his conversations, named by its own phase summary and
+    /// A conversation the user had with Computer out loud. Unlike the two above it DOES belong in
+    /// the session list — it is one of the user's conversations, named by its own phase summary and
     /// searchable beside everything else. What it is not is a session: there is no process
     /// behind it and never was, so nothing may offer to resume it, send to it, or open a
     /// terminal on it, and the backend refuses all three regardless.
     case computer
     /// A session answered by a worker on the POD rather than by `claude` in a tmux session on a
     /// machine — created with `session_type: "ultrafast"`. Unlike `.computer` above, this one
-    /// IS drivable: Freddy types into it and gets a reply, same as an ordinary conversation, just
+    /// IS drivable: the user types into it and gets a reply, same as an ordinary conversation, just
     /// served by a cheaper model with no Claude credential involved. See
     /// `sessionKindsPodResident`.
     case ultrafast
@@ -314,13 +314,13 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// - `.starting` — launching (blue)
     /// - `.working` — mid-turn, or parked on something that will wake it (spinner)
     /// - `.done` — finished; look whenever there is time (green)
-    /// - `.blocked` — waiting on Freddy: a permission or trust prompt, a gated-secret request,
+    /// - `.blocked` — waiting on the user: a permission or trust prompt, a gated-secret request,
     ///   or a turn that ended saying so (orange)
     /// - `.error` — cannot proceed until something outside it is fixed: a lapsed Claude login,
     ///   an unregistered pane (red)
     /// - `.closed` — no live process, or nothing PAI drives (grey)
     ///
-    /// A discovered session (one Freddy started in a terminal) gets a real value here too —
+    /// A discovered session (one the user started in a terminal) gets a real value here too —
     /// folded server-side from its own hook signals — rather than being forced grey the way
     /// `state` alone would read it; see `SessionListDomain.dotState(for:)`. Absent on a backend
     /// that predates it; a client seeing that falls back to treating the session as `closed`
@@ -381,7 +381,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// frontmatter is mutable and an env override is invisible. Read a `nil` as unknown, never
     /// as a default.
     public let subagentModel: String?
-    /// Where Freddy last stopped reading this transcript, persisted so returning to it restores
+    /// Where the user last stopped reading this transcript, persisted so returning to it restores
     /// the same position across a reload or a different device. `readPositionAtBottom` is `nil`
     /// until a position has ever been recorded; `true` means "go straight to the live edge" and
     /// beats the other two, which are `nil` together in that case. The anchor is a MESSAGE id
@@ -432,7 +432,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// re-deriving it from `state`/`discovered`/`kind` separately. `nil` from a backend that
     /// predates the field, read as not grantable rather than as unknown.
     public let secretGrantable: Bool?
-    /// Set while this session is waiting for Freddy to unlock the gated secrets it was refused.
+    /// Set while this session is waiting for the user to unlock the gated secrets it was refused.
     /// The session raises it itself; answering it is the ordinary grant call, and declining it is
     /// its own route — either way the session is told, because it is waiting on that message.
     /// `nil` means nothing is waiting, and reads the same from a backend that predates the field.
@@ -446,7 +446,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// third copy of the memberwise initializer call (`withLiveStatus`, `withPinnedAt`).
     public internal(set) var transferredToSessionId: String?
     public let transferredAt: String?
-    /// The namespace this session belongs to, by slug; `nil` is Freddy's own default namespace.
+    /// The namespace this session belongs to, by slug; `nil` is the user's own default namespace.
     /// Set at creation and never changed, so the SSE status event does not carry it.
     public let namespace: String?
 
@@ -795,7 +795,7 @@ public struct TransferResponse: Codable, Sendable, Equatable {
 
 // --- Machines ---
 
-/// A machine PAI can watch or drive — the VM, or Freddy's laptop while it is logged in. `types.ts`
+/// A machine PAI can watch or drive — the VM, or the user's laptop while it is logged in. `types.ts`
 /// names this `Agent`, which this port deliberately does not: `Session.kind == .subagent` names a
 /// Claude Code sub-conversation, an entirely different thing, and keeping both called "agent" in
 /// Swift produces code that typechecks while meaning the wrong one. `Machine` and `SessionKind`

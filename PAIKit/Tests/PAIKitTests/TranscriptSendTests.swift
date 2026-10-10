@@ -4,7 +4,7 @@ import XCTest
 
 /// Covers the pending-send / delivery-confirmation state machine — the part flagged as highest
 /// risk to get subtly wrong, since a false pass here (a bubble that never clears, or clears too
-/// early) is invisible until Freddy is staring at a stuck or doubled message.
+/// early) is invisible until the user is staring at a stuck or doubled message.
 @MainActor
 final class TranscriptSendTests: XCTestCase {
 

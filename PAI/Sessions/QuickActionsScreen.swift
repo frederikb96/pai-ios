@@ -1,9 +1,9 @@
 import PAIKit
 import SwiftUI
 
-/// One of the bottom row's three shortcuts — a link Freddy configures himself by long-pressing the
-/// tile, since Todoist's own view/filter URLs are his to find and paste rather than something
-/// this app can construct (a saved-filter URL in particular names an id only his account has).
+/// One of the bottom row's three shortcuts — a link the user configures by long-pressing the
+/// tile, since Todoist's own view/filter URLs are theirs to find and paste rather than something
+/// this app can construct (a saved-filter URL in particular names an id only their account has).
 /// Persisted locally, never synced: this is a per-device convenience, not app state PAI Cloud
 /// needs to know about.
 private struct QuickActionShortcut: Equatable {
@@ -15,9 +15,9 @@ private struct QuickActionShortcut: Equatable {
 }
 
 /// Where the hardware Action Button lands: five rows, reachable without the last being cut off —
-/// the layout Freddy actually reaches for, not a uniform grid that happens to hold every tile at
+/// the layout the user actually reaches for, not a uniform grid that happens to hold every tile at
 /// one size. The row widths differ on purpose: one full-width tile, three two-up rows, and a
-/// three-up row of shortcuts, each of which he configures himself.
+/// three-up row of shortcuts, each of which the user configures.
 ///
 /// The button is pressed without looking — walking, in a coat pocket, mid-sentence — so the whole
 /// screen is one glance and one thumb. That is what sets the shape: large targets rather than a
@@ -256,7 +256,7 @@ struct QuickActionsScreen: View {
         .accessibilityLabel("\(title), \(subtitle)")
     }
 
-    /// A configurable shortcut — task-shaped icon per Freddy's own ask, long-press to set its
+    /// A configurable shortcut — task-shaped icon, long-press to set its
     /// name and link. An unconfigured slot's tap opens the same editor a long press would, so
     /// pasting the link in is the tile's own first affordance rather than something that does
     /// nothing until discovered.

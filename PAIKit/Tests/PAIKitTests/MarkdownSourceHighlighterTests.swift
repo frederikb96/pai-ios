@@ -41,7 +41,7 @@ final class MarkdownSourceHighlighterTests: XCTestCase {
 
     /// The trap this whole file is offset-typed to avoid. A parser reporting character or UTF-8
     /// positions agrees with UTF-16 on ASCII and diverges on the first emoji — so the bug never
-    /// shows up in a test written in English, only in Freddy's actual notes.
+    /// shows up in a test written in English, only in the user's actual notes.
     func testOffsetsAreUtf16NotCharacters() {
         let source = "🎉 **bold**"
         let bold = MarkdownSourceHighlighter.spans(for: source).first { $0.style == .strong }
@@ -183,7 +183,7 @@ final class MarkdownSourceHighlighterTests: XCTestCase {
     // MARK: Frontmatter
 
     /// The YAML block is styled as one unit and never parsed — anything that parsed it could
-    /// rewrite Freddy's vault metadata on save.
+    /// rewrite the user's vault metadata on save.
     func testFrontmatterAtTheTopIsOneUnit() {
         XCTAssertEqual(
             styled("---\nid: 1\nsummary: x\n---\nbody\n", .frontmatter), ["---\nid: 1\nsummary: x\n---\n"])

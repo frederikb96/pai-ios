@@ -12,7 +12,7 @@ public struct ComputerCallDependencies: Sendable {
     public var sleep: @Sendable (Duration) async -> Void
     /// Where a drop, a recovery and an ending go — the same channel a dictation take reports on
     /// (`VoiceUplinkDependencies.feedback`), and for the same reason: a call is run with the
-    /// phone in a pocket, so anything worth knowing has to reach Freddy without a screen.
+    /// phone in a pocket, so anything worth knowing has to reach the user without a screen.
     public var feedback: @Sendable (FeedbackEvent) -> Void
     /// The client-local gate setting, read once per call; `nil` runs the call with no gate.
     public var silenceGate: @Sendable () -> SilenceGateSettings?
@@ -342,7 +342,7 @@ public final class ComputerCallSession {
         if let detail, detail.hasPrefix("close 1000") {
             // Ending a call from this side never reaches here — `stopInternal` sets `isStopping`
             // first and this method returns on it — so a clean close arriving here is always one
-            // Freddy did not ask for, and the one he is least likely to be looking at the screen
+            // the user did not ask for, and the one they are least likely to be looking at the screen
             // for. `hadUnsentText` is false because nothing here can know: a call's dictation
             // lives in the session's own draft, which this type has no view of.
             dependencies.feedback(.callEndedUnexpectedly(hadUnsentText: false))

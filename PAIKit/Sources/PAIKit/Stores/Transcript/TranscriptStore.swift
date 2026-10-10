@@ -456,7 +456,7 @@ public final class TranscriptStore {
     /// A queued nudge's text used to reach the transcript twice; the parser now catches that at
     /// the source, because the two writes are not reliably adjacent, so a display-side dedupe
     /// check could never fully cover them anyway — and one that only sometimes fires would be
-    /// worse than none, silently swallowing a message Freddy genuinely sent twice in a row.
+    /// worse than none, silently swallowing a message the user genuinely sent twice in a row.
     public static func displayMessages(_ messages: [Message]) -> [Message] {
         messages.filter(isDisplayable)
     }

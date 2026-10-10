@@ -253,12 +253,12 @@ final class SessionStoreRowStateTests: XCTestCase {
         let machines = [
             makeMachine(slug: "vm", displayName: "The VM"),
             makeMachine(
-                slug: "laptop", displayName: "Freddy's Laptop",
+                slug: "laptop", displayName: "Demo Laptop",
                 sessionTypes: [SessionType(id: "claude", name: "Claude Code", icon: "terminal")]),
         ]
         XCTAssertEqual(
             SessionListDomain.secretGrantTarget(for: session, machines: machines),
-            "Fix the alerting rule · Claude Code on Freddy's Laptop"
+            "Fix the alerting rule · Claude Code on Demo Laptop"
         )
     }
 

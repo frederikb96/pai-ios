@@ -158,7 +158,7 @@
 
         // MARK: - Assistant (index.css --color-assistant-400/500, what marks Claude's own prose
         // so it can be found while skimming past the tool rows. A hue nothing else in the
-        // transcript uses is the point of it: blue is what Freddy typed, `relay` is another
+        // transcript uses is the point of it: blue is what the user typed, `relay` is another
         // session, yellow is a landing and grey is a tool row. The web pairs it with a rail; this
         // client uses the wash alone, because here the tool rows already own the left rail and a
         // second one would read as one of them at exactly the speed this is meant to help.

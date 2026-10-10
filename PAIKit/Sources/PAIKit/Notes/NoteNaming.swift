@@ -6,7 +6,7 @@ public enum NoteNaming {
     public static let untitled = "Untitled"
 
     /// What a freshly created note is called — today's date, so it can be typed straight into
-    /// rather than replaced first. Freddy's own day, not the server's: computed in Europe/Berlin
+    /// rather than replaced first. The user's own day, not the server's: computed in Europe/Berlin
     /// so a note started near midnight lands on the day it felt like being written, not on
     /// whatever day UTC happens to be. The web client names a note created the same day
     /// identically, so both must compute this the same way.

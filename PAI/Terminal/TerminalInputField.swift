@@ -6,7 +6,7 @@ import UIKit
 /// own Enter — never per keystroke.
 ///
 /// Deliberately visible rather than a hidden keyboard-summoning trick — an invisible field would
-/// be cleverer and would leave Freddy with no idea what he has typed. It is not live per-character
+/// be cleverer and would leave the user with no idea what they have typed. It is not live per-character
 /// forwarding: a same-chunk carriage return is what lets the pane tell a line break from a submit
 /// apart, and once a character has already gone out on its own there is nothing left for a later,
 /// separately-sent carriage return to share a chunk with. So typing and backspacing stay purely

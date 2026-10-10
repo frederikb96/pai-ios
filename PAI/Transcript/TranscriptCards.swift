@@ -18,9 +18,9 @@ enum TranscriptContentMetrics {
 typealias TranscriptHighlightSpan = (range: NSRange, isCurrent: Bool)
 
 extension Shape where Self == UnevenRoundedRectangle {
-    /// Freddy's own bubble shape — a native uneven rectangle rather than a hand-drawn tail, one
+    /// The user's own bubble shape — a native uneven rectangle rather than a hand-drawn tail, one
     /// corner tucked in on the edge the bubble is addressed from, matching the web's `rounded-2xl
-    /// rounded-br-md`. Shared by every right-aligned bubble in this file (his own prompt, a
+    /// rounded-br-md`. Shared by every right-aligned bubble in this file (the user's own prompt, a
     /// relayed one, a command with arguments): one definition, so the three can never pick
     /// slightly different radii.
     static var ownBubbleTail: UnevenRoundedRectangle {
@@ -878,7 +878,7 @@ enum ToolBodyColorHint: Equatable {
     }
 }
 
-/// A plain prompt Freddy (or a device on his behalf) typed — right-aligned, filled, plain text,
+/// A plain prompt the user (or a device on their behalf) typed — right-aligned, filled, plain text,
 /// tucked into ``ownBubbleTail`` with a fixed gutter (``TranscriptRowMetrics/bubbleGutter``)
 /// so a long message stops short of the row's own left edge instead of going flush across it —
 /// the gutter is what tells the eye whose message it is.
@@ -913,9 +913,9 @@ struct UserBubbleView: View {
     }
 }
 
-/// A genuine prompt relayed from another session — drawn like Freddy's own bubble but a different
+/// A genuine prompt relayed from another session — drawn like the user's own bubble but a different
 /// colour (``PaiPalette/relay500``/``relay600``, mirroring `pai-cloud`'s `--color-relay-500/600`
-/// exactly, not the closest named green), so a reader can tell it was not him.
+/// exactly, not the closest named green), so a reader can tell it was not the user.
 struct RelayedBubbleView: View {
     @Environment(\.colorScheme) private var colorScheme
     let text: String
@@ -946,7 +946,7 @@ struct RelayedBubbleView: View {
     }
 }
 
-/// The second copy of a prompt Freddy sent, resent after an interrupt cut off the first — his own
+/// The second copy of a prompt the user sent, resent after an interrupt cut off the first — their own
 /// bubble at 70% opacity (mirroring the web's `bg-primary-500/70`), with a small "Resent" pill
 /// above the text carrying the same rotate glyph the web draws (`RotateCcw`, matched here by
 /// `arrow.counterclockwise`). The pill only exists when there is text to caption, same as the
@@ -1000,7 +1000,7 @@ struct ResentBubbleView: View {
 }
 
 /// An assistant's own reply — left-aligned, rendered as real markdown (unlike every other card,
-/// which shows plain or lightly-coloured monospace), in the mirror of Freddy's own bubble: the
+/// which shows plain or lightly-coloured monospace), in the mirror of the user's own bubble: the
 /// web's `bg-surface-100 dark:bg-surface-800` on `rounded-2xl rounded-bl-md`, which is the pairing
 /// ``PaiPalette/Semantic/raisedSurface`` carries. The two sides of the conversation read as a
 /// conversation, and the tool cards around them stay visibly a different kind of thing —
@@ -1012,7 +1012,7 @@ struct AssistantProseView: View {
     let blocks: [MarkdownBlock]
     /// Every `pai-file:` marker path in this reply — the message itself is never rewritten to
     /// remove the marker line, so `blocks` already renders it as ordinary text; these chips are
-    /// purely an addition below it, per Freddy's own rule (see `MessageRouting.extractFilePaths`).
+    /// purely an addition below it (see `MessageRouting.extractFilePaths`).
     let filePaths: [String]
     let sessionID: String
     let apiClient: PaiApiClient
@@ -1041,7 +1041,7 @@ struct AssistantProseView: View {
     }
 }
 
-/// A slash command Freddy typed. With arguments, they render unconditionally in his own bubble —
+/// A slash command the user typed. With arguments, they render unconditionally in their own bubble —
 /// a reader must never click to see their own words. With none, a compact, non-interactive line.
 struct CommandCardView: View {
     @Environment(\.colorScheme) private var colorScheme
@@ -1068,8 +1068,8 @@ struct CommandCardView: View {
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.leading, TranscriptRowMetrics.bubbleGutter)
         } else {
-            // Still Freddy's own message, just with nothing to show for its arguments — the
-            // trailing, primary-coloured identity every other bubble of his gets, not the
+            // Still the user's own message, just with nothing to show for its arguments — the
+            // trailing, primary-coloured identity every other bubble of the user's gets, not the
             // left-aligned muted chrome a system row draws. Pinned to the same label line the
             // layout budgets for this case, so the row this card measures for is the row it draws.
             HStack(spacing: 6) {

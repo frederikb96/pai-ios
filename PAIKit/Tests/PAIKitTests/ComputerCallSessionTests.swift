@@ -107,7 +107,7 @@ final class ComputerCallSessionTests: XCTestCase {
             ))
     }
 
-    /// A call runs with the phone in a pocket, so a drop and its recovery have to reach Freddy
+    /// A call runs with the phone in a pocket, so a drop and its recovery have to reach the user
     /// as a cue and a notification — the same channel a dictation take already reports on. This
     /// asserts the pair and their order: a recovery announced with no drop before it would be a
     /// banner about nothing.

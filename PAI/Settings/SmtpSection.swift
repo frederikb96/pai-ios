@@ -1,7 +1,7 @@
 import PAIKit
 import SwiftUI
 
-/// "Alert Mail" — lets the backend email Freddy when something breaks. Server-persisted,
+/// "Alert Mail" — lets the backend email the user when something breaks. Server-persisted,
 /// draft-and-save: nothing here is sent until Save, except the password, which is its own
 /// write-only secret with its own immediate Save/Clear (`SecretField`).
 struct SmtpSection: View {

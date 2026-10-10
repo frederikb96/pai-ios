@@ -328,7 +328,7 @@ struct TaskEditorView: View {
             get: { store.fields.environment },
             set: { newValue in
                 store.fields.environment = newValue
-                // Only "home" and "confined" let Freddy pick a directory — everything else
+                // Only "home" and "confined" let the user pick a directory — everything else
                 // clears whatever was carried over from a previous choice rather than silently
                 // keeping a stale value the new environment's own field never shows.
                 if newValue != "home" && newValue != "confined" { store.fields.workingDir = nil }

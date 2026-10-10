@@ -51,7 +51,7 @@ struct SessionListView: View {
         .toolbar {
             // Declared in this order — plus, apps, settings, notifications — so the rendered
             // trailing group reads right-to-left as notifications, settings, apps, plus, the
-            // order Freddy asked for and the same declaration convention this file already used
+            // intended order and the same declaration convention this file already used
             // (the "+" was always declared first, and always renders as the outermost icon).
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -463,7 +463,7 @@ struct SessionRow: View {
 /// disappears on its own at zero, matching `ActivityBadges.tsx`, so a number on screen always
 /// means something is actually there. `counts.agents` is every subagent still alive, idle ones
 /// included — `person.2.fill` pairs with the web's lucide `Users` for the same reason: there is
-/// no SF Symbol matching a "robot" glyph, so both sides draw this as people working for Freddy
+/// no SF Symbol matching a "robot" glyph, so both sides draw this as people working for the user
 /// rather than as hardware. Shown in the list beside a row's timestamp and in the session header
 /// beside its token figure, exactly as the web shows it in both places.
 struct ActivityBadges: View {

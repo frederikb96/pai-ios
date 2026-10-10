@@ -151,7 +151,7 @@ public struct ActivityCounts: Codable, Sendable, Equatable {
 
 // MARK: - Gated-secret prompt
 
-/// A session waiting for Freddy to unlock the gated secrets it was refused, raised by the session
+/// A session waiting for the user to unlock the gated secrets it was refused, raised by the session
 /// itself rather than by anyone opening a menu. `names` is the machine's own record of those
 /// refusals — the same set the grant acts on — and none of it is secret; the passphrase that
 /// answers the prompt goes straight to the grant route and is never stored anywhere.
@@ -571,7 +571,7 @@ public struct ClaudeLoginCodeResponse: Codable, Sendable, Equatable {
 
 // MARK: - Auth
 
-/// `owner` is Freddy; `guest` is a member of one or more namespaces and reaches only their
+/// `owner` is the account holder; `guest` is a member of one or more namespaces and reaches only their
 /// sessions. Guests use the web UI only, so this app never acts on `.guest` beyond decoding it;
 /// an unknown role still fails the decode, since a wrong guess about who is looking is the
 /// costly direction.

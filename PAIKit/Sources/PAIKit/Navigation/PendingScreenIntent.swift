@@ -11,7 +11,7 @@ import Observation
 ///
 /// There is no session id here because there is no session yet. Creating one requires a first
 /// message — the backend refuses an empty one — so a call cannot be opened first and filled in
-/// afterwards. What happens instead is the order Freddy actually described: the new-session
+/// afterwards. What happens instead: the new-session
 /// screen comes up with the microphone already live, the first prompt is spoken into it, and the
 /// session that send creates is the one the call then binds to.
 @MainActor

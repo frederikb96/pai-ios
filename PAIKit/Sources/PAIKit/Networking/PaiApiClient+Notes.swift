@@ -109,7 +109,7 @@ extension PaiApiClient {
     /// `frontmatter` is sent back byte-for-byte as it was read — and the route never reads the
     /// key at all (`patch_note_route` always merges the note's *stored* frontmatter), so sending
     /// it is inert either way. That is deliberate rather than an oversight: a note's frontmatter
-    /// is Freddy's own vault metadata, nothing in this app understands it, and a client that
+    /// is the user's own vault metadata, nothing in this app understands it, and a client that
     /// could overwrite it would be able to lose a `summary:` or a `uuid:` written elsewhere
     /// while somebody was typing. It is also what makes adopting a moved hash safe — see
     /// ``NoteBodyDivergence``.
@@ -407,7 +407,7 @@ extension PaiApiClient {
         }
     }
 
-    /// A filename Freddy picked (from the camera roll, say) can contain `"`, which would
+    /// A filename the user picked (from the camera roll, say) can contain `"`, which would
     /// otherwise close the quoted `filename` parameter early. Mirrors `PaiApiClient`'s own
     /// private `escapeContentDispositionValue` — duplicated rather than shared, since that one is
     /// `private` to its file and every route belongs in this extension rather than the base type.

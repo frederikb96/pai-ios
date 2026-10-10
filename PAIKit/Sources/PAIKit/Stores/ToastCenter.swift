@@ -43,7 +43,7 @@ public final class ToastCenter {
     public private(set) var toasts: [ToastMessage] = []
 
     /// How long an ordinary toast stays before it removes itself. The web's `addToast` has no
-    /// timeout at all — Freddy dismisses it by hand — but a phone has no idle mouse hovering over
+    /// timeout at all — the user dismisses it by hand — but a phone has no idle mouse hovering over
     /// a corner to notice one sitting there forever, so this gives it a life of its own instead.
     public static let autoDismissNanos: UInt64 = 4_000_000_000
 

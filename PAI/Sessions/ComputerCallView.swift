@@ -227,9 +227,9 @@ struct ComputerCallView: View {
 
 /// The session's draft, read-only, as it fills in.
 ///
-/// Read-only on purpose: this is the one surface where Freddy watches words land rather than
+/// Read-only on purpose: this is the one surface where the user watches words land rather than
 /// types them, and an editable field here would race the region the backend is still writing
-/// into. Attachments are deliberately absent — his own instruction; this is about seeing the
+/// into. Attachments are deliberately absent; this is about seeing the
 /// words.
 private struct DictatedDraftView: View {
     let text: String

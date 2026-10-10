@@ -6,7 +6,7 @@ import PAIKit
 ///
 /// This is what makes a home-screen shortcut per note possible: Shortcuts offers this action,
 /// the note picker comes from ``NoteEntityQuery``, and "Add to Home Screen" turns the result into
-/// an icon Freddy names himself. Nothing here is TestFlight-specific — App Intents are part of
+/// an icon the user names themselves. Nothing here is TestFlight-specific — App Intents are part of
 /// the app bundle, so a TestFlight build exposes them exactly as an App Store one would.
 struct OpenNoteIntent: AppIntent {
     static var title: LocalizedStringResource { "Open Note" }
@@ -62,7 +62,7 @@ struct OpenSessionIntent: AppIntent {
     }
 }
 
-/// The phrases Siri and Spotlight accept without Freddy building a shortcut first.
+/// The phrases Siri and Spotlight accept without the user building a shortcut first.
 ///
 /// Every phrase has to contain `\(.applicationName)`; a phrase without it is rejected at build
 /// time on Apple hardware and nowhere else, which is a long way to travel for a typo.

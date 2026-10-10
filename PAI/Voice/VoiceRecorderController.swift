@@ -21,9 +21,8 @@ private final class ConnectionHealthBox: @unchecked Sendable {
 /// The recorder and the uplink are deliberately two different things sharing one class: capture
 /// (`MicrophoneCapture` → `StreamingRecordingFile`) never stops for a network reason and has no
 /// idea a backend exists at all; `voiceSession` is the only thing that does, and its own state
-/// (`.reconnecting`, a dropped socket) never pauses the durable file underneath it. Freddy's own
-/// framing: "iOS doesn't even know that there is another module" — true of the recorder half, and
-/// this type is what keeps it true by never letting a connection problem reach `capture` or
+/// (`.reconnecting`, a dropped socket) never pauses the durable file underneath it. The recorder half
+/// knows of no other module, and this type is what keeps that true by never letting a connection problem reach `capture` or
 /// `streamingSent`.
 ///
 /// 🚨 **One instance for the whole app, owned by `AppEnvironment.Connection`** — never one per
@@ -35,7 +34,7 @@ private final class ConnectionHealthBox: @unchecked Sendable {
 /// The take is therefore keyed by ``activeDraftKey`` rather than by whoever is on screen, and the
 /// transcript is written into ``DraftStore`` as it arrives rather than into a view's own state —
 /// that is what makes it survive both the view going away and the app being backgrounded, and what
-/// puts it on Freddy's other clients at the same time.
+/// puts it on the user's other clients at the same time.
 ///
 /// Recording continues while the app is in the background or the screen is locked. That needs
 /// three things agreeing: `UIBackgroundModes = audio`, an `AVAudioSession` that stays active, and
@@ -406,7 +405,7 @@ final class VoiceRecorderController {
         await startTask.value
     }
 
-    /// Records to a local file only — no draft, no uplink, nothing transcribed until Freddy asks
+    /// Records to a local file only — no draft, no uplink, nothing transcribed until the user asks
     /// for it from the recordings list. What Quick Actions' note-taking-style tile starts: a
     /// meeting, a thought while driving, anything meant to be reviewed later rather than typed
     /// into a session right now.
@@ -938,7 +937,7 @@ final class VoiceRecorderController {
         scheduleBackfillIfNeeded(takeId: id)
     }
 
-    /// Deletes a past recording by Freddy's own tap — distinct from the retention cap's automatic
+    /// Deletes a past recording by the user's own tap — distinct from the retention cap's automatic
     /// eviction, though both end at `onRecordingEvicted`, which is what actually removes the
     /// bytes.
     func deleteRecording(_ meta: RecordingMeta) {
@@ -1039,7 +1038,7 @@ final class VoiceRecorderController {
     }
 
     /// Activating the session exclusive (no `.mixWithOthers`) first is what pauses whatever else
-    /// was already playing — Freddy's own expectation when a take or a call starts, the same
+    /// was already playing — the user's own expectation when a take or a call starts, the same
     /// effect this used to reach with `.duckOthers` before it was dropped. Re-setting the category
     /// with `.mixWithOthers` immediately after, without ever deactivating in between, is what
     /// keeps anything that starts playing LATER (Spotify resumed from an AirPods gesture, a video,
@@ -1280,8 +1279,8 @@ final class VoiceRecorderController {
     private func recoverSilentMicrophone() async {
         guard captureRestartAttempts < Self.maxCaptureRestarts else {
             // Out of attempts. Ending the take is what makes this recoverable: the audio captured
-            // so far is already on disk, and Freddy is told rather than discovering an hour later
-            // that a recording he believed was running captured nothing.
+            // so far is already on disk, and the user is told rather than discovering an hour later
+            // that a recording they believed was running captured nothing.
             //
             // 🚨 `isCapturing` first and `endCaptureWatchdog()` last, because this runs *inside*
             // the watchdog's own task: cancelling it up front would leave every `await` below

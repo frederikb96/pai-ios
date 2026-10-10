@@ -218,7 +218,7 @@ struct NoteEditorScreen: View {
                 // than whatever the debounce last happened to save.
                 Task { await notes.flush(id: noteID) }
                 isPreviewing.toggle()
-                // The one place Freddy actively chooses a mode, so the one place that updates the
+                // The one place the user actively chooses a mode, so the one place that updates the
                 // sticky preference the next note with no mode of its own falls back to.
                 browse.setPreviewMode(isPreviewing)
             } label: {

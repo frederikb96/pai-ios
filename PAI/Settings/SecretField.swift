@@ -89,7 +89,7 @@ struct SecretField: View {
 
     /// The backend sends ISO-8601 with six fractional digits, which a bare `ISO8601DateFormatter`
     /// rejects outright — `IsoTimestamp` is what actually parses it. A raw string is still shown
-    /// if parsing fails, rather than hiding the timestamp Freddy asked to see beside the dots.
+    /// if parsing fails, rather than hiding the timestamp shown beside the dots.
     private func formatted(_ raw: String) -> String {
         guard let date = IsoTimestamp.date(from: raw) else { return raw }
         return date.formatted(date: .abbreviated, time: .shortened)

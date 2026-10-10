@@ -169,7 +169,7 @@ final class FeedbackPolicyTests: XCTestCase {
     /// What a clean call-mode or microphone-mode cycle actually produces: the socket opening
     /// reads as unstable until proven stable (`gapOpened`), the fresh cycle then proving itself
     /// (`reconnected`), and the ordinary pre-connect gap healing (`backfillCompleted`) — none of
-    /// it a real hiccup, so none of it should reach Freddy.
+    /// it a real hiccup, so none of it should reach the user.
     func testAnOrdinaryCycleWithNoRealDropProducesNoCueOrNotification() {
         var policy = FeedbackPolicy()
         let gap = policy.decide(.gapOpened, now: t0)
@@ -186,7 +186,7 @@ final class FeedbackPolicyTests: XCTestCase {
     }
 
     /// The same sequence, but a real drop happened first — every step of it must still reach
-    /// Freddy, ending with the backfill's own closing update to the same notification.
+    /// the user, ending with the backfill's own closing update to the same notification.
     func testARealDropStillProducesACueAndNotificationThroughToTheFinalBackfillUpdate() {
         var policy = FeedbackPolicy()
         let dropped = policy.decide(.connectionDropped(reason: nil), now: t0)
@@ -281,7 +281,7 @@ final class FeedbackPolicyTests: XCTestCase {
         let second = policy.decide(.callEndedUnexpectedly(hadUnsentText: false), now: t0.addingTimeInterval(1))
         XCTAssertEqual(first.cue, .error)
         XCTAssertEqual(first.notify?.disposition, .post)
-        XCTAssertEqual(second.notify?.disposition, .post, "each is a separate call Freddy believes is still running")
+        XCTAssertEqual(second.notify?.disposition, .post, "each is a separate call the user believes is still running")
     }
 
     // MARK: - Cue-only, no-notification events

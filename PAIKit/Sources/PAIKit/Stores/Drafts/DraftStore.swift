@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// Composer text kept on the server so every one of Freddy's clients shows the same half-written
+/// Composer text kept on the server so every one of the user's clients shows the same half-written
 /// message. Swift port of `pai-cloud/web/src/stores/drafts.ts`'s version-ordered rewrite.
 ///
 /// **The device being typed on owns the text.** A composer's field reads this store's own local
@@ -26,7 +26,7 @@ import Observation
 public final class DraftStore {
 
     /// Long enough that ordinary typing produces one request; short enough that switching device
-    /// right after typing finds the draft already there. Freddy's own concession: cross-device
+    /// right after typing finds the draft already there. Cross-device
     /// text sync is "pick up where I left off", not real-time mirroring — seconds of lag is fine.
     public static let flushDebounceSeconds: TimeInterval = 2
 

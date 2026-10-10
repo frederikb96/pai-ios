@@ -1,7 +1,7 @@
 import Foundation
 
 /// What a stream connection's status display should say. "Connected" alone is not the useful
-/// state — Freddy's own bug report was a confidently green "Live" dot over a screen nothing had
+/// state — the failure case is a confidently green "Live" dot over a screen nothing had
 /// arrived on in minutes. Whether a quiet stretch is normal or a problem is a question of *time
 /// since the last event*, not of whether a socket is open.
 public enum StreamActivityState: Equatable, Sendable {

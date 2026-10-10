@@ -197,8 +197,8 @@ public struct Message: Codable, Sendable, Equatable, Identifiable {
     public let hookSummary: HookSummary?
     public let tokens: TokenUsage?
     /// Who put this prompt here, when nobody typed it — `"agent"` for a `subtype: "pai_message"`
-    /// row relayed from another PAI session, `nil` for a plain prompt Freddy typed (and for every
-    /// row ingested before this field existed — read an absent value as "typed by Freddy", never
+    /// row relayed from another PAI session, `nil` for a plain prompt the user typed (and for every
+    /// row ingested before this field existed — read an absent value as "typed by the user", never
     /// as "unknown").
     public let origin: String?
     /// The rest of the marker's attributes — `from`, `session`, `group`, `sent`, …
