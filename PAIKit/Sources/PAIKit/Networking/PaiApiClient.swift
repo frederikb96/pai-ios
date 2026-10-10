@@ -966,6 +966,11 @@ public struct PaiApiClient: Sendable {
         return try await send(path: "/api/scheduler/tasks/\(taskId)/runs", query: query)
     }
 
+    public func getSchedulerInsights(days: Int) async throws -> SchedulerInsights {
+        try await send(
+            path: "/api/scheduler/insights", query: [URLQueryItem(name: "days", value: String(days))])
+    }
+
     /// Runs the gate script once against an already-saved task, sending the editor's current,
     /// possibly-unsaved source rather than the task's own saved one — what makes writing a gate
     /// iterative instead of costing a real fire.

@@ -491,7 +491,9 @@ struct TaskEditorView: View {
     }
 }
 
-/// A task's fire history, newest first — paged, loading more as the reader nears the end.
+/// A task's fire history, newest first — paged, loading more as the reader nears the end. The
+/// enclosing `Form` is a native list that realizes only the rows near the viewport, so any
+/// number of runs stays bounded; run rows never claim a height of their own.
 private struct RunHistorySection: View {
     let taskId: String
 
@@ -504,7 +506,7 @@ private struct RunHistorySection: View {
                 ForEach(store.runs) { run in
                     RunRow(run: run)
                         .onAppear {
-                            guard store.hasMore, run.id == store.runs.last?.id else { return }
+                            guard store.shouldLoadMore(onAppearing: run) else { return }
                             Task { await store.loadMore() }
                         }
                 }
@@ -546,6 +548,12 @@ private struct RunRow: View {
                 Text(triggerLabel)
                     .font(PaiTypography.caption.font)
                     .foregroundStyle(PaiPalette.Semantic.textFaint)
+                if run.notified {
+                    Image(systemName: "bell.fill")
+                        .font(PaiTypography.caption.font)
+                        .foregroundStyle(PaiPalette.Semantic.accentText)
+                        .accessibilityLabel("Notified you")
+                }
                 Spacer()
                 Text(formattedStartedAt)
                     .font(PaiTypography.caption.font)
@@ -553,6 +561,9 @@ private struct RunRow: View {
             }
             if let reason = run.reason, !reason.isEmpty {
                 Text(reason).font(PaiTypography.caption.font).foregroundStyle(PaiPalette.Semantic.textMuted)
+            }
+            if run.disposition == .fired {
+                runFigures
             }
             if run.gateSkipped {
                 Label("Gate skipped — fired without running the check.", systemImage: "forward.fill")
@@ -575,8 +586,38 @@ private struct RunRow: View {
     }
 
     private var formattedStartedAt: String {
-        Date(timeIntervalSince1970: Double(run.startedAtMs) / 1000)
-            .formatted(date: .abbreviated, time: .shortened)
+        SchedulerRunDisplay.formatBerlin(ms: run.startedAtMs)
+    }
+
+    /// Start → end in Europe/Berlin, the duration, and the token readings of a fired run.
+    private var runFigures: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(timeSpanText)
+            if let durationMs = run.durationMs {
+                Text(SchedulerRunDisplay.formatDuration(ms: durationMs))
+            }
+            if run.tokensEnd != nil {
+                Text(tokensText)
+            }
+        }
+        .font(PaiTypography.caption.font)
+        .foregroundStyle(PaiPalette.Semantic.textFaint)
+    }
+
+    private var timeSpanText: String {
+        let start = SchedulerRunDisplay.formatBerlin(ms: run.startedAtMs)
+        let end = run.finishedAtMs.map {
+            SchedulerRunDisplay.formatBerlinEnd(ms: $0, sinceMs: run.startedAtMs)
+        } ?? "running"
+        return "\(start) → \(end)"
+    }
+
+    private var tokensText: String {
+        let start = SchedulerRunDisplay.formatTokens(run.tokensStart)
+        let end = SchedulerRunDisplay.formatTokens(run.tokensEnd)
+        let relative = SchedulerRunDisplay.formatTokens(run.tokensRelative)
+        let absolute = SchedulerRunDisplay.formatTokens(run.tokensAbsolute)
+        return "\(start) → \(end) (\(relative) run, \(absolute) abs)"
     }
 
     /// `runtimeWarned`/`budgetWarned` are the run's one-shot guard against repeating a budget
