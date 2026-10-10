@@ -180,6 +180,13 @@ final class MessageDisplayTests: XCTestCase {
         XCTAssertEqual(MessageDisplay.toolResultDisplayText(coloured, toolName: nil), "ok")
     }
 
+    /// An unlabelled system row is captioned with the first sixty characters of its body, so a
+    /// subtype without a label would title a list of file paths with one of them.
+    func testACompactContextRowHasItsOwnLabel() {
+        XCTAssertEqual(
+            MessageDisplay.systemLabel(subtype: "compact_context", content: "Read notes/a.md (62 lines)"), "Restored")
+    }
+
     // MARK: - JavaScript semantics that do not carry over
 
     /// `content ? … : 'System'` treats an empty string as falsy. A direct port checks only for

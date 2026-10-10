@@ -414,6 +414,13 @@ public enum TranscriptRowPlan {
                 blocks: MarkdownParser.parse(
                     revealed ? body : clampHeadroom(body, visualLines: MessageDisplay.Preview.report.visual)))
 
+        // What a compaction handed back, one file or skills line each: a list the reader skims
+        // for a name, so it gets a result's budget and a tap for the rest.
+        case "compact_context":
+            return slicedActivityCard(
+                kind: kind, text: body, budget: MessageDisplay.Preview.result, revealed: isRevealed(index),
+                tone: tone)
+
         // A hook that went wrong is the one system row worth reading in full, so it earns the
         // error budget; a quiet one is noise and gets two lines.
         case "hook":

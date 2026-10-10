@@ -435,6 +435,38 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         XCTAssertEqual(actual, 12 + content + 10 + 44 + 12)
     }
 
+    /// A hundred attachments draw three chips and one "+N more" row, so the row is four chip
+    /// heights tall however many were sent — a row taller than that would be a height nobody
+    /// bounded, a shorter one would clip the control.
+    func testManyAttachmentsDrawThreeChipsAndOneMoreRow() {
+        let paths = (0..<100).map { ".claude/attachments/a/file-\($0).png" }.joined(separator: " ")
+        let msg = message(type: .user, content: paths, timestamp: nil)
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        let actual = TranscriptRowLayout.height(
+            for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache,
+            metrics: metrics)
+
+        // 12: the row's padding. Four 22pt rows (three chips and the "+97 more" control), three
+        // 6pt gaps between them.
+        XCTAssertEqual(actual, 12 + 4 * 22 + 3 * 6)
+    }
+
+    /// The resend draws the same column, so it must stop at the same bound.
+    func testManyAttachmentsOnAResendAreBoundedTheSameWay() {
+        let paths = (0..<100).map { ".claude/attachments/a/file-\($0).png" }.joined(separator: " ")
+        let msg = message(type: .user, subtype: "resent", content: paths, timestamp: nil)
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        let actual = TranscriptRowLayout.height(
+            for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache,
+            metrics: metrics)
+
+        XCTAssertEqual(actual, 12 + 4 * 22 + 3 * 6)
+    }
+
     // MARK: - Assistant file markers
 
     /// Mirrors the user-bubble attachment tests just above: a `pai-file:` marker becomes its own

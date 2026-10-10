@@ -521,6 +521,7 @@ public enum MessageDisplay {
         case "image": return "Image"
         case "compact": return "Compacted"
         case "compact_summary": return "Compaction summary"
+        case "compact_context": return "Restored"
         case "hook": return "Hooks"
         case "duration": return "Duration"
         case "interrupt": return "Interrupted"
