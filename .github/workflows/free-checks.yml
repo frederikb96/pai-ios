@@ -18,8 +18,6 @@ name: Free checks
 # nothing. Standard Linux and macOS runners are unmetered for public repositories, so there is
 # nothing to buy back by hosting this ourselves.
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -31,7 +29,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  checks:
+  # Decides whether the macOS build is needed: only changes to the app, the package, the project
+  # or the Mac workflow itself can alter what it proves.
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.filter.outputs.app }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            app:
+              - 'PAI/**'
+              - 'PAIKit/**'
+              - 'PAI.xcodeproj/**'
+              - 'Config/**'
+              - '.github/workflows/mac.yml'
+
+  # The package's debug build and its whole test suite — the longest leg, so it runs alone.
+  test:
+    name: Build and test
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -55,19 +75,70 @@ jobs:
         with:
           swift-version: '6.4'
 
+      - uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: '6.4'
+
       # Dependencies are fetched and rebuilt on every run otherwise, which is most of the wall
       # time here. Keyed on the manifest so a dependency change invalidates it.
       - uses: actions/cache@v6
         with:
           path: PAIKit/.build
-          key: spm-${{ runner.os }}-${{ hashFiles('PAIKit/Package.swift') }}
-          restore-keys: spm-${{ runner.os }}-
+          key: spm-test-${{ runner.os }}-${{ hashFiles('PAIKit/Package.swift') }}
+          restore-keys: spm-test-${{ runner.os }}-
 
       - name: Build and test the package
         run: |
           set -o pipefail
           swift build --package-path PAIKit --build-tests 2>&1 | tee /tmp/build.log
           swift test --package-path PAIKit --skip-build
+
+      # Compiler errors sit far above the last lines of a long build, so a truncated log leaves a
+      # failure reporting nothing but an exit code.
+      - name: Surface compiler errors
+        if: failure()
+        run: |
+          grep -E "error:" /tmp/build.log | head -40 || echo "no compiler errors in the log"
+
+
+  # Everything else runs beside the tests: the release-configuration compile, the syntax pass over
+  # what Linux cannot build, the Swift 6 scan and the format check.
+  lint:
+    name: Release build and lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Swift's own documented Ubuntu dependency list, plus curl/file/ca-certificates for the
+      # setup action itself — it downloads a toolchain, verifies its signature, and identifies
+      # the archive with `file`. Installed explicitly rather than assumed from the runner image,
+      # because a missing package surfaces late and unhelpfully: as "Unable to locate executable
+      # file", or as the freshly unpacked toolchain failing to load a shared library.
+      - name: Install Swift toolchain dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            binutils ca-certificates curl file gnupg2 libc6-dev libcurl4-openssl-dev libedit2 \
+            libgcc-13-dev libncurses-dev libpython3-dev libsqlite3-0 libstdc++-13-dev \
+            libxml2-dev libz3-dev pkg-config tzdata unzip zlib1g-dev
+
+      - uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: '6.4'
+
+      - uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: '6.4'
+
+      # Dependencies are fetched and rebuilt on every run otherwise, which is most of the wall
+      # time here. Keyed on the manifest so a dependency change invalidates it.
+      - uses: actions/cache@v6
+        with:
+          path: PAIKit/.build
+          key: spm-release-${{ runner.os }}-${{ hashFiles('PAIKit/Package.swift') }}
+          restore-keys: spm-release-${{ runner.os }}-
 
       # 🚨 Release is a different compile, and the difference is not only optimisation: the type
       # checker runs under a budget there that a Debug build does not enforce, so a chained
@@ -116,3 +187,26 @@ jobs:
           name: format-patch
           path: format.patch
           retention-days: 5
+
+  mac:
+    name: Mac
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.app == 'true'
+    uses: ./.github/workflows/mac.yml
+
+  # The single required check. Skipped jobs (the Mac build on a change that cannot affect it)
+  # count as passing.
+  validation:
+    name: Validation
+    needs: [changes, test, lint, mac]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: All required jobs passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          case " $RESULTS " in
+            *" failure "*|*" cancelled "*) exit 1 ;;
+          esac
