@@ -370,7 +370,7 @@ final class TranscriptViewRowPlanTests: XCTestCase {
     func testACommandWithNoArgumentsCarriesNoBlocksAndNilArgs() {
         let msg = message(type: .user, subtype: "command", content: "/context\n\n")
         let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealAll)
-        guard case .command(let name, let args) = cards[0].kind else { return XCTFail("expected a command card") }
+        guard case .command(let name, let args, _) = cards[0].kind else { return XCTFail("expected a command card") }
         XCTAssertEqual(name, "/context")
         XCTAssertNil(args)
         XCTAssertTrue(cards[0].blocks.isEmpty)
@@ -381,8 +381,33 @@ final class TranscriptViewRowPlanTests: XCTestCase {
     func testACommandWithArgumentsShowsThemEvenWhenNothingIsExpanded() {
         let msg = message(type: .user, subtype: "command", content: "/loop\n\n5m /babysit-prs")
         let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealNone)
-        guard case .command(_, let args) = cards[0].kind else { return XCTFail("expected a command card") }
+        guard case .command(_, let args, _) = cards[0].kind else { return XCTFail("expected a command card") }
         XCTAssertEqual(args, "5m /babysit-prs")
         XCTAssertFalse(cards[0].blocks.isEmpty)
+    }
+
+    /// The backend appends attached files to the end of a command's arguments; they come off as
+    /// chips, so neither the card's text nor anything searchable carries the raw paths or the label.
+    func testACommandStripsItsAttachmentBlockIntoPathsAndKeepsTheTypedText() {
+        let msg = message(
+            type: .user, subtype: "command",
+            content: "/enrich\n\nlook at this\n\nAttachments referenced in this message:\n.claude/attachments/s1/a.png")
+        let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealNone)
+        guard case .command(_, let args, let paths) = cards[0].kind else { return XCTFail("expected a command card") }
+        XCTAssertEqual(args, "look at this")
+        XCTAssertEqual(paths, [".claude/attachments/s1/a.png"])
+        XCTAssertEqual(cards[0].blocks.map(\.plainText), ["look at this"])
+    }
+
+    /// Nothing typed after the name: the card is the compact name pill with the chips under it.
+    func testACommandWithOnlyAttachmentsHasNoArgsAndNoBlocks() {
+        let msg = message(
+            type: .user, subtype: "command",
+            content: "/enrich\n\nAttachments referenced in this message:\n.claude/attachments/s1/a.png")
+        let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealNone)
+        guard case .command(_, let args, let paths) = cards[0].kind else { return XCTFail("expected a command card") }
+        XCTAssertNil(args)
+        XCTAssertEqual(paths, [".claude/attachments/s1/a.png"])
+        XCTAssertTrue(cards[0].blocks.isEmpty)
     }
 }

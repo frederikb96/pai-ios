@@ -39,7 +39,10 @@ public enum MessageRouting {
         /// same as ``user(text:attachmentPaths:)``.
         case resentUser(text: String, attachmentPaths: [String])
         /// A slash command or skill invocation, already in the clean `"{name}\n\n{args}"` shape.
-        case command
+        /// Files attached to the message ride at the end of the arguments, so `args` arrives with
+        /// that trailing block already split into `attachmentPaths`, the same as a plain user
+        /// message.
+        case command(name: String, args: String, attachmentPaths: [String])
         /// Any other `type == "user"` subtype, and a `command` row whose content is still the
         /// raw, unparsed `<command-name>` XML wrapper — both permanent shapes for rows ingested
         /// before the classifier that would have caught them, degrading to a plain system card
@@ -81,9 +84,13 @@ public enum MessageRouting {
             return .resentUser(text: extracted.text, attachmentPaths: extracted.paths)
 
         case .user where message.subtype == "command":
-            return MessageDisplay.isUnparsedCommandXml(message.content ?? "")
-                ? .systemFallback(subtype: message.subtype, content: message.content)
-                : .command
+            let content = message.content ?? ""
+            if MessageDisplay.isUnparsedCommandXml(content) {
+                return .systemFallback(subtype: message.subtype, content: message.content)
+            }
+            let parts = MessageDisplay.commandParts(content)
+            let extracted = extractAttachmentPaths(parts.args)
+            return .command(name: parts.name, args: extracted.text, attachmentPaths: extracted.paths)
 
         case .user:
             return .systemFallback(subtype: message.subtype, content: message.content)

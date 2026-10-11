@@ -273,9 +273,11 @@ struct TranscriptCardKindView: View {
                 MarkdownContentView(blocks: card.plan.blocks, highlights: highlightsByBlockIndex)
             }
 
-        case .command(let name, let args):
+        case .command(let name, let args, let attachmentPaths):
             me {
-                CommandCardView(name: name, args: args, highlights: highlightsByBlockIndex[0] ?? [])
+                CommandCardView(
+                    name: name, args: args, attachmentPaths: attachmentPaths, sessionID: sessionID,
+                    apiClient: apiClient, highlights: highlightsByBlockIndex[0] ?? [])
             }
 
         case .system(let subtype, let content, _):
@@ -1043,54 +1045,61 @@ struct AssistantProseView: View {
 
 /// A slash command the user typed. With arguments, they render unconditionally in their own bubble —
 /// a reader must never click to see their own words. With none, a compact, non-interactive line.
+/// Files attached to the message sit below either as chips, the same as under a plain user bubble;
+/// `TranscriptRowLayout`'s `.command` case mirrors this stack, so a number that moves here and not
+/// there is a row drawn taller than its cell.
 struct CommandCardView: View {
     @Environment(\.colorScheme) private var colorScheme
     let name: String
     let args: String?
+    let attachmentPaths: [String]
+    let sessionID: String
+    let apiClient: PaiApiClient
     var highlights: [TranscriptHighlightSpan] = []
 
     var body: some View {
-        if let args {
-            VStack(alignment: .trailing, spacing: TranscriptRowMetrics.bubbleLabelSpacing) {
-                Text(name)
-                    .font(PaiTypography.captionEmphasized.font)
-                    .foregroundStyle(.white.opacity(0.85))
-                    .frame(height: TranscriptRowMetrics.bubbleLabelLineHeight, alignment: .leading)
-                TranscriptTextHighlighting.plainText(args, font: PaiTypography.body.font, highlights: highlights)
-                    .foregroundStyle(.white)
+        VStack(alignment: .trailing, spacing: TranscriptRowMetrics.attachmentChipSpacing) {
+            if let args {
+                VStack(alignment: .trailing, spacing: TranscriptRowMetrics.bubbleLabelSpacing) {
+                    Text(name)
+                        .font(PaiTypography.captionEmphasized.font)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .frame(height: TranscriptRowMetrics.bubbleLabelLineHeight, alignment: .leading)
+                    TranscriptTextHighlighting.plainText(args, font: PaiTypography.body.font, highlights: highlights)
+                        .foregroundStyle(.white)
+                }
+                .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding)
+                .padding(.vertical, TranscriptRowMetrics.bubbleVerticalPadding / 2)
+                .background(
+                    bubbleFill(light: PaiPalette.primary500, dark: PaiPalette.primary600, colorScheme: colorScheme),
+                    in: .ownBubbleTail
+                )
+            } else {
+                // Still the user's own message, just with nothing to show for its arguments — the
+                // trailing, primary-coloured identity every other bubble of the user's gets, not the
+                // left-aligned muted chrome a system row draws. Pinned to the same label line the
+                // layout budgets for this case, so the row this card measures for is the row it draws.
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.left.forwardslash.chevron.right")
+                    Text(name)
+                }
+                .font(PaiTypography.captionEmphasized.font)
+                .foregroundStyle(.white)
+                .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding / 2)
+                .padding(.vertical, 4)
+                .background(
+                    bubbleFill(light: PaiPalette.primary500, dark: PaiPalette.primary600, colorScheme: colorScheme),
+                    in: .ownBubbleTail
+                )
+                .frame(
+                    height: TranscriptRowMetrics.bubbleLabelLineHeight + TranscriptRowMetrics.bubbleVerticalPadding,
+                    alignment: .trailing
+                )
             }
-            .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding)
-            .padding(.vertical, TranscriptRowMetrics.bubbleVerticalPadding / 2)
-            .background(
-                bubbleFill(light: PaiPalette.primary500, dark: PaiPalette.primary600, colorScheme: colorScheme),
-                in: .ownBubbleTail
-            )
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .padding(.leading, TranscriptRowMetrics.bubbleGutter)
-        } else {
-            // Still the user's own message, just with nothing to show for its arguments — the
-            // trailing, primary-coloured identity every other bubble of the user's gets, not the
-            // left-aligned muted chrome a system row draws. Pinned to the same label line the
-            // layout budgets for this case, so the row this card measures for is the row it draws.
-            HStack(spacing: 6) {
-                Image(systemName: "chevron.left.forwardslash.chevron.right")
-                Text(name)
-            }
-            .font(PaiTypography.captionEmphasized.font)
-            .foregroundStyle(.white)
-            .padding(.horizontal, TranscriptRowMetrics.bubbleHorizontalPadding / 2)
-            .padding(.vertical, 4)
-            .background(
-                bubbleFill(light: PaiPalette.primary500, dark: PaiPalette.primary600, colorScheme: colorScheme),
-                in: .ownBubbleTail
-            )
-            .frame(
-                height: TranscriptRowMetrics.bubbleLabelLineHeight + TranscriptRowMetrics.bubbleVerticalPadding,
-                alignment: .trailing
-            )
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .padding(.leading, TranscriptRowMetrics.bubbleGutter)
+            SessionAttachmentListView(paths: attachmentPaths, sessionID: sessionID, apiClient: apiClient)
         }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.leading, TranscriptRowMetrics.bubbleGutter)
     }
 }
 
