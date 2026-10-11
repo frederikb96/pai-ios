@@ -526,6 +526,43 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         XCTAssertEqual(actual, 12 + content + 16 + 4 + 10)
     }
 
+    /// Chips under a command's bubble gap after it like they do under a plain user bubble: the
+    /// bubble, then one gap and one chip per attachment.
+    func testACommandWithArgumentsAndAttachmentsAddsChipsAndGapsBelowTheBubble() {
+        let msg = message(
+            type: .user, subtype: "command",
+            content: "/note\n\n\(bubbleSensitiveText)\n\n.claude/attachments/a/one.png .claude/attachments/a/two.png",
+            timestamp: nil)
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        let actual = TranscriptRowLayout.height(
+            for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache,
+            metrics: metrics)
+
+        let content = measuredContentHeight(
+            [.paragraph(InlineText(runs: [InlineRun(text: bubbleSensitiveText)]))], atWidth: 400 - 92,
+            measurer: measurer, cache: cache)
+        // 12: the row's padding. 16 + 4 + 10: the bubble's label line, gap and vertical padding.
+        // 44: two 22pt chips. 12: two 6pt gaps (bubble to first chip, first chip to second).
+        XCTAssertEqual(actual, 12 + content + 16 + 4 + 10 + 44 + 12)
+    }
+
+    /// The name-only pill with one chip: the pill's own height, one gap, one chip.
+    func testACommandWithOnlyAttachmentsStacksTheChipUnderTheNamePill() {
+        let msg = message(
+            type: .user, subtype: "command", content: "/enrich\n\n.claude/attachments/a/one.png", timestamp: nil)
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+
+        let actual = TranscriptRowLayout.height(
+            for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache,
+            metrics: metrics)
+
+        // 12: the row's padding. 16 + 10: the pill. 6: gap. 22: the chip.
+        XCTAssertEqual(actual, 12 + 16 + 10 + 6 + 22)
+    }
+
     /// A relayed prompt draws its "sender · group" line above the body text unconditionally, even
     /// when there is no group — the same label chrome a command-with-arguments bubble carries.
     func testRelayedBubbleAddsItsOwnLabelLine() {

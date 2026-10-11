@@ -434,16 +434,19 @@ public enum TranscriptRowLayout {
                 let gaps = childCount > 1 ? Double(childCount - 1) * TranscriptRowMetrics.attachmentChipSpacing : 0
                 return TranscriptRowMetrics.meRowPadding * 2 + bubbleHeight + chips + gaps
 
-            case .command(_, let args):
-                // No arguments degrades to a compact line naming the command and nothing else.
-                guard args != nil else {
-                    return TranscriptRowMetrics.meRowPadding * 2 + TranscriptRowMetrics.bubbleLabelLineHeight
-                        + TranscriptRowMetrics.bubbleVerticalPadding
-                }
-                // No trailer term: a command's arguments are never bounded, so there is never one
-                // to reserve — and reserving a line the view does not draw is a gap.
-                return TranscriptRowMetrics.meRowPadding * 2 + content + labelChrome
-                    + TranscriptRowMetrics.bubbleVerticalPadding
+            case .command(_, let args, let attachmentPaths):
+                // `CommandCardView`'s `VStack` puts its one bubble first, one chip per attachment
+                // after it. No arguments degrades the bubble to a compact line naming the command
+                // and nothing else; with arguments there is no trailer term, because a command's
+                // arguments are never bounded — reserving a line the view does not draw is a gap.
+                let bubbleHeight =
+                    args == nil
+                    ? TranscriptRowMetrics.bubbleLabelLineHeight + TranscriptRowMetrics.bubbleVerticalPadding
+                    : content + labelChrome + TranscriptRowMetrics.bubbleVerticalPadding
+                let attachmentRows = AttachmentListBound.transcriptRowCount(total: attachmentPaths.count)
+                let chips = Double(attachmentRows) * TranscriptRowMetrics.attachmentChipHeight
+                let gaps = Double(attachmentRows) * TranscriptRowMetrics.attachmentChipSpacing
+                return TranscriptRowMetrics.meRowPadding * 2 + bubbleHeight + chips + gaps
 
             default:
                 return TranscriptRowMetrics.meRowPadding * 2 + content

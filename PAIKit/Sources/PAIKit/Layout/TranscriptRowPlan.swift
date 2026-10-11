@@ -98,7 +98,9 @@ public struct TranscriptCardPlan: Equatable, Sendable {
         /// ``MessageRouting/extractFilePaths(_:)``.
         case assistantBubble(text: String, filePaths: [String])
         case agentMessage(sender: String, body: String)
-        case command(name: String, args: String?)
+        /// `args` is nil when nothing but attachments followed the name; `attachmentPaths` are the
+        /// files that rode at the end of the arguments.
+        case command(name: String, args: String?, attachmentPaths: [String])
         case system(subtype: String?, content: String?, hookSummary: HookSummary?)
         /// A `<local-command-…>` wrapper from before the parser classified that tag — permanent
         /// for rows ingested then; nothing re-parses a stored message.
@@ -221,13 +223,12 @@ public enum TranscriptRowPlan {
                 )
             ]
 
-        case .command:
-            let (name, args) = MessageDisplay.commandParts(message.content ?? "")
+        case .command(let name, let args, let attachmentPaths):
             let trimmedArgs = args.trimmingCharacters(in: .whitespacesAndNewlines)
             let hasArgs = !trimmedArgs.isEmpty
             return [
                 TranscriptCardPlan(
-                    kind: .command(name: name, args: hasArgs ? args : nil),
+                    kind: .command(name: name, args: hasArgs ? args : nil, attachmentPaths: attachmentPaths),
                     register: .me,
                     // Never bounded, like every other thing a person said. A `me` card has no
                     // clip, no trailer and no tap — `MeRowView` draws none of the three — so a

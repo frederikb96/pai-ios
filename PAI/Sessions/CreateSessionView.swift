@@ -54,6 +54,7 @@ struct CreateSessionView: View {
     /// Whether a secret grant is armed for the session this screen will start. One slot the
     /// backend holds and the web shares, so it is read back on appear and after every change.
     @State private var pregrantArmed = false
+    @Environment(\.scenePhase) private var scenePhase
     /// Whether the session this screen is about to create should become a call as soon as it
     /// exists. Set from the launcher's call tiles and from the plus menu below; read once, in
     /// `send(_:)`.
@@ -270,7 +271,13 @@ struct CreateSessionView: View {
             .sheet(isPresented: $showingPregrantSheet) {
                 SecretPregrantSheet { status in pregrantArmed = status.armed }
             }
-            .task { await refreshPregrant() }
+            // The slot is taken by whichever new session starts first, from any device, so it is
+            // re-read when this screen appears and whenever the app returns to the foreground
+            // rather than trusted from the last look. The id restarts the task on each phase.
+            .task(id: scenePhase) {
+                guard scenePhase == .active else { return }
+                await refreshPregrant()
+            }
         } else {
             ProgressView()
                 .paiScreenBackground()
@@ -284,6 +291,34 @@ struct CreateSessionView: View {
             let status = try? await client.getSecretPregrant()
         else { return }
         pregrantArmed = status.armed
+    }
+
+    /// Shown for as long as a grant waits, because sending from any device hands it over — not
+    /// only the menu entry, which is out of sight until opened. The ✕ cancels it.
+    private var pregrantChip: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "key")
+            Text("Secrets granted to the next session started")
+            Button {
+                togglePregrant()
+            } label: {
+                Image(systemName: "xmark")
+                    .padding(4)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Cancel secret grant")
+            .accessibilityIdentifier("pregrant-chip-cancel")
+        }
+        .font(PaiTypography.captionEmphasized.font)
+        .foregroundStyle(PaiPalette.Semantic.textSecondary)
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .padding(.vertical, 4)
+        .background(PaiPalette.Semantic.raisedSurface, in: Capsule())
+        .overlay(Capsule().strokeBorder(PaiPalette.Semantic.borderDefault, lineWidth: 1))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("pregrant-chip")
     }
 
     private func togglePregrant() {
@@ -476,6 +511,10 @@ struct CreateSessionView: View {
                 if voiceController.state != .recording || voiceController.isWithholding {
                     VoiceVolumeOverlay(controller: voiceController)
                 }
+            }
+
+            if pregrantArmed, !createSession.isUltrafastSelected {
+                pregrantChip
             }
 
             if !displayAttachments.isEmpty {

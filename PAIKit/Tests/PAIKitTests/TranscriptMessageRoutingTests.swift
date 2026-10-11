@@ -69,7 +69,18 @@ final class TranscriptMessageRoutingTests: XCTestCase {
 
     func testCleanCommandSubtypeRoutesToCommand() {
         let route = MessageRouting.route(for: message(type: .user, subtype: "command", content: "review\n\n--verbose"))
-        XCTAssertEqual(route, .command)
+        XCTAssertEqual(route, .command(name: "review", args: "--verbose", attachmentPaths: []))
+    }
+
+    func testCommandRouteSplitsTheTrailingAttachmentBlockOffTheArguments() {
+        let content =
+            "/enrich\n\nlook\n\nAttachments referenced in this message:\n.claude/attachments/s1/a.png\n.claude/attachments/s1/b.pdf"
+        let route = MessageRouting.route(for: message(type: .user, subtype: "command", content: content))
+        XCTAssertEqual(
+            route,
+            .command(
+                name: "/enrich", args: "look",
+                attachmentPaths: [".claude/attachments/s1/a.png", ".claude/attachments/s1/b.pdf"]))
     }
 
     /// The order-dependent trap: a `command` row whose content is still raw XML must fall through
