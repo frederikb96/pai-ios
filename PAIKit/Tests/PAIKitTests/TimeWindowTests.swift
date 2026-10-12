@@ -102,6 +102,8 @@ final class TimeWindowTests: XCTestCase {
         let marks = TimeWindowSlider.monthMarks(now: now, calendar: berlin)
         XCTAssertEqual(marks.first?.stop, 0)
         XCTAssertEqual(marks.first?.month, 10)
+        XCTAssertEqual(marks.first?.year, 2025)
+        XCTAssertEqual(marks.filter(\.showsYear).map(\.month), [10, 1])
         XCTAssertEqual(marks.map(\.month).first(where: { $0 == 11 }), 11)
         XCTAssertEqual(marks.map(\.stop), marks.map(\.stop).sorted())
         // Twelve months boundaries plus the leading partial month.
