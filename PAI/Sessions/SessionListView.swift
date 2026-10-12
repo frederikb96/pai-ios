@@ -118,6 +118,7 @@ struct SessionListView: View {
                 searchErrorRow(error)
                     .listRowSeparator(.hidden)
             }
+            semanticStatusRow
             content
         }
         .listStyle(.plain)
@@ -146,6 +147,9 @@ struct SessionListView: View {
                 centeredRow { emptyStateText("No sessions yet") }
             case .noMatchingSessions:
                 centeredRow { emptyStateText("No matching sessions") }
+            case .searchingByMeaning:
+                // The status line above already says so.
+                EmptyView()
             }
 
             ForEach(Array(sessions.rows.enumerated()), id: \.element.id) { index, row in
@@ -155,6 +159,8 @@ struct SessionListView: View {
                 SessionRowButton(row: row) {
                     environment.router.push(.session(id: row.id))
                 }
+                // The text matches wait, muted, for the tiered result to replace them.
+                .opacity(sessions.semanticStatus == .searching ? 0.5 : 1)
                 // The only two swipe actions left: pin/unpin on the trailing edge (a thumb's
                 // right-to-left swipe), close on the leading edge below. The full options menu —
                 // Subagents, Spec and everything else — moved to long-press only, so a swipe
@@ -232,6 +238,28 @@ struct SessionListView: View {
     // The search FIELD itself is `.searchable` on the body above; a search-specific error is the
     // one thing that does not fit that control. It lives as an ordinary first row in the list
     // rather than pinned chrome, since it applies only to a failed search.
+
+    /// One static line about the semantic query: that it is running (the text matches below are
+    /// provisional) or that the server could not answer. Nothing here animates.
+    @ViewBuilder
+    private var semanticStatusRow: some View {
+        switch sessions.semanticStatus {
+        case .searching:
+            semanticStatusText(SemanticSearchPhase.searchingLabel)
+        case .unavailable:
+            semanticStatusText(SemanticSearchPhase.unavailableLabel)
+        case .idle, .ready, .failed:
+            EmptyView()
+        }
+    }
+
+    private func semanticStatusText(_ text: String) -> some View {
+        Text(text)
+            .font(PaiTypography.caption.font)
+            .foregroundStyle(PaiPalette.Semantic.textMuted)
+            .listRowSeparator(.hidden)
+            .accessibilityIdentifier("semantic-status")
+    }
 
     private func searchErrorRow(_ error: String) -> some View {
         HStack(spacing: 4) {

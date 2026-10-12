@@ -11,6 +11,7 @@ struct NoteListScreen: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(NotesStore.self) private var notes
     @Environment(NotesBrowseStore.self) private var browse
+    @Environment(NoteMeaningSearchStore.self) private var meaning
     @Environment(ToastCenter.self) private var toasts
     @Environment(SettingsStore.self) private var settings
 
@@ -30,10 +31,6 @@ struct NoteListScreen: View {
     @State private var searchLoading = false
     @State private var searchError: String?
 
-    @State private var semanticResults: [NoteSemanticHit] = []
-    @State private var semanticLoading = false
-    @State private var semanticError: String?
-
     /// Drives `.searchFocused` below, so the launcher's "Find note" tile can land here with the
     /// keyboard already up and the filter ready to take a word.
     @FocusState private var isFilterFocused: Bool
@@ -47,13 +44,17 @@ struct NoteListScreen: View {
         case filter, fullText, semantic
     }
 
-    /// Drives the debounced search `.task` — one id covering both server-reaching modes so a
-    /// mode switch and a keystroke are never two separate tasks racing each other. The window is
-    /// part of it only where the server applies it, which is every mode but the local filter.
+    /// Everything that changes what a server-reaching mode asks for: one value, so a mode switch
+    /// and a keystroke are never two separate triggers racing each other. The window is part of
+    /// it only where the server applies it, which is every mode but the local filter.
     private struct SearchTrigger: Equatable {
         let query: String
         let mode: Mode
         let window: TimeWindow?
+    }
+
+    private var searchTrigger: SearchTrigger {
+        SearchTrigger(query: filterText, mode: mode, window: mode == .filter ? nil : timeWindow)
     }
 
     var body: some View {
@@ -142,22 +143,26 @@ struct NoteListScreen: View {
                 await notes.refresh()
             }
             .refreshable { await notes.refresh() }
-            .task(id: SearchTrigger(query: filterText, mode: mode, window: mode == .filter ? nil : timeWindow)) {
-                guard mode == .fullText || mode == .semantic else { return }
+            // Semantic search is debounced and ordered by its store, which also keeps the plain
+            // matches on screen until the tiered result lands.
+            .onChange(of: searchTrigger) { _, trigger in
+                if trigger.mode == .semantic {
+                    meaning.update(query: trigger.query, window: trigger.window)
+                } else {
+                    meaning.reset()
+                }
+            }
+            .task(id: searchTrigger) {
+                guard mode == .fullText else { return }
                 let trimmed = filterText.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else {
                     searchResults = []
                     searchTruncated = false
-                    semanticResults = []
                     return
                 }
-                try? await Task.sleep(for: .milliseconds(1000))
+                try? await Task.sleep(nanoseconds: SearchTiming.debounceNanos)
                 guard !Task.isCancelled else { return }
-                if mode == .fullText {
-                    await runFullTextSearch(trimmed)
-                } else {
-                    await runSemanticSearch(trimmed)
-                }
+                await runFullTextSearch(trimmed)
             }
             .sheet(isPresented: $showToolbarSettings) {
                 NoteToolbarSettingsScreen()
@@ -301,8 +306,6 @@ struct NoteListScreen: View {
         searchResults = []
         searchTruncated = false
         searchError = nil
-        semanticResults = []
-        semanticError = nil
     }
 
     private var tagFilterButton: some View {
@@ -375,18 +378,6 @@ struct NoteListScreen: View {
         }
     }
 
-    private func runSemanticSearch(_ query: String) async {
-        semanticLoading = true
-        semanticError = nil
-        defer { semanticLoading = false }
-        do {
-            semanticResults = try await browse.searchSemantic(
-                q: query, window: timeWindow?.bounds(now: Date()))
-        } catch {
-            semanticError = (error as? PaiError)?.userMessage ?? "Search failed"
-        }
-    }
-
     @ViewBuilder
     private var fullTextResults: some View {
         if let searchError {
@@ -423,16 +414,33 @@ struct NoteListScreen: View {
         }
     }
 
+    /// Semantic mode: the filter's matches at once, muted, until the tiered result lands and
+    /// replaces them. If the server cannot answer in time the matches stay, with a line saying so.
     @ViewBuilder
     private var semanticResultsView: some View {
-        if let semanticError {
-            ContentUnavailableView(
-                "Search failed", systemImage: "exclamationmark.triangle", description: Text(semanticError))
-        } else if filterText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if filterText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             ContentUnavailableView(
                 "Search by meaning", systemImage: "sparkles",
                 description: Text("Type to search notes by what they mean, not just their words."))
-        } else if semanticVisible.isEmpty && !semanticLoading {
+        } else {
+            switch meaning.phase {
+            case .ready:
+                tieredResults
+            case .searching:
+                filterMatches(status: SemanticSearchPhase.searchingLabel, muted: true, isError: false)
+            case .unavailable:
+                filterMatches(status: SemanticSearchPhase.unavailableLabel, muted: false, isError: false)
+            case let .failed(message):
+                filterMatches(status: message, muted: false, isError: true)
+            case .idle:
+                filterMatches(status: nil, muted: false, isError: false)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var tieredResults: some View {
+        if semanticVisible.isEmpty {
             ContentUnavailableView("No matches", systemImage: "sparkles")
         } else {
             List {
@@ -448,13 +456,31 @@ struct NoteListScreen: View {
                     .buttonStyle(.plain)
                     .listRowBackground(PaiPalette.Notes.panelBackground)
                 }
-                if semanticLoading {
-                    ProgressView().frame(maxWidth: .infinity)
-                }
             }
             .listStyle(.plain)
             .paiNotesListBackground()
         }
+    }
+
+    /// The same rows the filter mode shows for this text and window. The status line is static
+    /// text: no spinner, nothing that animates.
+    private func filterMatches(status: String?, muted: Bool, isError: Bool) -> some View {
+        List {
+            if let status {
+                Text(status)
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(isError ? PaiPalette.Semantic.errorText : PaiPalette.Semantic.textMuted)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .accessibilityIdentifier("semantic-status")
+            }
+            ForEach(visibleNotes) { note in
+                row(for: note)
+                    .opacity(muted ? 0.5 : 1)
+            }
+        }
+        .listStyle(.plain)
+        .paiNotesListBackground()
     }
 
     /// Full-text hits inside the tag selection, newest first: the mode narrows the list, it does
@@ -478,7 +504,7 @@ struct NoteListScreen: View {
     private var semanticVisible: [SemanticNoteHit] {
         let byId = Dictionary(
             uniqueKeysWithValues: notes.notes.filter { !$0.pendingDelete }.map { ($0.id, $0) })
-        return semanticResults.compactMap { hit in
+        return meaning.hits.compactMap { hit in
             guard let note = byId[hit.noteId], noteHasAllTags(note, selected: selectedTags) else { return nil }
             return SemanticNoteHit(hit: hit, note: note)
         }

@@ -77,6 +77,9 @@ final class AppEnvironment {
         /// How the index is being browsed — sort order, and whatever a semantic search returned.
         /// Separate from `NotesStore`, which owns the notes themselves and what is unsaved in them.
         let notesBrowse: NotesBrowseStore
+        /// The notes list's semantic query, which is slower than the filter it replaces and so
+        /// runs beside it — see `NoteMeaningSearchStore`.
+        let noteMeaning: NoteMeaningSearchStore
         /// Photos and files picked in a composer and not yet sent — see `StagedAttachmentStore`.
         let staging: StagedAttachmentStore
         /// The durable send queue — a message is here, and the bubble it drives exists, before
@@ -233,6 +236,7 @@ final class AppEnvironment {
             staging?.dropVanishedUploads(for: key, serverIds: ids, requestedAt: requestedAt)
         }
 
+        let notesBrowse = NotesBrowseStore(api: client, storage: defaults)
         connection = Connection(
             requestFactory: factory,
             apiClient: client,
@@ -249,7 +253,10 @@ final class AppEnvironment {
             },
             pushChannels: PushChannelsStore(api: client),
             notes: NotesStore(api: client),
-            notesBrowse: NotesBrowseStore(api: client, storage: defaults),
+            notesBrowse: notesBrowse,
+            noteMeaning: NoteMeaningSearchStore { query, window in
+                try await notesBrowse.searchSemantic(q: query, window: window)
+            },
             staging: staging,
             outbox: outbox,
             voice: voice,

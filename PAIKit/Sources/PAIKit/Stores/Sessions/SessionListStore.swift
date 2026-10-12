@@ -59,6 +59,8 @@ public struct SessionListRow: Sendable, Equatable, Identifiable {
 /// loading state, because it starts life already loaded via `loadInitialSessions()`.
 public enum SessionListEmptyState: Sendable, Equatable {
     case none, loadingFirstResults, noMatchingSessions, noSessionsYet
+    /// The text matches are empty and the semantic query has not answered yet.
+    case searchingByMeaning
 }
 
 /// Swift port of the session list's data flow: `pai-cloud/web/src/stores/session.ts` (the synced
@@ -97,7 +99,7 @@ public final class SessionListStore {
     /// second of deliberate dead time before the request is what a reader experiences as lag.
     /// Sized so a burst of typing still collapses into a couple of requests rather than one per
     /// character.
-    public static let defaultTextDebounceNanos: UInt64 = 250_000_000
+    public static let defaultTextDebounceNanos: UInt64 = SearchTiming.debounceNanos
     private static let pollIntervalNanos: UInt64 = 10_000_000_000
 
     // MARK: Source A — the synced list
@@ -145,6 +147,8 @@ public final class SessionListStore {
     private var resultsSourceKey: String?
     private var debounceTask: Task<Void, Never>?
     private var serverFilteredTask: Task<Void, Never>?
+    private var semanticTask: Task<Void, Never>?
+    private var semanticPhase: SemanticSearchPhase = .idle
     private var pollTask: Task<Void, Never>?
 
     private let api: SessionListApiClient
@@ -172,8 +176,15 @@ public final class SessionListStore {
     /// between reading `syncedSessions` and reading `serverFilteredResults`.
     public var isServerFiltered: Bool { machineFilter != nil || effectiveTextQuery != nil || timeWindow != nil }
 
-    /// Whether the rows are a semantic result list: tiered, in the backend's order.
-    private var isTieredSearch: Bool { semanticMode && effectiveTextQuery != nil }
+    /// Whether the rows are a semantic result list: tiered, in the backend's order. Only once the
+    /// tiered result has landed; before that the rows are the text matches.
+    private var isTieredSearch: Bool { semanticStatus == .ready }
+
+    /// Where the semantic query stands, `.idle` unless a semantic search is the active one. While
+    /// it is `.searching` the rows are the text matches and a view shows them muted.
+    public var semanticStatus: SemanticSearchPhase {
+        semanticMode && effectiveTextQuery != nil ? semanticPhase : .idle
+    }
 
     /// The rows a view renders, in order, with every per-row decision already made. Building this
     /// from `syncedSessions`/`serverFilteredResults` on every read rather than caching it keeps
@@ -199,7 +210,7 @@ public final class SessionListStore {
         // A tiered list keeps the backend's order: pinning would lift a tier-2 row above the
         // divider that is meant to introduce it.
         let ordered = isTieredSearch ? matched : Self.withPinnedFirst(matched)
-        let dividerIndex = SearchTier.lessLikelyDividerIndex(in: ordered.map(\.tier))
+        let dividerIndex = isTieredSearch ? SearchTier.lessLikelyDividerIndex(in: ordered.map(\.tier)) : nil
         return ordered.enumerated().map { index, result in
             Self.makeRow(result.session, tier: result.tier, startsLessLikely: index == dividerIndex)
         }
@@ -212,12 +223,18 @@ public final class SessionListStore {
     public var emptyState: SessionListEmptyState {
         guard rows.isEmpty else { return .none }
         if isLoadingFirstResults { return .loadingFirstResults }
+        if semanticStatus == .searching { return .searchingByMeaning }
         return filterQueryText.isEmpty && timeWindow == nil ? .noSessionsYet : .noMatchingSessions
     }
 
     /// Only meaningful while a server-backed fetch is the active source — the synced list has
     /// nothing that can fail this way.
-    public var searchError: String? { isServerFiltered ? serverFilteredError : nil }
+    public var searchError: String? {
+        guard isServerFiltered else { return nil }
+        if let serverFilteredError { return serverFilteredError }
+        if case let .failed(message) = semanticStatus { return message }
+        return nil
+    }
 
     /// Suppressed for an id query: that is a client-side pass over what is already loaded, and
     /// there is nothing server-side left to page for it.
@@ -651,9 +668,11 @@ public final class SessionListStore {
         let bounds = window?.bounds(now: now())
 
         serverFilteredTask?.cancel()
+        semanticTask?.cancel()
         generation += 1
         let myGeneration = generation
         let mode: SessionSearchMode = semanticMode ? .semantic : .fuzzy
+        semanticPhase = semanticMode && query != nil ? .searching : .idle
         serverFilteredLoading = true
         serverFilteredError = nil
         // Only when the filter genuinely changed: the id-fragment fast path in
@@ -673,18 +692,23 @@ public final class SessionListStore {
             guard let self else { return }
             if let query {
                 do {
+                    // Always the text match, also in semantic mode: it is what shows until the
+                    // tiered result lands.
                     let results = try await self.api.searchSessions(
-                        q: query, mode: mode, agent: machine, limit: Self.searchResultLimit, window: bounds
+                        q: query, mode: .fuzzy, agent: machine, limit: Self.searchResultLimit, window: bounds
                     )
                     guard !Task.isCancelled, self.generation == myGeneration else { return }
+                    // The tiered result may have landed first; the text matches never replace it.
                     // A fuzzy hit has no tier: the result is the list narrowed, newest activity
-                    // first, whatever order the matcher ranked it in. A semantic one is already
-                    // in its backend order.
-                    self.serverFilteredResults =
-                        mode == .fuzzy ? results.sorted { Self.byActivityDescending($0.session, $1.session) } : results
-                    self.serverFilteredCursor = nil
-                    self.serverFilteredHasMore = false
-                    self.resultsSourceKey = requestKey
+                    // first, whatever order the matcher ranked it in.
+                    if self.semanticPhase != .ready {
+                        self.serverFilteredResults = results.sorted {
+                            Self.byActivityDescending($0.session, $1.session)
+                        }
+                        self.serverFilteredCursor = nil
+                        self.serverFilteredHasMore = false
+                        self.resultsSourceKey = requestKey
+                    }
                 } catch {
                     guard !Task.isCancelled, self.generation == myGeneration else { return }
                     if error is CancellationError { return }
@@ -710,6 +734,26 @@ public final class SessionListStore {
                 }
             }
             if self.generation == myGeneration { self.serverFilteredLoading = false }
+        }
+
+        guard semanticMode, let query else { return }
+        semanticTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let results = try await self.api.searchSessions(
+                    q: query, mode: .semantic, agent: machine, limit: Self.searchResultLimit, window: bounds
+                )
+                guard !Task.isCancelled, self.generation == myGeneration else { return }
+                self.serverFilteredResults = results
+                self.serverFilteredCursor = nil
+                self.serverFilteredHasMore = false
+                self.resultsSourceKey = requestKey
+                self.semanticPhase = .ready
+            } catch {
+                guard !Task.isCancelled, self.generation == myGeneration else { return }
+                if error is CancellationError { return }
+                self.semanticPhase = SemanticSearchPhase.outcome(of: error)
+            }
         }
     }
 
