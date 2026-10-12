@@ -10,15 +10,16 @@ import SwiftUI
 /// A fixed height (``TranscriptRowMetrics/attachmentChipHeight``) in every state, on purpose —
 /// the transcript's row height is precomputed before this cell is ever laid out (see
 /// `docs/ARCHITECTURE.md` "Reading the transcript"), so nothing here
-/// may grow to show a loaded image inline. An image goes straight to
-/// ``FullScreenImageViewer`` instead once it loads, which is the right call on iOS when
+/// may grow to show a loaded image inline. An image or PDF goes straight to
+/// ``FilePreviewViewer`` instead once it loads, which is the right call on iOS when
 /// inline expansion would cost a row a height nobody measured.
 struct SessionAttachmentChipView: View {
     let sessionID: String
     let apiClient: PaiApiClient
     let path: String
-    /// True for a `pai-file:` marker the agent offered from its own machine — a non-image needs
-    /// an explicit confirmation before anything is fetched. False for a file the user attached
+    /// True for a `pai-file:` marker the agent offered from its own machine — a file with no
+    /// preview needs an explicit confirmation before anything is fetched, since it ends up saved
+    /// on the device; an image or PDF is fetched only to be shown. False for a file the user attached
     /// when composing, which they already know about and chose to send.
     let requiresConfirmation: Bool
 
@@ -33,10 +34,10 @@ struct SessionAttachmentChipView: View {
     @State private var state: LoadState = .idle
     @State private var errorDetail: String?
     @State private var confirmingDownload = false
-    @State private var fullScreenTarget: FullScreenImageTarget?
+    @State private var previewTarget: FilePreviewTarget?
     @State private var shareFile: AttachmentShareFile?
 
-    private var isImage: Bool { isImageAttachmentPath(path) }
+    private var kind: AttachmentPreviewKind { AttachmentPreviewKind(path: path) }
     private var filename: String { attachmentFilename(path) }
 
     var body: some View {
@@ -52,8 +53,8 @@ struct SessionAttachmentChipView: View {
         .foregroundStyle(PaiPalette.Semantic.textMuted)
         .frame(height: TranscriptRowMetrics.attachmentChipHeight, alignment: .leading)
         .disabled(isLoading)
-        .accessibilityLabel(isImage ? "View \(filename)" : filename)
-        .fullScreenImageViewer($fullScreenTarget)
+        .accessibilityLabel(kind.isPreviewable ? "View \(filename)" : filename)
+        .filePreview($previewTarget)
         .sheet(item: $shareFile) { file in AttachmentShareSheet(activityItems: [file.url]) }
         .confirmationDialog(
             "Download \(filename)?", isPresented: $confirmingDownload, titleVisibility: .visible
@@ -76,15 +77,31 @@ struct SessionAttachmentChipView: View {
     private var icon: some View {
         switch state {
         case .idle:
-            Image(systemName: isImage ? "photo" : "doc")
+            Image(systemName: idleSymbol)
         case .loading:
             ProgressView().controlSize(.mini)
         case .loaded:
-            Image(systemName: isImage ? "photo.fill" : "checkmark.circle.fill")
+            Image(systemName: loadedSymbol)
         case .notFound:
             Image(systemName: "questionmark.folder")
         case .error:
             Image(systemName: "exclamationmark.triangle")
+        }
+    }
+
+    private var idleSymbol: String {
+        switch kind {
+        case .image: return "photo"
+        case .pdf: return "doc.richtext"
+        case .other: return "doc"
+        }
+    }
+
+    private var loadedSymbol: String {
+        switch kind {
+        case .image: return "photo.fill"
+        case .pdf: return "doc.richtext.fill"
+        case .other: return "checkmark.circle.fill"
         }
     }
 
@@ -106,7 +123,7 @@ struct SessionAttachmentChipView: View {
         case .loaded(let data):
             present(data)
         case .idle, .notFound, .error:
-            if !isImage && requiresConfirmation {
+            if !kind.isPreviewable && requiresConfirmation {
                 confirmingDownload = true
             } else {
                 load()
@@ -138,16 +155,15 @@ struct SessionAttachmentChipView: View {
         }
     }
 
-    /// What "open" means once bytes are in hand — the full-screen viewer for a real image, the
+    /// What "open" means once bytes are in hand — the full-screen viewer for an image or PDF, the
     /// share sheet for everything else. Called both right after a fresh load and on a repeat tap
     /// of an already-loaded chip, so a second tap never re-fetches.
     ///
-    /// A path that looked like an image by extension but fails to decode falls through to the
-    /// share sheet instead of doing nothing — the same graceful degradation
-    /// ``NoteAttachmentEmbedView`` already gives this exact case.
+    /// A path that looked like an image or PDF by extension but fails to decode still opens the
+    /// viewer, which then offers the share sheet from its "no preview" card.
     private func present(_ data: Data) {
-        if isImage, let image = UIImage(data: data) {
-            fullScreenTarget = FullScreenImageTarget(image: image, filename: filename)
+        if kind.isPreviewable {
+            previewTarget = FilePreviewTarget(data: data, filename: filename)
         } else {
             shareFile = AttachmentSharing.stage(data, filename: filename)
         }

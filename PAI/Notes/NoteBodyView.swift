@@ -492,11 +492,11 @@ struct NotePreviewAttachmentView: View {
 
 /// An Obsidian embed (`![[attachments/foo.png]]`) or a plain wikilink resolved to an attachment
 /// (`[[attachments/foo.png]]`), rendered inline: in ``Mode/embed`` mode an image renders in place
-/// and opens the shared ``FullScreenImageViewer`` on tap — the same interaction and the same
-/// viewer a session's own attachments use — and anything else is a tappable chip that confirms
-/// before handing the file to the system share sheet, so a stray tap can never start a download on
-/// its own. In ``Mode/link`` mode every attachment, image included, always renders as the download
-/// chip: a plain wikilink is a *reference* to open the file, not a request to embed it inline —
+/// and opens the shared ``FilePreviewViewer`` on tap — the same interaction and the same
+/// viewer a session's own attachments use. Anything else is a tappable chip: an image or PDF opens
+/// in the viewer, any other file confirms before going to the system share sheet, so a stray tap
+/// can never start a download on its own. In ``Mode/link`` mode every attachment, image included,
+/// always renders as the chip: a plain wikilink is a *reference* to open the file, not a request to embed it inline —
 /// only `![[...]]` means that, mirroring the web's `NoteAttachmentEmbed` `mode` prop. Loads on
 /// appearance rather than deferring to a tap on the chip itself — a note body carries only its own
 /// handful of attachments, unlike a long chat transcript.
@@ -513,7 +513,7 @@ struct NoteAttachmentEmbedView: View {
     @State private var state: LoadState = .loading
     @State private var isConfirmingDownload = false
     @State private var shareFile: AttachmentShareFile?
-    @State private var fullScreenTarget: FullScreenImageTarget?
+    @State private var previewTarget: FilePreviewTarget?
 
     private enum LoadState {
         case loading
@@ -528,7 +528,7 @@ struct NoteAttachmentEmbedView: View {
             case .loaded(let data):
                 if mode == .embed, isImage, let uiImage = UIImage(data: data) {
                     Button {
-                        fullScreenTarget = FullScreenImageTarget(image: uiImage, filename: filename)
+                        previewTarget = FilePreviewTarget(data: data, filename: filename)
                     } label: {
                         Image(uiImage: uiImage)
                             .resizable()
@@ -540,10 +540,10 @@ struct NoteAttachmentEmbedView: View {
                     .accessibilityLabel("View \(filename)")
                 } else {
                     Button {
-                        isConfirmingDownload = true
+                        openChip(data)
                     } label: {
                         HStack(spacing: 6) {
-                            Image(systemName: "doc")
+                            Image(systemName: chipSymbol)
                             Text(chipName.shown)
                         }
                         .font(PaiTypography.caption.font)
@@ -593,7 +593,20 @@ struct NoteAttachmentEmbedView: View {
         .sheet(item: $shareFile) { file in
             AttachmentShareSheet(activityItems: [file.url])
         }
-        .fullScreenImageViewer($fullScreenTarget)
+        .filePreview($previewTarget)
+    }
+
+    /// A file the viewer can show opens in place; anything else asks before it is saved.
+    private func openChip(_ data: Data) {
+        if AttachmentPreviewKind(path: chipName.saved).isPreviewable {
+            previewTarget = FilePreviewTarget(data: data, filename: chipName.saved)
+        } else {
+            isConfirmingDownload = true
+        }
+    }
+
+    private var chipSymbol: String {
+        AttachmentPreviewKind(path: chipName.saved) == .pdf ? "doc.richtext" : "doc"
     }
 
     private func prepareShare(_ data: Data) {

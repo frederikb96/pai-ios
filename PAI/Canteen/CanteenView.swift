@@ -1,5 +1,4 @@
 import PAIKit
-import QuickLook
 import SwiftUI
 
 /// The canteen's weekly mails, newest first: the order link, the menu PDFs and which meals of
@@ -8,7 +7,7 @@ import SwiftUI
 struct CanteenView: View {
     @Environment(AppEnvironment.self) private var environment
     @State private var store: CanteenStore?
-    @State private var previewURL: URL?
+    @State private var previewTarget: FilePreviewTarget?
 
     var body: some View {
         Group {
@@ -20,7 +19,7 @@ struct CanteenView: View {
         }
         .navigationTitle("Canteen")
         .navigationBarTitleDisplayMode(.inline)
-        .quickLookPreview($previewURL)
+        .filePreview($previewTarget)
         .task {
             guard store == nil, let client = environment.connection?.apiClient else { return }
             let newStore = CanteenStore(api: client)
@@ -61,13 +60,11 @@ struct CanteenView: View {
         }
     }
 
-    /// Fetches the PDF with the bearer header and hands it to Quick Look as a temp file.
+    /// Fetches the PDF with the bearer header and shows it in the shared file viewer. The mail's
+    /// filename may lack an extension, so the kind is stated rather than read from the name.
     private func open(_ attachment: CanteenAttachment, of entry: CanteenEntry, store: CanteenStore) async {
         guard let data = await store.loadAttachment(entryId: entry.id, attachment: attachment) else { return }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "\(attachment.id)-\(attachment.filename)")
-        guard (try? data.write(to: url, options: .atomic)) != nil else { return }
-        previewURL = url
+        previewTarget = FilePreviewTarget(data: data, filename: attachment.filename, kind: .pdf)
     }
 }
 

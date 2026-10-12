@@ -118,7 +118,7 @@ private struct StagedAttachmentChip: View {
 
     private var showsRetry: Bool { attachment.uploadState == .failed }
 
-    @State private var fullScreenTarget: FullScreenImageTarget?
+    @State private var previewTarget: FilePreviewTarget?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -152,8 +152,7 @@ private struct StagedAttachmentChip: View {
             // The shared full-screen viewer, shown the bytes that will be sent rather than the
             // thumbnail's own decode.
             Button {
-                fullScreenTarget = FullScreenImageTarget(
-                    image: UIImage(data: attachment.data) ?? previewImage, filename: attachment.filename)
+                previewTarget = FilePreviewTarget(data: attachment.data, filename: attachment.filename, kind: .image)
             } label: {
                 Image(uiImage: previewImage)
                     .resizable()
@@ -163,7 +162,7 @@ private struct StagedAttachmentChip: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("View \(attachment.filename)")
-            .fullScreenImageViewer($fullScreenTarget)
+            .filePreview($previewTarget)
         } else {
             HStack(spacing: 4) {
                 Image(systemName: "doc")

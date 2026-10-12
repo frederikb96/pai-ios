@@ -73,7 +73,7 @@
         }
 
         /// Whether `-PaiFixtureOpenImage` was passed — how the Mac workflow reaches
-        /// `FullScreenImageViewer`, a `.fullScreenCover(item:)` with no `Route` of its own to
+        /// `FilePreviewViewer`, a `.fullScreenCover(item:)` with no `Route` of its own to
         /// launch straight into. Combined with `-PaiFixtureRoute session`, this makes
         /// `SessionDetailView`'s own `.task` fetch the fixture attachment directly and present the
         /// viewer on appear, rather than waiting for a tap on a message row's attachment chip —

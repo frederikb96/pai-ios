@@ -24,7 +24,7 @@ struct SessionDetailView: View {
     @State private var usage: Usage?
     /// Set only by the fixture screenshot workflow's own `.task` below — see its doc comment.
     /// Never touched by anything a real session does.
-    @State private var fixtureImageTarget: FullScreenImageTarget?
+    @State private var fixtureImageTarget: FilePreviewTarget?
     /// Read once via `.onGeometryChange` below, not a `GeometryReader` wrapping the screen — a
     /// `GeometryReader` becomes the layout for whatever it contains, and the point here is to
     /// observe the existing `VStack`'s width without changing how it lays out. Starts effectively
@@ -138,7 +138,7 @@ struct SessionDetailView: View {
         .sheet(isPresented: $isPresentingActionsSheet) {
             SessionActionsSheet(sessionId: sessionID)
         }
-        .fullScreenImageViewer($fixtureImageTarget)
+        .filePreview($fixtureImageTarget)
         // The same three the session list's own trailing swipe offers (`SessionListView`) — see
         // that swipe's own doc comment for why "Subagents" is skipped for a subagent itself.
         .confirmationDialog("Session", isPresented: $isPresentingArcMenu, titleVisibility: .hidden) {
@@ -175,7 +175,7 @@ struct SessionDetailView: View {
                 searchState.kind = kind
             }
             .task {
-                // `-PaiFixtureOpenImage` — how the Mac workflow reaches `FullScreenImageViewer`, a
+                // `-PaiFixtureOpenImage` — how the Mac workflow reaches `FilePreviewViewer`, a
                 // `.fullScreenCover` with no `Route` of its own. Presented from here rather than
                 // from `SessionAttachmentChipView`'s own tap handling: that chip lives inside a
                 // virtualized `UICollectionView` row, built only when scrolled into view, and the
@@ -190,10 +190,9 @@ struct SessionDetailView: View {
                     let apiClient = environment.connection?.apiClient,
                     let result = try? await apiClient.getAttachment(
                         sessionId: sessionID, path: PaiFixtures.attachmentPath),
-                    case .ok(let data, _) = result,
-                    let image = UIImage(data: data)
+                    case .ok(let data, _) = result
                 else { return }
-                fixtureImageTarget = FullScreenImageTarget(image: image, filename: "reconcile-diff.png")
+                fixtureImageTarget = FilePreviewTarget(data: data, filename: "reconcile-diff.png", kind: .image)
             }
         #endif
         // The session this screen is *about* stopped existing — deleted from the actions sheet

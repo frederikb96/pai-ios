@@ -11,7 +11,7 @@ import UIKit
 /// This reaches for the same primitive Photos itself is built on instead.
 struct ZoomableImageView: UIViewRepresentable {
     let image: UIImage
-    /// Mirrors the scroll view's live zoom scale out to the caller — `FullScreenImageViewer`'s
+    /// Mirrors the scroll view's live zoom scale out to the caller — `FilePreviewViewer`'s
     /// swipe-to-dismiss only makes sense at rest scale, exactly as in Photos: once zoomed in, a
     /// downward drag pans the image rather than dismissing the screen.
     @Binding var zoomScale: CGFloat
