@@ -139,16 +139,4 @@ final class NoteFilterTests: XCTestCase {
 
         XCTAssertEqual(result.map(\.id), ["weak-new", "strong-old"])
     }
-
-    func testFilterNotesKeepsOnlyNotesModifiedInsideTheWindow() {
-        let notes = [
-            makeNote(id: "before", name: "a", updatedAtMs: 99_000),
-            makeNote(id: "inside", name: "b", updatedAtMs: 150_000),
-            makeNote(id: "after", name: "c", updatedAtMs: 201_000),
-        ]
-        let bounds = TimeBounds(since: Date(timeIntervalSince1970: 100), until: Date(timeIntervalSince1970: 200))
-
-        XCTAssertEqual(filterNotes(notes, within: bounds).map(\.id), ["inside"])
-        XCTAssertEqual(filterNotes(notes, within: nil).count, 3)
-    }
 }

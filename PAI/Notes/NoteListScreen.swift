@@ -49,7 +49,7 @@ struct NoteListScreen: View {
 
     /// Drives the debounced search `.task` — one id covering both server-reaching modes so a
     /// mode switch and a keystroke are never two separate tasks racing each other. The window is
-    /// part of it only where the server applies it; full-text hits are narrowed on the phone.
+    /// part of it only where the server applies it, which is every mode but the local filter.
     private struct SearchTrigger: Equatable {
         let query: String
         let mode: Mode
@@ -142,7 +142,7 @@ struct NoteListScreen: View {
                 await notes.refresh()
             }
             .refreshable { await notes.refresh() }
-            .task(id: SearchTrigger(query: filterText, mode: mode, window: mode == .semantic ? timeWindow : nil)) {
+            .task(id: SearchTrigger(query: filterText, mode: mode, window: mode == .filter ? nil : timeWindow)) {
                 guard mode == .fullText || mode == .semantic else { return }
                 let trimmed = filterText.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else {
@@ -367,7 +367,7 @@ struct NoteListScreen: View {
         searchError = nil
         defer { searchLoading = false }
         do {
-            let page = try await notes.searchNotes(q: query)
+            let page = try await notes.searchNotes(q: query, window: timeWindow?.bounds(now: Date()))
             searchResults = page.hits
             searchTruncated = page.truncated
         } catch {
@@ -457,14 +457,10 @@ struct NoteListScreen: View {
         }
     }
 
-    /// Full-text hits inside the window and the tag selection, newest first: the mode narrows
-    /// the list, it does not rank it.
+    /// Full-text hits inside the tag selection, newest first: the mode narrows the list, it does
+    /// not rank it. The window was applied by the server, before its result cap.
     private var fullTextVisible: [NoteSearchHit] {
-        let bounds = timeWindow?.bounds(now: Date())
-        let kept = searchResults.filter { hit in
-            noteHasAllTags(hit.note, selected: selectedTags)
-                && (bounds?.contains(epochMilliseconds: hit.note.updatedAtMs) ?? true)
-        }
+        let kept = searchResults.filter { noteHasAllTags($0.note, selected: selectedTags) }
         return kept.sorted { $0.note.updatedAtMs > $1.note.updatedAtMs }
     }
 

@@ -193,7 +193,7 @@ private final class FakeNotesApi: NotesApiClient, @unchecked Sendable {
     func restoreNoteRevision(noteId: String, revisionId: String) async throws -> NoteDetail {
         restoreRevisionResult ?? NoteFixture.detail(id: noteId, name: "Restored version")
     }
-    func searchNotes(q: String, containerId: String?, limit: Int?) async throws -> NoteSearchPage {
+    func searchNotes(q: String, containerId: String?, limit: Int?, window: TimeBounds?) async throws -> NoteSearchPage {
         NoteSearchPage(hits: [], truncated: false)
     }
 

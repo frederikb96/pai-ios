@@ -56,14 +56,15 @@ final class TimeWindowTests: XCTestCase {
     }
 
     func testTheFullSliderRangeRunsFromFiftyTwoWeeksAgoUntilNow() {
-        let bounds = TimeWindow.slider(.full).bounds(now: now, calendar: berlin)
+        let bounds = TimeWindow.fromSlider(.full, now: now, calendar: berlin).bounds(now: now, calendar: berlin)
         XCTAssertEqual(day(bounds.since), "2025-10-13 00:00")
         XCTAssertEqual(bounds.until, now)
     }
 
     /// An end thumb short of the right edge covers the whole of its day.
     func testASliderEndBeforeTheEdgeIsTheEndOfThatDay() {
-        let bounds = TimeWindow.slider(SliderSelection(from: 40, to: 50)).bounds(now: now, calendar: berlin)
+        let bounds = TimeWindow.fromSlider(SliderSelection(from: 40, to: 50), now: now, calendar: berlin).bounds(
+            now: now, calendar: berlin)
         XCTAssertEqual(day(bounds.since), "2026-07-20 00:00")
         let until = try! XCTUnwrap(bounds.until)
         XCTAssertEqual(day(until), "2026-09-28 23:59")
@@ -143,16 +144,41 @@ final class TimeWindowTests: XCTestCase {
             .label(now: now, calendar: berlin),
             "2026-03-01 – 2026-03-09")
         XCTAssertEqual(
-            TimeWindow.slider(.full).label(now: now, calendar: berlin), "2025-10-13 – now")
+            TimeWindow.fromSlider(.full, now: now, calendar: berlin).label(now: now, calendar: berlin),
+            "2025-10-13 – now")
         XCTAssertEqual(
-            TimeWindow.slider(SliderSelection(from: 40, to: 50)).label(now: now, calendar: berlin),
+            TimeWindow.fromSlider(SliderSelection(from: 40, to: 50), now: now, calendar: berlin).label(
+                now: now, calendar: berlin),
             "2026-07-20 – 2026-09-28")
     }
 
     func testOpeningTheSliderWithoutASliderWindowSelectsTheWholeAxis() {
-        XCTAssertEqual(TimeWindow.preset(.today).sliderSelection, .full)
-        XCTAssertEqual(
-            TimeWindow.slider(SliderSelection(from: 3, to: 9)).sliderSelection, SliderSelection(from: 3, to: 9))
+        XCTAssertEqual(TimeWindow.preset(.today).sliderSelection(now: now, calendar: berlin), .full)
+    }
+
+    /// A slider window is its days: the same window read a week later means the same dates, and
+    /// reopening the overlay then puts the thumbs on the stops those days are now nearest to.
+    func testASliderWindowKeepsItsDatesAsTimePasses() {
+        let chosen = TimeWindow.fromSlider(SliderSelection(from: 40, to: 50), now: now, calendar: berlin)
+        let later = now.addingTimeInterval(7 * 86_400)
+
+        XCTAssertEqual(chosen.bounds(now: later, calendar: berlin), chosen.bounds(now: now, calendar: berlin))
+        XCTAssertEqual(chosen.label(now: later, calendar: berlin), "2026-07-20 – 2026-09-28")
+        XCTAssertEqual(chosen.sliderSelection(now: now, calendar: berlin), SliderSelection(from: 40, to: 50))
+        XCTAssertEqual(chosen.sliderSelection(now: later, calendar: berlin), SliderSelection(from: 39, to: 49))
+    }
+
+    /// The open right edge stays open: it means "until now" whenever the query runs.
+    func testAnOpenSliderEndFollowsNow() {
+        let chosen = TimeWindow.fromSlider(SliderSelection(from: 20, to: 52), now: now, calendar: berlin)
+        let later = now.addingTimeInterval(3 * 86_400)
+        XCTAssertEqual(chosen.bounds(now: later, calendar: berlin).until, later)
+        XCTAssertEqual(chosen.sliderSelection(now: later, calendar: berlin).to, 52)
+    }
+
+    func testAWindowOlderThanTheAxisReopensAtTheLeftEdge() {
+        let chosen = TimeWindow.slider(from: CalendarDay(year: 2020, month: 1, day: 1), to: nil)
+        XCTAssertEqual(chosen.sliderSelection(now: now, calendar: berlin).from, 0)
     }
 
     func testTheWireStringIsUtcWithAnOffset() {

@@ -139,6 +139,18 @@ final class PaiApiClientTests: XCTestCase {
         XCTAssertFalse(query.contains("until="), query)
     }
 
+    func testSearchNotesSendsTheWindowAsSinceAndUntil() async throws {
+        stubJSON(#"{"hits": [], "truncated": false}"#)
+        let client = try makeClient()
+        let bounds = TimeBounds(
+            since: Date(timeIntervalSince1970: 1_800_000_000), until: Date(timeIntervalSince1970: 1_800_086_400))
+        _ = try await client.searchNotes(q: "needle", window: bounds)
+
+        let query = PaiStubURLProtocol.capturedRequest?.url?.query ?? ""
+        XCTAssertTrue(query.contains("since=2027-01-15T08:00:00.000%2B00:00"), query)
+        XCTAssertTrue(query.contains("until=2027-01-16T08:00:00.000%2B00:00"), query)
+    }
+
     func testSearchSessionsSendsModeAndAgentWhenProvided() async throws {
         stubJSON("[]")
         let client = try makeClient()
