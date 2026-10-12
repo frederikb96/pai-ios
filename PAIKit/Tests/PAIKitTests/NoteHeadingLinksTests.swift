@@ -191,8 +191,8 @@ final class NoteHeadingLinksTests: XCTestCase {
         let document = NotePreviewDocument(body: body, nameToId: [:])
         let offset = try XCTUnwrap(NoteHeading.offset(of: "Setup", in: body))
         let index = try XCTUnwrap(document.itemIndex(forCharacterOffset: offset, in: body))
-        guard case .block(.heading(_, let text)) = document.items[index].kind else {
-            return XCTFail("expected the heading item, got \(document.items[index].kind)")
+        guard case .heading(_, let text) = document.items[index].block else {
+            return XCTFail("expected the heading item, got \(document.items[index].block)")
         }
         XCTAssertEqual(String(describing: text).contains("Setup"), true)
         XCTAssertEqual(document.items.count, 3, "the link must stay inline in its paragraph")

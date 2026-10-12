@@ -131,9 +131,9 @@ enum Wikilinks {
         return "[\(display)](\(noteLinkURL(id: "", heading: heading)))"
     }
 
-    /// What a non-embed wikilink becomes. An attachment is never inline markdown — it becomes its
-    /// own item/segment, since rendering it needs a live fetch; anything else is a real link to
-    /// the resolved note (at its heading, when the link names one) or a strikethrough span.
+    /// What a non-embed wikilink becomes. An attachment is never markdown — it is a segment of its
+    /// own, since drawing it needs a live fetch; anything else is a real link to the resolved note
+    /// (at its heading, when the link names one) or a strikethrough span.
     ///
     /// A link naming the note it sits in (`selfName`) is a heading of this page, whatever the
     /// index says — the same order as the web's `splitBodyForRender`.

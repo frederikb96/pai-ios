@@ -1,45 +1,57 @@
 import Foundation
 import Markdown
 
-/// One item in ``NotePreviewDocument/items``: a top-level rendered block, a resolved attachment
-/// embed (`![[...]]`), or a plain wikilink that resolved to an attachment rather than a note —
-/// all three need to sit in the same ordered, line-addressable list, since a jump target can land
-/// on any of them.
-public enum NotePreviewItemKind: Sendable {
-    case block(MarkdownBlock)
-    case embed(target: String, alias: String?)
-    case attachmentLink(target: String, label: String?)
-}
-
-/// A rendered item plus the 1-based source line its markdown started at — how a jump lands on
-/// the right item without reconstructing an exact character position inside rendered text (see
-/// ``NotePreviewDocument/itemIndex(forCharacterOffset:in:)``).
+/// A top-level rendered block plus the 1-based source line its markdown started at — how a jump
+/// lands on the right item without reconstructing an exact character position inside rendered
+/// text (see ``NotePreviewDocument/itemIndex(forCharacterOffset:in:)``).
 public struct NotePreviewItem: Identifiable, Sendable {
     public let id: Int
-    public let kind: NotePreviewItemKind
+    public let block: MarkdownBlock
     public let startLine: Int
     /// The ordinal of the first task box this item draws, counting every box on the page in
     /// drawing order — an index into ``NotePreviewDocument/taskMarks``.
     public let firstTask: Int
 }
 
-/// A note body parsed once for a read-only page: wikilinks resolved the same way
-/// ``splitBodyForRender(_:nameToId:)`` resolves them, but kept as one line-addressable list of
-/// top-level items instead of merged text segments — the shape a jump from the outline or from
-/// in-note search needs to land on a specific block rather than only on the segment of text
-/// surrounding it.
+/// An attachment drawn where the note wrote it: an embed (`![[...]]`), or a plain wikilink that
+/// resolved to an attachment rather than a note.
+public struct NotePreviewAttachment: Hashable, Sendable {
+    /// `.embed` shows an image in place; `.link` is a reference to the file and always a chip,
+    /// image or not, mirroring the web's `NoteAttachmentEmbed` `mode` prop.
+    public enum Mode: Hashable, Sendable {
+        case embed
+        case link
+    }
+
+    public let target: String
+    public let mode: Mode
+    /// What the link called the file; a chip shows it in place of the stored name.
+    public let label: String?
+
+    public init(target: String, mode: Mode, label: String? = nil) {
+        self.target = target
+        self.mode = mode
+        self.label = label
+    }
+}
+
+/// A note body parsed once for a read-only page: wikilinks resolved by
+/// ``splitBodyForRender(_:nameToId:attachmentIndex:selfName:)``, kept as one line-addressable list
+/// of top-level items — the shape a jump from the outline or from in-note search needs to land on
+/// a specific block.
 ///
-/// Built by splitting `body` at every embed the same way ``splitBodyForRender(_:nameToId:)``
-/// does — never inside a combined re-parse of the whole document — so an embed becomes its own
-/// item regardless of what markdown construct would otherwise have swallowed it: a list item it
-/// lazily continues with no blank line between them, or a run of several embeds on consecutive
-/// lines that would parse as one merged paragraph. Each surviving text segment is parsed on its
-/// own and contributes one item per top-level block in it, rather than by slicing the whole
-/// document's block list positionally against its child list — the two can disagree in length
-/// (an empty paragraph node produces no ``MarkdownBlock`` at all), and a positional zip would
-/// silently misalign every item after the gap rather than only the one that vanished.
+/// Each attachment is written back into the markdown where it stood, as a link to
+/// ``NotePreviewInline/attachmentScheme`` naming its index in ``attachments``, and the whole body
+/// is parsed in one pass. An attachment inside a list item therefore stays inside that item, and
+/// the rest of the list stays a list: parsing the text after an attachment on its own would read
+/// an indented next item as a code block. The renderer finds the placeholder in a block's inline
+/// text (``NotePreviewInline/lines(of:attachments:drawsAsBlock:)``) and draws the attachment there.
+/// No rewrite introduces a newline, so a block's source line in the rewritten text is its line in
+/// `body`.
 public struct NotePreviewDocument: Sendable {
     public let items: [NotePreviewItem]
+    /// Every attachment the body draws, indexed by the placeholder links in ``items``.
+    public let attachments: [NotePreviewAttachment]
     /// Where each drawn task box lives in the body, by the ordinal it is drawn in; empty when the
     /// body's own parse and the drawn page do not agree on every box, which makes nothing
     /// tickable (see ``NoteTasks``).
@@ -49,80 +61,40 @@ public struct NotePreviewDocument: Sendable {
         body: String, nameToId: [String: String], attachmentIndex: AttachmentIndex = .empty,
         selfName: String? = nil
     ) {
-        let chars = Array(body)
-        let links = Wikilinks.bodyLinks(in: chars)
+        var markdown = ""
+        var found: [NotePreviewAttachment] = []
+        for segment in splitBodyForRender(
+            body, nameToId: nameToId, attachmentIndex: attachmentIndex, selfName: selfName)
+        {
+            let attachment: NotePreviewAttachment
+            switch segment {
+            case .text(let text):
+                markdown += text
+                continue
+            case .embed(let target, _):
+                attachment = NotePreviewAttachment(target: target, mode: .embed)
+            case .attachmentLink(let relPath, let label):
+                attachment = NotePreviewAttachment(target: relPath, mode: .link, label: label)
+            }
+            markdown += NotePreviewInline.placeholder(for: attachment, index: found.count)
+            found.append(attachment)
+        }
 
+        // One item per top-level child that converts to a block, each carrying its own line: an
+        // empty paragraph converts to nothing, and only that child goes missing.
         var built: [NotePreviewItem] = []
-        var textParts: [String] = []
-        var textStartLine = 1
-        var cursor = 0
-        var line = 1
-
-        func appendChunk(_ chunk: String) {
-            if textParts.isEmpty { textStartLine = line }
-            textParts.append(chunk)
-        }
-
-        func flushText() {
-            guard !textParts.isEmpty else { return }
-            let segment = textParts.joined()
-            textParts = []
-            guard !segment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-            let document = Document(parsing: segment, options: MarkdownParser.defaultOptions)
-            for child in document.children {
-                guard let block = MarkdownParser.parse(child.format(), options: MarkdownParser.defaultOptions).first
-                else { continue }
-                let localLine = child.range?.lowerBound.line ?? 1
-                built.append(
-                    NotePreviewItem(
-                        id: built.count, kind: .block(block), startLine: textStartLine + localLine - 1, firstTask: 0))
-            }
-        }
-
-        for item in links {
-            if item.start < cursor { continue }
-            if item.start > cursor {
-                let chunk = String(chars[cursor..<item.start])
-                appendChunk(chunk)
-                line += chunk.reduce(0) { $1 == "\n" ? $0 + 1 : $0 }
-            }
-            // A link's own source text never contains a newline (the grammar excludes it), so it
-            // stays part of the segment currently accumulating and `line` needs no adjustment —
-            // except an embed or an attachment link, which becomes its own item.
-            switch item {
-            case .heading(_, _, let anchor, let alias):
-                appendChunk(Wikilinks.headingLinkMarkdown(anchor: anchor, alias: alias))
-            case .wikilink(let link) where link.isEmbed:
-                flushText()
-                built.append(
-                    NotePreviewItem(
-                        id: built.count, kind: .embed(target: link.target, alias: link.alias), startLine: line,
-                        firstTask: 0))
-            case .wikilink(let link):
-                switch Wikilinks.rendering(
-                    of: link, nameToId: nameToId, attachmentIndex: attachmentIndex, selfName: selfName)
-                {
-                case .attachment(let relPath, let label):
-                    flushText()
-                    built.append(
-                        NotePreviewItem(
-                            id: built.count, kind: .attachmentLink(target: relPath, label: label), startLine: line,
-                            firstTask: 0))
-                case .markdown(let markdown):
-                    appendChunk(markdown)
-                }
-            }
-            cursor = item.end
-        }
-        if cursor < chars.count { appendChunk(String(chars[cursor...])) }
-        flushText()
-
         var drawn: [Bool] = []
-        items = built.map { item in
-            let first = drawn.count
-            if case .block(let block) = item.kind { drawn += NoteTasks.drawnStates(in: [block]) }
-            return NotePreviewItem(id: item.id, kind: item.kind, startLine: item.startLine, firstTask: first)
+        let document = Document(parsing: markdown, options: MarkdownParser.defaultOptions)
+        for child in document.children {
+            guard let block = MarkdownParser.block(from: child) else { continue }
+            built.append(
+                NotePreviewItem(
+                    id: built.count, block: block, startLine: child.range?.lowerBound.line ?? 1,
+                    firstTask: drawn.count))
+            drawn += NoteTasks.drawnStates(in: [block])
         }
+        items = built
+        attachments = found
         taskMarks = NoteTasks.marks(in: body, drawn: drawn)
     }
 
@@ -138,6 +110,106 @@ public struct NotePreviewDocument: Sendable {
             result = index
         }
         return result
+    }
+}
+
+/// One stretch of a block's inline content once its attachments are taken out: text, or the
+/// attachment a placeholder link named.
+public enum NotePreviewInline: Hashable, Sendable {
+    case text(InlineText)
+    case attachment(NotePreviewAttachment)
+
+    /// The link scheme a placeholder carries, followed by the attachment's index.
+    public static let attachmentScheme = "pai-attachment://"
+
+    /// The markdown written where an attachment stood. The label is the file's name, so a place
+    /// that shows a block as plain text (a table cell) reads the name rather than the
+    /// placeholder.
+    static func placeholder(for attachment: NotePreviewAttachment, index: Int) -> String {
+        let name =
+            attachment.label ?? attachment.target.split(separator: "/").last.map(String.init) ?? attachment.target
+        return "[\(Wikilinks.escapeMarkdownText(name))](\(attachmentScheme)\(index))"
+    }
+
+    /// One row of a block's content, top to bottom: an attachment drawn as a block of its own (an
+    /// image), or a run of text and chips that flows like a line of text.
+    public enum Line: Hashable, Sendable {
+        case block(NotePreviewAttachment)
+        case flow([NotePreviewInline])
+    }
+
+    /// `text` split at its placeholder links, or `nil` when it carries none and draws as plain
+    /// text. `drawsAsBlock` decides which attachments take a row of their own. Text beside an
+    /// attachment loses the whitespace and line breaks at its edges, since the attachment
+    /// between them already separates the two.
+    public static func lines(
+        of text: InlineText, attachments: [NotePreviewAttachment],
+        drawsAsBlock: (NotePreviewAttachment) -> Bool
+    ) -> [Line]? {
+        var lines: [Line] = []
+        var flow: [NotePreviewInline] = []
+        var runs: [InlineRun] = []
+        var sawAttachment = false
+
+        func flushRuns() {
+            if let trimmed = trimmed(runs) { flow.append(.text(trimmed)) }
+            runs = []
+        }
+        func flushFlow() {
+            flushRuns()
+            if !flow.isEmpty { lines.append(.flow(flow)) }
+            flow = []
+        }
+
+        for run in text.runs {
+            guard let attachment = attachment(named: run.destination, in: attachments) else {
+                runs.append(run)
+                continue
+            }
+            sawAttachment = true
+            if drawsAsBlock(attachment) {
+                flushFlow()
+                lines.append(.block(attachment))
+            } else {
+                flushRuns()
+                flow.append(.attachment(attachment))
+            }
+        }
+        guard sawAttachment else { return nil }
+        flushFlow()
+        return lines
+    }
+
+    private static func attachment(named destination: String?, in attachments: [NotePreviewAttachment])
+        -> NotePreviewAttachment?
+    {
+        guard let destination, destination.hasPrefix(attachmentScheme),
+            let index = Int(destination.dropFirst(attachmentScheme.count)), attachments.indices.contains(index)
+        else { return nil }
+        return attachments[index]
+    }
+
+    /// `runs` without leading and trailing whitespace, or `nil` when nothing else is left.
+    private static func trimmed(_ runs: [InlineRun]) -> InlineText? {
+        var runs = runs
+        while let first = runs.first {
+            let text = String(first.text.drop(while: \.isWhitespace))
+            if !text.isEmpty {
+                runs[0] = InlineRun(text: text, style: first.style, destination: first.destination)
+                break
+            }
+            runs.removeFirst()
+        }
+        while let last = runs.last {
+            var text = last.text
+            while text.last?.isWhitespace == true { text.removeLast() }
+            if !text.isEmpty {
+                runs[runs.count - 1] = InlineRun(text: text, style: last.style, destination: last.destination)
+                break
+            }
+            runs.removeLast()
+        }
+        return runs.isEmpty ? nil : InlineText(runs: runs)
     }
 }
 

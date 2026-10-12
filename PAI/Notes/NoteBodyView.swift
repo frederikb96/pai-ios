@@ -6,7 +6,8 @@ import UIKit
 /// paragraphs at a size meant to be read rather than typed into, laid out and scrolled freely.
 /// `[[wikilinks]]` are resolved against the loaded index and turned into a link (or struck
 /// through when dead), and `![[embeds]]` render as attachments — an image inline, anything else a
-/// tappable chip offering to save it.
+/// tappable chip offering to save it, each where the note wrote it: inside its list item or
+/// paragraph (see ``NotePreviewDocument``).
 ///
 /// Deliberately its own renderer rather than a reuse of the transcript's `MarkdownContentView`.
 /// That view's spacing and code/table sizing are tuned to agree with `TranscriptRowLayout`'s
@@ -38,9 +39,9 @@ struct NoteBodyView: View {
     // even though the file exists, because a wikilink target that isn't a note name would
     // otherwise never be checked against anything else.
     @State private var attachmentIndex = AttachmentIndex.empty
-    /// Whether the index above has been fetched (or there is nothing to fetch). The document is
-    /// built from it, so a jump that ran before it landed was aimed at items that have since
-    /// moved — see ``reapplyJumpAfterAttachmentsLoad(proxy:document:)``.
+    /// Whether the index above has been fetched (or there is nothing to fetch). A link it resolves
+    /// redraws as a chip, so a jump that ran before it landed may have moved — see
+    /// ``reapplyJumpAfterAttachmentsLoad(proxy:document:)``.
     @State private var attachmentsLoaded = false
     /// The last jump this page scrolled to, so only a jump that actually ran is re-aimed.
     @State private var scrolledJumpToken: Int?
@@ -77,8 +78,12 @@ struct NoteBodyView: View {
                 // off-screen rows is deferred.
                 LazyVStack(alignment: .leading, spacing: NotePreviewMetrics.blockSpacing) {
                     ForEach(document.items) { item in
-                        itemView(item, taskMarks: document.taskMarks, isCurrentTarget: item.id == currentItemIndex)
-                            .id(item.id)
+                        NotePreviewBlockView(
+                            block: item.block, highlightQuery: highlight, isCurrentTarget: item.id == currentItemIndex,
+                            taskBase: item.firstTask, taskMarks: document.taskMarks, onToggleTask: onToggleTask,
+                            attachments: document.attachments, containerId: containerId
+                        )
+                        .id(item.id)
                     }
                 }
                 .padding(NotePreviewMetrics.pagePadding)
@@ -132,10 +137,9 @@ struct NoteBodyView: View {
         return true
     }
 
-    /// A page opened on a jump scrolls before its attachment index has loaded, and an attachment
-    /// resolving turns inline text into an item of its own — so the item that jump named is no
-    /// longer the one at that position. Aims the same jump again once the index is in, without
-    /// animating.
+    /// A page opened on a jump scrolls before its attachment index has loaded, and a link that
+    /// index resolves redraws as a chip of a different height, moving every item below it. Aims
+    /// the same jump again once the index is in, without animating.
     private func reapplyJumpAfterAttachmentsLoad(proxy: ScrollViewProxy, document: NotePreviewDocument) {
         guard let request = jump, scrolledJumpToken == request.token else { return }
         _ = scroll(toCharacterOffset: request.characterOffset, document: document, proxy: proxy, animated: false)
@@ -148,33 +152,6 @@ struct NoteBodyView: View {
         }
         guard let heading = target.heading, let offset = NoteHeading.offset(of: heading, in: noteBody) else { return }
         _ = scroll(toCharacterOffset: offset, document: document, proxy: proxy, animated: true)
-    }
-
-    @ViewBuilder
-    private func itemView(_ item: NotePreviewItem, taskMarks: [NoteTaskMark], isCurrentTarget: Bool) -> some View {
-        switch item.kind {
-        case .block(let block):
-            NotePreviewBlockView(
-                block: block, highlightQuery: highlight, isCurrentTarget: isCurrentTarget,
-                taskBase: item.firstTask, taskMarks: taskMarks, onToggleTask: onToggleTask)
-        case .embed(let target, _):
-            attachmentView(target: target, mode: .embed)
-        case .attachmentLink(let target, let label):
-            attachmentView(target: target, mode: .link, label: label)
-        }
-    }
-
-    @ViewBuilder
-    private func attachmentView(
-        target: String, mode: NoteAttachmentEmbedView.Mode, label: String? = nil
-    ) -> some View {
-        if let containerId {
-            NoteAttachmentEmbedView(containerId: containerId, target: target, mode: mode, label: label)
-        } else {
-            Text("\(target) — this note has no container, so its attachments can't be resolved")
-                .font(PaiTypography.caption.font)
-                .foregroundStyle(PaiPalette.Notes.muted)
-        }
     }
 }
 
@@ -204,16 +181,18 @@ struct NotePreviewBlockView: View {
     var taskBase: Int = 0
     var taskMarks: [NoteTaskMark] = []
     var onToggleTask: ((NoteTaskMark) -> Void)?
+    /// What the placeholder links in this block's text name (``NotePreviewDocument/attachments``),
+    /// and the container they are fetched from.
+    var attachments: [NotePreviewAttachment] = []
+    var containerId: String?
 
     var body: some View {
         switch block {
         case .paragraph(let text):
-            styledText(text, style: PaiTypography.markdownBody, baseColor: PaiPalette.Notes.text)
-                .textSelection(.enabled)
+            inlineContent(text, style: PaiTypography.markdownBody, baseColor: PaiPalette.Notes.text)
 
         case .heading(let level, let text):
-            styledText(text, style: headingStyle(level), baseColor: PaiPalette.Notes.heading)
-                .textSelection(.enabled)
+            inlineContent(text, style: headingStyle(level), baseColor: PaiPalette.Notes.heading)
 
         case .preformattedText(let text):
             // Never produced by `MarkdownParser` — only the transcript's own Thinking card
@@ -247,7 +226,8 @@ struct NotePreviewBlockView: View {
                     let starts = NoteTasks.starts(of: nested, from: taskBase)
                     ForEach(Array(nested.enumerated()), id: \.offset) { index, block in
                         NotePreviewBlockView(
-                            block: block, taskBase: starts[index], taskMarks: taskMarks, onToggleTask: onToggleTask)
+                            block: block, taskBase: starts[index], taskMarks: taskMarks, onToggleTask: onToggleTask,
+                            attachments: attachments, containerId: containerId)
                     }
                 }
             }
@@ -264,7 +244,7 @@ struct NotePreviewBlockView: View {
                             ForEach(Array(item.blocks.enumerated()), id: \.offset) { blockIndex, block in
                                 NotePreviewBlockView(
                                     block: block, taskBase: childStarts[blockIndex], taskMarks: taskMarks,
-                                    onToggleTask: onToggleTask)
+                                    onToggleTask: onToggleTask, attachments: attachments, containerId: containerId)
                             }
                         }
                     }
@@ -282,6 +262,44 @@ struct NotePreviewBlockView: View {
                 raw, font: PaiTypography.markdownCodeBlock.font, highlights: highlightSpans(in: raw)
             )
             .foregroundStyle(PaiPalette.Notes.muted)
+        }
+    }
+
+    /// A paragraph's or heading's text, with any attachment in it drawn where it stands: an image
+    /// on a row of its own, a chip flowing with the words around it.
+    @ViewBuilder
+    private func inlineContent(_ text: InlineText, style: PaiTypography.Style, baseColor: Color) -> some View {
+        if let lines = NotePreviewInline.lines(
+            of: text, attachments: attachments,
+            drawsAsBlock: { $0.mode == .embed && isImageAttachmentPath($0.target) })
+        {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                    switch line {
+                    case .block(let attachment):
+                        NotePreviewAttachmentView(attachment: attachment, containerId: containerId)
+                    case .flow(let pieces):
+                        flowRow(pieces, style: style, baseColor: baseColor)
+                    }
+                }
+            }
+        } else {
+            styledText(text, style: style, baseColor: baseColor)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func flowRow(_ pieces: [NotePreviewInline], style: PaiTypography.Style, baseColor: Color) -> some View {
+        NoteInlineFlowLayout {
+            ForEach(Array(pieces.enumerated()), id: \.offset) { _, piece in
+                switch piece {
+                case .text(let run):
+                    styledText(run, style: style, baseColor: baseColor)
+                        .textSelection(.enabled)
+                case .attachment(let attachment):
+                    NotePreviewAttachmentView(attachment: attachment, containerId: containerId)
+                }
+            }
         }
     }
 
@@ -422,6 +440,56 @@ struct NotePreviewTableView: View {
     }
 }
 
+/// A run of text pieces and attachment chips laid out like a line of text: see ``InlineFlow``.
+struct NoteInlineFlowLayout: Layout {
+    var spacing: CGFloat = 6
+    var lineSpacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let arranged = arrange(width: proposal.width ?? .infinity, subviews: subviews)
+        return CGSize(width: CGFloat(arranged.width), height: CGFloat(arranged.height))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let arranged = arrange(width: bounds.width, subviews: subviews)
+        for (subview, frame) in zip(subviews, arranged.frames) {
+            subview.place(
+                at: CGPoint(x: bounds.minX + CGFloat(frame.x), y: bounds.minY + CGFloat(frame.y)), anchor: .topLeading,
+                proposal: ProposedViewSize(width: CGFloat(frame.width), height: CGFloat(frame.height)))
+        }
+    }
+
+    private func arrange(width: CGFloat, subviews: Subviews) -> (
+        frames: [InlineFlow.Frame], width: Double, height: Double
+    ) {
+        InlineFlow.arrange(
+            count: subviews.count, width: Double(width), spacing: Double(spacing), lineSpacing: Double(lineSpacing)
+        ) { index, proposedWidth in
+            let size = subviews[index].sizeThatFits(
+                ProposedViewSize(width: proposedWidth.map { CGFloat($0) }, height: nil))
+            return (width: Double(size.width), height: Double(size.height))
+        }
+    }
+}
+
+/// One attachment as the preview draws it, or a note that it cannot be fetched when the note has
+/// no container to fetch it from.
+struct NotePreviewAttachmentView: View {
+    let attachment: NotePreviewAttachment
+    let containerId: String?
+
+    var body: some View {
+        if let containerId {
+            NoteAttachmentEmbedView(
+                containerId: containerId, target: attachment.target, mode: attachment.mode, label: attachment.label)
+        } else {
+            Text("\(attachment.target) — this note has no container, so its attachments can't be resolved")
+                .font(PaiTypography.caption.font)
+                .foregroundStyle(PaiPalette.Notes.muted)
+        }
+    }
+}
+
 /// An Obsidian embed (`![[attachments/foo.png]]`) or a plain wikilink resolved to an attachment
 /// (`[[attachments/foo.png]]`), rendered inline: in ``Mode/embed`` mode an image renders in place
 /// and opens the shared ``FullScreenImageViewer`` on tap — the same interaction and the same
@@ -433,10 +501,7 @@ struct NotePreviewTableView: View {
 /// appearance rather than deferring to a tap on the chip itself — a note body carries only its own
 /// handful of attachments, unlike a long chat transcript.
 struct NoteAttachmentEmbedView: View {
-    enum Mode: Equatable {
-        case embed
-        case link
-    }
+    typealias Mode = NotePreviewAttachment.Mode
 
     let containerId: String
     let target: String

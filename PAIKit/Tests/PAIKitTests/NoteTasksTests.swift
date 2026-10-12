@@ -72,7 +72,7 @@ final class NoteTasksTests: XCTestCase {
         XCTAssertEqual(document.taskMarks.count, 4)
         XCTAssertEqual(document.items.map(\.firstTask), [0, 3, 3])
 
-        guard case .block(.list(let list)) = document.items[0].kind else { return XCTFail("expected a list") }
+        guard case .list(let list) = document.items[0].block else { return XCTFail("expected a list") }
         let itemStarts = NoteTasks.starts(of: list.items, from: document.items[0].firstTask)
         XCTAssertEqual(itemStarts, [0, 0, 2])
         let inner = NoteTasks.starts(of: list.items[1].blocks, from: itemStarts[1] + 1)

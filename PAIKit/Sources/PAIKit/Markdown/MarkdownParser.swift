@@ -40,7 +40,7 @@ public enum MarkdownParser {
         children.compactMap(block(from:))
     }
 
-    private static func block(from markup: Markup) -> MarkdownBlock? {
+    static func block(from markup: Markup) -> MarkdownBlock? {
         switch markup {
         case let heading as Heading:
             return .heading(level: heading.level, text: inlineText(from: heading.children))
