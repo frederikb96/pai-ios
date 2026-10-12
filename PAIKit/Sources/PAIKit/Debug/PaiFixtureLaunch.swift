@@ -17,6 +17,7 @@
         static let authStateFlag = "-PaiFixtureAuthState"
         static let searchKindFlag = "-PaiFixtureSearchKind"
         static let openImageFlag = "-PaiFixtureOpenImage"
+        static let openPdfFlag = "-PaiFixtureOpenPdf"
         static let jumpMessageFlag = "-PaiFixtureJumpMessage"
         static let autoCreateSessionFlag = "-PaiFixtureAutoCreateSession"
         static let secretPromptFlag = "-PaiFixtureSecretPrompt"
@@ -81,6 +82,13 @@
         /// never built by the virtualized transcript at all in an ordinary open.
         public static func opensImageAutomatically(arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
             arguments.contains(openImageFlag)
+        }
+
+        /// Whether `-PaiFixtureOpenPdf` was passed — the same route as ``opensImageAutomatically``,
+        /// presenting a generated PDF in the viewer instead of the fixture image, so the PDF path
+        /// (`PDFPreviewView`) is drawn by a screenshot run.
+        public static func opensPdfAutomatically(arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
+            arguments.contains(openPdfFlag)
         }
 
         /// Whether `-PaiFixtureAutoCreateSession` was passed — how the Mac workflow reproduces the

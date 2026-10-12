@@ -18,8 +18,8 @@ struct SessionAttachmentChipView: View {
     let apiClient: PaiApiClient
     let path: String
     /// True for a `pai-file:` marker the agent offered from its own machine — a file with no
-    /// preview needs an explicit confirmation before anything is fetched, since it ends up saved
-    /// on the device; an image or PDF is fetched only to be shown. False for a file the user attached
+    /// preview is not fetched by the tap: the viewer's card holds it back until Download is
+    /// pressed, since it ends up saved on the device. An image or PDF is fetched only to be shown. False for a file the user attached
     /// when composing, which they already know about and chose to send.
     let requiresConfirmation: Bool
 
@@ -33,9 +33,7 @@ struct SessionAttachmentChipView: View {
 
     @State private var state: LoadState = .idle
     @State private var errorDetail: String?
-    @State private var confirmingDownload = false
     @State private var previewTarget: FilePreviewTarget?
-    @State private var shareFile: AttachmentShareFile?
 
     private var kind: AttachmentPreviewKind { AttachmentPreviewKind(path: path) }
     private var filename: String { attachmentFilename(path) }
@@ -55,17 +53,6 @@ struct SessionAttachmentChipView: View {
         .disabled(isLoading)
         .accessibilityLabel(kind.isPreviewable ? "View \(filename)" : filename)
         .filePreview($previewTarget)
-        .sheet(item: $shareFile) { file in AttachmentShareSheet(activityItems: [file.url]) }
-        .confirmationDialog(
-            "Download \(filename)?", isPresented: $confirmingDownload, titleVisibility: .visible
-        ) {
-            Button("Download") { load() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(
-                "An agent offered “\(filename)” from its own machine. It will be fetched through the connection "
-                    + "and saved to your device.")
-        }
     }
 
     private var isLoading: Bool {
@@ -124,48 +111,48 @@ struct SessionAttachmentChipView: View {
             present(data)
         case .idle, .notFound, .error:
             if !kind.isPreviewable && requiresConfirmation {
-                confirmingDownload = true
+                previewTarget = FilePreviewTarget(filename: filename, load: { await fetch() })
             } else {
                 load()
             }
         }
     }
 
+    private func fetch() async -> FilePreviewTarget.Fetch {
+        do {
+            switch try await apiClient.getAttachment(sessionId: sessionID, path: path) {
+            case .ok(let data, _): return .ok(data)
+            case .notFound: return .notFound
+            case .error(let paiError): return .failed(paiError.userMessage)
+            }
+        } catch let paiError as PaiError {
+            return .failed(paiError.userMessage)
+        } catch {
+            return .failed("Could not load attachment")
+        }
+    }
+
     private func load() {
         state = .loading
         Task {
-            do {
-                switch try await apiClient.getAttachment(sessionId: sessionID, path: path) {
-                case .ok(let data, _):
-                    state = .loaded(data)
-                    present(data)
-                case .notFound:
-                    state = .notFound
-                case .error(let paiError):
-                    errorDetail = paiError.userMessage
-                    state = .error
-                }
-            } catch let paiError as PaiError {
-                errorDetail = paiError.userMessage
-                state = .error
-            } catch {
-                errorDetail = "Could not load attachment"
+            switch await fetch() {
+            case .ok(let data):
+                state = .loaded(data)
+                present(data)
+            case .notFound:
+                state = .notFound
+            case .failed(let message):
+                errorDetail = message
                 state = .error
             }
         }
     }
 
-    /// What "open" means once bytes are in hand — the full-screen viewer for an image or PDF, the
-    /// share sheet for everything else. Called both right after a fresh load and on a repeat tap
-    /// of an already-loaded chip, so a second tap never re-fetches.
-    ///
-    /// A path that looked like an image or PDF by extension but fails to decode still opens the
-    /// viewer, which then offers the share sheet from its "no preview" card.
+    /// What "open" means once bytes are in hand — always the full-screen viewer, which draws an
+    /// image or PDF and offers everything else as a card with the share sheet behind its button.
+    /// Called both right after a fresh load and on a repeat tap of an already-loaded chip, so a
+    /// second tap never re-fetches.
     private func present(_ data: Data) {
-        if kind.isPreviewable {
-            previewTarget = FilePreviewTarget(data: data, filename: filename)
-        } else {
-            shareFile = AttachmentSharing.stage(data, filename: filename)
-        }
+        previewTarget = FilePreviewTarget(data: data, filename: filename)
     }
 }

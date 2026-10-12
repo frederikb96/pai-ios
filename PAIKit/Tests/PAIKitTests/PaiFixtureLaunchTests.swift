@@ -48,6 +48,15 @@ final class PaiFixtureLaunchTests: XCTestCase {
         XCTAssertFalse(PaiFixtureLaunch.opensImageAutomatically(arguments: ["/path/to/app", "-PaiFixtureMode"]))
     }
 
+    func testOpensPdfAutomaticallyIsTrueOnlyWhenItsFlagIsPresent() {
+        XCTAssertTrue(
+            PaiFixtureLaunch.opensPdfAutomatically(
+                arguments: ["/path/to/app", "-PaiFixtureMode", "-PaiFixtureOpenPdf"]))
+        XCTAssertFalse(
+            PaiFixtureLaunch.opensPdfAutomatically(
+                arguments: ["/path/to/app", "-PaiFixtureMode", "-PaiFixtureOpenImage"]))
+    }
+
     func testFlagOrderDoesNotMatter() {
         let name = PaiFixtureLaunch.requestedRouteName(
             arguments: ["/path/to/app", "-PaiFixtureRoute", "terminal", "-PaiFixtureMode"]

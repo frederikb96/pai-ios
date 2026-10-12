@@ -493,9 +493,9 @@ struct NotePreviewAttachmentView: View {
 /// An Obsidian embed (`![[attachments/foo.png]]`) or a plain wikilink resolved to an attachment
 /// (`[[attachments/foo.png]]`), rendered inline: in ``Mode/embed`` mode an image renders in place
 /// and opens the shared ``FilePreviewViewer`` on tap — the same interaction and the same
-/// viewer a session's own attachments use. Anything else is a tappable chip: an image or PDF opens
-/// in the viewer, any other file confirms before going to the system share sheet, so a stray tap
-/// can never start a download on its own. In ``Mode/link`` mode every attachment, image included,
+/// viewer a session's own attachments use. Anything else is a tappable chip that opens the viewer
+/// too: an image or PDF is drawn, any other file shows a card whose button hands it to the system
+/// share sheet, so a stray tap can never start a download on its own. In ``Mode/link`` mode every attachment, image included,
 /// always renders as the chip: a plain wikilink is a *reference* to open the file, not a request to embed it inline —
 /// only `![[...]]` means that, mirroring the web's `NoteAttachmentEmbed` `mode` prop. Loads on
 /// appearance rather than deferring to a tap on the chip itself — a note body carries only its own
@@ -511,8 +511,6 @@ struct NoteAttachmentEmbedView: View {
 
     @Environment(NotesStore.self) private var notes
     @State private var state: LoadState = .loading
-    @State private var isConfirmingDownload = false
-    @State private var shareFile: AttachmentShareFile?
     @State private var previewTarget: FilePreviewTarget?
 
     private enum LoadState {
@@ -540,7 +538,7 @@ struct NoteAttachmentEmbedView: View {
                     .accessibilityLabel("View \(filename)")
                 } else {
                     Button {
-                        openChip(data)
+                        previewTarget = FilePreviewTarget(data: data, filename: chipName.saved)
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: chipSymbol)
@@ -552,12 +550,6 @@ struct NoteAttachmentEmbedView: View {
                         .background(PaiPalette.Notes.codeBackground, in: RoundedRectangle(cornerRadius: 8))
                     }
                     .buttonStyle(.plain)
-                    .confirmationDialog(
-                        "Download \(chipName.shown)?", isPresented: $isConfirmingDownload, titleVisibility: .visible
-                    ) {
-                        Button("Download") { prepareShare(data) }
-                        Button("Cancel", role: .cancel) {}
-                    }
                 }
             case .loading:
                 HStack(spacing: 6) {
@@ -590,27 +582,11 @@ struct NoteAttachmentEmbedView: View {
                 state = .error
             }
         }
-        .sheet(item: $shareFile) { file in
-            AttachmentShareSheet(activityItems: [file.url])
-        }
         .filePreview($previewTarget)
-    }
-
-    /// A file the viewer can show opens in place; anything else asks before it is saved.
-    private func openChip(_ data: Data) {
-        if AttachmentPreviewKind(path: chipName.saved).isPreviewable {
-            previewTarget = FilePreviewTarget(data: data, filename: chipName.saved)
-        } else {
-            isConfirmingDownload = true
-        }
     }
 
     private var chipSymbol: String {
         AttachmentPreviewKind(path: chipName.saved) == .pdf ? "doc.richtext" : "doc"
-    }
-
-    private func prepareShare(_ data: Data) {
-        shareFile = AttachmentSharing.stage(data, filename: chipName.saved)
     }
 
     private var filename: String {
