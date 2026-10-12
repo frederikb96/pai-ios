@@ -452,13 +452,22 @@ public struct PaiApiClient: Sendable {
         agent: String? = nil,
         limit: Int? = nil,
         window: TimeBounds? = nil
-    ) async throws -> [SessionSearchResult] {
+    ) async throws -> SessionSearchPage {
         var query = [URLQueryItem(name: "q", value: q)]
         if let mode { query.append(URLQueryItem(name: "mode", value: mode.rawValue)) }
         if let agent { query.append(URLQueryItem(name: "agent", value: agent)) }
         if let limit { query.append(URLQueryItem(name: "limit", value: String(limit))) }
         if let window { query += window.queryItems(sinceName: "since", untilName: "until") }
-        return try await send(path: "/api/sessions/search", query: query)
+        let (data, response) = try await sendRaw(
+            path: "/api/sessions/search", method: "GET", query: query, body: nil, contentType: "application/json")
+        let results: [SessionSearchResult]
+        do {
+            results = try JSONDecoder().decode([SessionSearchResult].self, from: data)
+        } catch {
+            throw PaiError.decoding("\(error)")
+        }
+        let header = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: SessionSearchPage.truncatedHeader)
+        return SessionSearchPage(results: results, truncated: SessionSearchPage.isTruncated(headerValue: header))
     }
 
     public func getMachines() async throws -> [Machine] {

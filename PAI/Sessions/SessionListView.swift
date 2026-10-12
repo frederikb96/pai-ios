@@ -119,6 +119,13 @@ struct SessionListView: View {
                     .listRowSeparator(.hidden)
             }
             semanticStatusRow
+            if let notice = sessions.truncationNotice {
+                Text(notice)
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Semantic.textMuted)
+                    .listRowSeparator(.hidden)
+                    .accessibilityIdentifier("search-truncated")
+            }
             content
         }
         .listStyle(.plain)

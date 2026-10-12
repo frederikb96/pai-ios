@@ -314,6 +314,35 @@ final class SessionStoreListStoreTests: XCTestCase {
         await assertRowsStay(store, ["likely-old", "less-new", "less-pinned"])
     }
 
+    /// A cut-short list says so, for the text matches and again for the tiered list that replaces
+    /// them, and stops saying so once the query changes to one that fits.
+    func testATruncatedSearchAsksTheReaderToNarrowIt() async {
+        let api = FakeSessionListApi()
+        await answerByMode(api)
+        await api.setSearchTruncated(true)
+        let store = makeStore(api: api)
+        store.updateFilterText("match")
+        await awaitRows(store, ["text-new", "text-old"])
+        XCTAssertEqual(store.truncationNotice, "More matches than shown — narrow the search")
+
+        await api.setSearchTruncated(false)
+        store.updateFilterText("match narrower")
+        _ = await awaitSearchCalls(api, count: 2)
+        let deadline = ContinuousClock().now + .seconds(5)
+        while store.truncationNotice != nil, ContinuousClock().now < deadline {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        XCTAssertNil(store.truncationNotice)
+    }
+
+    /// With no text query there is no search to be cut short.
+    func testThereIsNoNoticeWithoutASearch() async {
+        let api = FakeSessionListApi()
+        await api.setSearchTruncated(true)
+        let store = makeStore(api: api)
+        XCTAssertNil(store.truncationNotice)
+    }
+
     /// Without semantic mode there is exactly one request, and no semantic status.
     func testTextModeSendsOneRequestAndHasNoSemanticStatus() async {
         let api = FakeSessionListApi()
@@ -1427,6 +1456,8 @@ extension FakeSessionListApi {
     {
         getSessionsResult = closure
     }
+
+    func setSearchTruncated(_ truncated: Bool) { searchTruncated = truncated }
 
     func setSearchResult(_ closure: @escaping @Sendable (SearchCall) async -> Result<[SessionSearchResult], PaiError>) {
         searchResult = closure

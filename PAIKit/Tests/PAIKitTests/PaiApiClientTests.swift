@@ -151,6 +151,20 @@ final class PaiApiClientTests: XCTestCase {
         XCTAssertTrue(query.contains("until=2027-01-16T08:00:00.000%2B00:00"), query)
     }
 
+    /// The cut is announced only in a response header, the body being a bare array: the client
+    /// must read it, and read absence as "not cut".
+    func testSearchSessionsReportsTheTruncationHeader() async throws {
+        PaiStubURLProtocol.stub = .init(
+            statusCode: 200, headers: ["Content-Type": "application/json", "X-Search-Truncated": "true"],
+            body: Data("[]".utf8))
+        let cut = try await makeClient().searchSessions(q: "notes", limit: 100)
+        XCTAssertTrue(cut.truncated)
+
+        stubJSON("[]")
+        let whole = try await makeClient().searchSessions(q: "notes", limit: 100)
+        XCTAssertFalse(whole.truncated)
+    }
+
     func testSearchSessionsSendsModeAndAgentWhenProvided() async throws {
         stubJSON("[]")
         let client = try makeClient()
