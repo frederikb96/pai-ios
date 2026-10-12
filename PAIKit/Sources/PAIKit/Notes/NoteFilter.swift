@@ -140,28 +140,24 @@ public func sortNotes(_ notes: [NoteSummary], order: NoteSortOrder) -> [NoteSumm
 
 /// The note list's whole text pass: which notes the query admits, and in what order.
 ///
-/// With a query present the order is the match score, exactly as a session search result is
-/// ordered — "the closest match first" is the only order a search has, and leaving a scored
-/// result in modified-date order hides the note that was typed for behind ones that merely
-/// mention a word from it. Ties break on recency, so the order is total. An empty query is not
-/// a search at all and keeps whichever order the user chose.
+/// The match score decides membership only. The admitted notes keep whichever order the user
+/// chose, as the unfiltered list does: a filter narrows the list as it already is, so the rows a
+/// query leaves behind do not jump to a ranking nothing on screen explains.
 ///
 /// Takes prepared notes rather than raw ones so the folding and tokenising survive between
 /// keystrokes — see ``NoteSearchCorpus``.
 public func searchAndSortNotes(_ notes: [PreparedNote], query: String, order: NoteSortOrder) -> [NoteSummary] {
     let prepared = NoteSearchQuery(query)
     guard !prepared.isEmpty else { return sortNotes(notes.map(\.note), order: order) }
-    // Written as statements rather than one chain on purpose: the inferred tuple element types
-    // through `compactMap` → `sorted` → `map` defeat the type checker in a Release build, which
-    // is the one build nothing here compiles until a macOS runner does.
-    var scored: [(score: Double, note: NoteSummary)] = []
-    scored.reserveCapacity(notes.count)
-    for candidate in notes {
-        let score = noteMatchScore(candidate, query: prepared)
-        if score > 0 { scored.append((score: score, note: candidate.note)) }
+    var admitted: [NoteSummary] = []
+    for candidate in notes where noteMatchScore(candidate, query: prepared) > 0 {
+        admitted.append(candidate.note)
     }
-    scored.sort { a, b in
-        a.score != b.score ? a.score > b.score : a.note.updatedAtMs > b.note.updatedAtMs
-    }
-    return scored.map(\.note)
+    return sortNotes(admitted, order: order)
+}
+
+/// The notes last modified inside `bounds`; all of them when there is no window.
+public func filterNotes(_ notes: [NoteSummary], within bounds: TimeBounds?) -> [NoteSummary] {
+    guard let bounds else { return notes }
+    return notes.filter { bounds.contains(epochMilliseconds: $0.updatedAtMs) }
 }

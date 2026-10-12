@@ -590,33 +590,24 @@ public struct NoteSearchPage: Codable, Sendable, Equatable {
     }
 }
 
-/// One hit from a semantic search scoped to notes — `POST /api/memory/search` filtered to
-/// `type: "note"`. The generic route answers an open `metadata` dictionary; the only key notes
-/// ever write into it is `note_id` (`embed_note`'s job handler, backend-side), so this reads out
-/// just that one and lets a hit missing it fail the whole decode — which would mean the `type`
-/// filter itself stopped working, not something to paper over.
-public struct NoteSemanticHit: Sendable, Equatable, Identifiable {
+/// One hit from `GET /api/notes/semantic`: a note id and the tier the backend put it in (`1`
+/// likely, `2` less likely). The list arrives ordered by tier and then by the note's own
+/// `updated_at`; the name and summary come from the index the client already holds, so a hit never
+/// carries a copy that could have gone stale.
+public struct NoteSemanticHit: Sendable, Equatable, Identifiable, Decodable {
     public let noteId: String
-    /// Cosine similarity, 0-1 — closer to 1 is a better match.
-    public let score: Double
+    public let tier: Int
 
     public var id: String { noteId }
 
-    public init(noteId: String, score: Double) {
+    public init(noteId: String, tier: Int) {
         self.noteId = noteId
-        self.score = score
+        self.tier = tier
     }
-}
 
-extension NoteSemanticHit: Decodable {
-    private enum CodingKeys: String, CodingKey { case score, metadata }
-    private enum MetadataKeys: String, CodingKey { case noteId = "note_id" }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        score = try container.decode(Double.self, forKey: .score)
-        let metadata = try container.nestedContainer(keyedBy: MetadataKeys.self, forKey: .metadata)
-        noteId = try metadata.decode(String.self, forKey: .noteId)
+    enum CodingKeys: String, CodingKey {
+        case tier
+        case noteId = "note_id"
     }
 }
 

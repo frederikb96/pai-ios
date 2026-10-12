@@ -113,6 +113,32 @@ final class PaiApiClientTests: XCTestCase {
         XCTAssertTrue(query.contains("kind=listed"), query)
     }
 
+    /// The browse window must not ride `since`, which the endpoint reads as the incremental sync
+    /// (ascending, every other filter ignored).
+    func testGetSessionsSendsTheWindowUnderItsOwnNamesNotSince() async throws {
+        stubJSON("[]")
+        let client = try makeClient()
+        let bounds = TimeBounds(
+            since: Date(timeIntervalSince1970: 1_800_000_000), until: Date(timeIntervalSince1970: 1_800_086_400))
+        _ = try await client.getSessions(kind: .listed, window: bounds)
+
+        let query = PaiStubURLProtocol.capturedRequest?.url?.query ?? ""
+        XCTAssertTrue(query.contains("active_since=2027-01-15T08:00:00.000%2B00:00"), query)
+        XCTAssertTrue(query.contains("active_until=2027-01-16T08:00:00.000%2B00:00"), query)
+        XCTAssertFalse(query.contains("&since=") || query.hasPrefix("since="), query)
+    }
+
+    func testSearchSessionsSendsTheWindowAsSinceAndUntil() async throws {
+        stubJSON("[]")
+        let client = try makeClient()
+        let bounds = TimeBounds(since: Date(timeIntervalSince1970: 1_800_000_000), until: nil)
+        _ = try await client.searchSessions(q: "notes", mode: .semantic, window: bounds)
+
+        let query = PaiStubURLProtocol.capturedRequest?.url?.query ?? ""
+        XCTAssertTrue(query.contains("since=2027-01-15T08:00:00.000%2B00:00"), query)
+        XCTAssertFalse(query.contains("until="), query)
+    }
+
     func testSearchSessionsSendsModeAndAgentWhenProvided() async throws {
         stubJSON("[]")
         let client = try makeClient()

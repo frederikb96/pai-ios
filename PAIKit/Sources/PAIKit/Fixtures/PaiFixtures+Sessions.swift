@@ -585,9 +585,9 @@ extension PaiFixtures {
 
     // MARK: - Search
 
-    /// `GET /api/sessions/search` — one fuzzy hit (`score: null`, per the interface's own doc
-    /// comment: a fuzzy rank isn't a comparable scale) and one semantic hit (`score` a cosine
-    /// similarity in 0...1).
+    /// `GET /api/sessions/search` — one fuzzy hit (`score` and `tier` null: a fuzzy rank isn't a
+    /// comparable scale and has no tier) and one semantic hit (`score` a cosine similarity in
+    /// 0...1, `tier` 1).
     public static let sessionSearchResults: String = #"""
         [
           {
@@ -603,7 +603,8 @@ extension PaiFixtures {
             "last_activity_at": "2026-08-29T09:41:55Z",
             "working_dir": "/home/frederik/wt/pai-ios-fixtures",
             "agent": "vm",
-            "score": null
+            "score": null,
+            "tier": null
           },
           {
             "id": "aed4e04d-5a7c-48ee-b3a0-2805ce4e08cc",
@@ -618,7 +619,8 @@ extension PaiFixtures {
             "last_activity_at": "2026-08-29T08:50:12Z",
             "working_dir": "/home/frederik/Programming/kubernetes-hetzner-talos",
             "agent": "vm",
-            "score": 0.71
+            "score": 0.71,
+            "tier": 1
           }
         ]
         """#

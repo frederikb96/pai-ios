@@ -123,4 +123,32 @@ final class NoteFilterTests: XCTestCase {
         ]
         XCTAssertEqual(sortNotes(notes, order: .favouritesFirst).map(\.id), ["new", "old"])
     }
+
+    // MARK: - searchAndSortNotes / filterNotes
+
+    /// The score decides who is in; the chosen order decides where they sit. A strong match
+    /// older than a weak one stays below it under "Last modified".
+    @MainActor
+    func testAQueryNarrowsTheListWithoutReRankingIt() async {
+        let strongOld = makeNote(id: "strong-old", name: "kubernetes", updatedAtMs: 1_000)
+        let weakNew = makeNote(id: "weak-new", name: "Notes", summary: "mentions kubernetes once", updatedAtMs: 9_000)
+        let unrelated = makeNote(id: "unrelated", name: "Groceries", updatedAtMs: 5_000)
+        let prepared = NoteSearchCorpus().prepared([strongOld, weakNew, unrelated])
+
+        let result = searchAndSortNotes(prepared, query: "kubernetes", order: .modified)
+
+        XCTAssertEqual(result.map(\.id), ["weak-new", "strong-old"])
+    }
+
+    func testFilterNotesKeepsOnlyNotesModifiedInsideTheWindow() {
+        let notes = [
+            makeNote(id: "before", name: "a", updatedAtMs: 99_000),
+            makeNote(id: "inside", name: "b", updatedAtMs: 150_000),
+            makeNote(id: "after", name: "c", updatedAtMs: 201_000),
+        ]
+        let bounds = TimeBounds(since: Date(timeIntervalSince1970: 100), until: Date(timeIntervalSince1970: 200))
+
+        XCTAssertEqual(filterNotes(notes, within: bounds).map(\.id), ["inside"])
+        XCTAssertEqual(filterNotes(notes, within: nil).count, 3)
+    }
 }

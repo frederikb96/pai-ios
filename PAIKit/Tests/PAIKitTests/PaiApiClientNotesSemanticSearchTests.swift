@@ -19,53 +19,46 @@ final class PaiApiClientNotesSemanticSearchTests: XCTestCase {
             statusCode: statusCode, headers: ["Content-Type": "application/json"], body: Data(json.utf8))
     }
 
-    /// `/api/memory/search` is generic across memories, phase summaries and notes — forgetting
-    /// the filter would silently widen every search to the whole corpus instead of throwing.
-    func testSendsTheNoteTypeFilterAlongsideTheQueryAndLimit() async throws {
-        stubJSON(#"{"count": 0, "results": []}"#)
+    func testSendsTheQueryAndWindowToTheNotesRoute() async throws {
+        stubJSON(#"{"results": []}"#)
         let client = try makeClient()
-        _ = try await client.searchNotesSemantic(q: "kubernetes migration", limit: 42)
+        let bounds = TimeBounds(
+            since: Date(timeIntervalSince1970: 1_800_000_000), until: Date(timeIntervalSince1970: 1_800_086_400))
+        _ = try await client.searchNotesSemantic(q: "kubernetes migration", window: bounds)
 
-        XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.url?.path, "/api/memory/search")
-        XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.httpMethod, "POST")
-
-        let body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
-        XCTAssertTrue(body.contains(#""query":"kubernetes migration""#), body)
-        XCTAssertTrue(body.contains(#""limit":42"#), body)
-        XCTAssertTrue(body.contains(#""filter":{"type":"note"}"#), body)
+        XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.url?.path, "/api/notes/semantic")
+        XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.httpMethod, "GET")
+        let query = PaiStubURLProtocol.capturedRequest?.url?.query ?? ""
+        XCTAssertTrue(query.contains("q=kubernetes%20migration") || query.contains("q=kubernetes+migration"), query)
+        XCTAssertTrue(query.contains("since=2027-01-15T08:00:00.000%2B00:00"), query)
+        XCTAssertTrue(query.contains("until=2027-01-16T08:00:00.000%2B00:00"), query)
     }
 
-    func testDecodesTheNoteIdOutOfTheNestedMetadata() async throws {
-        stubJSON(
-            #"""
-            {"count": 1, "results": [
-                {"point_id": "p1", "type": "note", "text": "…", "score": 0.87,
-                 "metadata": {"note_id": "n1"}, "created_at": "2026-01-01T00:00:00Z",
-                 "updated_at": "2026-01-01T00:00:00Z"}
-            ]}
-            """#)
+    func testSendsNoWindowParametersWithoutAWindow() async throws {
+        stubJSON(#"{"results": []}"#)
+        let client = try makeClient()
+        _ = try await client.searchNotesSemantic(q: "x")
+
+        let query = PaiStubURLProtocol.capturedRequest?.url?.query ?? ""
+        XCTAssertFalse(query.contains("since") || query.contains("until"), query)
+    }
+
+    func testDecodesTheHitsInTheOrderTheBackendSentThem() async throws {
+        stubJSON(#"{"results": [{"note_id": "n2", "tier": 1}, {"note_id": "n1", "tier": 2}]}"#)
         let client = try makeClient()
         let hits = try await client.searchNotesSemantic(q: "x")
 
-        XCTAssertEqual(hits, [NoteSemanticHit(noteId: "n1", score: 0.87)])
+        XCTAssertEqual(hits, [NoteSemanticHit(noteId: "n2", tier: 1), NoteSemanticHit(noteId: "n1", tier: 2)])
     }
 
-    /// `type: "note"` metadata always carries `note_id` — `embed_note`'s job handler writes it as
-    /// the row's whole metadata, backend-side. A hit missing it means the `type` filter itself
-    /// stopped working, which should surface as a decode failure rather than a silently dropped
-    /// row that reads as "no matches".
-    func testAHitMissingNoteIdFailsTheDecodeRatherThanBeingSilentlyDropped() async throws {
-        stubJSON(
-            #"""
-            {"count": 1, "results": [
-                {"point_id": "p1", "type": "note", "text": "…", "score": 0.5,
-                 "metadata": {}, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
-            ]}
-            """#)
+    /// A hit without a tier would be drawn in the wrong bucket; the decode must refuse it rather
+    /// than guess.
+    func testAHitMissingItsTierFailsTheDecode() async throws {
+        stubJSON(#"{"results": [{"note_id": "n1"}]}"#)
         let client = try makeClient()
         do {
             _ = try await client.searchNotesSemantic(q: "x")
-            XCTFail("expected a decode failure for a hit with no note_id")
+            XCTFail("expected a decode failure for a hit with no tier")
         } catch {
             // Any thrown error is the point — the exact `PaiError` case is not what this asserts.
         }

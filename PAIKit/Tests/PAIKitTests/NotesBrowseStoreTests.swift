@@ -4,12 +4,12 @@ import XCTest
 @testable import PAIKit
 
 private final class FakeNotesBrowseApi: NotesBrowseApiClient, @unchecked Sendable {
-    private(set) var searchCalls: [(q: String, limit: Int)] = []
+    private(set) var searchCalls: [(q: String, window: TimeBounds?)] = []
     var searchResult: [NoteSemanticHit] = []
     var searchError: (any Error)?
 
-    func searchNotesSemantic(q: String, limit: Int) async throws -> [NoteSemanticHit] {
-        searchCalls.append((q: q, limit: limit))
+    func searchNotesSemantic(q: String, window: TimeBounds?) async throws -> [NoteSemanticHit] {
+        searchCalls.append((q: q, window: window))
         if let searchError { throw searchError }
         return searchResult
     }
@@ -53,12 +53,14 @@ final class NotesBrowseStoreTests: XCTestCase {
 
     func testSearchSemanticPassesTheQueryThrough() async throws {
         let api = FakeNotesBrowseApi()
-        api.searchResult = [NoteSemanticHit(noteId: "n1", score: 0.9)]
+        api.searchResult = [NoteSemanticHit(noteId: "n1", tier: 1)]
         let store = NotesBrowseStore(api: api, storage: SettingsInMemoryKeyValueStore())
 
-        let results = try await store.searchSemantic(q: "kubernetes migration")
+        let bounds = TimeBounds(since: Date(timeIntervalSince1970: 1_800_000_000), until: nil)
+        let results = try await store.searchSemantic(q: "kubernetes migration", window: bounds)
 
         XCTAssertEqual(api.searchCalls.map(\.q), ["kubernetes migration"])
+        XCTAssertEqual(api.searchCalls.map(\.window), [bounds])
         XCTAssertEqual(results.map(\.noteId), ["n1"])
     }
 
@@ -68,7 +70,7 @@ final class NotesBrowseStoreTests: XCTestCase {
         let store = NotesBrowseStore(api: api, storage: SettingsInMemoryKeyValueStore())
 
         do {
-            _ = try await store.searchSemantic(q: "x")
+            _ = try await store.searchSemantic(q: "x", window: nil)
             XCTFail("expected the API's error to propagate")
         } catch {
             // Any error propagating is the point — the screen decides how to phrase it.
