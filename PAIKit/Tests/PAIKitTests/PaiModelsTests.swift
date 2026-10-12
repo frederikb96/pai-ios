@@ -511,12 +511,13 @@ final class PaiModelsTests: XCTestCase {
              "agent":null,"kind":null,"parent_session_id":null,"subagent_name":null,
              "subagent_type":null,"subagent_description":null,"remote_control":null,
              "discovered":null,"project_id":null,"phase_id":null,"project_name":null,
-             "score":0.8421}
+             "score":0.8421,"tier":2}
             """.utf8)
         let result = try JSONDecoder().decode(SessionSearchResult.self, from: json)
 
         XCTAssertEqual(result.session.title, "Found me")
         XCTAssertEqual(result.score, 0.8421)
+        XCTAssertEqual(result.tier, 2)
 
         let reencoded = try JSONEncoder().encode(result)
         let roundTripped = try JSONDecoder().decode(SessionSearchResult.self, from: reencoded)
@@ -535,10 +536,11 @@ final class PaiModelsTests: XCTestCase {
              "agent":null,"kind":null,"parent_session_id":null,"subagent_name":null,
              "subagent_type":null,"subagent_description":null,"remote_control":null,
              "discovered":null,"project_id":null,"phase_id":null,"project_name":null,
-             "score":null}
+             "score":null,"tier":null}
             """.utf8)
         let result = try JSONDecoder().decode(SessionSearchResult.self, from: json)
         XCTAssertNil(result.score)
+        XCTAssertNil(result.tier)
     }
 
     // MARK: - ResumeResponse

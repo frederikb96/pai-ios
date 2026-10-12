@@ -7,10 +7,10 @@ import Observation
 public protocol SessionListApiClient: Sendable {
     func getSessions(
         since: String?, limit: Int?, cursor: String?, agent: String?, kind: SessionKindFilter?, parent: String?,
-        q: String?
+        q: String?, window: TimeBounds?
     ) async throws -> SessionsPage
     func searchSessions(
-        q: String, mode: SessionSearchMode?, agent: String?, limit: Int?
+        q: String, mode: SessionSearchMode?, agent: String?, limit: Int?, window: TimeBounds?
     ) async throws -> [SessionSearchResult]
     /// Only reached through `SessionListStore.deleteSession(id:)` — see its doc comment.
     func deleteSession(sessionId: String) async throws -> DeleteResponse
@@ -23,9 +23,9 @@ public protocol SessionListApiClient: Sendable {
 extension PaiApiClient: SessionListApiClient {}
 
 /// One row as the view needs it — every field already resolved, so nothing about a row's
-/// appearance is decided in `PAI/`. Deliberately does not carry a semantic `score`: the row
-/// anatomy the web ports (`Sidebar.tsx`'s `SessionItem`) never shows one — the threshold slider
-/// only ever decides *membership*, never what a row displays.
+/// appearance is decided in `PAI/`. Deliberately does not carry a semantic `score`: no client
+/// shows one. What it does carry is the tier the backend put a semantic hit in, and whether the
+/// "Less likely" divider sits above this row.
 public struct SessionListRow: Sendable, Equatable, Identifiable {
     public let id: String
     public let session: Session
@@ -48,6 +48,10 @@ public struct SessionListRow: Sendable, Equatable, Identifiable {
     /// What this session has running right now — `nil` when there is nothing to show, same as
     /// the source field. See `ActivityCounts`.
     public let activityCounts: ActivityCounts?
+    /// `1` or `2` for a semantic hit, `nil` for every other row.
+    public let tier: Int?
+    /// The first tier-2 row of a tiered list: the view draws the divider above it.
+    public let startsLessLikely: Bool
 }
 
 /// Why nothing is showing where a row list would be. `.loadingFirstResults` only applies to a
@@ -70,8 +74,12 @@ public enum SessionListEmptyState: Sendable, Equatable {
 ///   wired here; they must land only on this list, never on B/C.
 /// - **B — server browse** (`serverFilteredResults` when a machine chip is active and no text
 ///   query): paged, no live updates.
-/// - **C — server search** (`serverFilteredResults` when a text query is active): ranked, **no
-///   paging** — a ranked result set has no natural next page.
+/// - **C — server search** (`serverFilteredResults` when a text query is active): a fuzzy search
+///   is a filter over the list, newest activity first; a semantic one arrives tiered and is
+///   shown in the order the backend sent. **No paging** — a result set has no natural next page.
+///
+/// A time window (`timeWindow`) narrows B and C and also turns the plain list into B: the synced
+/// list holds only the pages loaded so far, and the window must reach older sessions.
 ///
 /// B and C going stale while active is a deliberate trade-off ported from the web, not a bug:
 /// nothing pushes into them, and clearing back to "All" with no query is what restores the live
@@ -81,7 +89,6 @@ public enum SessionListEmptyState: Sendable, Equatable {
 public final class SessionListStore {
     static let sessionsPageSize = 100
     static let searchResultLimit = 100
-    static let defaultSemanticThreshold = 0.0
     /// Applied only to raw typed text — a chip click, a mode toggle and the Enter key all bypass
     /// this, because each is a discrete choice, not a keystroke stream.
     ///
@@ -119,7 +126,7 @@ public final class SessionListStore {
     /// `taskId` once loaded.
     public private(set) var scheduledOnly = false
     public private(set) var semanticMode = false
-    public var threshold: Double = SessionListStore.defaultSemanticThreshold
+    public private(set) var timeWindow: TimeWindow?
 
     // MARK: Sources B/C — server-filtered
 
@@ -142,12 +149,17 @@ public final class SessionListStore {
 
     private let api: SessionListApiClient
     private let debounceNanos: UInt64
+    /// The clock a window is resolved against, so "Last 7 days" is measured from the moment each
+    /// query runs.
+    private let now: @Sendable () -> Date
 
     public init(
-        api: SessionListApiClient, debounceNanos: UInt64 = SessionListStore.defaultTextDebounceNanos
+        api: SessionListApiClient, debounceNanos: UInt64 = SessionListStore.defaultTextDebounceNanos,
+        now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.api = api
         self.debounceNanos = debounceNanos
+        self.now = now
     }
 
     // MARK: - The view's surface
@@ -156,30 +168,41 @@ public final class SessionListStore {
     /// loaded, and never sent to the server (there is no id-search endpoint).
     public var isIdQuery: Bool { SessionFilterMatch.looksLikeIdFragment(filterQueryText) }
 
-    /// Whether a machine chip or a committed text query is active — the switch between reading
-    /// `syncedSessions` and reading `serverFilteredResults`.
-    public var isServerFiltered: Bool { machineFilter != nil || effectiveTextQuery != nil }
+    /// Whether a machine chip, a committed text query or a time window is active — the switch
+    /// between reading `syncedSessions` and reading `serverFilteredResults`.
+    public var isServerFiltered: Bool { machineFilter != nil || effectiveTextQuery != nil || timeWindow != nil }
+
+    /// Whether the rows are a semantic result list: tiered, in the backend's order.
+    private var isTieredSearch: Bool { semanticMode && effectiveTextQuery != nil }
 
     /// The rows a view renders, in order, with every per-row decision already made. Building this
     /// from `syncedSessions`/`serverFilteredResults` on every read rather than caching it keeps
     /// the source-of-truth arrays as the only state that can go stale — this is always derived.
     public var rows: [SessionListRow] {
-        let source: [Session] = isServerFiltered ? thresholdFilteredServerResults.map(\.session) : syncedSessions
+        let source: [SessionSearchResult] =
+            isServerFiltered
+            ? serverFilteredResults : syncedSessions.map { SessionSearchResult(session: $0, score: nil, tier: nil) }
         // Exclusive, not an extra narrowing on top of the ordinary list — a scheduled session
         // shows under this toggle and nowhere else, whether or not a search is also active.
         // Matches the web's `Sidebar.tsx` (`scopedToView`).
-        let scoped = source.filter { scheduledOnly ? $0.taskId != nil : $0.taskId == nil }
+        let scoped = source.filter { scheduledOnly ? $0.session.taskId != nil : $0.session.taskId == nil }
         // A subagent (opened from its parent's own subagents screen) or a supervisor (opened
         // from its worker's own menu) lands in this same synced store so a chat view can find it
         // by id — neither may ever surface as a row of its own here. A spoken Computer
         // conversation is not one of these: it belongs in the list exactly like any other
         // conversation, it simply cannot be typed into once opened.
-        let withoutSubagents = scoped.filter { $0.kind != .subagent && $0.kind != .supervisor }
+        let withoutSubagents = scoped.filter { $0.session.kind != .subagent && $0.session.kind != .supervisor }
         let matched =
             isIdQuery
-            ? withoutSubagents.filter { SessionFilterMatch.sessionIdMatches(filterQueryText, session: $0) }
+            ? withoutSubagents.filter { SessionFilterMatch.sessionIdMatches(filterQueryText, session: $0.session) }
             : withoutSubagents
-        return Self.withPinnedFirst(matched).map(Self.makeRow)
+        // A tiered list keeps the backend's order: pinning would lift a tier-2 row above the
+        // divider that is meant to introduce it.
+        let ordered = isTieredSearch ? matched : Self.withPinnedFirst(matched)
+        let dividerIndex = SearchTier.lessLikelyDividerIndex(in: ordered.map(\.tier))
+        return ordered.enumerated().map { index, result in
+            Self.makeRow(result.session, tier: result.tier, startsLessLikely: index == dividerIndex)
+        }
     }
 
     /// `.loadingFirstResults` only, `.noMatchingSessions`/`.noSessionsYet` otherwise — driven by
@@ -189,7 +212,7 @@ public final class SessionListStore {
     public var emptyState: SessionListEmptyState {
         guard rows.isEmpty else { return .none }
         if isLoadingFirstResults { return .loadingFirstResults }
-        return filterQueryText.isEmpty ? .noSessionsYet : .noMatchingSessions
+        return filterQueryText.isEmpty && timeWindow == nil ? .noSessionsYet : .noMatchingSessions
     }
 
     /// Only meaningful while a server-backed fetch is the active source — the synced list has
@@ -238,7 +261,7 @@ public final class SessionListStore {
         guard session(withId: id) == nil, !unknownSessionIds.contains(id) else { return }
         guard
             let page = try? await api.getSessions(
-                since: nil, limit: 1, cursor: nil, agent: nil, kind: nil, parent: nil, q: id
+                since: nil, limit: 1, cursor: nil, agent: nil, kind: nil, parent: nil, q: id, window: nil
             )
         else { return }
         if let found = page.sessions.first(where: { $0.id == id }) {
@@ -273,7 +296,7 @@ public final class SessionListStore {
             var marked = serverFilteredResults[index].session
             marked.transferredToSessionId = response.session.id
             serverFilteredResults[index] = SessionSearchResult(
-                session: marked, score: serverFilteredResults[index].score)
+                session: marked, score: serverFilteredResults[index].score, tier: serverFilteredResults[index].tier)
         }
     }
 
@@ -304,7 +327,7 @@ public final class SessionListStore {
                 liveModel: liveModel, transfer: transfer
             )
             serverFilteredResults[index] = SessionSearchResult(
-                session: updated, score: serverFilteredResults[index].score
+                session: updated, score: serverFilteredResults[index].score, tier: serverFilteredResults[index].tier
             )
         }
     }
@@ -318,7 +341,7 @@ public final class SessionListStore {
         }
         if let index = serverFilteredResults.firstIndex(where: { $0.session.id == session.id }) {
             serverFilteredResults[index] = SessionSearchResult(
-                session: session, score: serverFilteredResults[index].score
+                session: session, score: serverFilteredResults[index].score, tier: serverFilteredResults[index].tier
             )
         }
     }
@@ -379,11 +402,10 @@ public final class SessionListStore {
         refetchServerFiltered()
     }
 
-    /// The threshold slider. Never a fresh request — it re-filters the already-fetched top-N
-    /// locally via `thresholdFilteredServerResults`. A band passed to the server instead is the
-    /// 170x query-planner cliff this exists specifically to avoid.
-    public func setThreshold(_ value: Double) {
-        threshold = value
+    /// The time picker's choice, `nil` to clear it. A discrete choice, so it answers immediately.
+    public func setTimeWindow(_ window: TimeWindow?) {
+        timeWindow = window
+        refetchServerFiltered()
     }
 
     // MARK: - Source A: bootstrap, poll, page
@@ -394,7 +416,7 @@ public final class SessionListStore {
         guard
             let page = try? await api.getSessions(
                 since: nil, limit: Self.sessionsPageSize, cursor: nil, agent: nil, kind: .listed, parent: nil,
-                q: nil
+                q: nil, window: nil
             )
         else { return }
         syncedSessions = page.sessions.sorted(by: Self.byActivityDescending)
@@ -442,7 +464,7 @@ public final class SessionListStore {
         guard
             let page = try? await api.getSessions(
                 since: nil, limit: Self.sessionsPageSize, cursor: cursor, agent: nil, kind: .listed, parent: nil,
-                q: nil
+                q: nil, window: nil
             )
         else { return }
         // Every row in `page` sorts strictly after the cursor it was requested with, so
@@ -611,13 +633,6 @@ public final class SessionListStore {
         return debouncedQuery
     }
 
-    private var thresholdFilteredServerResults: [SessionSearchResult] {
-        guard semanticMode, effectiveTextQuery != nil else { return serverFilteredResults }
-        // Order stays exactly what the server sent (chronological, never score-ordered):
-        // filtering a sorted array keeps it sorted.
-        return serverFilteredResults.filter { ($0.score ?? 0) >= threshold }
-    }
-
     private var isLoadingFirstResults: Bool {
         isServerFiltered && serverFilteredLoading && serverFilteredResults.isEmpty
     }
@@ -631,7 +646,9 @@ public final class SessionListStore {
     private func refetchServerFiltered() {
         let machine = machineFilter
         let query = effectiveTextQuery
-        guard machine != nil || query != nil else { return }
+        let window = timeWindow
+        guard machine != nil || query != nil || window != nil else { return }
+        let bounds = window?.bounds(now: now())
 
         serverFilteredTask?.cancel()
         generation += 1
@@ -647,7 +664,7 @@ public final class SessionListStore {
         // search replacing the last one) from showing the previous filter's rows for as long as
         // the new fetch is in flight — `isLoadingFirstResults` requires
         // `serverFilteredResults.isEmpty`, which a stale-but-nonempty array defeats.
-        let requestKey = Self.resultsSourceKey(machine: machine, query: query, mode: mode)
+        let requestKey = Self.resultsSourceKey(machine: machine, query: query, mode: mode, window: window)
         if requestKey != resultsSourceKey {
             serverFilteredResults = []
         }
@@ -657,10 +674,14 @@ public final class SessionListStore {
             if let query {
                 do {
                     let results = try await self.api.searchSessions(
-                        q: query, mode: mode, agent: machine, limit: Self.searchResultLimit
+                        q: query, mode: mode, agent: machine, limit: Self.searchResultLimit, window: bounds
                     )
                     guard !Task.isCancelled, self.generation == myGeneration else { return }
-                    self.serverFilteredResults = results
+                    // A fuzzy hit has no tier: the result is the list narrowed, newest activity
+                    // first, whatever order the matcher ranked it in. A semantic one is already
+                    // in its backend order.
+                    self.serverFilteredResults =
+                        mode == .fuzzy ? results.sorted { Self.byActivityDescending($0.session, $1.session) } : results
                     self.serverFilteredCursor = nil
                     self.serverFilteredHasMore = false
                     self.resultsSourceKey = requestKey
@@ -673,10 +694,12 @@ public final class SessionListStore {
                 do {
                     let page = try await self.api.getSessions(
                         since: nil, limit: Self.sessionsPageSize, cursor: nil, agent: machine, kind: .listed,
-                        parent: nil, q: nil
+                        parent: nil, q: nil, window: bounds
                     )
                     guard !Task.isCancelled, self.generation == myGeneration else { return }
-                    self.serverFilteredResults = page.sessions.map { SessionSearchResult(session: $0, score: nil) }
+                    self.serverFilteredResults = page.sessions.map {
+                        SessionSearchResult(session: $0, score: nil, tier: nil)
+                    }
                     self.serverFilteredCursor = page.nextCursor
                     self.serverFilteredHasMore = page.nextCursor != nil
                     self.resultsSourceKey = requestKey
@@ -690,31 +713,35 @@ public final class SessionListStore {
         }
     }
 
-    private static func resultsSourceKey(machine: String?, query: String?, mode: SessionSearchMode) -> String {
-        "\(machine ?? "")\u{0}\(query ?? "")\u{0}\(mode.rawValue)"
+    private static func resultsSourceKey(
+        machine: String?, query: String?, mode: SessionSearchMode, window: TimeWindow?
+    ) -> String {
+        "\(machine ?? "")\u{0}\(query ?? "")\u{0}\(mode.rawValue)\u{0}\(String(describing: window))"
     }
 
     /// Only for the browse source (B) — a ranked search result (C) has no natural next page.
     /// Unlike `refetchServerFiltered`, this never cancels a fresh query that starts while it is
     /// in flight — ported as-is; see `SessionListStore`'s report for the web's own gap here.
     public func loadMoreServerFiltered() async {
-        guard machineFilter != nil, effectiveTextQuery == nil,
+        guard machineFilter != nil || timeWindow != nil, effectiveTextQuery == nil,
             let cursor = serverFilteredCursor, !serverFilteredLoading, !serverFilteredResults.isEmpty
         else { return }
         generation += 1
         let myGeneration = generation
         let machine = machineFilter
+        let bounds = timeWindow?.bounds(now: now())
         serverFilteredLoading = true
         defer { if generation == myGeneration { serverFilteredLoading = false } }
         guard
             let page = try? await api.getSessions(
                 since: nil, limit: Self.sessionsPageSize, cursor: cursor, agent: machine, kind: .listed,
                 parent: nil,
-                q: nil
+                q: nil, window: bounds
             )
         else { return }
         guard generation == myGeneration else { return }
-        serverFilteredResults.append(contentsOf: page.sessions.map { SessionSearchResult(session: $0, score: nil) })
+        serverFilteredResults.append(
+            contentsOf: page.sessions.map { SessionSearchResult(session: $0, score: nil, tier: nil) })
         serverFilteredCursor = page.nextCursor
         serverFilteredHasMore = page.nextCursor != nil
     }
@@ -727,7 +754,9 @@ public final class SessionListStore {
         while true {
             guard
                 let page = try? await api.getSessions(
-                    since: cursor, limit: Self.sessionsPageSize, cursor: nil, agent: nil, kind: nil, parent: nil, q: nil
+                    since: cursor, limit: Self.sessionsPageSize, cursor: nil, agent: nil, kind: nil, parent: nil,
+                    q: nil,
+                    window: nil
                 )
             else { return }
             if page.sessions.isEmpty { break }
@@ -774,12 +803,14 @@ public final class SessionListStore {
     /// `syncedSessions` itself: that array's order is what the merge/staleness logic above keys
     /// on, and this grouping is a pure presentation concern layered on top of it. `pinned_at` is
     /// compared as its ISO-8601 text, which orders correctly for the server's own uniform format.
-    private static func withPinnedFirst(_ sessions: [Session]) -> [Session] {
-        let pinned = sessions.filter { $0.pinnedAt != nil }.sorted { ($0.pinnedAt ?? "") < ($1.pinnedAt ?? "") }
-        return pinned + sessions.filter { $0.pinnedAt == nil }
+    private static func withPinnedFirst(_ results: [SessionSearchResult]) -> [SessionSearchResult] {
+        let pinned = results.filter { $0.session.pinnedAt != nil }.sorted {
+            ($0.session.pinnedAt ?? "") < ($1.session.pinnedAt ?? "")
+        }
+        return pinned + results.filter { $0.session.pinnedAt == nil }
     }
 
-    private static func makeRow(_ session: Session) -> SessionListRow {
+    private static func makeRow(_ session: Session, tier: Int?, startsLessLikely: Bool) -> SessionListRow {
         SessionListRow(
             id: session.id,
             session: session,
@@ -793,7 +824,9 @@ public final class SessionListStore {
             lastActivityAt: session.lastActivityAt ?? session.createdAt,
             sessionTokens: session.sessionTokens,
             showsTokenCount: session.sessionTokens > 0,
-            activityCounts: session.activityCounts
+            activityCounts: session.activityCounts,
+            tier: tier,
+            startsLessLikely: startsLessLikely
         )
     }
 

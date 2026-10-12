@@ -15,6 +15,7 @@ actor FakeSessionListApi: SessionListApiClient {
         let agent: String?
         let kind: SessionKindFilter?
         let q: String?
+        let window: TimeBounds?
     }
 
     struct SearchCall: Equatable {
@@ -22,6 +23,7 @@ actor FakeSessionListApi: SessionListApiClient {
         let mode: SessionSearchMode?
         let agent: String?
         let limit: Int?
+        let window: TimeBounds?
     }
 
     private(set) var getSessionsCalls: [GetSessionsCall] = []
@@ -46,9 +48,10 @@ actor FakeSessionListApi: SessionListApiClient {
 
     func getSessions(
         since: String?, limit: Int?, cursor: String?, agent: String?, kind: SessionKindFilter?, parent: String?,
-        q: String?
+        q: String?, window: TimeBounds?
     ) async throws -> SessionsPage {
-        let call = GetSessionsCall(since: since, limit: limit, cursor: cursor, agent: agent, kind: kind, q: q)
+        let call = GetSessionsCall(
+            since: since, limit: limit, cursor: cursor, agent: agent, kind: kind, q: q, window: window)
         getSessionsCalls.append(call)
         await gate.wait(for: Self.gateKey(call))
         guard let getSessionsResult else { return SessionsPage(sessions: [], nextCursor: nil) }
@@ -58,10 +61,10 @@ actor FakeSessionListApi: SessionListApiClient {
         }
     }
 
-    func searchSessions(q: String, mode: SessionSearchMode?, agent: String?, limit: Int?) async throws
-        -> [SessionSearchResult]
+    func searchSessions(q: String, mode: SessionSearchMode?, agent: String?, limit: Int?, window: TimeBounds?)
+        async throws -> [SessionSearchResult]
     {
-        let call = SearchCall(q: q, mode: mode, agent: agent, limit: limit)
+        let call = SearchCall(q: q, mode: mode, agent: agent, limit: limit, window: window)
         searchCalls.append(call)
         await gate.wait(for: "search:\(q)")
         guard let searchResult else { return [] }

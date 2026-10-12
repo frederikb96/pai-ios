@@ -395,6 +395,23 @@ public struct PaiApiClient: Sendable {
         parent: String? = nil,
         q: String? = nil
     ) async throws -> SessionsPage {
+        try await getSessions(
+            since: since, limit: limit, cursor: cursor, agent: agent, kind: kind, parent: parent, q: q,
+            window: nil)
+    }
+
+    /// The browse form with a time window: only sessions whose last activity falls inside it.
+    /// `since` keeps meaning the incremental sync, so the window travels under its own names.
+    public func getSessions(
+        since: String? = nil,
+        limit: Int? = nil,
+        cursor: String? = nil,
+        agent: String? = nil,
+        kind: SessionKindFilter? = nil,
+        parent: String? = nil,
+        q: String? = nil,
+        window: TimeBounds?
+    ) async throws -> SessionsPage {
         var query: [URLQueryItem] = []
         if let since { query.append(URLQueryItem(name: "since", value: since)) }
         if let limit { query.append(URLQueryItem(name: "limit", value: String(limit))) }
@@ -403,6 +420,10 @@ public struct PaiApiClient: Sendable {
         if let kind { query.append(URLQueryItem(name: "kind", value: kind.queryValue)) }
         if let parent { query.append(URLQueryItem(name: "parent", value: parent)) }
         if let q { query.append(URLQueryItem(name: "q", value: q)) }
+        if let window {
+            query += window.queryItems(
+                sinceName: Self.browseWindowSinceName, untilName: Self.browseWindowUntilName)
+        }
 
         let request = try requestFactory.makeRequest(path: "/api/sessions", query: query)
         let (data, response) = try await urlSession.data(for: request)
@@ -417,18 +438,26 @@ public struct PaiApiClient: Sendable {
         return SessionsPage(sessions: sessions, nextCursor: nextCursor)
     }
 
+    /// `GET /api/sessions` reads `since` as the incremental sync, so its time window is a pair of
+    /// parameters of its own.
+    static let browseWindowSinceName = "active_since"
+    static let browseWindowUntilName = "active_until"
+
     /// `GET /api/sessions/search` — the fuzzy/semantic matcher `csm` reads through too. An
-    /// invalid `mode` or an unknown `agent` both 400.
+    /// invalid `mode` or an unknown `agent` both 400. `window` narrows the candidates before
+    /// they are tiered.
     public func searchSessions(
         q: String,
         mode: SessionSearchMode? = nil,
         agent: String? = nil,
-        limit: Int? = nil
+        limit: Int? = nil,
+        window: TimeBounds? = nil
     ) async throws -> [SessionSearchResult] {
         var query = [URLQueryItem(name: "q", value: q)]
         if let mode { query.append(URLQueryItem(name: "mode", value: mode.rawValue)) }
         if let agent { query.append(URLQueryItem(name: "agent", value: agent)) }
         if let limit { query.append(URLQueryItem(name: "limit", value: String(limit))) }
+        if let window { query += window.queryItems(sinceName: "since", untilName: "until") }
         return try await send(path: "/api/sessions/search", query: query)
     }
 

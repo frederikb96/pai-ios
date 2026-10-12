@@ -4,8 +4,9 @@ import SwiftUI
 /// The note index (spec parity with `pai-cloud/web/src/apps/notes/NoteList.tsx`): client-side
 /// filter-as-you-type over the already-loaded index, favourites and tags narrowing it further,
 /// a full-text mode that reaches the server for a literal substring match over note bodies, and a
-/// semantic mode that reaches `POST /api/memory/search` for a meaning-based match over each
-/// note's summary.
+/// semantic mode that reaches `GET /api/notes/semantic` for a meaning-based match over each
+/// note's summary, shown in two tiers (likely, then a "Less likely" divider). A time window
+/// narrows every mode by when a note was last modified.
 struct NoteListScreen: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(NotesStore.self) private var notes
@@ -17,6 +18,7 @@ struct NoteListScreen: View {
     @State private var favouritesOnly = false
     @State private var selectedTags: [String] = []
     @State private var mode: Mode = .filter
+    @State private var timeWindow: TimeWindow?
     @State private var showTagFilter = false
     /// Folded and tokenised note text, kept across keystrokes — see ``NoteSearchCorpus``.
     /// Owned by the screen so it dies with it; nothing about it is worth persisting.
@@ -46,10 +48,12 @@ struct NoteListScreen: View {
     }
 
     /// Drives the debounced search `.task` — one id covering both server-reaching modes so a
-    /// mode switch and a keystroke are never two separate tasks racing each other.
+    /// mode switch and a keystroke are never two separate tasks racing each other. The window is
+    /// part of it only where the server applies it; full-text hits are narrowed on the phone.
     private struct SearchTrigger: Equatable {
         let query: String
         let mode: Mode
+        let window: TimeWindow?
     }
 
     var body: some View {
@@ -138,7 +142,7 @@ struct NoteListScreen: View {
                 await notes.refresh()
             }
             .refreshable { await notes.refresh() }
-            .task(id: SearchTrigger(query: filterText, mode: mode)) {
+            .task(id: SearchTrigger(query: filterText, mode: mode, window: mode == .semantic ? timeWindow : nil)) {
                 guard mode == .fullText || mode == .semantic else { return }
                 let trimmed = filterText.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else {
@@ -224,7 +228,7 @@ struct NoteListScreen: View {
                 ContentUnavailableView(
                     "No notes", systemImage: "note.text",
                     description: Text(
-                        filterText.isEmpty && !favouritesOnly
+                        filterText.isEmpty && !favouritesOnly && timeWindow == nil
                             ? "Notes synced from a container appear here." : "No notes match"))
             } else {
                 List(visibleNotes) { note in
@@ -241,6 +245,14 @@ struct NoteListScreen: View {
     /// Scrolled rather than wrapped: a `Label` given less width than its text needs breaks the
     /// word instead of shrinking — "Favourites" reads as "Favourite / s".
     private var filterChips: some View {
+        HStack(spacing: 0) {
+            chipScroller
+            TimeWindowButton(window: $timeWindow)
+                .padding(.trailing, 8)
+        }
+    }
+
+    private var chipScroller: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 modeChip(target: .fullText, label: "Full text", systemImage: "text.magnifyingglass")
@@ -259,6 +271,7 @@ struct NoteListScreen: View {
                 }
 
                 tagFilterButton
+                TimeWindowChip(window: $timeWindow)
             }
             .lineLimit(1)
             .padding(.horizontal, 12)
@@ -367,7 +380,8 @@ struct NoteListScreen: View {
         semanticError = nil
         defer { semanticLoading = false }
         do {
-            semanticResults = try await browse.searchSemantic(q: query)
+            semanticResults = try await browse.searchSemantic(
+                q: query, window: timeWindow?.bounds(now: Date()))
         } catch {
             semanticError = (error as? PaiError)?.userMessage ?? "Search failed"
         }
@@ -391,7 +405,7 @@ struct NoteListScreen: View {
                         .font(PaiTypography.caption.font)
                         .foregroundStyle(PaiPalette.Semantic.textMuted)
                 }
-                ForEach(searchResults.filter { noteHasAllTags($0.note, selected: selectedTags) }) { hit in
+                ForEach(fullTextVisible) { hit in
                     Button {
                         environment.router.push(.note(id: hit.note.id))
                     } label: {
@@ -423,10 +437,13 @@ struct NoteListScreen: View {
         } else {
             List {
                 ForEach(semanticVisible) { entry in
+                    if entry.id == lessLikelyDividerId {
+                        LessLikelyDividerRow()
+                    }
                     Button {
                         environment.router.push(.note(id: entry.note.id))
                     } label: {
-                        NoteRow(note: entry.note, score: entry.hit.score)
+                        NoteRow(note: entry.note)
                     }
                     .buttonStyle(.plain)
                     .listRowBackground(PaiPalette.Notes.panelBackground)
@@ -440,8 +457,27 @@ struct NoteListScreen: View {
         }
     }
 
+    /// Full-text hits inside the window and the tag selection, newest first: the mode narrows
+    /// the list, it does not rank it.
+    private var fullTextVisible: [NoteSearchHit] {
+        let bounds = timeWindow?.bounds(now: Date())
+        let kept = searchResults.filter { hit in
+            noteHasAllTags(hit.note, selected: selectedTags)
+                && (bounds?.contains(epochMilliseconds: hit.note.updatedAtMs) ?? true)
+        }
+        return kept.sorted { $0.note.updatedAtMs > $1.note.updatedAtMs }
+    }
+
+    /// The note the "Less likely" divider sits above: the first tier-2 hit that is still visible
+    /// after resolving against the index and the tag selection.
+    private var lessLikelyDividerId: String? {
+        let visible = semanticVisible
+        guard let index = SearchTier.lessLikelyDividerIndex(in: visible.map { $0.hit.tier }) else { return nil }
+        return visible[index].id
+    }
+
     /// Every semantic hit resolved against the already-loaded index — the search route answers
-    /// only an id and a score (see `NotesBrowseStore`'s doc comment), never a name or summary
+    /// only an id and a tier (see `NotesBrowseStore`'s doc comment), never a name or summary
     /// that could go stale relative to what a note holds now.
     private var semanticVisible: [SemanticNoteHit] {
         let byId = Dictionary(
@@ -460,7 +496,11 @@ struct NoteListScreen: View {
         let live = prepared.filter { !$0.note.pendingDelete }
         let scoped = favouritesOnly ? live.filter(\.note.favourite) : live
         let tagged = scoped.filter { noteHasAllTags($0.note, selected: selectedTags) }
-        return searchAndSortNotes(tagged, query: filterText, order: browse.sortOrder)
+        var windowed = tagged
+        if let bounds = timeWindow?.bounds(now: Date()) {
+            windowed = tagged.filter { bounds.contains(epochMilliseconds: $0.note.updatedAtMs) }
+        }
+        return searchAndSortNotes(windowed, query: filterText, order: browse.sortOrder)
     }
 }
 
@@ -498,21 +538,13 @@ private enum NoteTimeFormat {
 
 private struct NoteRow: View {
     let note: NoteSummary
-    var score: Double? = nil
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(note.name.isEmpty ? "Untitled" : note.name)
-                        .font(PaiTypography.bodyEmphasized.font)
-                        .foregroundStyle(PaiPalette.Semantic.textPrimary)
-                    if let score {
-                        Text("\(Int((score * 100).rounded()))%")
-                            .font(.system(size: 10))
-                            .foregroundStyle(PaiPalette.Semantic.textFaint)
-                    }
-                }
+                Text(note.name.isEmpty ? "Untitled" : note.name)
+                    .font(PaiTypography.bodyEmphasized.font)
+                    .foregroundStyle(PaiPalette.Semantic.textPrimary)
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(NoteTimeFormat.text(for: note.updatedAtMs))
                         .font(PaiTypography.caption.font)

@@ -669,36 +669,41 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
-/// One `GET /api/sessions/search` result — a `Session` plus how it matched. `score` is `nil`
-/// for a fuzzy hit (its scale is an internal ranking device, not comparable across queries) and
-/// a 0-1 cosine similarity for a semantic one.
+/// One `GET /api/sessions/search` result — a `Session` plus how it matched. `tier` is `1`
+/// (likely) or `2` (less likely) for a semantic hit and `nil` for a fuzzy one; the list arrives
+/// already ordered by it. `score` is the backend's own relevance figure, kept on the wire for
+/// `csm`: nothing here displays it or cuts on it.
 ///
 /// `types.ts` expresses this as a TS structural extension (`Session & {score}`); Swift has no
 /// struct inheritance, and duplicating every one of `Session`'s ~25 fields here would be exactly
 /// the kind of drift this whole file exists to avoid. Delegating both `Codable` directions to
-/// `Session` itself keeps this one field the only thing this type says.
+/// `Session` itself keeps these two fields the only thing this type says.
 public struct SessionSearchResult: Codable, Sendable, Equatable, Identifiable {
     public var id: String { session.id }
     public let session: Session
     public let score: Double?
+    public let tier: Int?
 
-    private enum ScoreCodingKeys: String, CodingKey { case score }
+    private enum MatchCodingKeys: String, CodingKey { case score, tier }
 
-    public init(session: Session, score: Double?) {
+    public init(session: Session, score: Double?, tier: Int?) {
         self.session = session
         self.score = score
+        self.tier = tier
     }
 
     public init(from decoder: Decoder) throws {
         session = try Session(from: decoder)
-        let container = try decoder.container(keyedBy: ScoreCodingKeys.self)
+        let container = try decoder.container(keyedBy: MatchCodingKeys.self)
         score = try container.decodeIfPresent(Double.self, forKey: .score)
+        tier = try container.decodeIfPresent(Int.self, forKey: .tier)
     }
 
     public func encode(to encoder: Encoder) throws {
         try session.encode(to: encoder)
-        var container = encoder.container(keyedBy: ScoreCodingKeys.self)
+        var container = encoder.container(keyedBy: MatchCodingKeys.self)
         try container.encode(score, forKey: .score)
+        try container.encode(tier, forKey: .tier)
     }
 }
 

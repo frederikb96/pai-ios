@@ -209,25 +209,13 @@ extension PaiApiClient {
 
     // MARK: Semantic search
 
-    /// `POST /api/memory/search`, scoped to `filter: {"type": "note"}` — meaning-based search
-    /// over the summary each note contributes to memory, ported from the web's `NoteList.tsx`
-    /// (`semantic` mode). The route is generic across memories, phase summaries and notes;
-    /// nothing here reuses it for those, so this stays a notes-only wrapper rather than a
-    /// general memory-search client.
-    public func searchNotesSemantic(q: String, limit: Int = 100) async throws -> [NoteSemanticHit] {
-        struct Body: Encodable {
-            let query: String
-            let limit: Int
-            let filter: [String: String]
-        }
-        let payload: Data
-        do {
-            payload = try JSONEncoder().encode(Body(query: q, limit: limit, filter: ["type": "note"]))
-        } catch {
-            throw PaiError.decoding("\(error)")
-        }
-        let response: NoteSemanticSearchResponse = try await send(
-            path: "/api/memory/search", method: "POST", body: payload)
+    /// `GET /api/notes/semantic` — meaning-based search over the summary each note contributes
+    /// to memory. The backend tiers the hits and orders them; `window` narrows the candidates
+    /// (by the note's `updated_at`) before they are tiered.
+    public func searchNotesSemantic(q: String, window: TimeBounds? = nil) async throws -> [NoteSemanticHit] {
+        var query = [URLQueryItem(name: "q", value: q)]
+        if let window { query += window.queryItems(sinceName: "since", untilName: "until") }
+        let response: NoteSemanticSearchResponse = try await send(path: "/api/notes/semantic", query: query)
         return response.results
     }
 

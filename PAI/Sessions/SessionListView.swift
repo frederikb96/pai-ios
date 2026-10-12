@@ -114,10 +114,6 @@ struct SessionListView: View {
 
     private var list: some View {
         List {
-            if showsThresholdSlider {
-                thresholdRow
-                    .listRowSeparator(.hidden)
-            }
             if let error = sessions.searchError {
                 searchErrorRow(error)
                     .listRowSeparator(.hidden)
@@ -153,6 +149,9 @@ struct SessionListView: View {
             }
 
             ForEach(Array(sessions.rows.enumerated()), id: \.element.id) { index, row in
+                if row.startsLessLikely {
+                    LessLikelyDividerRow()
+                }
                 SessionRowButton(row: row) {
                     environment.router.push(.session(id: row.id))
                 }
@@ -230,25 +229,9 @@ struct SessionListView: View {
 
     // MARK: - Filter accessories
     //
-    // The search FIELD itself is `.searchable` on the body above — these are the two things that
-    // do not fit that control: the semantic-match threshold slider, and a search-specific error.
-    // Both live as ordinary first rows in the list rather than pinned chrome, since neither
-    // applies outside an active semantic search.
-
-    private var thresholdRow: some View {
-        HStack(spacing: 8) {
-            Text("Match")
-                .font(PaiTypography.caption.font)
-                .foregroundStyle(PaiPalette.Semantic.textMuted)
-            Slider(value: thresholdBinding, in: 0...1, step: 0.01)
-                .accessibilityLabel("Minimum match score")
-            Text(thresholdPercentText)
-                .font(PaiTypography.monoLabel.font)
-                .foregroundStyle(PaiPalette.Semantic.textMuted)
-                .monospacedDigit()
-                .frame(minWidth: 36, alignment: .trailing)
-        }
-    }
+    // The search FIELD itself is `.searchable` on the body above; a search-specific error is the
+    // one thing that does not fit that control. It lives as an ordinary first row in the list
+    // rather than pinned chrome, since it applies only to a failed search.
 
     private func searchErrorRow(_ error: String) -> some View {
         HStack(spacing: 4) {
@@ -270,24 +253,12 @@ struct SessionListView: View {
         )
     }
 
-    private var thresholdBinding: Binding<Double> {
-        Binding(get: { sessions.threshold }, set: { sessions.setThreshold($0) })
+    private var timeWindowBinding: Binding<TimeWindow?> {
+        Binding(get: { sessions.timeWindow }, set: { sessions.setTimeWindow($0) })
     }
 
     private var filterPlaceholder: String {
         sessions.semanticMode ? "Search by meaning…" : "Filter sessions or paste an id…"
-    }
-
-    private var thresholdPercentText: String {
-        "\(Int((sessions.threshold * 100).rounded()))%"
-    }
-
-    /// Mirrors the web's `semanticMode && textQuery !== undefined`: a live, non-id query, in
-    /// semantic mode. `filterQueryText` rather than the store's internal debounced query — the
-    /// web shows this the instant there is text, not only once the debounce settles.
-    private var showsThresholdSlider: Bool {
-        sessions.semanticMode && !sessions.isIdQuery
-            && !sessions.filterQueryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     // MARK: - Filter chips
@@ -301,6 +272,15 @@ struct SessionListView: View {
     }
 
     private var filterChips: some View {
+        HStack(spacing: 0) {
+            chipScroller
+            TimeWindowButton(window: timeWindowBinding)
+                .padding(.trailing, 8)
+        }
+        .padding(.bottom, 6)
+    }
+
+    private var chipScroller: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 MachineChip(title: "All", isSelected: sessions.machineFilter == nil && !sessions.scheduledOnly) {
@@ -323,10 +303,10 @@ struct SessionListView: View {
                         }
                     }
                 }
+                TimeWindowChip(window: timeWindowBinding)
             }
             .padding(.horizontal, 12)
         }
-        .padding(.bottom, 6)
     }
 }
 

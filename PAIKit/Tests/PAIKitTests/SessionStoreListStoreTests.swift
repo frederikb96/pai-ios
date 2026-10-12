@@ -3,8 +3,8 @@ import XCTest
 
 /// The session list's central complexity is routing between three sources and never showing a
 /// stale or premature empty state while doing it — these tests target exactly that: the
-/// debounce/immediate asymmetry, generation + real cancellation across a race, the threshold
-/// filter never re-querying, and the subagent/id-query filtering `rows` applies on top of
+/// debounce/immediate asymmetry, generation + real cancellation across a race, the tiered
+/// result order, the time window reaching every fetch, and the subagent/id-query filtering `rows` applies on top of
 /// whichever source is active.
 @MainActor
 final class SessionStoreListStoreTests: XCTestCase {
@@ -13,11 +13,12 @@ final class SessionStoreListStoreTests: XCTestCase {
     private static let shortDebounceNanos: UInt64 = 20_000_000
 
     private func makeStore(
-        api: FakeSessionListApi, debounceNanos: UInt64 = SessionStoreListStoreTests.shortDebounceNanos
+        api: FakeSessionListApi, debounceNanos: UInt64 = SessionStoreListStoreTests.shortDebounceNanos,
+        now: @escaping @Sendable () -> Date = { Date() }
     )
         -> SessionListStore
     {
-        SessionListStore(api: api, debounceNanos: debounceNanos)
+        SessionListStore(api: api, debounceNanos: debounceNanos, now: now)
     }
 
     private func sleepPastDebounce() async {
@@ -176,41 +177,22 @@ final class SessionStoreListStoreTests: XCTestCase {
         XCTAssertEqual(calls.map(\.agent), ["laptop"])
     }
 
-    func testThresholdChangeNeverRefetches() async {
-        let api = FakeSessionListApi()
-        await api.setSearchResult { _ in
-            .success([
-                SessionSearchResult(session: SessionFixture.make(id: "hi"), score: 0.9),
-                SessionSearchResult(session: SessionFixture.make(id: "lo"), score: 0.1),
-            ])
-        }
-        let store = makeStore(api: api)
-        store.setSemanticMode(true)
-        store.commitFilterTextNow()  // no-op (empty text), just establishing state
-        store.updateFilterText("meaning search")
-        let callsAfterSearch = await awaitSearchCalls(api, count: 1)
-        XCTAssertEqual(callsAfterSearch.count, 1)
-
-        store.setThreshold(0.5)
-        store.setThreshold(0.8)
-
-        let callsAfterThresholdChanges = await api.searchCalls
-        XCTAssertEqual(callsAfterThresholdChanges.count, 1, "dragging the slider must never re-query")
-        await awaitRows(store, ["hi"])
-    }
-
-    /// Filtering by threshold must never re-sort — the server already returns chronological
-    /// order, and a re-sort here would silently start ranking by score instead.
-    func testThresholdFilterPreservesServerOrder() async {
+    /// A semantic list is shown in the backend's order (tier, then newest first) and the
+    /// divider sits on the first tier-2 row. A pinned tier-2 session must not be lifted above it.
+    func testSemanticResultsKeepTheBackendOrderAndMarkTheFirstLessLikelyRow() async {
         let api = FakeSessionListApi()
         await api.setSearchResult { _ in
             .success([
                 SessionSearchResult(
-                    session: SessionFixture.make(id: "newest", lastActivityAt: "2026-03-03T00:00:00Z"), score: 0.4),
+                    session: SessionFixture.make(id: "likely-old", lastActivityAt: "2026-01-01T00:00:00Z"),
+                    score: 0.9, tier: 1),
                 SessionSearchResult(
-                    session: SessionFixture.make(id: "middle", lastActivityAt: "2026-02-02T00:00:00Z"), score: 0.9),
+                    session: SessionFixture.make(id: "less-new", lastActivityAt: "2026-03-03T00:00:00Z"),
+                    score: 0.4, tier: 2),
                 SessionSearchResult(
-                    session: SessionFixture.make(id: "oldest", lastActivityAt: "2026-01-01T00:00:00Z"), score: 0.6),
+                    session: SessionFixture.make(
+                        id: "less-pinned", pinnedAt: "2026-02-01T00:00:00Z", lastActivityAt: "2026-02-02T00:00:00Z"),
+                    score: 0.3, tier: 2),
             ])
         }
         let store = makeStore(api: api)
@@ -218,10 +200,85 @@ final class SessionStoreListStoreTests: XCTestCase {
         store.updateFilterText("meaning search")
         _ = await awaitSearchCalls(api, count: 1)
 
-        store.setThreshold(0.3)
+        await awaitRows(store, ["likely-old", "less-new", "less-pinned"])
+        XCTAssertEqual(store.rows.map(\.startsLessLikely), [false, true, false])
+    }
 
-        // Chronological (as the server sent it), not score-descending.
-        await awaitRows(store, ["newest", "middle", "oldest"])
+    /// A fuzzy search narrows the list; it does not re-rank it. Whatever order the matcher
+    /// answered in, the rows are newest activity first.
+    func testFuzzyResultsAreNewestFirstWhateverOrderTheMatcherAnsweredIn() async {
+        let api = FakeSessionListApi()
+        await api.setSearchResult { _ in
+            .success([
+                SessionSearchResult(
+                    session: SessionFixture.make(id: "best-match-old", lastActivityAt: "2026-01-01T00:00:00Z"),
+                    score: nil, tier: nil),
+                SessionSearchResult(
+                    session: SessionFixture.make(id: "weak-match-new", lastActivityAt: "2026-03-03T00:00:00Z"),
+                    score: nil, tier: nil),
+            ])
+        }
+        let store = makeStore(api: api)
+        store.updateFilterText("match")
+        _ = await awaitSearchCalls(api, count: 1)
+
+        await awaitRows(store, ["weak-match-new", "best-match-old"])
+        XCTAssertEqual(store.rows.map(\.startsLessLikely), [false, false])
+    }
+
+    // MARK: - Time window
+
+    private nonisolated static let fixedNow = Date(timeIntervalSince1970: 1_800_000_000)
+
+    /// With no text and no machine, a window alone must still leave the synced list: that list
+    /// holds only the loaded pages, and the window has to reach older sessions.
+    func testAWindowAloneBrowsesTheServerWithTheResolvedBounds() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(SessionsPage(sessions: [SessionFixture.make(id: "old-one")], nextCursor: nil))
+        }
+        let store = makeStore(api: api, now: { Self.fixedNow })
+
+        store.setTimeWindow(.preset(.last7Days))
+
+        await awaitRows(store, ["old-one"])
+        let calls = await api.getSessionsCalls
+        XCTAssertEqual(
+            calls.last?.window,
+            TimeBounds(since: Self.fixedNow.addingTimeInterval(-7 * 86_400), until: Self.fixedNow))
+    }
+
+    func testAWindowReachesASearchToo() async {
+        let api = FakeSessionListApi()
+        let store = makeStore(api: api, now: { Self.fixedNow })
+        store.setTimeWindow(.preset(.last30Days))
+        store.setSemanticMode(true)
+        store.updateFilterText("meaning search")
+
+        let calls = await awaitSearchCalls(api, count: 1)
+
+        XCTAssertEqual(
+            calls.first?.window,
+            TimeBounds(since: Self.fixedNow.addingTimeInterval(-30 * 86_400), until: Self.fixedNow))
+    }
+
+    func testClearingTheWindowReturnsToTheSyncedList() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { call in
+            if call.window == nil {
+                return .success(SessionsPage(sessions: [SessionFixture.make(id: "synced")], nextCursor: nil))
+            }
+            return .success(SessionsPage(sessions: [SessionFixture.make(id: "windowed")], nextCursor: nil))
+        }
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        store.setTimeWindow(.preset(.today))
+        await awaitRows(store, ["windowed"])
+        store.setTimeWindow(nil)
+
+        await awaitRows(store, ["synced"])
+        XCTAssertFalse(store.isServerFiltered)
     }
 
     // MARK: - Races: generation + real cancellation
@@ -259,7 +316,7 @@ final class SessionStoreListStoreTests: XCTestCase {
         await api.gate.arm("search:beta")
         await api.setSearchResult { call in
             let id = call.q == "alpha" ? "alpha-session" : "beta-session"
-            return .success([SessionSearchResult(session: SessionFixture.make(id: id), score: nil)])
+            return .success([SessionSearchResult(session: SessionFixture.make(id: id), score: nil, tier: nil)])
         }
         let store = makeStore(api: api)
 
@@ -581,7 +638,7 @@ final class SessionStoreListStoreTests: XCTestCase {
             return .success(SessionsPage(sessions: [SessionFixture.make(id: "synced-1")], nextCursor: nil))
         }
         await api.setSearchResult { _ in
-            .success([SessionSearchResult(session: SessionFixture.make(id: "search-only"), score: nil)])
+            .success([SessionSearchResult(session: SessionFixture.make(id: "search-only"), score: nil, tier: nil)])
         }
         let store = makeStore(api: api)
         await store.loadInitialSessions()
