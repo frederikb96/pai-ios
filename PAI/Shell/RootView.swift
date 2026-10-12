@@ -140,6 +140,7 @@ struct RootView: View {
                 .environment(connection.toasts)
                 .environment(connection.notes)
                 .environment(connection.notesBrowse)
+                .environment(connection.noteMeaning)
                 .environment(connection.staging)
                 .environment(connection.outbox)
                 .environment(connection.notifications)

@@ -45,6 +45,17 @@ public enum PaiError: Error, Equatable {
         }
     }
 
+    /// A semantic endpoint could not embed the query in time and said so with a 503. Any 503 from
+    /// one means the same thing; nothing else is read from the body.
+    public var isSemanticUnavailable: Bool {
+        switch self {
+        case .detail(_, let statusCode), .http(let statusCode, _):
+            return statusCode == 503
+        case .transport, .decoding:
+            return false
+        }
+    }
+
     /// What the user should see. Always non-empty.
     public var userMessage: String {
         switch self {

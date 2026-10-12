@@ -66,7 +66,9 @@ actor FakeSessionListApi: SessionListApiClient {
     {
         let call = SearchCall(q: q, mode: mode, agent: agent, limit: limit, window: window)
         searchCalls.append(call)
-        await gate.wait(for: "search:\(q)")
+        // The text match and the semantic query of one search are told apart, so a test can
+        // hold one while the other answers.
+        await gate.wait(for: mode == .semantic ? "semantic:\(q)" : "search:\(q)")
         guard let searchResult else { return [] }
         switch await searchResult(call) {
         case let .success(results): return results

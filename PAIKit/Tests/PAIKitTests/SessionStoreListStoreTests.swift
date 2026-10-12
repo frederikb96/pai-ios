@@ -177,31 +177,154 @@ final class SessionStoreListStoreTests: XCTestCase {
         XCTAssertEqual(calls.map(\.agent), ["laptop"])
     }
 
+    private func tieredFixture() -> [SessionSearchResult] {
+        [
+            SessionSearchResult(
+                session: SessionFixture.make(id: "likely-old", lastActivityAt: "2026-01-01T00:00:00Z"),
+                score: 0.9, tier: 1),
+            SessionSearchResult(
+                session: SessionFixture.make(id: "less-new", lastActivityAt: "2026-03-03T00:00:00Z"),
+                score: 0.4, tier: 2),
+            SessionSearchResult(
+                session: SessionFixture.make(
+                    id: "less-pinned", pinnedAt: "2026-02-01T00:00:00Z", lastActivityAt: "2026-02-02T00:00:00Z"),
+                score: 0.3, tier: 2),
+        ]
+    }
+
+    private func textMatchFixture() -> [SessionSearchResult] {
+        [
+            SessionSearchResult(
+                session: SessionFixture.make(id: "text-old", lastActivityAt: "2026-01-01T00:00:00Z"), score: nil,
+                tier: nil),
+            SessionSearchResult(
+                session: SessionFixture.make(id: "text-new", lastActivityAt: "2026-03-03T00:00:00Z"), score: nil,
+                tier: nil),
+        ]
+    }
+
+    private func answerByMode(_ api: FakeSessionListApi) async {
+        let tiered = tieredFixture()
+        let text = textMatchFixture()
+        await api.setSearchResult { call in .success(call.mode == .semantic ? tiered : text) }
+    }
+
     /// A semantic list is shown in the backend's order (tier, then newest first) and the
     /// divider sits on the first tier-2 row. A pinned tier-2 session must not be lifted above it.
     func testSemanticResultsKeepTheBackendOrderAndMarkTheFirstLessLikelyRow() async {
         let api = FakeSessionListApi()
-        await api.setSearchResult { _ in
-            .success([
-                SessionSearchResult(
-                    session: SessionFixture.make(id: "likely-old", lastActivityAt: "2026-01-01T00:00:00Z"),
-                    score: 0.9, tier: 1),
-                SessionSearchResult(
-                    session: SessionFixture.make(id: "less-new", lastActivityAt: "2026-03-03T00:00:00Z"),
-                    score: 0.4, tier: 2),
-                SessionSearchResult(
-                    session: SessionFixture.make(
-                        id: "less-pinned", pinnedAt: "2026-02-01T00:00:00Z", lastActivityAt: "2026-02-02T00:00:00Z"),
-                    score: 0.3, tier: 2),
-            ])
+        await answerByMode(api)
+        let store = makeStore(api: api)
+        store.setSemanticMode(true)
+        store.updateFilterText("meaning search")
+
+        await awaitRows(store, ["likely-old", "less-new", "less-pinned"])
+        XCTAssertEqual(store.rows.map(\.startsLessLikely), [false, true, false])
+        XCTAssertEqual(store.semanticStatus, .ready)
+    }
+
+    /// The text matches are on screen while the semantic query is still out, and the tiered list
+    /// replaces them when it lands.
+    func testTextMatchesShowFirstAndTheTieredListReplacesThem() async {
+        let api = FakeSessionListApi()
+        await answerByMode(api)
+        await api.gate.arm("semantic:meaning search")
+        let store = makeStore(api: api)
+        store.setSemanticMode(true)
+        store.updateFilterText("meaning search")
+
+        await awaitRows(store, ["text-new", "text-old"])
+        XCTAssertEqual(store.semanticStatus, .searching)
+        XCTAssertEqual(store.rows.map(\.startsLessLikely), [false, false])
+
+        await api.gate.release("semantic:meaning search")
+        await awaitRows(store, ["likely-old", "less-new", "less-pinned"])
+        XCTAssertEqual(store.semanticStatus, .ready)
+    }
+
+    /// A text match that answers after the tiered list has landed must not put itself back.
+    func testALateTextMatchNeverReplacesTheTieredList() async {
+        let api = FakeSessionListApi()
+        await answerByMode(api)
+        await api.gate.arm("search:meaning search")
+        let store = makeStore(api: api)
+        store.setSemanticMode(true)
+        store.updateFilterText("meaning search")
+
+        await awaitRows(store, ["likely-old", "less-new", "less-pinned"])
+        await api.gate.release("search:meaning search")
+
+        await assertRowsStay(store, ["likely-old", "less-new", "less-pinned"])
+    }
+
+    /// Any 503 from the semantic query keeps the text matches, un-muted, and says so.
+    func testASemanticOutageKeepsTheTextMatches() async {
+        let api = FakeSessionListApi()
+        let text = textMatchFixture()
+        await api.setSearchResult { call in
+            call.mode == .semantic
+                ? .failure(.detail("semantic_unavailable", statusCode: 503)) : .success(text)
         }
         let store = makeStore(api: api)
         store.setSemanticMode(true)
         store.updateFilterText("meaning search")
-        _ = await awaitSearchCalls(api, count: 1)
 
+        let deadline = ContinuousClock().now + .seconds(5)
+        while store.semanticStatus != .unavailable, ContinuousClock().now < deadline {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        XCTAssertEqual(store.semanticStatus, .unavailable)
+        await awaitRows(store, ["text-new", "text-old"])
+        XCTAssertNil(store.searchError, "an outage is a line of its own, not an error banner")
+    }
+
+    /// A failure that is not a 503 keeps the text matches too, and is reported as an error.
+    func testAnotherSemanticFailureIsReportedAndKeepsTheTextMatches() async {
+        let api = FakeSessionListApi()
+        let text = textMatchFixture()
+        await api.setSearchResult { call in
+            call.mode == .semantic ? .failure(.detail("boom", statusCode: 500)) : .success(text)
+        }
+        let store = makeStore(api: api)
+        store.setSemanticMode(true)
+        store.updateFilterText("meaning search")
+
+        await awaitRows(store, ["text-new", "text-old"])
+        let deadline = ContinuousClock().now + .seconds(5)
+        while store.searchError == nil, ContinuousClock().now < deadline {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        XCTAssertEqual(store.searchError, "boom")
+    }
+
+    /// A semantic answer for text that has since changed is dropped.
+    func testAStaleSemanticAnswerIsDropped() async {
+        let api = FakeSessionListApi()
+        await answerByMode(api)
+        await api.gate.arm("semantic:first")
+        let store = makeStore(api: api)
+        store.setSemanticMode(true)
+        store.updateFilterText("first")
+        _ = await awaitSearchCalls(api, count: 2)
+
+        store.updateFilterText("second")
         await awaitRows(store, ["likely-old", "less-new", "less-pinned"])
-        XCTAssertEqual(store.rows.map(\.startsLessLikely), [false, true, false])
+        await api.gate.release("semantic:first")
+
+        await assertRowsStay(store, ["likely-old", "less-new", "less-pinned"])
+    }
+
+    /// Without semantic mode there is exactly one request, and no semantic status.
+    func testTextModeSendsOneRequestAndHasNoSemanticStatus() async {
+        let api = FakeSessionListApi()
+        await answerByMode(api)
+        let store = makeStore(api: api)
+        store.updateFilterText("match")
+
+        await awaitRows(store, ["text-new", "text-old"])
+        let calls = await api.searchCalls
+        XCTAssertEqual(calls.map(\.mode), [.fuzzy])
+        XCTAssertEqual(store.semanticStatus, .idle)
     }
 
     /// A fuzzy search narrows the list; it does not re-rank it. Whatever order the matcher
@@ -255,11 +378,11 @@ final class SessionStoreListStoreTests: XCTestCase {
         store.setSemanticMode(true)
         store.updateFilterText("meaning search")
 
-        let calls = await awaitSearchCalls(api, count: 1)
+        let calls = await awaitSearchCalls(api, count: 2)
 
-        XCTAssertEqual(
-            calls.first?.window,
-            TimeBounds(since: Self.fixedNow.addingTimeInterval(-30 * 86_400), until: Self.fixedNow))
+        let expected = TimeBounds(since: Self.fixedNow.addingTimeInterval(-30 * 86_400), until: Self.fixedNow)
+        XCTAssertEqual(Set(calls.map { $0.mode == .semantic }), [true, false], "text match and semantic")
+        XCTAssertEqual(calls.map(\.window), [expected, expected])
     }
 
     func testClearingTheWindowReturnsToTheSyncedList() async {
