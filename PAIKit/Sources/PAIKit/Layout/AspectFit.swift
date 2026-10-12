@@ -4,7 +4,7 @@ import Foundation
 /// arithmetic `UIContentMode.scaleAspectFit` performs, extracted so a device-only view can be
 /// proven without an Apple framework.
 ///
-/// `FullScreenImageViewer`'s pinch-to-zoom (`PAI/Attachments/ZoomableImageView.swift`) uses this
+/// `FilePreviewViewer`'s pinch-to-zoom (`PAI/Attachments/ZoomableImageView.swift`) uses this
 /// to compute the image's starting frame inside a `UIScrollView` — everything past that starting
 /// point (the gesture wiring itself) is `UIScrollView`/`UIScrollViewDelegate` and cannot be
 /// proven here, but the one piece of arithmetic it depends on can be.
