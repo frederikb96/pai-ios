@@ -29,6 +29,11 @@ public final class MeStore {
     /// before the identity check lands.
     public var isOwner: Bool { me?.role == .owner }
 
+    /// Whether a guest is signed in. `false` until `refresh()` has answered: the screens this
+    /// hides (alert routing and mail, as on the web) belong to the owner, who is the one who
+    /// must not see them flicker away while the identity check lands.
+    public var isGuest: Bool { me?.role == .guest }
+
     public func refresh() async {
         do {
             me = try await api.getMe()

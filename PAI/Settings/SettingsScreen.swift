@@ -21,7 +21,10 @@ struct SettingsScreen: View {
                 .accessibilityIdentifier("theme-picker")
             }
 
-            AlertsSection(alerts: settings.alerts, routing: settings.alertRouting, smtp: settings.smtp)
+            // Alerts, their routing and their mail are the owner's, as on the web.
+            if environment.connection?.me.isGuest != true {
+                AlertsSection(alerts: settings.alerts, routing: settings.alertRouting, smtp: settings.smtp)
+            }
 
             NotificationsSection()
 
