@@ -1,8 +1,9 @@
 import PAIKit
 import SwiftUI
 
-/// Everything the web's settings panel offers, minus what is out of scope: the VM shell and the
-/// apps/memory section.
+/// What the web's settings panel offers, minus what is out of scope: the VM shell, the memory
+/// pipeline and the keyboard shortcuts. A topic with many controls (alert routing, alert mail)
+/// opens on a screen of its own from a row, as on the web.
 struct SettingsScreen: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(SettingsStore.self) private var settings
@@ -20,15 +21,13 @@ struct SettingsScreen: View {
                 .accessibilityIdentifier("theme-picker")
             }
 
-            AlertsSection(alerts: settings.alerts)
+            AlertsSection(alerts: settings.alerts, routing: settings.alertRouting, smtp: settings.smtp)
 
-            SmtpSection(smtp: settings.smtp)
+            NotificationsSection()
 
             VoiceSection(settings: settings)
 
             ComputerSection(settings: settings)
-
-            NotificationsSection()
 
             HistorySection(settings: settings)
 
@@ -51,21 +50,26 @@ struct SettingsScreen: View {
     }
 }
 
-/// Notifications, and the one control that asks for them.
+/// This device's notifications: whether it can receive a push, and which channels it takes.
 ///
-/// Deliberately an explicit opt-in rather than a prompt at launch. iOS shows the system
-/// permission alert at most once per install and never again — so asking at a moment the person
-/// did not choose spends the only chance there is, over whatever screen they were actually
-/// looking at, for a feature they have not asked about yet. Here, the tap is the consent.
+/// A notification is always kept in the notifications screen. A push is the delivery of one to
+/// this device, and a channel is what this device can switch off; the choice is stored on the
+/// server per device. Both channels off means no push here, and nothing in the notifications
+/// screen changes.
+///
+/// Enabling is an explicit opt-in rather than a prompt at launch. iOS shows the system permission
+/// alert at most once per install and never again — so asking at a moment the person did not
+/// choose spends the only chance there is, over whatever screen they were actually looking at,
+/// for a feature they have not asked about yet. Here, the tap is the consent.
 private struct NotificationsSection: View {
     @Environment(AppEnvironment.self) private var environment
 
     var body: some View {
         Section {
-            if let push = environment.connection?.push {
+            if let push = environment.connection?.push, let channels = environment.connection?.pushChannels {
                 switch push.registration.status {
                 case .notRequested:
-                    Button("Enable notifications") {
+                    Button("Enable push on this device") {
                         Task {
                             await PushRegistrar.requestAuthorizationIfNeeded(store: push)
                             await push.registerWithBackendIfNeeded()
@@ -74,22 +78,23 @@ private struct NotificationsSection: View {
                     .accessibilityIdentifier("enable-notifications")
                 case .authorized:
                     LabeledContent(
-                        "Notifications", value: push.registration.registeredToken == nil ? "Not yet registered" : "On")
-                    ForEach(PushChannel.allCases, id: \.self) { channel in
-                        Toggle(isOn: channelBinding(push, channel)) {
+                        "Push on this device",
+                        value: push.registration.deviceStatusText(offeredChannelIds: channels.offeredIds))
+                    ForEach(channels.rows(muted: push.registration.mutedChannels)) { channel in
+                        Toggle(isOn: channelBinding(push, channel.id)) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(channel.title)
-                                Text(channel.explanation)
+                                Text(channel.label)
+                                Text(channel.description)
                                     .font(PaiTypography.caption.font)
                                     .foregroundStyle(PaiPalette.Semantic.textMuted)
                             }
                         }
-                        .accessibilityIdentifier("push-channel-\(channel.rawValue)")
+                        .accessibilityIdentifier("push-channel-\(channel.id)")
                     }
                 case .denied:
-                    LabeledContent("Notifications", value: "Off")
+                    LabeledContent("Push on this device", value: "Off")
                 case .failed:
-                    LabeledContent("Notifications", value: "Unavailable")
+                    LabeledContent("Push on this device", value: "Unavailable")
                 }
             }
         } header: {
@@ -97,14 +102,16 @@ private struct NotificationsSection: View {
         } footer: {
             Text(footer)
         }
+        .task { await environment.connection?.pushChannels.load() }
     }
 
     /// The toggle reads "receive this", the store holds "muted" — the two are opposites, and this
-    /// is the only place they meet. See ``PushChannel`` for why what is stored is the mute.
-    private func channelBinding(_ push: PushRegistrationStore, _ channel: PushChannel) -> Binding<Bool> {
+    /// is the only place they meet. See ``PushRegistration/mutedChannels`` for why what is stored
+    /// is the mute.
+    private func channelBinding(_ push: PushRegistrationStore, _ channelId: String) -> Binding<Bool> {
         Binding(
-            get: { !push.registration.isMuted(channel) },
-            set: { wanted in Task { await push.setMuted(!wanted, for: channel) } }
+            get: { !push.registration.isMuted(channelId) },
+            set: { wanted in Task { await push.setMuted(!wanted, forChannel: channelId) } }
         )
     }
 
@@ -115,9 +122,9 @@ private struct NotificationsSection: View {
         case .failed:
             "This device could not be registered with Apple. It will try again next launch."
         case .authorized:
-            "Alerts about this account reach this device."
+            "Everything is always kept in the notifications screen. These switches decide what this device also gets as a push."
         default:
-            "Get alerted on this device when something needs you."
+            "Get a push on this device when something needs you."
         }
     }
 }

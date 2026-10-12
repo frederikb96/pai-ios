@@ -84,6 +84,34 @@ extension PaiFixtures {
         }
         """#
 
+    /// `GET /api/settings/alert-routing` — one kind sent to both, so the screen photographs a
+    /// routed row and the row summary reads "1 kind routed".
+    public static let alertRouting: String = #"""
+        {
+          "kinds": [
+            { "id": "health", "label": "PAI health", "patterns": ["health:*"] },
+            { "id": "relay", "label": "Relayed reports", "patterns": ["relay:*"] },
+            { "id": "other", "label": "Other", "patterns": [] }
+          ],
+          "routes": { "relay": "both" },
+          "agent_task_id": null, "agent_task_name": null, "agent_task_problem": null,
+          "updated_at": "2026-07-02T09:00:00Z"
+        }
+        """#
+
+    /// `GET /api/push/channels` — the two channels a device can mute.
+    public static let pushChannels: String = #"""
+        {
+          "channels": [
+            { "id": "default", "label": "Agent messages",
+              "description": "A session telling you it finished, or that it needs you.",
+              "kinds": ["agent"] },
+            { "id": "alerts", "label": "Alerts",
+              "description": "Something in PAI Cloud broke or recovered.", "kinds": ["alert"] }
+          ]
+        }
+        """#
+
     /// `GET /api/settings/secrets` — `elevenlabs` set, every other name absent entirely
     /// (`SecretStatusMap` is a `Partial<Record<...>>`, so a missing key means "never configured",
     /// distinct from `{"set": false, ...}`).

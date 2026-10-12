@@ -67,6 +67,9 @@ final class AppEnvironment {
         /// device to send it to. Lives on the connection because a device token is worthless
         /// without a backend to register it against.
         let push: PushRegistrationStore
+        /// The channels this account's devices can mute — what the notification switches are
+        /// drawn from.
+        let pushChannels: PushChannelsStore
         /// The note index and every note currently open, with whatever is unsaved in each.
         /// App-wide rather than per-screen: an unsaved edit has to survive the editor being
         /// closed, and a note is reachable from three places at once — see `NotesStore`.
@@ -244,6 +247,7 @@ final class AppEnvironment {
             push: PushRegistrationStore(storage: defaults) { token, mutedChannels in
                 try await client.registerDevice(token: token, mutedChannels: mutedChannels)
             },
+            pushChannels: PushChannelsStore(api: client),
             notes: NotesStore(api: client),
             notesBrowse: NotesBrowseStore(api: client, storage: defaults),
             staging: staging,

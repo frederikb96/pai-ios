@@ -57,6 +57,7 @@ public final class SettingsStore {
     public let todoistToken: WriteOnlySecretField
     public let smtp: SmtpSettingsStore
     public let alerts: AlertsStore
+    public let alertRouting: AlertRoutingStore
     public let voices: SpokenVoiceSettingsStore
 
     /// Called for a recording evicted by the 10-entry cap, so whichever store holds the actual
@@ -79,6 +80,7 @@ public final class SettingsStore {
         self.todoistToken = WriteOnlySecretField(name: .todoistToken, apiClient: apiClient)
         self.smtp = SmtpSettingsStore(apiClient: apiClient)
         self.alerts = AlertsStore(api: apiClient)
+        self.alertRouting = AlertRoutingStore(api: apiClient)
         self.voices = SpokenVoiceSettingsStore(apiClient: apiClient)
 
         silenceGate = storage.value(forKey: Keys.silenceGate) ?? .standard

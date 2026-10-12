@@ -1472,8 +1472,9 @@ public struct PaiApiClient: Sendable {
     ///
     /// The muted list is always sent, empty included: the backend reads an absent field as "leave
     /// whatever this device already chose alone", which is right for a client that does not know
-    /// about channels and wrong for one clearing its last mute.
-    public func registerDevice(token: String, mutedChannels: [PushChannel]) async throws -> DeviceRegistration {
+    /// about channels and wrong for one clearing its last mute. An id the backend does not know
+    /// is a 400.
+    public func registerDevice(token: String, mutedChannels: [String]) async throws -> DeviceRegistration {
         struct Body: Encodable {
             let token: String
             let mutedChannels: [String]
@@ -1486,8 +1487,26 @@ public struct PaiApiClient: Sendable {
         return try await send(
             path: "/api/devices/register",
             method: "POST",
-            body: try Self.jsonBody(Body(token: token, mutedChannels: mutedChannels.map(\.rawValue)))
+            body: try Self.jsonBody(Body(token: token, mutedChannels: mutedChannels))
         )
+    }
+
+    /// `GET /api/push/channels` — the channels this account's devices can mute, with the label and
+    /// description to show for each. A guest is offered only `default`.
+    public func getPushChannels() async throws -> PushChannelsResponse {
+        try await send(path: "/api/push/channels")
+    }
+
+    // MARK: Alert routing
+
+    public func getAlertRouting() async throws -> AlertRoutingSettings {
+        try await send(path: "/api/settings/alert-routing")
+    }
+
+    /// Whole map every time: a kind absent from `routes` notifies, so a partial write would
+    /// silently reset the kinds it left out.
+    public func updateAlertRouting(_ update: AlertRoutingUpdate) async throws -> AlertRoutingSettings {
+        try await send(path: "/api/settings/alert-routing", method: "PUT", body: try Self.jsonBody(update))
     }
 
     // MARK: Alerts

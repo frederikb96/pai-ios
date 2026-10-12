@@ -1,9 +1,23 @@
 import PAIKit
 import SwiftUI
 
-/// "Alert Mail" — lets the backend email the user when something breaks. Server-persisted,
-/// draft-and-save: nothing here is sent until Save, except the password, which is its own
-/// write-only secret with its own immediate Save/Clear (`SecretField`).
+/// The page behind Settings' "Alert mail" row.
+struct AlertMailScreen: View {
+    let smtp: SmtpSettingsStore
+
+    var body: some View {
+        Form {
+            SmtpSection(smtp: smtp)
+        }
+        .paiListBackground()
+        .navigationTitle("Alert mail")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// Alert mail — the backend's mail account and whether alerts are mailed as well as pushed.
+/// Server-persisted, draft-and-save: nothing here is sent until Save, except the password, which
+/// is its own write-only secret with its own immediate Save/Clear (`SecretField`).
 struct SmtpSection: View {
     let smtp: SmtpSettingsStore
 
@@ -18,10 +32,10 @@ struct SmtpSection: View {
                     .font(PaiTypography.caption.font)
                     .foregroundStyle(PaiPalette.Semantic.errorText)
             }
-        } header: {
-            Text("Alert Mail")
         } footer: {
-            Text("Lets PAI email you when something breaks.")
+            Text(
+                "Lets PAI email you when something breaks. Alerts and relayed messages are always kept in the notifications screen and pushed to your devices; mail is an addition."
+            )
         }
         .task {
             if smtp.draft == nil { await smtp.load() }
@@ -30,7 +44,7 @@ struct SmtpSection: View {
 
     @ViewBuilder
     private func loadedContent(_ draft: SmtpSettingsDraft) -> some View {
-        Toggle("Enabled", isOn: bindingToDraft(\.enabled, fallback: draft))
+        Toggle("Send alerts by email", isOn: bindingToDraft(\.enabled, fallback: draft))
             .accessibilityIdentifier("smtp-enabled")
 
         // `LabeledContent` rather than a bare `TextField`: a text field's title is only its

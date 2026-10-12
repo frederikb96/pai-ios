@@ -11,7 +11,7 @@ final class PushRegistrationStoreTests: XCTestCase {
 
     private final class Recorder: @unchecked Sendable {
         var tokens: [String] = []
-        var mutedChannels: [[PushChannel]] = []
+        var mutedChannels: [[String]] = []
         var shouldThrow = false
         /// Stands in for the backend normalising what it stores. Returning something other than
         /// what was sent is the case that matters: the store must remember the answer, not the
@@ -19,9 +19,9 @@ final class PushRegistrationStoreTests: XCTestCase {
         var normalise: (String) -> String = { $0 }
         /// What the backend says it holds. `nil` stands in for one that does not answer about
         /// channels at all, which is not the same as one answering "nothing is muted".
-        var answersMutedChannels: ([PushChannel]) -> [String]? = { $0.map(\.rawValue) }
+        var answersMutedChannels: ([String]) -> [String]? = { $0 }
 
-        func register(_ token: String, _ muted: [PushChannel]) async throws -> DeviceRegistration {
+        func register(_ token: String, _ muted: [String]) async throws -> DeviceRegistration {
             if shouldThrow { throw URLError(.notConnectedToInternet) }
             tokens.append(token)
             mutedChannels.append(muted)
@@ -146,10 +146,10 @@ final class PushRegistrationStoreTests: XCTestCase {
         store.recordDeviceToken("abc")
         await store.registerWithBackendIfNeeded()
 
-        await store.setMuted(true, for: .alerts)
+        await store.setMuted(true, forChannel: "alerts")
 
         XCTAssertEqual(recorder.tokens, ["abc", "abc"])
-        XCTAssertEqual(recorder.mutedChannels, [[], [.alerts]])
+        XCTAssertEqual(recorder.mutedChannels, [[], ["alerts"]])
     }
 
     /// Flipping a channel back to where it already was is not a change, and posting for it would
@@ -160,7 +160,7 @@ final class PushRegistrationStoreTests: XCTestCase {
         store.recordDeviceToken("abc")
         await store.registerWithBackendIfNeeded()
 
-        await store.setMuted(false, for: .alerts)
+        await store.setMuted(false, forChannel: "alerts")
 
         XCTAssertEqual(recorder.tokens, ["abc"])
     }
@@ -174,13 +174,13 @@ final class PushRegistrationStoreTests: XCTestCase {
         await store.registerWithBackendIfNeeded()
 
         recorder.shouldThrow = true
-        await store.setMuted(true, for: .default)
-        XCTAssertTrue(store.registration.isMuted(.default), "the toggle has to stay where it was put")
+        await store.setMuted(true, forChannel: "default")
+        XCTAssertTrue(store.registration.isMuted("default"), "the toggle has to stay where it was put")
         XCTAssertTrue(store.registration.needsBackendRegistration)
 
         recorder.shouldThrow = false
         await store.registerWithBackendIfNeeded()
-        XCTAssertEqual(recorder.mutedChannels, [[], [.default]])
+        XCTAssertEqual(recorder.mutedChannels, [[], ["default"]])
         XCTAssertFalse(store.registration.needsBackendRegistration)
     }
 
@@ -192,11 +192,25 @@ final class PushRegistrationStoreTests: XCTestCase {
         recorder.answersMutedChannels = { _ in nil }
         let store = makeStore(recorder: recorder)
         store.recordDeviceToken("abc")
-        await store.setMuted(true, for: .alerts)
+        await store.setMuted(true, forChannel: "alerts")
         XCTAssertFalse(store.registration.needsBackendRegistration)
 
         await store.registerWithBackendIfNeeded()
         XCTAssertEqual(recorder.tokens, ["abc"], "one post, not one per call")
+    }
+
+    /// A channel id this build has never heard of is a mute like any other: kept, sent back, and
+    /// confirmed, not filtered out as unknown. Dropping it would let the registration silently
+    /// disagree with what the person chose.
+    func testAMuteForAnIdThisBuildDoesNotKnowIsSentAndKept() async {
+        let recorder = Recorder()
+        let store = makeStore(recorder: recorder)
+        store.recordDeviceToken("abc")
+        await store.setMuted(true, forChannel: "digest")
+
+        XCTAssertEqual(recorder.mutedChannels, [["digest"]])
+        XCTAssertEqual(store.registration.registeredMutedChannels, ["digest"])
+        XCTAssertFalse(store.registration.needsBackendRegistration)
     }
 
     /// Channel choices have to outlive the process for the same reason the token does.
@@ -205,11 +219,11 @@ final class PushRegistrationStoreTests: XCTestCase {
         let first = Recorder()
         let store = makeStore(storage: storage, recorder: first)
         store.recordDeviceToken("abc")
-        await store.setMuted(true, for: .alerts)
+        await store.setMuted(true, forChannel: "alerts")
 
         let second = Recorder()
         let relaunched = makeStore(storage: storage, recorder: second)
-        XCTAssertTrue(relaunched.registration.isMuted(.alerts))
+        XCTAssertTrue(relaunched.registration.isMuted("alerts"))
         await relaunched.registerWithBackendIfNeeded()
         XCTAssertEqual(second.tokens, [], "already acknowledged before the relaunch")
     }
