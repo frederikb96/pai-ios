@@ -171,6 +171,8 @@
             exact("GET", "/api/settings/secrets") { PaiFixtures.secretStatuses },
             exact("GET", "/api/settings/smtp") { PaiFixtures.smtpSettings },
             exact("GET", "/api/settings/voice") { PaiFixtures.spokenVoiceSettings },
+            exact("GET", "/api/settings/alert-routing") { PaiFixtures.alertRouting },
+            exact("GET", "/api/push/channels") { PaiFixtures.pushChannels },
             exact("GET", "/api/voice/debug-recordings") { PaiFixtures.debugRecordings },
             exact("GET", "/api/wake-word/runs") { PaiFixtures.wakeWordRuns },
             exact("GET", "/api/auth/claude") { claudeAuthFixtureBody() },

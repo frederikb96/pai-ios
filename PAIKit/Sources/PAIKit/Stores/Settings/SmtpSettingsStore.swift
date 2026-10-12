@@ -83,6 +83,13 @@ public final class SmtpSettingsStore {
         return draft != SmtpSettingsDraft(loaded: loaded)
     }
 
+    /// One line for the settings row: whether alerts are mailed, and to whom.
+    public var summary: String? {
+        guard let loaded else { return nil }
+        guard loaded.enabled else { return "Off" }
+        return loaded.recipient.isEmpty ? "On" : loaded.recipient
+    }
+
     public var isPortValid: Bool {
         guard let draft else { return false }
         return (1...65_535).contains(draft.port)

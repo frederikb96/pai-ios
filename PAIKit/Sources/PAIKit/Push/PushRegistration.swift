@@ -31,13 +31,16 @@ public struct PushRegistration: Codable, Sendable, Equatable {
     /// registration that failed to reach the backend is distinguishable from one that never
     /// happened — the two look identical if only the token is stored.
     public var registeredToken: String?
-    /// Which channels this device has switched off. See ``PushChannel`` for why the muted set is
-    /// what is stored rather than the wanted set.
-    public var mutedChannels: Set<PushChannel>
+    /// The ids of the channels this device has switched off (`GET /api/push/channels` lists what
+    /// exists). What is stored is the mute, never the wish: an opt-in list would leave a channel
+    /// added later silently off for every registered device, an opt-out list has it arrive on and
+    /// only an explicit mute turns it off. Plain strings, so an id this build has never heard of
+    /// is kept and sent back rather than dropped. The backend rejects an id it does not know.
+    public var mutedChannels: Set<String>
     /// The muted set the backend has confirmed, held apart from the local one for the same reason
     /// the two token fields are held apart. `nil` means the backend has never been told, which is
     /// distinct from having been told "nothing is muted".
-    public var registeredMutedChannels: Set<PushChannel>?
+    public var registeredMutedChannels: Set<String>?
     /// Why the last attempt failed, for the diagnostics screen. Never shown as an alert: a
     /// person who has just granted permission does not want an error about plumbing.
     public var lastError: String?
@@ -46,8 +49,8 @@ public struct PushRegistration: Codable, Sendable, Equatable {
         status: Status = .notRequested,
         deviceToken: String? = nil,
         registeredToken: String? = nil,
-        mutedChannels: Set<PushChannel> = [],
-        registeredMutedChannels: Set<PushChannel>? = nil,
+        mutedChannels: Set<String> = [],
+        registeredMutedChannels: Set<String>? = nil,
         lastError: String? = nil
     ) {
         self.status = status
@@ -58,12 +61,20 @@ public struct PushRegistration: Codable, Sendable, Equatable {
         self.lastError = lastError
     }
 
-    /// Every channel that is currently switched on, in a stable order.
-    public var enabledChannels: [PushChannel] {
-        PushChannel.allCases.filter { !mutedChannels.contains($0) }
+    public func isMuted(_ channelId: String) -> Bool { mutedChannels.contains(channelId) }
+
+    /// The one-line state of an authorized device: not yet known to the backend, off because
+    /// every channel is muted, or on.
+    public func deviceStatusText(offeredChannelIds: [String]) -> String {
+        if registeredToken == nil { return "Not yet registered" }
+        return isPushOff(offeredChannelIds: offeredChannelIds) ? "Off" : "On"
     }
 
-    public func isMuted(_ channel: PushChannel) -> Bool { mutedChannels.contains(channel) }
+    /// Push is off for this device when every channel on offer is muted. The notifications
+    /// screen is unaffected: a notification is stored whatever a device does with its pushes.
+    public func isPushOff(offeredChannelIds: [String]) -> Bool {
+        !offeredChannelIds.isEmpty && offeredChannelIds.allSatisfy(mutedChannels.contains)
+    }
 
     /// Whether the backend needs to be told about this device.
     ///
@@ -84,9 +95,9 @@ public struct PushRegistration: Codable, Sendable, Equatable {
         status = try container.decodeIfPresent(Status.self, forKey: .status) ?? .notRequested
         deviceToken = try container.decodeIfPresent(String.self, forKey: .deviceToken)
         registeredToken = try container.decodeIfPresent(String.self, forKey: .registeredToken)
-        mutedChannels = try container.decodeIfPresent(Set<PushChannel>.self, forKey: .mutedChannels) ?? []
+        mutedChannels = try container.decodeIfPresent(Set<String>.self, forKey: .mutedChannels) ?? []
         registeredMutedChannels = try container.decodeIfPresent(
-            Set<PushChannel>.self, forKey: .registeredMutedChannels)
+            Set<String>.self, forKey: .registeredMutedChannels)
         lastError = try container.decodeIfPresent(String.self, forKey: .lastError)
     }
 

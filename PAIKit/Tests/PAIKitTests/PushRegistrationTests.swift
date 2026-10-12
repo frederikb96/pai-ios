@@ -81,8 +81,35 @@ final class PushRegistrationTests: XCTestCase {
     func testAMuteTheBackendHasNotAcknowledgedIsStillOwed() {
         let state = PushRegistration(
             status: .authorized, deviceToken: "same", registeredToken: "same",
-            mutedChannels: [.alerts], registeredMutedChannels: [])
+            mutedChannels: ["alerts"], registeredMutedChannels: [])
         XCTAssertTrue(state.needsBackendRegistration)
+    }
+
+    /// Push is off only when every channel on offer is muted; muting one leaves the other
+    /// arriving, and an empty offer (nothing loaded yet) must not read as "all muted".
+    func testPushIsOffOnlyWhenEveryOfferedChannelIsMuted() {
+        let offered = ["default", "alerts"]
+        XCTAssertFalse(PushRegistration(mutedChannels: ["alerts"]).isPushOff(offeredChannelIds: offered))
+        XCTAssertTrue(
+            PushRegistration(mutedChannels: ["alerts", "default"]).isPushOff(offeredChannelIds: offered))
+        XCTAssertFalse(PushRegistration(mutedChannels: ["alerts"]).isPushOff(offeredChannelIds: []))
+    }
+
+    func testTheDeviceStatusLineSaysWhyPushIsNotArriving() {
+        let offered = ["default", "alerts"]
+        XCTAssertEqual(
+            PushRegistration(status: .authorized, deviceToken: "t").deviceStatusText(offeredChannelIds: offered),
+            "Not yet registered")
+        XCTAssertEqual(
+            PushRegistration(
+                status: .authorized, deviceToken: "t", registeredToken: "t", mutedChannels: ["default", "alerts"]
+            )
+            .deviceStatusText(offeredChannelIds: offered),
+            "Off")
+        XCTAssertEqual(
+            PushRegistration(status: .authorized, deviceToken: "t", registeredToken: "t", mutedChannels: ["alerts"])
+                .deviceStatusText(offeredChannelIds: offered),
+            "On")
     }
 
     // MARK: - When asking is still possible
@@ -118,6 +145,17 @@ final class PushRegistrationDecodingTests: XCTestCase {
         XCTAssertNil(state.registeredMutedChannels, "never told is not the same as told nothing is muted")
     }
 
+    /// The muted set used to be stored as an enum's raw values; the same JSON must keep meaning
+    /// the same mutes now that channels are plain ids.
+    func testMutesStoredByAnEarlierBuildLoadAsIds() throws {
+        let state = try decode(
+            #"{"status":"authorized","deviceToken":"abc","registeredToken":"abc","mutedChannels":["alerts"],"registeredMutedChannels":["alerts"]}"#
+        )
+        XCTAssertEqual(state.mutedChannels, ["alerts"])
+        XCTAssertEqual(state.registeredMutedChannels, ["alerts"])
+        XCTAssertFalse(state.needsBackendRegistration)
+    }
+
     func testAnEmptyObjectLoadsAsAFreshInstall() throws {
         XCTAssertEqual(try decode("{}").status, .notRequested)
     }
@@ -125,7 +163,7 @@ final class PushRegistrationDecodingTests: XCTestCase {
     func testWhatIsWrittenIsWhatComesBack() throws {
         let written = PushRegistration(
             status: .authorized, deviceToken: "abc", registeredToken: "abc",
-            mutedChannels: [.alerts], registeredMutedChannels: [.alerts], lastError: nil)
+            mutedChannels: ["alerts"], registeredMutedChannels: ["alerts"], lastError: nil)
         let data = try JSONEncoder().encode(written)
         XCTAssertEqual(try JSONDecoder().decode(PushRegistration.self, from: data), written)
     }

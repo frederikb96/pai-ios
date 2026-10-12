@@ -138,3 +138,31 @@ public struct NotificationSummary: Codable, Sendable, Equatable {
         self.latestId = latestId
     }
 }
+
+// MARK: - Push channels
+
+/// One channel a device can mute, as `GET /api/push/channels` serves it. The id is what a
+/// registration's `muted_channels` holds; `kinds` are the notification kinds pushed on it. The
+/// label and description are the server's, so a channel added there needs no client change.
+public struct PushChannelInfo: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let label: String
+    public let description: String
+    public let kinds: [String]
+
+    public init(id: String, label: String, description: String, kinds: [String]) {
+        self.id = id
+        self.label = label
+        self.description = description
+        self.kinds = kinds
+    }
+}
+
+/// `GET /api/push/channels`.
+public struct PushChannelsResponse: Codable, Sendable, Equatable {
+    public let channels: [PushChannelInfo]
+
+    public init(channels: [PushChannelInfo]) {
+        self.channels = channels
+    }
+}

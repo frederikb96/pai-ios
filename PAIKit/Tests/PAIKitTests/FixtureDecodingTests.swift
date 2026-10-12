@@ -72,6 +72,13 @@ final class FixtureDecodingTests: XCTestCase {
         _ = try decode([SessionSearchResult].self, from: PaiFixtures.emptySearchResults, "empty search")
     }
 
+    func testNotificationSettingsFixturesDecode() throws {
+        let routing = try decode(AlertRoutingSettings.self, from: PaiFixtures.alertRouting, "alert routing")
+        XCTAssertEqual(routing.routes["relay"], .both)
+        let channels = try decode(PushChannelsResponse.self, from: PaiFixtures.pushChannels, "push channels")
+        XCTAssertEqual(channels.channels.map(\.id), ["default", "alerts"])
+    }
+
     // MARK: - Machines and session types
 
     func testMachinesDecodeIncludingTheEmptyCase() throws {

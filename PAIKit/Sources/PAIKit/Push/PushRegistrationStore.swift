@@ -25,13 +25,13 @@ public final class PushRegistrationStore {
     /// went out, is what stops a normalisation this client does not perform from looking like a
     /// token that was never registered — which would re-post on every launch, forever, with
     /// nothing wrong.
-    private let registerToken: @Sendable (String, [PushChannel]) async throws -> DeviceRegistration
+    private let registerToken: @Sendable (String, [String]) async throws -> DeviceRegistration
 
     public private(set) var registration: PushRegistration
 
     public init(
         storage: SettingsKeyValueStore,
-        registerToken: @escaping @Sendable (String, [PushChannel]) async throws -> DeviceRegistration
+        registerToken: @escaping @Sendable (String, [String]) async throws -> DeviceRegistration
     ) {
         self.storage = storage
         self.registerToken = registerToken
@@ -76,13 +76,13 @@ public final class PushRegistrationStore {
         guard registration.needsBackendRegistration, let token = registration.deviceToken else { return }
         let sent = registration.mutedChannels
         do {
-            let result = try await registerToken(token, sent.sorted { $0.rawValue < $1.rawValue })
+            let result = try await registerToken(token, sent.sorted())
             registration.registeredToken = result.token
             // What the backend reports it holds, and what was sent when it reports nothing. A
             // backend that does not answer about channels has still stored what it was given, so
             // treating silence as "nothing is muted" is the one reading that is certainly wrong.
             registration.registeredMutedChannels =
-                result.mutedChannels.map { Set($0.compactMap(PushChannel.init(rawValue:))) } ?? sent
+                result.mutedChannels.map(Set.init) ?? sent
             registration.lastError = nil
         } catch {
             registration.lastError = String(describing: error)
@@ -95,12 +95,12 @@ public final class PushRegistrationStore {
     /// The local choice is recorded and persisted whether or not the call succeeds — the toggle
     /// has to stay where it was put, and `needsBackendRegistration` is what carries an unsent
     /// change to the next launch.
-    public func setMuted(_ muted: Bool, for channel: PushChannel) async {
-        guard registration.isMuted(channel) != muted else { return }
+    public func setMuted(_ muted: Bool, forChannel channelId: String) async {
+        guard registration.isMuted(channelId) != muted else { return }
         if muted {
-            registration.mutedChannels.insert(channel)
+            registration.mutedChannels.insert(channelId)
         } else {
-            registration.mutedChannels.remove(channel)
+            registration.mutedChannels.remove(channelId)
         }
         persist()
         await registerWithBackendIfNeeded()
