@@ -245,12 +245,17 @@ private struct TimeWindowRangeSlider: View {
         let symbols = Calendar.current.shortMonthSymbols
         return ZStack(alignment: .topLeading) {
             ForEach(TimeWindowSlider.monthMarks(now: now)) { mark in
-                Text(symbols[(mark.month - 1) % symbols.count])
-                    .font(.system(size: 10))
-                    .foregroundStyle(PaiPalette.Semantic.textMuted)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .offset(x: x(for: mark.stop, usable: usable) + thumbSize / 2 - 8, y: 52)
+                VStack(spacing: 0) {
+                    Text(symbols[(mark.month - 1) % symbols.count])
+                    if mark.showsYear {
+                        Text(String(mark.year)).fontWeight(.semibold)
+                    }
+                }
+                .font(.system(size: 10))
+                .foregroundStyle(PaiPalette.Semantic.textMuted)
+                .lineLimit(1)
+                .fixedSize()
+                .offset(x: x(for: mark.stop, usable: usable) + thumbSize / 2 - 8, y: 52)
             }
         }
     }

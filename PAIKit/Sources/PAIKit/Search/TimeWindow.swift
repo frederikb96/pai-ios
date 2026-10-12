@@ -189,6 +189,9 @@ public struct MonthMark: Sendable, Equatable, Identifiable {
     public let stop: Int
     /// `1...12`
     public let month: Int
+    public let year: Int
+    /// Whether the label also names the year: the axis' first tick and every January.
+    public let showsYear: Bool
     public var id: Int { stop }
 }
 
@@ -232,8 +235,11 @@ public enum TimeWindowSlider {
         var marks: [MonthMark] = []
         var previous: Int?
         for stop in 0...weeks {
-            let month = calendar.component(.month, from: date(forStop: stop, now: now, calendar: calendar))
-            if month != previous { marks.append(MonthMark(stop: stop, month: month)) }
+            let parts = calendar.dateComponents(
+                [.year, .month], from: date(forStop: stop, now: now, calendar: calendar))
+            guard let month = parts.month, let year = parts.year, month != previous else { continue }
+            marks.append(
+                MonthMark(stop: stop, month: month, year: year, showsYear: marks.isEmpty || month == 1))
             previous = month
         }
         return marks
