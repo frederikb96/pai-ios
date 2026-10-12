@@ -155,9 +155,3 @@ public func searchAndSortNotes(_ notes: [PreparedNote], query: String, order: No
     }
     return sortNotes(admitted, order: order)
 }
-
-/// The notes last modified inside `bounds`; all of them when there is no window.
-public func filterNotes(_ notes: [NoteSummary], within bounds: TimeBounds?) -> [NoteSummary] {
-    guard let bounds else { return notes }
-    return notes.filter { bounds.contains(epochMilliseconds: $0.updatedAtMs) }
-}

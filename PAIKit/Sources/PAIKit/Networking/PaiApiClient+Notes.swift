@@ -200,8 +200,11 @@ extension PaiApiClient {
 
     /// Literal substring search over note bodies — not stemmed full-text search, since finding
     /// part of an identifier or a path is the point.
-    public func searchNotes(q: String, containerId: String? = nil, limit: Int? = nil) async throws -> NoteSearchPage {
+    public func searchNotes(
+        q: String, containerId: String? = nil, limit: Int? = nil, window: TimeBounds? = nil
+    ) async throws -> NoteSearchPage {
         var query = [URLQueryItem(name: "q", value: q)]
+        if let window { query += window.queryItems(sinceName: "since", untilName: "until") }
         if let containerId { query.append(URLQueryItem(name: "container_id", value: containerId)) }
         if let limit { query.append(URLQueryItem(name: "limit", value: String(limit))) }
         return try await send(path: "/api/notes/search", query: query)

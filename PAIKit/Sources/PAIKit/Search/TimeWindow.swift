@@ -92,7 +92,9 @@ public struct SliderSelection: Sendable, Equatable, Hashable {
 /// The window a time picker has applied. `nil` where it is stored means no window.
 public enum TimeWindow: Sendable, Equatable, Hashable {
     case preset(TimeWindowPreset)
-    case slider(SliderSelection)
+    /// Chosen on the slider as days, so the window does not drift as time passes; `to == nil` is
+    /// the open right edge, "until now".
+    case slider(from: CalendarDay, to: CalendarDay?)
     /// Both days inclusive.
     case custom(from: CalendarDay, to: CalendarDay)
 
@@ -116,11 +118,9 @@ public enum TimeWindow: Sendable, Equatable, Hashable {
             return TimeBounds(since: now.addingTimeInterval(-7 * 86_400), until: now)
         case .preset(.last30Days):
             return TimeBounds(since: now.addingTimeInterval(-30 * 86_400), until: now)
-        case let .slider(selection):
-            let since = TimeWindowSlider.date(forStop: selection.from, now: now, calendar: calendar)
-            guard selection.to < TimeWindowSlider.weeks else { return TimeBounds(since: since, until: now) }
-            let end = TimeWindowSlider.date(forStop: selection.to, now: now, calendar: calendar)
-            return TimeBounds(since: since, until: CalendarDay(end, calendar: calendar).endOfDay(in: calendar))
+        case let .slider(from, to):
+            return TimeBounds(
+                since: from.startOfDay(in: calendar), until: to.map { $0.endOfDay(in: calendar) } ?? now)
         case let .custom(from, to):
             return TimeBounds(since: from.startOfDay(in: calendar), until: to.endOfDay(in: calendar))
         }
@@ -131,19 +131,32 @@ public enum TimeWindow: Sendable, Equatable, Hashable {
         switch self {
         case let .preset(preset):
             return preset.label
-        case let .slider(selection):
-            let start = TimeWindowSlider.startLabel(selection, now: now, calendar: calendar)
-            return start + " – " + TimeWindowSlider.endLabel(selection, now: now, calendar: calendar)
+        case let .slider(from, to):
+            return from.isoString + " – " + (to?.isoString ?? "now")
         case let .custom(from, to):
             return from.isoString + " – " + to.isoString
         }
     }
 
-    /// The slider position to reopen the overlay at: the window's own when it is a slider window,
+    /// The slider window for a selection of stops, stored as the days they mean today.
+    public static func fromSlider(
+        _ selection: SliderSelection, now: Date, calendar: Calendar = TimeWindow.defaultCalendar()
+    ) -> TimeWindow {
+        let from = CalendarDay(
+            TimeWindowSlider.date(forStop: selection.from, now: now, calendar: calendar), calendar: calendar)
+        guard selection.to < TimeWindowSlider.weeks else { return .slider(from: from, to: nil) }
+        let to = CalendarDay(
+            TimeWindowSlider.date(forStop: selection.to, now: now, calendar: calendar), calendar: calendar)
+        return .slider(from: from, to: to)
+    }
+
+    /// The slider position to reopen the overlay at: the nearest stops to a slider window's days,
     /// otherwise the whole axis.
-    public var sliderSelection: SliderSelection {
-        if case let .slider(selection) = self { return selection }
-        return .full
+    public func sliderSelection(now: Date, calendar: Calendar = TimeWindow.defaultCalendar()) -> SliderSelection {
+        guard case let .slider(from, to) = self else { return .full }
+        let start = TimeWindowSlider.stop(for: from, now: now, calendar: calendar)
+        let end = to.map { TimeWindowSlider.stop(for: $0, now: now, calendar: calendar) } ?? TimeWindowSlider.weeks
+        return SliderSelection(from: start, to: end)
     }
 }
 
@@ -205,6 +218,17 @@ public enum TimeWindowSlider {
     {
         let today = calendar.startOfDay(for: now)
         return calendar.date(byAdding: .day, value: -(weeks - stop) * 7, to: today) ?? today
+    }
+
+    /// The stop nearest a day, clamped to the axis.
+    public static func stop(for day: CalendarDay, now: Date, calendar: Calendar = TimeWindow.defaultCalendar())
+        -> Int
+    {
+        guard let start = day.startOfDay(in: calendar) else { return 0 }
+        let today = calendar.startOfDay(for: now)
+        let days = calendar.dateComponents([.day], from: start, to: today).day ?? 0
+        let stop = weeks - Int((Double(days) / 7).rounded())
+        return min(max(stop, 0), weeks)
     }
 
     /// The stop nearest a position along the track (`0...1`).

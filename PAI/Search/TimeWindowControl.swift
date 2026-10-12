@@ -68,7 +68,7 @@ struct TimeWindowButton: View {
     private func openSlider() {
         var isSliderWindow = false
         if case .slider = window { isSliderWindow = true }
-        if !isSliderWindow { window = .slider(.full) }
+        if !isSliderWindow { window = .fromSlider(.full, now: Date()) }
         isShowingSlider = true
     }
 }
@@ -116,7 +116,7 @@ struct TimeWindowSliderOverlay: View {
 
     init(window: Binding<TimeWindow?>) {
         _window = window
-        _draft = State(initialValue: window.wrappedValue?.sliderSelection ?? .full)
+        _draft = State(initialValue: window.wrappedValue?.sliderSelection(now: Date()) ?? .full)
     }
 
     var body: some View {
@@ -160,7 +160,7 @@ struct TimeWindowSliderOverlay: View {
             .accessibilityElement(children: .combine)
 
             TimeWindowRangeSlider(selection: $draft, now: now) { committed in
-                window = .slider(committed)
+                window = .fromSlider(committed, now: now)
             }
             .frame(height: 96)
         }

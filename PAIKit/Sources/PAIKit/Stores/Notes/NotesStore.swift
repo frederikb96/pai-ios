@@ -17,7 +17,7 @@ public protocol NotesApiClient: Sendable {
     func listNoteRevisions(id: String) async throws -> [NoteRevisionSummary]
     func getNoteRevision(noteId: String, revisionId: String) async throws -> NoteRevisionDetail
     func restoreNoteRevision(noteId: String, revisionId: String) async throws -> NoteDetail
-    func searchNotes(q: String, containerId: String?, limit: Int?) async throws -> NoteSearchPage
+    func searchNotes(q: String, containerId: String?, limit: Int?, window: TimeBounds?) async throws -> NoteSearchPage
 
     func getNoteContainers() async throws -> [NoteContainer]
     func createNoteContainer(path: String, name: String, agentSlug: String?, isDefault: Bool) async throws
@@ -390,8 +390,8 @@ public final class NotesStore {
     /// A passthrough rather than stored state — the caller (the note list, debouncing its own
     /// query text) owns the results, loading state and generation guard, the same way the web's
     /// component-local `useState` does.
-    public func searchNotes(q: String) async throws -> NoteSearchPage {
-        try await api.searchNotes(q: q, containerId: nil, limit: nil)
+    public func searchNotes(q: String, window: TimeBounds?) async throws -> NoteSearchPage {
+        try await api.searchNotes(q: q, containerId: nil, limit: nil, window: window)
     }
 
     // MARK: Attachments
