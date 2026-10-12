@@ -392,7 +392,7 @@ struct NoteListScreen: View {
         } else {
             List {
                 if searchTruncated {
-                    Text("More matches than shown — narrow the search.")
+                    Text(SearchTruncation.notice)
                         .font(PaiTypography.caption.font)
                         .foregroundStyle(PaiPalette.Semantic.textMuted)
                 }

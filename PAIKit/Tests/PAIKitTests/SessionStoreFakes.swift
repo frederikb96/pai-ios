@@ -40,6 +40,8 @@ actor FakeSessionListApi: SessionListApiClient {
     /// independently without the test having to thread call counts through by hand.
     var getSessionsResult: (@Sendable (GetSessionsCall) async -> Result<SessionsPage, PaiError>)?
     var searchResult: (@Sendable (SearchCall) async -> Result<[SessionSearchResult], PaiError>)?
+    /// What the fake reports for the server's `X-Search-Truncated` header.
+    var searchTruncated = false
 
     /// Lets a test suspend a specific call (keyed by whatever it chooses — usually `q` or
     /// `agent`) until it explicitly releases it, to script response ORDER independently of call
@@ -62,16 +64,16 @@ actor FakeSessionListApi: SessionListApiClient {
     }
 
     func searchSessions(q: String, mode: SessionSearchMode?, agent: String?, limit: Int?, window: TimeBounds?)
-        async throws -> [SessionSearchResult]
+        async throws -> SessionSearchPage
     {
         let call = SearchCall(q: q, mode: mode, agent: agent, limit: limit, window: window)
         searchCalls.append(call)
         // The text match and the semantic query of one search are told apart, so a test can
         // hold one while the other answers.
         await gate.wait(for: mode == .semantic ? "semantic:\(q)" : "search:\(q)")
-        guard let searchResult else { return [] }
+        guard let searchResult else { return SessionSearchPage(results: [], truncated: searchTruncated) }
         switch await searchResult(call) {
-        case let .success(results): return results
+        case let .success(results): return SessionSearchPage(results: results, truncated: searchTruncated)
         case let .failure(error): throw error
         }
     }

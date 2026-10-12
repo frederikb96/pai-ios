@@ -11,7 +11,7 @@ public protocol SessionListApiClient: Sendable {
     ) async throws -> SessionsPage
     func searchSessions(
         q: String, mode: SessionSearchMode?, agent: String?, limit: Int?, window: TimeBounds?
-    ) async throws -> [SessionSearchResult]
+    ) async throws -> SessionSearchPage
     /// Only reached through `SessionListStore.deleteSession(id:)` — see its doc comment.
     func deleteSession(sessionId: String) async throws -> DeleteResponse
     /// Only reached through `SessionListStore.closeSession(id:onFailure:)` — see its doc comment.
@@ -90,7 +90,9 @@ public enum SessionListEmptyState: Sendable, Equatable {
 @Observable
 public final class SessionListStore {
     static let sessionsPageSize = 100
-    static let searchResultLimit = 100
+    /// The most the server will return for one search. A plain `List` realises its rows lazily, so
+    /// asking for all of them costs one response, not 500 views.
+    static let searchResultLimit = 500
     /// Applied only to raw typed text — a chip click, a mode toggle and the Enter key all bypass
     /// this, because each is a discrete choice, not a keystroke stream.
     ///
@@ -137,6 +139,9 @@ public final class SessionListStore {
     public private(set) var serverFilteredHasMore = false
     public private(set) var serverFilteredLoading = false
     public private(set) var serverFilteredError: String?
+    /// The shown search was cut to the limit asked for, so older matches exist that it does not
+    /// list. Describes whichever list is on screen: the text matches, then the tiered result.
+    public private(set) var searchTruncated = false
     /// Only the response matching the current generation may ever write state — the guard
     /// against an older, slower request landing after a newer one.
     private var generation = 0
@@ -229,6 +234,11 @@ public final class SessionListStore {
 
     /// Only meaningful while a server-backed fetch is the active source — the synced list has
     /// nothing that can fail this way.
+    /// The line to show under a search whose list was cut short, `nil` when there is none.
+    public var truncationNotice: String? {
+        isServerFiltered && effectiveTextQuery != nil && searchTruncated ? SearchTruncation.notice : nil
+    }
+
     public var searchError: String? {
         guard isServerFiltered else { return nil }
         if let serverFilteredError { return serverFilteredError }
@@ -675,6 +685,7 @@ public final class SessionListStore {
         semanticPhase = semanticMode && query != nil ? .searching : .idle
         serverFilteredLoading = true
         serverFilteredError = nil
+        searchTruncated = false
         // Only when the filter genuinely changed: the id-fragment fast path in
         // `updateFilterText` calls this on every keystroke even when neither the machine chip
         // nor the effective query moved, and blanking the array there would defeat its own
@@ -694,7 +705,7 @@ public final class SessionListStore {
                 do {
                     // Always the text match, also in semantic mode: it is what shows until the
                     // tiered result lands.
-                    let results = try await self.api.searchSessions(
+                    let page = try await self.api.searchSessions(
                         q: query, mode: .fuzzy, agent: machine, limit: Self.searchResultLimit, window: bounds
                     )
                     guard !Task.isCancelled, self.generation == myGeneration else { return }
@@ -702,9 +713,10 @@ public final class SessionListStore {
                     // A fuzzy hit has no tier: the result is the list narrowed, newest activity
                     // first, whatever order the matcher ranked it in.
                     if self.semanticPhase != .ready {
-                        self.serverFilteredResults = results.sorted {
+                        self.serverFilteredResults = page.results.sorted {
                             Self.byActivityDescending($0.session, $1.session)
                         }
+                        self.searchTruncated = page.truncated
                         self.serverFilteredCursor = nil
                         self.serverFilteredHasMore = false
                         self.resultsSourceKey = requestKey
@@ -740,11 +752,12 @@ public final class SessionListStore {
         semanticTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let results = try await self.api.searchSessions(
+                let page = try await self.api.searchSessions(
                     q: query, mode: .semantic, agent: machine, limit: Self.searchResultLimit, window: bounds
                 )
                 guard !Task.isCancelled, self.generation == myGeneration else { return }
-                self.serverFilteredResults = results
+                self.serverFilteredResults = page.results
+                self.searchTruncated = page.truncated
                 self.serverFilteredCursor = nil
                 self.serverFilteredHasMore = false
                 self.resultsSourceKey = requestKey

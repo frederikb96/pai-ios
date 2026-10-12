@@ -707,6 +707,31 @@ public struct SessionSearchResult: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+/// What `GET /api/sessions/search` answered: the hits, and whether the server cut the list to the
+/// `limit` asked for (the `X-Search-Truncated` response header). A truncated list is the newest
+/// matches only, so the reader is told to narrow the search.
+public struct SessionSearchPage: Sendable, Equatable {
+    public let results: [SessionSearchResult]
+    public let truncated: Bool
+
+    public init(results: [SessionSearchResult], truncated: Bool) {
+        self.results = results
+        self.truncated = truncated
+    }
+
+    /// The header's name and its one meaningful value.
+    public static let truncatedHeader = "X-Search-Truncated"
+
+    public static func isTruncated(headerValue: String?) -> Bool {
+        headerValue?.lowercased() == "true"
+    }
+}
+
+/// The line under a search that was cut short, shared by every list that can be.
+public enum SearchTruncation {
+    public static let notice = "More matches than shown — narrow the search"
+}
+
 /// One page of `GET /api/sessions`, plus the opaque token for the next one. `nextCursor` is
 /// `nil` once there is no further page — pass it straight back as `cursor`; never derive one
 /// from a row. The cursor rides the `X-Next-Cursor` response header, not the body, which is why
