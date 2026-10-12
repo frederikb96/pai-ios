@@ -26,7 +26,7 @@ struct PDFPreviewView: UIViewRepresentable {
 }
 
 /// A `PDFView` that opens fitted to its width, cannot be pinched smaller than that, and reports
-/// whether it is at rest. The fit is applied by hand: `autoScales` alone left the first frame at
+/// whether it is at rest. The fit is applied by hand: `autoScales` alone can leave the first frame at
 /// the document's natural scale, a page wider than the screen. PDFKit exposes neither the scroll position nor a callback for it, so the scroll view it
 /// hosts is found once laid out and its offset observed.
 final class FittedPDFView: PDFView {
