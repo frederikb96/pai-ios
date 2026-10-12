@@ -194,6 +194,12 @@ struct SessionDetailView: View {
                 else { return }
                 fixtureImageTarget = FilePreviewTarget(data: data, filename: "reconcile-diff.png", kind: .image)
             }
+            .task {
+                // `-PaiFixtureOpenPdf` — the viewer on a generated PDF; no fetch involved.
+                guard PaiFixtureLaunch.isEnabled(), PaiFixtureLaunch.opensPdfAutomatically() else { return }
+                fixtureImageTarget = FilePreviewTarget(
+                    data: FixturePdf.make(), filename: "fixture-menu.pdf", kind: .pdf)
+            }
         #endif
         // The session this screen is *about* stopped existing — deleted from the actions sheet
         // right here, or from another client. Without this the transcript and composer stay live

@@ -5,7 +5,8 @@ import SwiftUI
 /// One file, shown full-screen without saving it — the single viewer every preview in the app
 /// opens, whether the file came from a session attachment, a `pai-file:` marker, a note's embed or
 /// the canteen's menus. An image zooms, a PDF scrolls and zooms, and a file that cannot be drawn
-/// gets a card that offers the share sheet instead.
+/// gets a card whose button is the deliberate step that saves it: the share sheet, preceded by the
+/// fetch when the file was not downloaded yet.
 ///
 /// Unlike the web's version, this carries a share button rather than relying on a long-press:
 /// The web's "the browser's own right-click already gives copy and save" has no equivalent
@@ -17,6 +18,8 @@ struct FilePreviewViewer: View {
     @State private var shareFile: AttachmentShareFile?
     @State private var zoomScale: CGFloat = 1
     @State private var pdfIsAtRest = true
+    @State private var isFetching = false
+    @State private var fetchError: String?
 
     /// How close to the resting scale still counts as "not zoomed" for the swipe-to-dismiss gate
     /// below — `UIScrollView` settles fractionally off `1.0` after its own rubber-band animation,
@@ -74,7 +77,8 @@ struct FilePreviewViewer: View {
     }
 
     /// Shown for a file the viewer cannot draw: a type it has no preview for, or bytes that do not
-    /// decode as the image or PDF their name claims.
+    /// decode as the image or PDF their name claims. A file that was not fetched yet is fetched
+    /// only when its button is pressed.
     private var unavailableCard: some View {
         VStack(spacing: 12) {
             Image(systemName: "doc.questionmark")
@@ -85,9 +89,24 @@ struct FilePreviewViewer: View {
             Text("No preview available")
                 .font(PaiTypography.body.font)
                 .foregroundStyle(.white.opacity(0.7))
-            Button("Share or save") { share() }
-                .buttonStyle(.borderedProminent)
-                .padding(.top, 8)
+            if let fetchError {
+                Text(fetchError)
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Semantic.errorText)
+                    .multilineTextAlignment(.center)
+            }
+            Button {
+                Task { await saveFromCard() }
+            } label: {
+                if isFetching {
+                    ProgressView()
+                } else {
+                    Text(target.data == nil ? "Download" : "Share or save")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isFetching)
+            .padding(.top, 8)
         }
         .foregroundStyle(.white)
         .padding(32)
@@ -111,13 +130,15 @@ struct FilePreviewViewer: View {
                 .background(.thinMaterial, in: Capsule())
             Spacer(minLength: 0)
             HStack(spacing: 16) {
-                Button {
-                    share()
-                } label: {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.title3)
+                if target.data != nil {
+                    Button {
+                        share()
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.title3)
+                    }
+                    .accessibilityLabel("Share \(target.filename)")
                 }
-                .accessibilityLabel("Share \(target.filename)")
                 Button {
                     dismiss()
                 } label: {
@@ -134,7 +155,28 @@ struct FilePreviewViewer: View {
     }
 
     private func share() {
-        shareFile = AttachmentSharing.stage(target.data, filename: target.filename)
+        guard let data = target.data else { return }
+        shareFile = AttachmentSharing.stage(data, filename: target.filename)
+    }
+
+    /// Fetches first when the target carries only a loader, then opens the share sheet.
+    private func saveFromCard() async {
+        if target.data != nil {
+            share()
+            return
+        }
+        guard let load = target.load else { return }
+        isFetching = true
+        fetchError = nil
+        defer { isFetching = false }
+        switch await load() {
+        case .ok(let data):
+            shareFile = AttachmentSharing.stage(data, filename: target.filename)
+        case .notFound:
+            fetchError = "No longer available"
+        case .failed(let message):
+            fetchError = message
+        }
     }
 }
 
@@ -150,17 +192,29 @@ struct FilePreviewTarget: Identifiable {
         case unavailable
     }
 
+    /// What a ``load`` produced.
+    enum Fetch {
+        case ok(Data)
+        case notFound
+        case failed(String)
+    }
+
     let id = UUID()
-    /// The file as fetched; what the share button hands on.
-    let data: Data
+    /// The file as fetched, what the share button hands on; `nil` while only ``load`` can get it.
+    let data: Data?
     let filename: String
     let content: Content
+    /// Fetches a file nobody asked to download yet (an agent-offered `pai-file:` with no
+    /// preview). The viewer calls it only when the card's Download button is pressed, so a stray
+    /// tap on the chip never saves anything.
+    let load: (@MainActor () async -> Fetch)?
 
     /// - Parameter kind: the file's kind when the filename does not say (a canteen PDF whose mail
     ///   name has no extension); defaults to what the filename's extension says.
     init(data: Data, filename: String, kind: AttachmentPreviewKind? = nil) {
         self.data = data
         self.filename = filename
+        load = nil
         switch kind ?? AttachmentPreviewKind(path: filename) {
         case .image:
             content = UIImage(data: data).map(Content.image) ?? .unavailable
@@ -169,6 +223,16 @@ struct FilePreviewTarget: Identifiable {
         case .other:
             content = .unavailable
         }
+    }
+}
+
+extension FilePreviewTarget {
+    /// A file with no preview whose bytes are fetched by the card's Download button.
+    init(filename: String, load: @escaping @MainActor () async -> Fetch) {
+        data = nil
+        self.filename = filename
+        self.load = load
+        content = .unavailable
     }
 }
 

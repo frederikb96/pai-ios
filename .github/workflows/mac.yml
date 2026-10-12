@@ -309,6 +309,11 @@ jobs:
           screenshot fullscreen-image -PaiFixtureRoute session -PaiFixtureOpenImage
           xcrun simctl terminate "$udid" "$bundle" || true
 
+          # The same cover on a generated two-page PDF: `PDFPreviewView` and its scroll tracking
+          # are drawn by nothing else.
+          screenshot fullscreen-pdf -PaiFixtureRoute session -PaiFixtureOpenPdf
+          xcrun simctl terminate "$udid" "$bundle" || true
+
           # The grant sheet a session pops up by itself when it needs a gated secret — the same
           # sheet the composer's plus menu opens manually, auto-presented on opening a session
           # that is carrying one. Nothing in fixture mode has a live conversation to raise a real
