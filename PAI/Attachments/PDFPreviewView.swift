@@ -15,8 +15,6 @@ struct PDFPreviewView: UIViewRepresentable {
         view.document = document
         view.displayMode = .singlePageContinuous
         view.displayDirection = .vertical
-        view.autoScales = true
-        view.maxScaleFactor = 4
         view.backgroundColor = .black
         let restBinding = $isAtRest
         view.onRestChange = { restBinding.wrappedValue = $0 }
@@ -27,13 +25,16 @@ struct PDFPreviewView: UIViewRepresentable {
     func updateUIView(_ uiView: FittedPDFView, context: Context) {}
 }
 
-/// A `PDFView` that cannot be pinched smaller than its fitted width and reports whether it is at
-/// rest. PDFKit exposes neither the scroll position nor a callback for it, so the scroll view it
+/// A `PDFView` that opens fitted to its width, cannot be pinched smaller than that, and reports
+/// whether it is at rest. The fit is applied by hand: `autoScales` alone left the first frame at
+/// the document's natural scale, a page wider than the screen. PDFKit exposes neither the scroll position nor a callback for it, so the scroll view it
 /// hosts is found once laid out and its offset observed.
 final class FittedPDFView: PDFView {
     var onRestChange: ((Bool) -> Void)?
 
     private var offsetObservation: NSKeyValueObservation?
+    /// The fitted-width scale last applied; `0` until PDFKit can answer with a real one.
+    private var appliedFit: CGFloat = 0
     private var lastRest = true
 
     override init(frame: CGRect) {
@@ -48,10 +49,23 @@ final class FittedPDFView: PDFView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        let fit = scaleFactorForSizeToFit
-        if fit > 0 { minScaleFactor = fit }
+        applyFit()
         observeScrollViewIfNeeded()
         evaluateRest()
+    }
+
+    /// Re-fits whenever the fitted scale changes (first layout, rotation) unless the reader has
+    /// zoomed in, whose zoom is kept. The zoom range is relative to the fit: down to it, up to
+    /// four times it.
+    private func applyFit() {
+        let fit = scaleFactorForSizeToFit
+        guard fit > 0, abs(fit - appliedFit) > 0.001 else { return }
+        let wasFitted = appliedFit == 0 || scaleFactor <= appliedFit * 1.01
+        appliedFit = fit
+        autoScales = false
+        minScaleFactor = fit
+        maxScaleFactor = fit * 4
+        if wasFitted { scaleFactor = fit }
     }
 
     @objc private func scaleDidChange() {
