@@ -35,6 +35,9 @@ public struct SessionListRow: Sendable, Equatable, Identifiable {
     public let isWorking: Bool
     public let showsBlockedWarning: Bool
     public let showsAttentionWarning: Bool
+    /// The session is pinned (`pinned_at` set) — the row draws a pin beside its title, as the
+    /// web's row does.
+    public let showsPin: Bool
     /// Already project-prefixed (`SessionListFormat.withProjectPrefix`) — the row never composes
     /// this itself.
     public let displayTitle: String
@@ -875,6 +878,7 @@ public final class SessionListStore {
             isWorking: SessionListDomain.isWorking(session),
             showsBlockedWarning: session.state == .blocked,
             showsAttentionWarning: session.state == .attention,
+            showsPin: session.pinnedAt != nil,
             displayTitle: SessionListFormat.withProjectPrefix(
                 session.projectName, SessionListFormat.displayTitle(for: session)
             ),
