@@ -474,7 +474,9 @@ public final class SessionListStore {
         page.sessions.forEach(place)
         syncedSessions = page.sessions
         sortSynced()
-        lastSessionSync = Self.isoNow()
+        // The server's own clock, not this device's: a phone running ahead would otherwise skip
+        // every write between the server's now and its own.
+        lastSessionSync = Self.maxUpdatedAt(page.sessions) ?? Self.isoNow()
         hasMoreSyncedSessions = page.nextCursor != nil
         syncedSessionsCursor = page.nextCursor
     }
@@ -860,12 +862,18 @@ public final class SessionListStore {
     // MARK: - Private helpers
 
     private func fetchIncremental(since: String) async {
+        // A row's `updated_at` is stamped when its write starts, not when it commits, so a row
+        // can become visible with a stamp older than a cursor that already moved past it. The
+        // first request of a poll therefore starts `syncOverlapSeconds` before the cursor; rows
+        // it returns a second time are dropped as stale versions in the merge below, and the
+        // cursor never moves back.
         var cursor = since
+        var from = Self.syncStart(since)
         var changed: [Session] = []
         while true {
             guard
                 let page = try? await api.getSessions(
-                    since: cursor, limit: Self.sessionsPageSize, cursor: nil, agent: nil, kind: nil, parent: nil,
+                    since: from, limit: Self.sessionsPageSize, cursor: nil, agent: nil, kind: nil, parent: nil,
                     q: nil,
                     window: nil
                 )
@@ -877,9 +885,10 @@ public final class SessionListStore {
             // fetch the identical page forever. Requiring forward progress bounds the loop; the
             // rare rows left beyond this page's size at that exact timestamp are picked up by the
             // next poll tick, same as `.hasOlder` paging catching up incrementally elsewhere.
-            guard let pageMax = Self.maxUpdatedAt(page.sessions), pageMax > cursor else { break }
-            cursor = pageMax
-            if page.sessions.count < Self.sessionsPageSize { break }
+            guard let pageMax = Self.maxUpdatedAt(page.sessions) else { break }
+            if Self.isLater(pageMax, than: cursor) { cursor = pageMax }
+            guard Self.isLater(pageMax, than: from), page.sessions.count == Self.sessionsPageSize else { break }
+            from = pageMax
         }
 
         // `uniquingKeysWith` rather than `uniqueKeysWithValues`: a duplicate id in
@@ -1039,6 +1048,24 @@ public final class SessionListStore {
 
     private static func activity(of session: Session) -> String {
         session.lastActivityAt ?? session.createdAt ?? ""
+    }
+
+    /// How far before the sync cursor a poll starts.
+    static let syncOverlapSeconds: TimeInterval = 3
+
+    /// Where a poll holding `cursor` asks from.
+    static func syncStart(_ cursor: String) -> String {
+        guard let date = IsoTimestamp.date(from: cursor) else { return cursor }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date.addingTimeInterval(-syncOverlapSeconds))
+    }
+
+    /// Whether `a` is a later instant than `b`, compared as microseconds because the two strings
+    /// can differ in shape (`Z` against `+00:00`, with or without a fraction).
+    private static func isLater(_ a: String, than b: String) -> Bool {
+        guard let left = versionMicros(a), let right = versionMicros(b) else { return a > b }
+        return left > right
     }
 
     private static func isoNow() -> String {
