@@ -163,6 +163,19 @@ public final class SessionListStore {
     private var syncInFlight = false
     private var syncRequestedAgain = false
 
+    // MARK: Row positions
+
+    /// Where a row sits in the list, kept apart from what it says: the order is by placement, and
+    /// placements are renewed in one step after the list has been quiet (`SessionOrderSettler`).
+    private struct Placement: Equatable {
+        var pinnedAt: String?
+        var activity: String
+    }
+    private var placements: [String: Placement] = [:]
+    private let orderSettler: SessionOrderSettler
+    /// Bumped by every settle: the one value a view animates the reorder against.
+    public private(set) var orderRevision = 0
+
     private let api: SessionListApiClient
     private let debounceNanos: UInt64
     /// The clock a window is resolved against, so "Last 7 days" is measured from the moment each
@@ -171,11 +184,14 @@ public final class SessionListStore {
 
     public init(
         api: SessionListApiClient, debounceNanos: UInt64 = SessionListStore.defaultTextDebounceNanos,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        orderTiming: SessionOrderSettler.Timing = .production
     ) {
         self.api = api
         self.debounceNanos = debounceNanos
         self.now = now
+        self.orderSettler = SessionOrderSettler(timing: orderTiming)
+        orderSettler.onSettle = { [weak self] in self?.settleOrder() }
     }
 
     // MARK: - The view's surface
@@ -221,7 +237,7 @@ public final class SessionListStore {
             : withoutSubagents
         // A tiered list keeps the backend's order: pinning would lift a tier-2 row above the
         // divider that is meant to introduce it.
-        let ordered = isTieredSearch ? matched : Self.withPinnedFirst(matched)
+        let ordered = isTieredSearch ? matched : pinnedFirst(matched)
         let dividerIndex = isTieredSearch ? SearchTier.lessLikelyDividerIndex(in: ordered.map(\.tier)) : nil
         return ordered.enumerated().map { index, result in
             Self.makeRow(result.session, tier: result.tier, startsLessLikely: index == dividerIndex)
@@ -314,7 +330,8 @@ public final class SessionListStore {
         } else {
             syncedSessions.append(session)
         }
-        syncedSessions.sort(by: Self.byActivityDescending)
+        place(session)
+        sortSynced()
     }
 
     /// Puts the row a transfer produced on the target machine into the list, and — for a move,
@@ -453,7 +470,10 @@ public final class SessionListStore {
                 q: nil, window: nil
             )
         else { return }
-        syncedSessions = page.sessions.sorted(by: Self.byActivityDescending)
+        placements = [:]
+        page.sessions.forEach(place)
+        syncedSessions = page.sessions
+        sortSynced()
         lastSessionSync = Self.isoNow()
         hasMoreSyncedSessions = page.nextCursor != nil
         syncedSessionsCursor = page.nextCursor
@@ -527,7 +547,9 @@ public final class SessionListStore {
         // Every row in `page` sorts strictly after the cursor it was requested with, so
         // appending preserves order without a re-sort.
         let seen = Set(syncedSessions.map(\.id))
-        syncedSessions.append(contentsOf: page.sessions.filter { !seen.contains($0.id) })
+        let appended = page.sessions.filter { !seen.contains($0.id) }
+        appended.forEach(place)
+        syncedSessions.append(contentsOf: appended)
         hasMoreSyncedSessions = page.nextCursor != nil
         syncedSessionsCursor = page.nextCursor
     }
@@ -547,48 +569,48 @@ public final class SessionListStore {
         guard case .newSession = entry.target, let result = entry.result else { return nil }
         guard session(withId: result.sessionId) == nil else { return result.sessionId }
         let now = ISO8601DateFormatter().string(from: Date())
-        syncedSessions.insert(
-            Session(
-                id: result.sessionId,
-                sessionType: entry.target.sessionType ?? "default",
-                model: entry.target.model,
-                thinking: entry.target.thinking,
-                status: .pending,
-                state: .starting,
-                blocker: nil,
-                displayState: .starting,
-                title: nil,
-                titleLocked: nil,
-                initialMessage: entry.text,
-                sessionTokens: 0,
-                claudeSessionId: nil,
-                idleTimeoutMinutes: nil,
-                effectiveIdleTimeoutMinutes: nil,
-                cseId: nil,
-                createdAt: now,
-                // No version of its own, deliberately: this row is a guess, and the server's
-                // first copy of it has to replace it whatever its own `updated_at` says. A
-                // client-minted one is compared against the server's by `isStaleVersion`, so a
-                // phone clock even slightly ahead makes the real row read as stale and the guess
-                // outlive it.
-                updatedAt: nil,
-                lastActivityAt: now,
-                workingDir: entry.target.workingDir,
-                agent: entry.target.agent,
-                kind: .conversation,
-                parentSessionId: nil,
-                subagentName: nil,
-                subagentType: nil,
-                subagentDescription: nil,
-                // Optimistic and technically premature — ported as-is from the web; the real
-                // value arrives on the next poll.
-                remoteControl: true,
-                discovered: nil,
-                projectId: nil,
-                phaseId: nil,
-                projectName: nil
-            ),
-            at: 0)
+        let created = Session(
+            id: result.sessionId,
+            sessionType: entry.target.sessionType ?? "default",
+            model: entry.target.model,
+            thinking: entry.target.thinking,
+            status: .pending,
+            state: .starting,
+            blocker: nil,
+            displayState: .starting,
+            title: nil,
+            titleLocked: nil,
+            initialMessage: entry.text,
+            sessionTokens: 0,
+            claudeSessionId: nil,
+            idleTimeoutMinutes: nil,
+            effectiveIdleTimeoutMinutes: nil,
+            cseId: nil,
+            createdAt: now,
+            // No version of its own, deliberately: this row is a guess, and the server's
+            // first copy of it has to replace it whatever its own `updated_at` says. A
+            // client-minted one is compared against the server's by `isStaleVersion`, so a
+            // phone clock even slightly ahead makes the real row read as stale and the guess
+            // outlive it.
+            updatedAt: nil,
+            lastActivityAt: now,
+            workingDir: entry.target.workingDir,
+            agent: entry.target.agent,
+            kind: .conversation,
+            parentSessionId: nil,
+            subagentName: nil,
+            subagentType: nil,
+            subagentDescription: nil,
+            // Optimistic and technically premature — ported as-is from the web; the real
+            // value arrives on the next poll.
+            remoteControl: true,
+            discovered: nil,
+            projectId: nil,
+            phaseId: nil,
+            projectName: nil
+        )
+        place(created)
+        syncedSessions.insert(created, at: 0)
         return result.sessionId
     }
 
@@ -672,6 +694,7 @@ public final class SessionListStore {
         guard let session = session(withId: id) else { return }
         let pinning = session.pinnedAt == nil
         replaceSession(session.withPinnedAt(pinning ? Self.isoNow() : nil))
+        settleOrderNow()
         Task { [weak self, api] in
             do {
                 let updated = try await api.setPinned(sessionId: id, pinned: pinning)
@@ -680,6 +703,7 @@ public final class SessionListStore {
                 // The request never reached the backend — put the row back exactly as it was.
                 self?.replaceSession(session)
             }
+            self?.settleOrderNow()
         }
     }
 
@@ -862,6 +886,7 @@ public final class SessionListStore {
         // `syncedSessions` should never happen, but this merge runs on every poll tick and a
         // precondition crash here would be far worse than silently keeping the later duplicate.
         var byId = Dictionary(syncedSessions.map { ($0.id, $0) }, uniquingKeysWith: { _, newest in newest })
+        var reorders = false
         for session in changed {
             if session.status == .deleted {
                 byId.removeValue(forKey: session.id)
@@ -878,10 +903,17 @@ public final class SessionListStore {
                 // own answer) answers with the row's old version; applying it rolls the screen
                 // back. Only a strictly newer `updated_at` replaces a held row.
                 if let held = byId[session.id], Self.isStaleVersion(held: held, incoming: session) { continue }
+                // A row new to the list waits at the bottom for the next settle, so it does not
+                // push the rows above it down; a known row keeps its place however its content
+                // moved.
+                if byId[session.id] == nil { placements[session.id] = Placement(pinnedAt: nil, activity: "") }
                 byId[session.id] = session
+                if isMisplaced(session) { reorders = true }
             }
         }
-        syncedSessions = byId.values.sorted(by: Self.byActivityDescending)
+        syncedSessions = Array(byId.values)
+        sortSynced()
+        if reorders { orderSettler.markUnsettled() }
         lastSessionSync = cursor
     }
 
@@ -890,11 +922,66 @@ public final class SessionListStore {
     /// `syncedSessions` itself: that array's order is what the merge/staleness logic above keys
     /// on, and this grouping is a pure presentation concern layered on top of it. `pinned_at` is
     /// compared as its ISO-8601 text, which orders correctly for the server's own uniform format.
-    private static func withPinnedFirst(_ results: [SessionSearchResult]) -> [SessionSearchResult] {
-        let pinned = results.filter { $0.session.pinnedAt != nil }.sorted {
-            ($0.session.pinnedAt ?? "") < ($1.session.pinnedAt ?? "")
+    private func pinnedFirst(_ results: [SessionSearchResult]) -> [SessionSearchResult] {
+        let pinned = results.filter { placement(of: $0.session).pinnedAt != nil }.sorted {
+            (placement(of: $0.session).pinnedAt ?? "") < (placement(of: $1.session).pinnedAt ?? "")
         }
-        return pinned + results.filter { $0.session.pinnedAt == nil }
+        return pinned + results.filter { placement(of: $0.session).pinnedAt == nil }
+    }
+
+    // MARK: - Row positions
+
+    private func placement(of session: Session) -> Placement {
+        placements[session.id] ?? Placement(pinnedAt: session.pinnedAt, activity: Self.activity(of: session))
+    }
+
+    private func place(_ session: Session) {
+        placements[session.id] = Placement(pinnedAt: session.pinnedAt, activity: Self.activity(of: session))
+    }
+
+    /// Whether a row's live values differ from where it is placed.
+    private func isMisplaced(_ session: Session) -> Bool {
+        guard let placed = placements[session.id] else { return false }
+        return placed != Placement(pinnedAt: session.pinnedAt, activity: Self.activity(of: session))
+    }
+
+    /// Newest placed activity first; the pin grouping is applied where the rows are read.
+    private func sortSynced() {
+        syncedSessions.sort { placement(of: $0).activity > placement(of: $1).activity }
+    }
+
+    /// One step: every row takes the position it currently says it has.
+    private func settleOrder() {
+        syncedSessions.forEach(place)
+        sortSynced()
+        orderRevision += 1
+    }
+
+    /// The reader acted (a pin, a message they sent): the list reorders now, pending changes
+    /// included.
+    private func settleOrderNow() {
+        orderSettler.settleNow()
+    }
+
+    // MARK: - Holding the order while the list is in use
+
+    /// A finger is on the list; the order is held for as long as it stays there.
+    public func setListTouching(_ touching: Bool) { orderSettler.setTouching(touching) }
+
+    /// The list is moving under the reader.
+    public func noteListInteraction() { orderSettler.noteInteraction() }
+
+    /// Whether the list is scrolled away from its top; the rows in view stay where they are.
+    public func setListAwayFromTop(_ away: Bool) { orderSettler.setAwayFromTop(away) }
+
+    /// The list left the screen: nothing is being looked at, so the order catches up.
+    public func releaseListHold() { orderSettler.releaseHold() }
+
+    /// The reader sent a message to this session: its row moves to the top at once.
+    public func noteOwnSend(sessionId: String) {
+        guard let index = syncedSessions.firstIndex(where: { $0.id == sessionId }) else { return }
+        syncedSessions[index] = syncedSessions[index].withLastActivityAt(Self.isoNow())
+        settleOrderNow()
     }
 
     private static func makeRow(_ session: Session, tier: Int?, startsLessLikely: Bool) -> SessionListRow {
@@ -947,7 +1034,11 @@ public final class SessionListStore {
     }
 
     private static func byActivityDescending(_ a: Session, _ b: Session) -> Bool {
-        (a.lastActivityAt ?? a.createdAt ?? "") > (b.lastActivityAt ?? b.createdAt ?? "")
+        activity(of: a) > activity(of: b)
+    }
+
+    private static func activity(of session: Session) -> String {
+        session.lastActivityAt ?? session.createdAt ?? ""
     }
 
     private static func isoNow() -> String {

@@ -107,13 +107,13 @@ final class NewSessionFlowTests: XCTestCase {
             api: api, listApi: listApi)
     }
 
-    private func session(id: String, title: String) -> Session {
+    private func session(id: String, title: String, at: String = "2020-01-01T00:00:00.000000+00:00") -> Session {
         Session(
             id: id, sessionType: "fast", status: .active, state: .ready, blocker: nil, displayState: .done,
             title: title, titleLocked: nil, initialMessage: "hello", sessionTokens: 0, claudeSessionId: nil,
             idleTimeoutMinutes: nil, effectiveIdleTimeoutMinutes: nil, cseId: nil,
-            createdAt: "2020-01-01T00:00:00.000000+00:00", updatedAt: "2020-01-01T00:00:00.000000+00:00",
-            lastActivityAt: "2020-01-01T00:00:00.000000+00:00", workingDir: nil, agent: "vm", kind: .conversation,
+            createdAt: at, updatedAt: at,
+            lastActivityAt: at, workingDir: nil, agent: "vm", kind: .conversation,
             parentSessionId: nil, subagentName: nil, subagentType: nil, subagentDescription: nil,
             remoteControl: true, discovered: nil, projectId: nil, phaseId: nil, projectName: nil)
     }
@@ -166,6 +166,23 @@ final class NewSessionFlowTests: XCTestCase {
 
         await waitUntil { h.handoff.createdSessionID != nil }
         XCTAssertEqual(h.drafts.draft(for: DraftKey.newSession).knownVersion, 11)
+    }
+
+    /// A message to a session that already exists lands through the same handover, and the
+    /// session it went to rises to the top at once instead of after the list has settled.
+    func testALandedSendToAnExistingSessionMovesItToTheTopAtOnce() async {
+        let h = makeHarness()
+        h.api.response = PostMessageResponse(sessionId: "older", messageId: 3, duplicate: false, draftVersion: 2)
+        let newer = session(id: "newer", title: "newer", at: "2026-01-02T00:00:00.000000+00:00")
+        let older = session(id: "older", title: "older", at: "2026-01-01T00:00:00.000000+00:00")
+        await h.listApi.setGetSessionsResult { _ in .success(SessionsPage(sessions: [newer, older], nextCursor: nil)) }
+        await h.sessions.loadInitialSessions()
+        XCTAssertEqual(h.sessions.syncedSessions.map(\.id), ["newer", "older"])
+
+        h.outbox.enqueue(OutboxEntry(target: .session(sessionId: "older"), text: "following up"))
+
+        await waitUntil { h.outbox.entries.isEmpty }
+        XCTAssertEqual(h.sessions.syncedSessions.map(\.id), ["older", "newer"])
     }
 
     // MARK: - No link at the moment of sending
