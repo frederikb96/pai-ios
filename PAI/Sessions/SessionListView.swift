@@ -138,6 +138,19 @@ struct SessionListView: View {
             await sessions.pollSyncedSessions()
         }
         .accessibilityIdentifier("session-list")
+        // Row content updates live, positions do not: the store holds the order while the list is
+        // touched, scrolling, or scrolled away from its top, and renews it in one step once it
+        // is quiet. These report the three conditions, and the step is animated as one move.
+        .onScrollGeometryChange(for: Double.self, of: { Double($0.contentOffset.y + $0.contentInsets.top) }) {
+            _, offset in
+            sessions.setListAwayFromTop(offset > SessionOrderSettler.awayFromTopPoints)
+            sessions.noteListInteraction()
+        }
+        .onScrollPhaseChange { _, phase in
+            sessions.setListTouching(phase == .tracking || phase == .interacting)
+        }
+        .animation(.easeOut(duration: 0.22), value: sessions.orderRevision)
+        .onDisappear { sessions.releaseListHold() }
     }
 
     @ViewBuilder

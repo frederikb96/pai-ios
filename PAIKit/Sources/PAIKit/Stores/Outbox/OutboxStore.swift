@@ -145,6 +145,8 @@ public final class OutboxStore {
             drafts?.recordVersionAfterSend(key: entry.draftKey, version: entry.result?.draftVersion)
             if let created = sessions?.adoptCreatedSession(entry) {
                 handoff.created(sessionID: created)
+            } else if let sessionId = entry.target.sessionId {
+                sessions?.noteOwnSend(sessionId: sessionId)
             }
             self?.discard(id: entry.id)
         }

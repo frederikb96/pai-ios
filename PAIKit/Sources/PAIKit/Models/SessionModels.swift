@@ -667,6 +667,33 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             namespace: namespace
         )
     }
+
+    /// A copy with just `lastActivityAt` replaced — what a message the reader sent changes locally
+    /// before the server's own value arrives (`SessionListStore.noteOwnSend(sessionId:)`). Every
+    /// other parameter MUST be passed through explicitly for the same reason `withLiveStatus` does:
+    /// this calls the memberwise initializer with `self`'s own other fields.
+    public func withLastActivityAt(_ lastActivityAt: String?) -> Session {
+        Session(
+            id: id, sessionType: sessionType, model: model, thinking: thinking, status: status, state: state,
+            blocker: blocker,
+            turnState: turnState, displayState: displayState,
+            title: title, titleLocked: titleLocked, pinnedAt: pinnedAt, initialMessage: initialMessage,
+            sessionTokens: sessionTokens, claudeSessionId: claudeSessionId, idleTimeoutMinutes: idleTimeoutMinutes,
+            effectiveIdleTimeoutMinutes: effectiveIdleTimeoutMinutes, cseId: cseId, transcriptPath: transcriptPath,
+            createdAt: createdAt,
+            updatedAt: updatedAt, lastActivityAt: lastActivityAt, workingDir: workingDir, agent: agent, kind: kind,
+            parentSessionId: parentSessionId, subagentName: subagentName, subagentType: subagentType,
+            subagentDescription: subagentDescription, subagentModel: subagentModel,
+            readPositionMessageId: readPositionMessageId, readPositionOffsetPx: readPositionOffsetPx,
+            readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
+            sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
+            projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName,
+            liveModel: liveModel, taskId: taskId,
+            activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
+            transferredToSessionId: transferredToSessionId, transferredAt: transferredAt,
+            namespace: namespace
+        )
+    }
 }
 
 /// One `GET /api/sessions/search` result — a `Session` plus how it matched. `tier` is `1`
