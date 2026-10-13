@@ -217,7 +217,7 @@ struct SessionDetailView: View {
         }
         // Routes the transcript's own live SSE `status` event into the session list the moment
         // it changes, so the list (and this header, which reads through the same store) reflect
-        // it while this screen is open rather than waiting for the 10s poll — see
+        // it while this screen is open rather than waiting for the next sync — see
         // `TranscriptStore.liveStatus`'s doc comment. One mutator, one call site.
         .onChange(of: transcript.liveStatus[sessionID]) { _, newValue in
             guard let newValue else { return }

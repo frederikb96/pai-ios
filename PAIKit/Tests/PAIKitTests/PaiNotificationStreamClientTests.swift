@@ -59,6 +59,39 @@ final class PaiNotificationStreamClientTests: XCTestCase {
         XCTAssertEqual(reads.map(\.unread), [1])
     }
 
+    func testASessionsEventFiresTheListWake() async throws {
+        PaiStubURLProtocol.stub = .init(
+            statusCode: 200, headers: [:], body: Data("event: sessions\r\ndata: {}\r\n\r\n".utf8))
+
+        let factory = try PaiRequestFactory(baseURL: "https://stub.example.com", tokenProvider: { "jwt" })
+        let wakeSignal = PaiStreamConnectionSignal()
+        var wakes = 0
+
+        let callbacks = PaiNotificationStreamClient.Callbacks(
+            onNotification: { _ in },
+            onRead: { _ in },
+            onSessionsChanged: {
+                wakes += 1
+                Task { await wakeSignal.fire() }
+            },
+            onActivity: {},
+            onConnected: {},
+            // The stub's body ends, which the client reports as a disconnect: a stream that
+            // never delivered the wake still ends the wait, so the test fails rather than hangs.
+            onDisconnected: { Task { await wakeSignal.fire() } }
+        )
+
+        let client = PaiNotificationStreamClient(
+            requestFactory: factory, callbacks: callbacks,
+            urlSessionConfiguration: PaiStubURLProtocol.makeConfiguration()
+        )
+        client.connect()
+        await wakeSignal.wait()
+        client.disconnect()
+
+        XCTAssertGreaterThanOrEqual(wakes, 1, "the `sessions` event never reached the wake callback")
+    }
+
     /// A `ping` keeps the connection alive but names neither callback — the routing this proves
     /// is that an unrecognised/no-op event name is dropped rather than mis-dispatched to one of
     /// them, which a looser `switch` (falling through to `default` only by luck) could get wrong.

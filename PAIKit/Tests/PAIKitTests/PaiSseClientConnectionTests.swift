@@ -18,6 +18,45 @@ final class PaiSseClientConnectionTests: XCTestCase {
         super.tearDown()
     }
 
+    /// A session reported `completed` can still have its transcript grow (a discovered session, a
+    /// resumed one), so the stream must keep delivering after that status. Each record is its own
+    /// chunk, because the client checks for a finished stream between chunks. The first of the two
+    /// signals to fire names what happened: a batch means the stream carried on, a disconnect
+    /// means it stopped.
+    func testACompletedStatusDoesNotEndTheStream() async throws {
+        let status = "event: status\r\ndata: {\"status\":\"completed\"}\r\n\r\n"
+        let batch = "event: batch\r\ndata: {\"entries\":[],\"session_tokens\":null}\r\n\r\n"
+        PaiStubURLProtocol.stub = .init(
+            statusCode: 200, headers: [:], body: Data((status + batch).utf8),
+            bodyChunks: [Data(status.utf8), Data(batch.utf8)])
+
+        let factory = try PaiRequestFactory(baseURL: "https://stub.example.com", tokenProvider: { "jwt" })
+        let outcome = PaiStreamConnectionSignal()
+        var receivedBatch = false
+
+        let callbacks = PaiSseClient.Callbacks(
+            onInit: { _ in },
+            onBatch: { _ in
+                receivedBatch = true
+                Task { await outcome.fire() }
+            },
+            onStatus: { _ in },
+            onActivity: {},
+            onConnected: {},
+            onDisconnected: { Task { await outcome.fire() } }
+        )
+
+        let client = PaiSseClient(
+            sessionId: "s1", requestFactory: factory, callbacks: callbacks,
+            urlSessionConfiguration: PaiStubURLProtocol.makeConfiguration()
+        )
+        client.connect()
+        await outcome.wait()
+        client.disconnect()
+
+        XCTAssertTrue(receivedBatch, "the stream stopped at `completed` instead of carrying on")
+    }
+
     func testConnectDecodesRawStubbedBytesIntoInitAndBatchCallbacks() async throws {
         let raw =
             "event: init\r\ndata: {\"entries\":[],\"cursor\":1,\"has_more\":false,\"session_tokens\":null}\r\n\r\n"

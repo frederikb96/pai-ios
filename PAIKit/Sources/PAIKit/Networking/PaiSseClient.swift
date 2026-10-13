@@ -69,7 +69,14 @@ public final class PaiSseClient {
     private static let maxBackoffNanos: UInt64 = 30_000_000_000
     private static let staleTimeout: TimeInterval = 45
     private static let watchdogIntervalNanos: UInt64 = 10_000_000_000
-    private static let terminalStatuses: Set<SessionStatus> = [.completed, .deleted]
+    /// Only a deleted session can never receive another message. `completed` is not terminal: a
+    /// discovered session is stored closed and completed while its transcript keeps growing, and a
+    /// session PAI finished can be resumed from its own terminal at any time — closing the stream
+    /// on it leaves the transcript frozen at what was on screen with every other signal healthy.
+    /// Mirrors `TERMINAL_STATUSES` in the web's `sse.ts`.
+    nonisolated static func endsStream(status: SessionStatus) -> Bool {
+        status == .deleted
+    }
 
     private let sessionId: String
     private let requestFactory: PaiRequestFactory
@@ -106,6 +113,19 @@ public final class PaiSseClient {
         streamTask?.cancel()
         activeByteStream?.cancel()
         streamTask = Task { await self.runConnection() }
+    }
+
+    /// Replaces the connection now when it cannot be vouched for — see `StreamRevival`. The
+    /// cursor survives, so the new connection resumes from the last entry instead of replaying
+    /// history.
+    public func reviveIfStale(force: Bool = false) {
+        guard
+            StreamRevival.shouldReconnect(
+                stopped: stopped, terminal: terminal,
+                sinceLastEvent: Date().timeIntervalSince(lastEventTime), force: force)
+        else { return }
+        backoffNanos = Self.initialBackoffNanos
+        connect()
     }
 
     public func disconnect() {
@@ -202,7 +222,7 @@ public final class PaiSseClient {
         case "status":
             guard let event = try? JSONDecoder().decode(SseStatusEvent.self, from: jsonData) else { return }
             callbacks.onStatus(event)
-            if Self.terminalStatuses.contains(event.status) {
+            if Self.endsStream(status: event.status) {
                 terminal = true
                 disconnect()
             }

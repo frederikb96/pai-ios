@@ -216,7 +216,13 @@ final class AppEnvironment {
         let pathObserver = NetworkPathObserver()
         pathObserver.onEvent = { event in
             guard case .pathSatisfied(true) = event else { return }
-            Task { @MainActor [weak outbox] in outbox?.retryNow() }
+            Task { @MainActor [weak outbox, weak sessions] in
+                outbox?.retryNow()
+                // A path change can kill a stream silently: sync the list now and have every
+                // stream owner replace its connection.
+                sessions?.requestSync()
+                StreamWake.post(force: true)
+            }
         }
         pathObserver.start()
         outboxPathObserver = pathObserver
@@ -335,9 +341,9 @@ final class AppEnvironment {
 
     /// Keeps the bell badge honest while the app is in front of the reader — the same
     /// self-healing role `getNotificationsSummary()`'s doc comment already describes, just driven
-    /// on a schedule rather than only at launch. There is no SSE stream on this client (the centre
-    /// needs no live feed, only a live count), so this poll is what stands in for one; APNs's
-    /// own `aps.badge` already covers the count while the app is not running at all.
+    /// on a schedule rather than only at launch. The notification stream (`RootView`) carries the
+    /// count live while the app is in front but replays nothing, so this poll is what heals a gap
+    /// in it; APNs's own `aps.badge` already covers the count while the app is not running at all.
     func pollNotificationSummary() async {
         guard let connection else { return }
         // Refreshed immediately rather than only after the first sleep — otherwise the bell
