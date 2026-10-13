@@ -406,7 +406,7 @@ private enum SessionSearchScope: Hashable {
     case text, meaning
 }
 
-/// One row: state dot (or a working spinner in its place), warnings, title, when it last did
+/// One row: state dot (or a working spinner in its place), warnings, title with a pin when pinned, when it last did
 /// anything, token count, and what it has running — matching what the web's row shows, denser
 /// than the row this replaces. 🚨 The spinner is sized to the dot it replaces so a working row is
 /// never taller than an idle one — see `SessionStateIndicator`'s doc comment.
@@ -425,10 +425,21 @@ struct SessionRow: View {
             SessionStateIndicator(dotState: row.dotState, isWorking: row.isWorking)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(row.displayTitle)
-                    .font(PaiTypography.body.font)
-                    .foregroundStyle(PaiPalette.Semantic.textPrimary)
-                    .lineLimit(1)
+                // The pin follows the title like the web's row, and it keeps its width: a long
+                // title truncates, the mark never does.
+                HStack(spacing: 6) {
+                    Text(row.displayTitle)
+                        .font(PaiTypography.body.font)
+                        .foregroundStyle(PaiPalette.Semantic.textPrimary)
+                        .lineLimit(1)
+                    if row.showsPin {
+                        Image(systemName: "pin.fill")
+                            .font(PaiTypography.caption.font)
+                            .foregroundStyle(PaiPalette.Semantic.textFaint)
+                            .layoutPriority(1)
+                            .accessibilityLabel("Pinned")
+                    }
+                }
 
                 HStack(spacing: 6) {
                     if let movedPill {

@@ -1441,6 +1441,26 @@ final class SessionStoreListStoreTests: XCTestCase {
         XCTAssertEqual(
             store.rows.map(\.id), ["pinned-first", "pinned-second", "newest-unpinned", "oldest-unpinned"])
     }
+
+    /// Only a pinned session's row asks the view for a pin.
+    func testRowsMarkOnlyPinnedSessionsWithAPin() async {
+        let api = FakeSessionListApi()
+        await api.setGetSessionsResult { _ in
+            .success(
+                SessionsPage(
+                    sessions: [
+                        SessionFixture.make(id: "plain", lastActivityAt: "2026-01-04T00:00:00Z"),
+                        SessionFixture.make(
+                            id: "pinned", pinnedAt: "2026-01-01T00:00:00Z", lastActivityAt: "2026-01-02T00:00:00Z"),
+                    ],
+                    nextCursor: nil))
+        }
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+
+        XCTAssertEqual(store.rows.map(\.id), ["pinned", "plain"])
+        XCTAssertEqual(store.rows.map(\.showsPin), [true, false])
+    }
 }
 
 /// A `String?` set from inside a `@Sendable @MainActor` callback and read back from the test's own
