@@ -52,4 +52,14 @@ final class PaiSseClientTests: XCTestCase {
         )
         XCTAssertTrue(shouldReconnect)
     }
+
+    // MARK: - endsStream
+
+    /// `completed` is stored for a discovered session whose transcript keeps growing; ending the
+    /// stream on it froze the transcript with every other signal still healthy.
+    func testOnlyADeletedSessionEndsTheStream() {
+        XCTAssertTrue(PaiSseClient.endsStream(status: .deleted))
+        XCTAssertFalse(PaiSseClient.endsStream(status: .completed))
+        XCTAssertFalse(PaiSseClient.endsStream(status: .active))
+    }
 }

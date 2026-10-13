@@ -7,7 +7,8 @@ import Foundation
 #endif
 
 /// The account-wide notification stream (`GET /api/notifications/stream`) — a new row arriving
-/// anywhere, or the unread count moving because something was marked read anywhere. Reuses the same framing pieces `PaiSseClient` does
+/// anywhere, the unread count moving because something was marked read anywhere, or a session
+/// row changing (`sessions`: the signal to run the list's incremental sync now). Reuses the same framing pieces `PaiSseClient` does
 /// (`PaiHttpByteStream`/`LineSplitter`/`SseEventAccumulator`), and its own tested
 /// `shouldReconnectAfterStreamEnded` rule, but is a separate, simpler client rather than a second
 /// mode of that one: this stream carries no cursor and no terminal status — the backend replays
@@ -34,6 +35,10 @@ public final class PaiNotificationStreamClient {
     public struct Callbacks: Sendable {
         public var onNotification: @MainActor @Sendable (SseNotificationEvent) -> Void
         public var onRead: @MainActor @Sendable (SseNotificationReadEvent) -> Void
+        /// A session row the list would sync has changed. Carries nothing: the answer is the
+        /// incremental sync the list already runs, never a second way of deriving the rows.
+        /// Optional with a no-op default, like `PaiSseClient.Callbacks.onArc`.
+        public var onSessionsChanged: @MainActor @Sendable () -> Void
         /// Fired for every successfully-parsed record, including a bare `ping` with no
         /// `onNotification`/`onRead` counterpart — see `PaiSseClient.Callbacks.onActivity`.
         public var onActivity: @MainActor @Sendable () -> Void
@@ -43,12 +48,14 @@ public final class PaiNotificationStreamClient {
         public init(
             onNotification: @escaping @MainActor @Sendable (SseNotificationEvent) -> Void,
             onRead: @escaping @MainActor @Sendable (SseNotificationReadEvent) -> Void,
+            onSessionsChanged: @escaping @MainActor @Sendable () -> Void = {},
             onActivity: @escaping @MainActor @Sendable () -> Void,
             onConnected: @escaping @MainActor @Sendable () -> Void,
             onDisconnected: @escaping @MainActor @Sendable () -> Void
         ) {
             self.onNotification = onNotification
             self.onRead = onRead
+            self.onSessionsChanged = onSessionsChanged
             self.onActivity = onActivity
             self.onConnected = onConnected
             self.onDisconnected = onDisconnected
@@ -91,6 +98,17 @@ public final class PaiNotificationStreamClient {
         streamTask?.cancel()
         activeByteStream?.cancel()
         streamTask = Task { await self.runConnection() }
+    }
+
+    /// Replaces the connection now when it cannot be vouched for — see `StreamRevival`.
+    public func reviveIfStale(force: Bool = false) {
+        guard
+            StreamRevival.shouldReconnect(
+                stopped: stopped, terminal: false,
+                sinceLastEvent: Date().timeIntervalSince(lastEventTime), force: force)
+        else { return }
+        backoffNanos = Self.initialBackoffNanos
+        connect()
     }
 
     /// A deliberate, caller-initiated stop — going to the background. Safe to call more than
@@ -164,6 +182,9 @@ public final class PaiNotificationStreamClient {
         case "read":
             guard let event = try? JSONDecoder().decode(SseNotificationReadEvent.self, from: jsonData) else { return }
             callbacks.onRead(event)
+
+        case "sessions":
+            callbacks.onSessionsChanged()
 
         case "ping":
             break  // No-op handler that exists only to advance `lastEventTime`, already done above.

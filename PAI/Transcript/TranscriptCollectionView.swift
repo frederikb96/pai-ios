@@ -175,6 +175,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// actor during setup and read once at deallocation, when nothing else holds a reference, so
     /// there is no concurrent access for the isolation to protect.
     private nonisolated(unsafe) var backgroundObserver: NSObjectProtocol?
+    private nonisolated(unsafe) var streamWakeObserver: NSObjectProtocol?
 
     /// The row currently wearing the deep-link ring, if any — see `beginDeepLinkHighlight(for:)`.
     private var highlightedMessageId: Int?
@@ -282,6 +283,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         highlightClearTask?.cancel()
         readPositionSaveTask?.cancel()
         if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
+        if let streamWakeObserver { NotificationCenter.default.removeObserver(streamWakeObserver) }
         // `deinit` is nonisolated and `disconnect()` is not. Copy the reference out so the hop
         // captures the client rather than `self`, which is already being deallocated.
         let client = sseClient
@@ -366,6 +368,15 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in self?.flushReadPositionSaveNow() }
+        }
+        // Back in front of the reader, or the network returned: a transcript connection the OS
+        // suspended looks open and delivers nothing, so replace it now rather than when the
+        // stale watchdog next fires.
+        streamWakeObserver = NotificationCenter.default.addObserver(
+            forName: StreamWake.name, object: nil, queue: .main
+        ) { [weak self] note in
+            let force = StreamWake.isForced(note)
+            Task { @MainActor [weak self] in self?.sseClient?.reviveIfStale(force: force) }
         }
     }
 

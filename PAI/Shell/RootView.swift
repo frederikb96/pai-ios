@@ -73,6 +73,11 @@ struct RootView: View {
                 guard let link = DeepLink.from(url: url) else { return }
                 deepLinks.receive(link)
             }
+            // The network came back while the app is in front: replace a stream the path change
+            // may have killed without a word.
+            .onReceive(NotificationCenter.default.publisher(for: StreamWake.name)) { note in
+                notificationStream?.reviveIfStale(force: StreamWake.isForced(note))
+            }
             // Presented once per capture, then only marked seen — never deleted on dismiss: this is
             // the only capture of the reason string Apple's own crash report leaves out, so the
             // file stays reachable from Settings until deleted there or through the debug bridge's
@@ -194,6 +199,10 @@ struct RootView: View {
                         AppVoiceDiagnosticsLog.shared.log(.info, .lifecycle, "app active")
                         connectNotificationStream(connection)
                         connection.wakeWordSamples.drain()
+                        // Sync at once instead of up to a poll interval from now, and let the
+                        // open transcript replace a connection the OS suspended while away.
+                        connection.sessions.requestSync()
+                        StreamWake.post(force: false)
                         Task {
                             await connection.notifications.refreshSummary()
                             await PushRegistrar.reconcileDeliveredNotifications(against: connection.notifications)
@@ -411,8 +420,11 @@ struct RootView: View {
                     guard let store else { return }
                     Task { await PushRegistrar.reconcileDeliveredNotifications(against: store) }
                 },
+                // The list is an incremental sync; the stream only says when to run it. Connecting
+                // runs one too, since the stream replays nothing from while it was down.
+                onSessionsChanged: { [weak sessions = connection.sessions] in sessions?.requestSync() },
                 onActivity: {},
-                onConnected: {},
+                onConnected: { [weak sessions = connection.sessions] in sessions?.requestSync() },
                 onDisconnected: {}
             )
         )

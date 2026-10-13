@@ -73,10 +73,11 @@ public enum SessionListEmptyState: Sendable, Equatable {
 /// is how those four stay correct.
 ///
 /// **The three sources, and why there are three fetch paths below:**
-/// - **A — the synced list** (`syncedSessions`): live, polled every 10s via `startPolling()`, the
-///   only source that receives push-shaped updates at all — SSE-driven live updates arrive
-///   outside this store's scope (the transcript/chat layer owns that connection) and are not
-///   wired here; they must land only on this list, never on B/C.
+/// - **A — the synced list** (`syncedSessions`): live, the only source that receives push-shaped
+///   updates at all. The account-wide notification stream wakes it (`requestSync()`), and a slow
+///   poll via `startPolling()` is the backstop for a stream that is down. Status events from a
+///   transcript stream are applied outside this store's scope; they must land only on this
+///   list, never on B/C.
 /// - **B — server browse** (`serverFilteredResults` when a machine chip is active and no text
 ///   query): paged, no live updates.
 /// - **C — server search** (`serverFilteredResults` when a text query is active): a fuzzy search
@@ -105,7 +106,8 @@ public final class SessionListStore {
     /// Sized so a burst of typing still collapses into a couple of requests rather than one per
     /// character.
     public static let defaultTextDebounceNanos: UInt64 = SearchTiming.debounceNanos
-    private static let pollIntervalNanos: UInt64 = 10_000_000_000
+    /// The backstop cadence: the notification stream is what makes the list live.
+    private static let pollIntervalNanos: UInt64 = 15_000_000_000
 
     // MARK: Source A — the synced list
 
@@ -158,6 +160,8 @@ public final class SessionListStore {
     private var semanticTask: Task<Void, Never>?
     private var semanticPhase: SemanticSearchPhase = .idle
     private var pollTask: Task<Void, Never>?
+    private var syncInFlight = false
+    private var syncRequestedAgain = false
 
     private let api: SessionListApiClient
     private let debounceNanos: UInt64
@@ -455,10 +459,33 @@ public final class SessionListStore {
         syncedSessionsCursor = page.nextCursor
     }
 
-    /// One incremental poll, or the first load if none has happened yet. Called on a 10s cadence
-    /// by `startPolling()`; also callable directly (e.g. pull-to-refresh) without duplicating the
+    /// One incremental poll, or the first load if none has happened yet. Called on the backstop
+    /// cadence by `startPolling()`, by the notification stream's wake and when the app returns
+    /// to the foreground; also callable directly (e.g. pull-to-refresh) without duplicating the
     /// bootstrap-vs-incremental branch.
+    ///
+    /// A call made while a sync is running does not start a second one but asks for one more
+    /// behind it: the running request may have left before the change that prompted the call,
+    /// so dropping the call would leave that change unseen until the next wake or poll.
     public func pollSyncedSessions() async {
+        if syncInFlight {
+            syncRequestedAgain = true
+            return
+        }
+        syncInFlight = true
+        defer { syncInFlight = false }
+        repeat {
+            syncRequestedAgain = false
+            await syncOnce()
+        } while syncRequestedAgain
+    }
+
+    /// Fire-and-forget form of ``pollSyncedSessions()`` for a callback that cannot await.
+    public func requestSync() {
+        Task { await pollSyncedSessions() }
+    }
+
+    private func syncOnce() async {
         if let since = lastSessionSync {
             await fetchIncremental(since: since)
         } else {
@@ -466,7 +493,7 @@ public final class SessionListStore {
         }
     }
 
-    /// Starts the 10s recurring poll. Idempotent — a second call while one is already running
+    /// Starts the recurring backstop poll. Idempotent — a second call while one is already running
     /// does nothing. Sleeps before each poll, so callers that want the list populated for a first
     /// render should `await loadInitialSessions()` (or `pollSyncedSessions()`) once before this.
     public func startPolling() {

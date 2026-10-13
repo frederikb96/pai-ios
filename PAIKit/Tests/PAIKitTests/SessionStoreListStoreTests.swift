@@ -636,6 +636,29 @@ final class SessionStoreListStoreTests: XCTestCase {
 
     // MARK: - Source A: incremental merge
 
+    /// The notification stream's wake can arrive while a sync is already on its way. That request
+    /// may have left before the change the wake is about, so the wake has to run one more sync
+    /// behind it rather than being dropped.
+    func testAWakeDuringASyncRunsAnotherBehindIt() async throws {
+        let api = FakeSessionListApi()
+        let store = makeStore(api: api)
+        await store.loadInitialSessions()
+        let since = try XCTUnwrap(store.lastSessionSync)
+        await api.gate.arm("since:\(since)")
+
+        let running = Task { await store.pollSyncedSessions() }
+        let deadline = ContinuousClock().now + .seconds(5)
+        while await api.getSessionsCalls.filter({ $0.since != nil }).isEmpty, ContinuousClock().now < deadline {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        await store.pollSyncedSessions()  // the wake: returns at once, leaving the request behind
+        await api.gate.release("since:\(since)")
+        await running.value
+
+        let incrementalCalls = await api.getSessionsCalls.filter { $0.since != nil }
+        XCTAssertEqual(incrementalCalls.count, 2)
+    }
+
     func testDeletedSessionIsRemovedFromTheSyncedListOnTheNextPoll() async {
         let api = FakeSessionListApi()
         await api.setGetSessionsResult { call in
