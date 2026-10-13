@@ -644,7 +644,7 @@ final class SessionStoreListStoreTests: XCTestCase {
         let store = makeStore(api: api)
         await store.loadInitialSessions()
         let since = try XCTUnwrap(store.lastSessionSync)
-        await api.gate.arm("since:\(since)")
+        await api.gate.arm("since:\(SessionListStore.syncStart(since))")
 
         let running = Task { await store.pollSyncedSessions() }
         let deadline = ContinuousClock().now + .seconds(5)
@@ -652,7 +652,7 @@ final class SessionStoreListStoreTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 2_000_000)
         }
         await store.pollSyncedSessions()  // the wake: returns at once, leaving the request behind
-        await api.gate.release("since:\(since)")
+        await api.gate.release("since:\(SessionListStore.syncStart(since))")
         await running.value
 
         let incrementalCalls = await api.getSessionsCalls.filter { $0.since != nil }
