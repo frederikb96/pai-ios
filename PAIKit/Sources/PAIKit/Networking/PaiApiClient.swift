@@ -1297,6 +1297,20 @@ public struct PaiApiClient: Sendable {
         try await send(path: "/api/settings/smtp/test", method: "POST", body: nil, contentType: nil)
     }
 
+    // MARK: Status message
+
+    public func getStatusMessage() async throws -> StatusMessage {
+        try await send(path: "/api/status-message")
+    }
+
+    public func setStatusMessage(_ update: StatusMessageUpdate) async throws -> StatusMessage {
+        try await send(path: "/api/status-message", method: "PUT", body: try Self.jsonBody(update))
+    }
+
+    public func clearStatusMessage() async throws -> StatusMessage {
+        try await send(path: "/api/status-message", method: "DELETE", body: nil, contentType: nil)
+    }
+
     // MARK: Voice settings — how the two spoken voices sound
 
     public func getVoiceSettings() async throws -> SpokenVoiceSettings {

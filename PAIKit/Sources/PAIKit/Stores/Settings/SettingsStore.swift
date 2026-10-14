@@ -11,7 +11,7 @@ import Observation
 /// - **client-side, immediate** — mic device, the silence gate, the two diagnostic lists, expand
 ///   preferences: a `set...` call persists to `storage` and updates published state in the same
 ///   step, same as the web's `localStorage` + immediate apply.
-/// - **server-persisted, draft-and-save** — `smtp`, a whole sub-store, because Save/dirty
+/// - **server-persisted, draft-and-save** — `smtp` and `statusMessage`, whole sub-stores, because Save/dirty
 ///   tracking/validation is real state, not a detail this store should flatten away.
 /// - **write-only secret** — `elevenLabsKey`, `homeAssistantToken`, `todoistToken` (and
 ///   `smtp.password`): presence is fetched, the value is only ever sent, never read back. See
@@ -59,6 +59,7 @@ public final class SettingsStore {
     public let alerts: AlertsStore
     public let alertRouting: AlertRoutingStore
     public let voices: SpokenVoiceSettingsStore
+    public let statusMessage: StatusMessageStore
 
     /// Called for a recording evicted by the 10-entry cap, so whichever store holds the actual
     /// audio (a voice-capture concern, not this one's) can delete it — the same seam the web's
@@ -82,6 +83,7 @@ public final class SettingsStore {
         self.alerts = AlertsStore(api: apiClient)
         self.alertRouting = AlertRoutingStore(api: apiClient)
         self.voices = SpokenVoiceSettingsStore(apiClient: apiClient)
+        self.statusMessage = StatusMessageStore(api: apiClient)
 
         silenceGate = storage.value(forKey: Keys.silenceGate) ?? .standard
         micDeviceId = storage.value(forKey: Keys.micDeviceId) ?? ""
