@@ -215,7 +215,12 @@ private final class FakeNotesApi: NotesApiClient, @unchecked Sendable {
         NoteLinkHealth(broken: [], outside: [], unlinkedAttachments: [], unlinkedNotes: [], ambiguousNames: [])
     }
 
-    func getNoteAttachment(containerId: String, path: String) async throws -> NoteAttachmentResult { .notFound }
+    private(set) var getAttachmentCalls: [String] = []
+    var attachmentResult: NoteAttachmentResult = .notFound
+    func getNoteAttachment(containerId: String, path: String) async throws -> NoteAttachmentResult {
+        getAttachmentCalls.append(path)
+        return attachmentResult
+    }
     func uploadNoteAttachment(containerId: String, filename: String, mimeType: String, data: Data) async throws
         -> NoteAttachmentUploaded
     { fatalError("not scripted") }
@@ -247,6 +252,33 @@ private enum NoteFixture {
 
 @MainActor
 final class NotesStoreTests: XCTestCase {
+
+    func testAFetchedAttachmentIsServedFromMemoryUntilItIsDeleted() async throws {
+        let api = FakeNotesApi()
+        api.attachmentResult = .ok(Data([1, 2, 3]))
+        let store = NotesStore(api: api)
+
+        _ = try await store.fetchAttachment(containerId: "c", path: "attachments/a.png")
+        let again = try await store.fetchAttachment(containerId: "c", path: "attachments/a.png")
+
+        guard case .ok(let data) = again else { return XCTFail("expected the file") }
+        XCTAssertEqual(data, Data([1, 2, 3]))
+        XCTAssertEqual(api.getAttachmentCalls, ["attachments/a.png"])
+        XCTAssertNotNil(store.cachedAttachment(containerId: "c", path: "attachments/a.png"))
+
+        _ = try await store.deleteAttachment(containerId: "c", path: "attachments/a.png")
+        XCTAssertNil(store.cachedAttachment(containerId: "c", path: "attachments/a.png"))
+    }
+
+    func testAMissingAttachmentIsAskedForAgainNextTime() async throws {
+        let api = FakeNotesApi()
+        let store = NotesStore(api: api)
+
+        _ = try await store.fetchAttachment(containerId: "c", path: "attachments/a.png")
+        _ = try await store.fetchAttachment(containerId: "c", path: "attachments/a.png")
+
+        XCTAssertEqual(api.getAttachmentCalls.count, 2)
+    }
 
     /// The conflict banner fired constantly against notes nobody else was touching, and the cause
     /// was the client racing itself: every save reads its `expectedHash` from `details[id]` and
