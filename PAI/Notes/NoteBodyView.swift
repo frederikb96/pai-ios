@@ -522,7 +522,7 @@ struct NoteAttachmentEmbedView: View {
 
     var body: some View {
         Group {
-            switch state {
+            switch shown {
             case .loaded(let data):
                 if mode == .embed, isImage, let uiImage = UIImage(data: data) {
                     Button {
@@ -572,6 +572,10 @@ struct NoteAttachmentEmbedView: View {
             }
         }
         .task(id: target) {
+            if let data = notes.cachedAttachment(containerId: containerId, path: target) {
+                state = .loaded(data)
+                return
+            }
             state = .loading
             do {
                 switch try await notes.fetchAttachment(containerId: containerId, path: target) {
@@ -583,6 +587,16 @@ struct NoteAttachmentEmbedView: View {
             }
         }
         .filePreview($previewTarget)
+    }
+
+    /// What to draw this frame. A `LazyVStack` drops a row's view, and its `@State` with it, when it
+    /// scrolls far enough away, so a returning embed starts at `.loading` — a one-line placeholder
+    /// in place of an image up to 320 pt tall, which is the flicker. The store's cache answers
+    /// during the first body, before the `.task` has run.
+    private var shown: LoadState {
+        if case .loaded = state { return state }
+        if let data = notes.cachedAttachment(containerId: containerId, path: target) { return .loaded(data) }
+        return state
     }
 
     private var chipSymbol: String {

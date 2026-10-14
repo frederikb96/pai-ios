@@ -403,21 +403,44 @@ public final class NotesStore {
     public func uploadAttachment(
         containerId: String, filename: String, mimeType: String, data: Data
     ) async throws -> NoteAttachmentUploaded {
-        try await api.uploadNoteAttachment(containerId: containerId, filename: filename, mimeType: mimeType, data: data)
+        let uploaded = try await api.uploadNoteAttachment(
+            containerId: containerId, filename: filename, mimeType: mimeType, data: data)
+        attachmentCache.remove(containerId: containerId, path: uploaded.relPath)
+        return uploaded
     }
 
     public func renameAttachment(
         containerId: String, fromPath: String, toPath: String
     ) async throws -> NoteAttachmentRecord {
-        try await api.renameNoteAttachment(containerId: containerId, fromPath: fromPath, toPath: toPath)
+        let renamed = try await api.renameNoteAttachment(containerId: containerId, fromPath: fromPath, toPath: toPath)
+        attachmentCache.remove(containerId: containerId, path: fromPath)
+        attachmentCache.remove(containerId: containerId, path: toPath)
+        return renamed
     }
 
     public func deleteAttachment(containerId: String, path: String) async throws -> Bool {
-        try await api.deleteNoteAttachment(containerId: containerId, path: path)
+        let deleted = try await api.deleteNoteAttachment(containerId: containerId, path: path)
+        attachmentCache.remove(containerId: containerId, path: path)
+        return deleted
     }
 
+    /// Files already fetched this run. Not observed: a view reads it during its own body to draw a
+    /// returning image in its first frame, and the fetch that fills it has its own state to drive
+    /// the redraw.
+    @ObservationIgnored private var attachmentCache = NoteAttachmentCache()
+
+    /// A file ``fetchAttachment(containerId:path:)`` already brought in, or `nil`.
+    public func cachedAttachment(containerId: String, path: String) -> Data? {
+        attachmentCache.data(containerId: containerId, path: path)
+    }
+
+    /// Serves from the cache when the file is there. A file that is not on the server is never
+    /// cached, so a later sync that brings it in is picked up.
     public func fetchAttachment(containerId: String, path: String) async throws -> NoteAttachmentResult {
-        try await api.getNoteAttachment(containerId: containerId, path: path)
+        if let data = attachmentCache.data(containerId: containerId, path: path) { return .ok(data) }
+        let result = try await api.getNoteAttachment(containerId: containerId, path: path)
+        if case .ok(let data) = result { attachmentCache.insert(data, containerId: containerId, path: path) }
+        return result
     }
 
     public func loadLinkHealth(containerId: String) async throws -> NoteLinkHealth {
