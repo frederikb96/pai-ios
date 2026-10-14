@@ -26,6 +26,11 @@ struct SettingsScreen: View {
                 AlertsSection(alerts: settings.alerts, routing: settings.alertRouting, smtp: settings.smtp)
             }
 
+            // What scheduled agents are told is the owner's, as with the alerts.
+            if environment.connection?.me.isGuest != true {
+                StatusMessageSection(store: settings.statusMessage)
+            }
+
             NotificationsSection()
 
             VoiceSection(settings: settings)
