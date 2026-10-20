@@ -25,6 +25,16 @@ public enum VoiceRecordingState: Sendable, Equatable {
     case reconnecting
     case stopping
     case transcriptionStopped
+
+    /// Whether the microphone level line shows above the composer: for the whole take, from the
+    /// tap until the microphone stops. It is the one continuous proof that capture is running,
+    /// so it does not hand over to the live transcript once the connection is up.
+    public var showsMicrophoneLevel: Bool {
+        switch self {
+        case .idle, .stopping: false
+        case .connecting, .recording, .paused, .reconnecting, .transcriptionStopped: true
+        }
+    }
 }
 
 /// The marker every dictated text carries, so a session reading it knows it came from speech and

@@ -63,6 +63,10 @@ final class MicrophoneCapture: @unchecked Sendable {
     func start() throws {
         let input = engine.inputNode
         let inputFormat = input.inputFormat(forBus: 0)
+        guard
+            AudioEngineReadiness.isUsableInputFormat(
+                sampleRate: inputFormat.sampleRate, channelCount: Int(inputFormat.channelCount))
+        else { throw CaptureError.formatUnavailable }
 
         guard
             let sendFormat = AVAudioFormat(
@@ -107,7 +111,8 @@ final class MicrophoneCapture: @unchecked Sendable {
     ///
     /// Safe to call whether or not `start()` has been called yet: the engine is
     /// started if it isn't already running. A caller with nothing to play through this yet (the
-    /// very first cue of a take, before any capture starts) still gets a working cue.
+    /// very first cue of a take, before any capture starts) still gets a working cue. When the
+    /// engine cannot be started the cue is skipped and logged.
     func playEarcon(samples: [Int16], sampleRate: Double) {
         guard !samples.isEmpty,
             let format = AVAudioFormat(
@@ -140,10 +145,20 @@ final class MicrophoneCapture: @unchecked Sendable {
             channelData[0].update(from: base, count: samples.count)
         }
 
-        if !engine.isRunning {
-            engine.prepare()
-            try? engine.start()
-        }
+        // `play()` on a stopped engine raises an Objective-C exception, which ends the app. A cue
+        // can arrive with the engine stopped and unstartable — after a take ended and its session
+        // was deactivated, or right after a configuration change — and is then dropped.
+        let ready = AudioEngineReadiness.ensureRunning(
+            isRunning: { engine.isRunning },
+            start: {
+                engine.prepare()
+                try engine.start()
+            },
+            onStartFailure: { error in
+                AppVoiceDiagnosticsLog.shared.log(
+                    .warning, .audioSession, "earcon skipped, engine did not start: \(error)")
+            })
+        guard ready else { return }
         node.scheduleBuffer(buffer, completionHandler: nil)
         node.play()
     }

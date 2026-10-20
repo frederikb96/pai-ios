@@ -1,12 +1,12 @@
 import PAIKit
 import SwiftUI
 
-/// Proves the microphone is still capturing while there is nothing else on screen that can —
-/// shown while dictating and not in the ordinary connected `.recording` state (connecting,
-/// reconnecting, paused, or transcription stopped), or while the silence gate is withholding,
-/// since that is exactly when no new committed word can arrive to prove it another way. The bars
-/// dim while the gate withholds: the microphone is heard, but nothing is being sent. See `MicrophoneHealthState`'s own doc comment for why
-/// "quiet" and "not hearing" are two different states rather than one amplitude reading.
+/// Proves the microphone is still capturing, for as long as the take holds the microphone
+/// (`VoiceRecordingState.showsMicrophoneLevel`) — through connecting, reconnecting, a pause or a
+/// stopped transcription, when no committed word can arrive to prove it another way. The bars
+/// dim while the silence gate withholds: the microphone is heard, but nothing is being sent. See
+/// `MicrophoneHealthState`'s own doc comment for why "quiet" and "not hearing" are two different
+/// states rather than one amplitude reading.
 ///
 /// 🚨 Data-driven, never decorative: the bars redraw only when `controller.currentLevel` actually
 /// changes (the same ~100ms cadence buffers arrive at), and a flat input draws a flat line — there

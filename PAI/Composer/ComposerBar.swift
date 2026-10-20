@@ -153,11 +153,7 @@ struct ComposerBar: View {
             if isRecordingHere(voiceController) {
                 VoiceRecordingIndicator(controller: voiceController)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                // No live transcript can arrive while the connection is anything but
-                // `.recording`, or while the silence gate is holding the microphone back — the
-                // overlay is what proves the microphone is still capturing in the meantime, which
-                // the plain state label alone could not.
-                if voiceController.state != .recording || voiceController.isWithholding {
+                if voiceController.state.showsMicrophoneLevel {
                     VoiceVolumeOverlay(controller: voiceController)
                 }
             }
