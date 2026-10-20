@@ -637,8 +637,9 @@ struct CreateSessionView: View {
     /// leaves its row in the list, which is the right outcome: a queue that waited out an hour
     /// offline must not then yank the reader out of whatever they moved on to.
     ///
-    /// The draft is cleared as soon as the entry is on disk, not when the request answers, so
-    /// there is no instant at which the message exists in neither place. What shows it from here
+    /// The draft text is cleared as soon as the entry is on disk, not when the request answers, so
+    /// there is no instant at which the message exists in neither place. The draft itself is never
+    /// discarded here: its uploaded attachments are claimed by the create request. What shows it from here
     /// is its own bubble above the composer — queued, sending, or failed with Retry / Put back in
     /// composer / Discard, exactly as a session's own composer shows one.
     private func send(_ createSession: CreateSessionStore, _ voiceController: VoiceRecorderController) {
@@ -668,8 +669,8 @@ struct CreateSessionView: View {
                 settings.saveSentMessage(messageText)
             }
             createSession.enqueueSend(
-                message: messageText, files: files, draftAttachmentIds: uploadedAttachmentIds, outbox: outbox)
-            drafts.clearDraft(key: DraftKey.newSession)
+                message: messageText, files: files, draftAttachmentIds: uploadedAttachmentIds, outbox: outbox,
+                drafts: drafts)
             staging.set([], for: DraftKey.newSession)
         }
     }

@@ -252,8 +252,16 @@ public final class CreateSessionStore {
     /// session, and no caller left to open it. Offline it is worse still: an await with nothing
     /// on screen to say the message was kept. What the reader sees while a send waits is
     /// ``OutboxStore/newSessionEntries()``, drawn as bubbles on the screen that composed it.
+    ///
+    /// `drafts`, when given, has its new-session text emptied once the entry is on disk — and
+    /// **only the text**. The uploaded attachments stay on the server's draft until the create
+    /// request names them: a `DELETE` of the draft removes them, and the request that claims them
+    /// is asynchronous, queued behind the network and retried after a failure, so a discard issued
+    /// here lands first and the session starts without its files. The backend empties the draft
+    /// itself when the create lands.
     public func enqueueSend(
-        message: String, files: [PaiFileUpload] = [], draftAttachmentIds: [String] = [], outbox: OutboxStore
+        message: String, files: [PaiFileUpload] = [], draftAttachmentIds: [String] = [], outbox: OutboxStore,
+        drafts: DraftStore? = nil
     ) {
         let inlineFiles = files.map { file in
             OutboxInlineFile(localId: UUID().uuidString, filename: file.filename, mimeType: file.mimeType)
@@ -274,5 +282,6 @@ public final class CreateSessionStore {
                 text: message, draftAttachmentIds: draftAttachmentIds, inlineFiles: inlineFiles
             ),
             inlineFileData: inlineFileData)
+        drafts?.setDraftText(key: DraftKey.newSession, text: "")
     }
 }
