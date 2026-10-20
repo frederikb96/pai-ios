@@ -87,6 +87,12 @@ public final class DraftStore {
     /// edit it was retrying.
     private var retryAttempt: [String: Int] = [:]
 
+    /// Attachment ids a message has been composed with, per key — from Send until the message is
+    /// abandoned. The server keeps listing such a row until the send request claims it, and a
+    /// poll answered before that claim can arrive after it, so neither a fresh nor a stale
+    /// response may put the chip back. Only ever used to hide rows.
+    private var withheldAttachmentIds: [String: Set<String>] = [:]
+
     private enum PendingOp: Equatable { case write, delete }
 
     public init(
@@ -216,6 +222,28 @@ public final class DraftStore {
         entry.attachments.removeAll { $0.id == attachmentId }
         drafts[key] = entry
         _ = try? await api.removeDraftAttachment(key: key, attachmentId: attachmentId)
+    }
+
+    /// Takes attachments out of the composer because a message now carries them: dropped from the
+    /// local draft at once, and ignored by ``syncFromServer()`` until ``releaseAttachments(key:ids:)``.
+    /// Nothing is deleted on the server — the send request claims the rows.
+    public func withholdAttachments(key: String, ids: [String]) {
+        guard !ids.isEmpty else { return }
+        withheldAttachmentIds[key, default: []].formUnion(ids)
+        guard var entry = drafts[key] else { return }
+        let kept = entry.attachments.filter { !ids.contains($0.id) }
+        guard kept.count != entry.attachments.count else { return }
+        entry.attachments = kept
+        drafts[key] = entry
+    }
+
+    /// Hands attachments back to the composer after the message that carried them was abandoned
+    /// unsent (discarded, refused, pulled back); the rows are still on the server, so the next
+    /// poll lists them again.
+    public func releaseAttachments(key: String, ids: [String]) {
+        guard var held = withheldAttachmentIds[key] else { return }
+        held.subtract(ids)
+        withheldAttachmentIds[key] = held.isEmpty ? nil : held
     }
 
     // MARK: - Clearing
@@ -408,8 +436,12 @@ public final class DraftStore {
             // independently of the text-ordering rule above — they already have the right model
             // (tombstones on removal), and another device's just-added file should appear even
             // while this device's own text edit is still in flight.
-            if entry.attachments != row.attachments {
-                entry.attachments = row.attachments
+            let withheld = withheldAttachmentIds[row.key] ?? []
+            // `unclaimed` is the server saying a send named the row and could not move it: the
+            // one state that must stay visible after a send.
+            let listed = row.attachments.filter { !withheld.contains($0.id) || $0.state == "unclaimed" }
+            if entry.attachments != listed {
+                entry.attachments = listed
                 changed = true
             }
             // `previousText` is informational, like attachments — adopted whenever the row is not

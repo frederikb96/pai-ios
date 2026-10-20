@@ -85,6 +85,11 @@ public final class OutboxStore {
     /// ``installHandover(drafts:sessions:handoff:)`` here; this stays a plain closure so a test can
     /// observe the moment without one.
     public var onSent: (@MainActor (OutboxEntry) -> Void)?
+    /// Called when an entry is queued, and for each entry restored from disk at startup.
+    public var onQueued: (@MainActor (OutboxEntry) -> Void)?
+    /// Called when an entry leaves the queue without having reached the server: discarded, pulled
+    /// back by Undo send, or refused.
+    public var onAbandoned: (@MainActor (OutboxEntry) -> Void)?
     /// Called when the server REFUSED an entry because it was pulled back (Escape-undo, here or
     /// on another device) before it could be delivered — the entry is already gone from
     /// ``entries``. The `Bool` is whether the server's own draft already holds the text; when it
@@ -141,6 +146,14 @@ public final class OutboxStore {
     /// removed rather than one that succeeded. A create's id reaching nobody that way is a
     /// session sitting in the list with the reader still on the screen that made it.
     public func installHandover(drafts: DraftStore, sessions: SessionListStore, handoff: NewSessionHandoff) {
+        onQueued = { [weak drafts] entry in
+            drafts?.withholdAttachments(key: entry.draftKey, ids: entry.draftAttachmentIds)
+        }
+        onAbandoned = { [weak drafts] entry in
+            drafts?.releaseAttachments(key: entry.draftKey, ids: entry.draftAttachmentIds)
+        }
+        // Entries restored from disk were queued before this store had anyone to tell.
+        for entry in entries { onQueued?(entry) }
         onSent = { [weak self, weak drafts, weak sessions] entry in
             drafts?.recordVersionAfterSend(key: entry.draftKey, version: entry.result?.draftVersion)
             if let created = sessions?.adoptCreatedSession(entry) {
@@ -257,6 +270,7 @@ public final class OutboxStore {
         for (localId, data) in inlineFileData {
             storage.writeInlineFile(data, localId: localId)
         }
+        onQueued?(entry)
         ensureWorker(for: entry.target.workerKey)
     }
 
@@ -278,6 +292,7 @@ public final class OutboxStore {
         entries.removeAll { $0.id == id }
         storage.removeInlineFiles(localIds: entry.inlineFiles.map(\.localId))
         persist()
+        if entry.state != .sent { onAbandoned?(entry) }
     }
 
     /// "On path satisfied, attempt immediately" — skips whatever backoff a worker is waiting out.
