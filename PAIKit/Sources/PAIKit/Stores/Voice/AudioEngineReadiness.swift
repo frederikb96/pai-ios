@@ -48,3 +48,36 @@ public enum MicrophoneStartRecovery {
         }
     }
 }
+
+/// An audio input whose engine can be thrown away for a fresh one — the shape both the
+/// dictation capture and the call's bidirectional audio have, so both start through the same
+/// recovery.
+public protocol RecoverableAudioInput: AnyObject {
+    /// One start attempt on the current engine.
+    func startOnce() throws
+    /// Drops the engine for a fresh one that reads the hardware as it is now.
+    func rebuildEngine()
+}
+
+extension MicrophoneStartRecovery {
+    /// Starts `input`, rebuilding its engine between attempts. `prepareRetry` runs first on every
+    /// retry — where a caller re-activates the audio session it owns — and `onFailure` hears
+    /// every failed attempt.
+    @MainActor
+    public static func start(
+        _ input: some RecoverableAudioInput, prepareRetry: () throws -> Void = {},
+        onFailure: (Int, Error) -> Void = { _, _ in }, sleep: (Duration) async -> Void
+    ) async throws {
+        try await start(
+            attempt: { index in
+                do {
+                    if index > 0 { try prepareRetry() }
+                    try input.startOnce()
+                } catch {
+                    onFailure(index, error)
+                    throw error
+                }
+            },
+            recover: { _ in input.rebuildEngine() }, sleep: sleep)
+    }
+}

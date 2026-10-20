@@ -114,7 +114,7 @@ final class ComputerCallController {
             return
         }
         do {
-            try audioIO.start()
+            try await audioIO.start()
         } catch {
             setupFailure = "Couldn't start the microphone. Try again."
             return

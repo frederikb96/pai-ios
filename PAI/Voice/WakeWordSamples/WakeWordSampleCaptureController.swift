@@ -163,7 +163,7 @@ final class WakeWordSampleCaptureController {
         }
         wireCapture()
         do {
-            try audioIO.start()
+            try await audioIO.start()
         } catch {
             teardownCapture()
             startFailure = .audioFailed

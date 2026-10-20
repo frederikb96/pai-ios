@@ -11,7 +11,7 @@ import PAIKit
 /// whose callbacks fire on that thread. A caller that needs to touch `@MainActor` state from a
 /// callback (`VoiceRecordingSession.ingestAudioChunk` is `@MainActor`) must hop off itself first —
 /// exactly what that method's own documentation requires, and what `VoiceRecorderController` does.
-final class MicrophoneCapture: @unchecked Sendable {
+final class MicrophoneCapture: RecoverableAudioInput, @unchecked Sendable {
     enum CaptureError: Error {
         case formatUnavailable
         case converterUnavailable
@@ -81,7 +81,7 @@ final class MicrophoneCapture: @unchecked Sendable {
         }
     }
 
-    func start() throws {
+    func startOnce() throws {
         let input = engine.inputNode
         let inputFormat = input.inputFormat(forBus: 0)
         guard
