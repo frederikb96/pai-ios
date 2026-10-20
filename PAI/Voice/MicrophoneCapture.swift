@@ -38,8 +38,6 @@ final class MicrophoneCapture: @unchecked Sendable {
     private var configurationObserver: NSObjectProtocol?
     private var sendConverter: AVAudioConverter?
     private var sendFormat: AVAudioFormat?
-    private var earconPlayerNode: AVAudioPlayerNode?
-    private var earconSampleRate: Double?
 
     /// The input's own rate before any conversion — what the narrowband judgement reads.
     var hardwareSampleRate: Int {
@@ -81,8 +79,12 @@ final class MicrophoneCapture: @unchecked Sendable {
         self.sendFormat = sendFormat
         self.sendConverter = sendConverter
 
+        // `format: nil` taps whatever the input delivers. A route change between reading the
+        // input format above and installing the tap would otherwise leave a tap format that
+        // disagrees with the hardware, and `installTap` raises on that; `process` re-keys the
+        // converter to each buffer's actual format instead.
         input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { [weak self] buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 2048, format: nil) { [weak self] buffer, _ in
             self?.process(buffer)
         }
 
@@ -95,72 +97,6 @@ final class MicrophoneCapture: @unchecked Sendable {
         if engine.isRunning { engine.stop() }
         sendConverter = nil
         sendFormat = nil
-        // A stop can follow a configuration change, which invalidates every connection on the
-        // engine including the earcon node's — `playEarcon` re-attaches a fresh one on next use
-        // rather than scheduling onto a node whose connection no longer exists.
-        earconPlayerNode = nil
-        earconSampleRate = nil
-    }
-
-    /// Plays `samples` (mono, 16-bit PCM at `sampleRate` — exactly what `Earcon.samples` already
-    /// produces) through this same engine, mixed into its output. This is what makes a cue
-    /// audible with the ringer switch on silent: `.playAndRecord` "continues with the Silent
-    /// switch set to silent", and the cue rides the session capture already configured rather
-    /// than opening one of its own. Never touches the input tap or `onChunk` — an
-    /// earcon playing is not a capture event.
-    ///
-    /// Safe to call whether or not `start()` has been called yet: the engine is
-    /// started if it isn't already running. A caller with nothing to play through this yet (the
-    /// very first cue of a take, before any capture starts) still gets a working cue. When the
-    /// engine cannot be started the cue is skipped and logged.
-    func playEarcon(samples: [Int16], sampleRate: Double) {
-        guard !samples.isEmpty,
-            let format = AVAudioFormat(
-                commonFormat: .pcmFormatInt16, sampleRate: sampleRate, channels: 1, interleaved: true)
-        else { return }
-
-        let node: AVAudioPlayerNode
-        if let existing = earconPlayerNode, earconSampleRate == sampleRate {
-            node = existing
-        } else {
-            if let existing = earconPlayerNode {
-                engine.disconnectNodeOutput(existing)
-                engine.detach(existing)
-            }
-            let fresh = AVAudioPlayerNode()
-            engine.attach(fresh)
-            engine.connect(fresh, to: engine.mainMixerNode, format: format)
-            earconPlayerNode = fresh
-            earconSampleRate = sampleRate
-            node = fresh
-        }
-
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)) else {
-            return
-        }
-        buffer.frameLength = AVAudioFrameCount(samples.count)
-        guard let channelData = buffer.int16ChannelData else { return }
-        samples.withUnsafeBufferPointer { source in
-            guard let base = source.baseAddress else { return }
-            channelData[0].update(from: base, count: samples.count)
-        }
-
-        // `play()` on a stopped engine raises an Objective-C exception, which ends the app. A cue
-        // can arrive with the engine stopped and unstartable — after a take ended and its session
-        // was deactivated, or right after a configuration change — and is then dropped.
-        let ready = AudioEngineReadiness.ensureRunning(
-            isRunning: { engine.isRunning },
-            start: {
-                engine.prepare()
-                try engine.start()
-            },
-            onStartFailure: { error in
-                AppVoiceDiagnosticsLog.shared.log(
-                    .warning, .audioSession, "earcon skipped, engine did not start: \(error)")
-            })
-        guard ready else { return }
-        node.scheduleBuffer(buffer, completionHandler: nil)
-        node.play()
     }
 
     /// Runs on the tap's real-time thread. `AVAudioConverter.convert` allocates internally, which
@@ -170,7 +106,16 @@ final class MicrophoneCapture: @unchecked Sendable {
     /// another thread would only relocate the same work, not remove it.
     private func process(_ buffer: AVAudioPCMBuffer) {
         onLevel?(DictationInputGain.apply(toLevel: Self.rms(of: buffer)))
-        if let sendFormat, let sendConverter, let samples = Self.convert(buffer, using: sendConverter, to: sendFormat) {
+        guard let sendFormat else { return }
+        let converter: AVAudioConverter
+        if let sendConverter, sendConverter.inputFormat == buffer.format {
+            converter = sendConverter
+        } else {
+            guard let fresh = AVAudioConverter(from: buffer.format, to: sendFormat) else { return }
+            sendConverter = fresh
+            converter = fresh
+        }
+        if let samples = Self.convert(buffer, using: converter, to: sendFormat) {
             onChunk?(DictationInputGain.apply(to: samples))
         }
     }

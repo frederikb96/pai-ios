@@ -250,7 +250,7 @@ final class VoiceRecorderController {
         self.toasts = toasts
         self.recordingAudio = RecordingAudioLibrary(storage: audioStorage)
 
-        let earconPlayer = EarconPlayer(capture: capture)
+        let earconPlayer = EarconPlayer(sessionPlayer: EarconSessionPlayer())
         let feedbackNotifier = VoiceFeedbackNotifier(earcons: earconPlayer)
         self.earconPlayer = earconPlayer
         self.feedbackNotifier = feedbackNotifier
