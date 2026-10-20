@@ -25,15 +25,22 @@ public struct VoiceSocketCapabilities: Sendable, Equatable {
     /// True only when the gate setting is on at connect time; a toggle applies from the next
     /// connection.
     public var silenceGate: Bool
+    /// This client uses server-owned takes: the server stores its take audio before acking it,
+    /// resolves the take and answers the take routes. Sent only by a client built for that; the
+    /// server keeps the older semantics for one that does not say so.
+    public var takeStore: Bool
 
-    public init(audioDownlink: Bool = true, dtmf: Bool = false, silenceGate: Bool = false) {
+    public init(audioDownlink: Bool = true, dtmf: Bool = false, silenceGate: Bool = false, takeStore: Bool = false) {
         self.audioDownlink = audioDownlink
         self.dtmf = dtmf
         self.silenceGate = silenceGate
+        self.takeStore = takeStore
     }
 
     var jsonObject: [String: Any] {
-        ["audio_downlink": audioDownlink, "dtmf": dtmf, "silence_gate": silenceGate]
+        var object: [String: Any] = ["audio_downlink": audioDownlink, "dtmf": dtmf, "silence_gate": silenceGate]
+        if takeStore { object["take_store"] = true }
+        return object
     }
 }
 

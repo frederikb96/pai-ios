@@ -258,6 +258,32 @@ final class ServerTakeTests: XCTestCase {
                 among: takes + [owed("500", .batch)], draftKey: "s1", composerText: "")?.takeId, "500")
     }
 
+    /// A batch take the server refused, or that wants audio this phone does not have, is stuck:
+    /// nothing this device does finishes it. The next message typed in that composer has nothing
+    /// to do with it and must go out at once, not wait on the stuck take and arrive later with an
+    /// "incomplete" marker. A stuck take is not "transcribing" either.
+    func testAStuckBatchTakeNeverCapturesALaterSend() {
+        var stuck = PendingServerTake(mode: .batch, capturedSamples: 16_000)
+        stuck.stuckReason = "the server refused the upload"
+        let owed = [OwedTakeSummary(takeId: "100", draftKey: "s1", serverTake: stuck)]
+        XCTAssertNil(OwedTakeSummary.heldSendCandidate(among: owed, draftKey: "s1", composerText: "unrelated"))
+        XCTAssertFalse(owed[0].isTranscribing)
+        XCTAssertTrue(owed[0].serverTake.isOwed, "still owed: the next resume tries again")
+
+        let fresh = OwedTakeSummary(
+            takeId: "200", draftKey: "s1", serverTake: PendingServerTake(mode: .batch, capturedSamples: 16_000))
+        XCTAssertEqual(
+            OwedTakeSummary.heldSendCandidate(among: owed + [fresh], draftKey: "s1", composerText: "")?.takeId, "200")
+        XCTAssertTrue(fresh.isTranscribing)
+    }
+
+    /// Ledgers written before a take could be stuck still decode.
+    func testAPendingTakeWithoutAStuckReasonDecodes() throws {
+        let json = #"{"mode":"batch","standalone":false,"withheld":[],"settled":false,"capturedSamples":5}"#
+        let take = try JSONDecoder().decode(PendingServerTake.self, from: Data(json.utf8))
+        XCTAssertNil(take.stuckReason)
+    }
+
     // MARK: - Wire shapes
 
     /// A held row on the session's pending list says why it has not gone yet, inside the bubble's

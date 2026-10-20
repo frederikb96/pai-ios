@@ -116,17 +116,26 @@ private struct StartModeMenu: ViewModifier {
 }
 
 /// Shown above a composer whose batch take is being transcribed on the server — its words land
-/// in the field by themselves, and a Send made meanwhile waits for them.
+/// in the field by themselves, and a Send made meanwhile waits for them — or whose batch take is
+/// stuck, which a Send does not wait for.
 struct BatchTranscribingLine: View {
+    var isStuck = false
+
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "tray.and.arrow.up")
+            Image(systemName: isStuck ? "exclamationmark.triangle" : "tray.and.arrow.up")
                 .font(.system(size: 11))
-            Text("Batch dictation transcribing — Send waits for it")
+            Text(text)
                 .font(PaiTypography.caption.font)
         }
-        .foregroundStyle(PaiPalette.Semantic.textSecondary)
-        .accessibilityIdentifier("voice-batch-transcribing")
+        .foregroundStyle(isStuck ? PaiPalette.Semantic.warningText : PaiPalette.Semantic.textSecondary)
+        .accessibilityIdentifier(isStuck ? "voice-batch-stuck" : "voice-batch-transcribing")
+    }
+
+    private var text: String {
+        isStuck
+            ? "Batch dictation stuck — see Past Recordings; Send does not wait for it"
+            : "Batch dictation transcribing — Send waits for it"
     }
 }
 

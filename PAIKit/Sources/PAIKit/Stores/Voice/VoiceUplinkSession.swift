@@ -322,7 +322,8 @@ public final class VoiceUplinkSession {
                 .hello(
                     transport: VoiceSocketProtocol.transportName,
                     caps: VoiceSocketCapabilities(
-                        audioDownlink: true, dtmf: false, silenceGate: gate?.settings.enabled == true),
+                        audioDownlink: true, dtmf: false, silenceGate: gate?.settings.enabled == true,
+                        takeStore: currentTakeId != nil),
                     auth: token,
                     resumeToken: resumeToken,
                     draftKey: isStandalone ? nil : currentDraftKey,

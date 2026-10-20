@@ -452,6 +452,28 @@ final class VoiceUplinkSessionTests: XCTestCase {
         XCTAssertEqual(closes.first?.2, 4)
     }
 
+    /// A dictation opts into server-owned takes on its hello. Without the cap the server keeps
+    /// the old semantics — nothing stored, nothing resolved — so this take's audio would be acked
+    /// and lost to every upload, poll and held send built on the take.
+    func testADictationHelloOptsIntoTheTakeStore() async throws {
+        let transport = FakeVoiceSocketTransport()
+        let session = makeSession(transport: transport)
+        let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
+        await waitUntil { await !transport.sentFrames.isEmpty }
+        let frames = await transport.sentFrames
+        let hello = try XCTUnwrap(frames.first).encoded()
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(hello.utf8)) as? [String: Any])
+        XCTAssertEqual((object["caps"] as? [String: Any])?["take_store"] as? Bool, true)
+        await transport.enqueue(
+            .control(
+                .ready(
+                    resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: false))
+        )
+        await waitUntil { await transport.sentFrames.count >= 2 }
+        await stopAfterTakeDone(session, transport: transport, takeId: "take-1")
+        _ = await startTask.value
+    }
+
     /// A batch take says so on `hello`, and its stop waits for the seal to be stored
     /// (`take_state` past `open`), never for a `take_done` that may be minutes away.
     func testABatchTakeAnnouncesItselfAndItsStopWaitsForTheStoredSeal() async {
@@ -493,6 +515,7 @@ final class VoiceUplinkSessionTests: XCTestCase {
         let helloObject = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(hello.utf8)) as? [String: Any])
         XCTAssertEqual(helloObject["stt_mode"] as? String, "batch")
+        XCTAssertNil((helloObject["caps"] as? [String: Any])?["take_store"], "only a client that says so is stored")
         XCTAssertEqual(helloObject["standalone"] as? Bool, true)
         XCTAssertNil(helloObject["draft_key"])
 
