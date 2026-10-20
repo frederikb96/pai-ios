@@ -221,9 +221,10 @@ final class AppEnvironment {
         outbox.installHandover(drafts: draftStore, sessions: sessions, handoff: NewSessionHandoff.shared)
         outboxPathObserver?.stop()
         let pathObserver = NetworkPathObserver()
-        // Skipping a send's backoff is for a network that came back. A link that stays up while its
-        // interface changes reports satisfied again and again, and cancelling the backoff on each
-        // would send a failing message in a tight loop.
+        // Skipping a send's backoff is for a new network: one that came back or a changed primary
+        // interface. A link that stays up while its gateway or DNS changes reports satisfied again
+        // and again, and cancelling the backoff on each would send a failing message in a tight
+        // loop.
         pathObserver.onRegained = {
             Task { @MainActor [weak outbox] in outbox?.retryNow() }
         }
