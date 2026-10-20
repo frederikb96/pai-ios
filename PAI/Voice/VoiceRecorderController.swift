@@ -749,11 +749,25 @@ final class VoiceRecorderController {
         case let .failed(take):
             AppVoiceDiagnosticsLog.shared.log(
                 .warning, .mode, "take \(takeId) failed on the server: \(take.failure?.detail ?? "-")")
-            noteTakeState(takeId: takeId, state: .failed)
+            settleFailedTake(takeId: takeId)
         case let .stuck(reason):
             AppVoiceDiagnosticsLog.shared.log(.warning, .mode, "take \(takeId) stuck: \(reason)")
         case .cancelled:
             break
+        }
+    }
+
+    /// The server gave up on the take with every sample it needs from here: nothing this device
+    /// can add, so it stops asking. A held send it carried was released by the server with what
+    /// existed; the recording keeps its live text, marked incomplete, and a tap re-transcribes it.
+    private func settleFailedTake(takeId: String) {
+        guard let ledger = readLedger(takeId: takeId), var server = ledger.serverTake else { return }
+        server.settled = true
+        server.lastState = .failed
+        writeServerTake(takeId: takeId, ledger: ledger.withServerTake(server))
+        if let existing = settingsStore.recordings.first(where: { $0.id == takeId }) {
+            settingsStore.updateRecording(
+                existing.withTranscript(existing.transcript, source: existing.transcriptSource, complete: false))
         }
     }
 
@@ -1142,21 +1156,12 @@ final class VoiceRecorderController {
         }
     }
 
-    /// The recordings screen's "Transcribe now" — the one explicit "try again": a take the
-    /// server gave up on is sent back to its resolver, a take from before takes lived on the
-    /// server has its demoted gaps put back in the running, and either way the take's loop is
-    /// running again.
+    /// The recordings screen's "Transcribe now" for a take from before takes lived on the server —
+    /// the one explicit "try again": its demoted gaps are put back in the running and its loop
+    /// runs again. A server-side take offers nothing here: the server finishes it, and a held
+    /// send it gave up on is released by the server itself.
     func transcribeRemainingGaps(id: String) {
-        guard let ledger = readLedger(takeId: id) else { return }
-        if let server = ledger.serverTake {
-            guard server.isOwed else { return }
-            Task {
-                if server.lastState == .failed { _ = try? await apiClient.retryVoiceTake(takeId: id) }
-                scheduleBackfillIfNeeded(takeId: id)
-            }
-            return
-        }
-        guard !ledger.gaps.isEmpty else { return }
+        guard let ledger = readLedger(takeId: id), ledger.serverTake == nil, !ledger.gaps.isEmpty else { return }
         if ledger.gaps.contains(where: \.demoted) {
             try? LedgerFile.write(ledger.undemotingGaps(), to: audioStorage.ledgerURL(id: id))
         }

@@ -302,7 +302,7 @@ private struct RecordingRow: View {
                 ProgressView()
             } else {
                 HStack(spacing: 16) {
-                    if hasOpenGaps || owed?.lastState == .failed {
+                    if hasOpenGaps, owed == nil {
                         Button(action: onTranscribeRemaining) {
                             Image(systemName: "waveform.badge.magnifyingglass")
                         }
@@ -328,20 +328,19 @@ private struct RecordingRow: View {
 
     /// What the stored transcript is worth: missing, possibly cut short, or a full batch pass.
     private var transcriptLine: String? {
-        if let owed {
-            if owed.lastState == .failed { return "Transcription failed on the server · tap the wave to retry" }
+        if owed != nil {
             return meta.transcript?.isEmpty ?? true ? "Transcribing on the server…" : "Finishing on the server…"
         }
         if meta.transcript?.isEmpty ?? true {
-            return meta.mode == .offline ? "Transcribing once online…" : "No transcript · tap to transcribe"
+            return meta.mode == .offline && meta.transcriptComplete != false
+                ? "Transcribing once online…" : "No transcript · tap to transcribe"
         }
         if meta.transcriptComplete == false { return "Incomplete · tap to re-transcribe" }
         return meta.transcriptSource == .batch ? "Transcribed in full" : nil
     }
 
     private var transcriptLineColor: Color {
-        if owed?.lastState == .failed { return PaiPalette.Semantic.errorText }
-        return meta.transcriptComplete == false && owed == nil
+        meta.transcriptComplete == false && owed == nil
             ? PaiPalette.Semantic.warningText : PaiPalette.Semantic.textMuted
     }
 

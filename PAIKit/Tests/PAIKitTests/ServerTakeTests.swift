@@ -39,6 +39,10 @@ private final class FakeTakeServer: VoiceTakeAPI, @unchecked Sendable {
         return try body()
     }
 
+    func markFailed() {
+        locked { state = .failed }
+    }
+
     func getVoiceTake(takeId: String) async throws -> VoiceTake {
         locked {
             if state == .sealed,
@@ -74,6 +78,7 @@ private final class FakeTakeServer: VoiceTakeAPI, @unchecked Sendable {
             uploads.append(range)
             if !failUploads.isEmpty { throw failUploads.removeFirst() }
             received = TranscriptLedger.merge(received + [range])
+            if state == .failed { state = .sealed }
             return snapshot()
         }
     }
@@ -120,6 +125,29 @@ final class ServerTakeTests: XCTestCase {
             "only what was missing, in pieces of at most a minute")
         XCTAssertTrue(server.uploads.allSatisfy { $0.count <= OwedTakeDriver.uploadPieceSeconds * Self.rate })
         XCTAssertEqual(server.uploads.count, 4, "both outage failures were retried")
+    }
+
+    /// The server gave up on a take whose audio never arrived (`audio_missing`) while this phone
+    /// was out of reach. Coming back, the phone still delivers what it holds — a fresh upload
+    /// returns the take to `sealed` — and the take resolves after all.
+    func testAFailedTakeStillMissingAudioIsFilledAndResolves() async {
+        let server = FakeTakeServer(text: "late but whole")
+        _ = try? await server.sealVoiceTake(takeId: "t1", seal: VoiceTakeSeal(mode: .batch, capturedSamples: 32_000))
+        server.markFailed()
+        let outcome = await resolve(server, captured: 32_000)
+        guard case let .done(take) = outcome else { return XCTFail("expected done, got \(outcome)") }
+        XCTAssertEqual(take.text, "late but whole")
+        XCTAssertEqual(server.uploads, [0..<32_000])
+    }
+
+    /// A failed take with nothing left to send ends the driver: no action of this device changes it.
+    func testAFailedTakeWithNothingMissingIsReportedAsFailed() async {
+        let server = FakeTakeServer(received: [0..<32_000], text: "x")
+        _ = try? await server.sealVoiceTake(takeId: "t1", seal: VoiceTakeSeal(mode: .batch, capturedSamples: 32_000))
+        server.markFailed()
+        let outcome = await resolve(server, captured: 32_000)
+        guard case .failed = outcome else { return XCTFail("expected failed, got \(outcome)") }
+        XCTAssertTrue(server.uploads.isEmpty)
     }
 
     /// A refusal no retry changes stops the driver instead of looping; it is reported, and the

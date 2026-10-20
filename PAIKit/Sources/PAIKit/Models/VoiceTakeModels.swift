@@ -93,12 +93,15 @@ public enum VoiceTakeEnded: WireStringEnum {
 
 public enum VoiceTakeFailureCode: WireStringEnum {
     case transcriptionFailed, transcriptionNotConfigured, internalError
+    /// A held send's take whose missing audio never arrived.
+    case audioMissing
     case unrecognized(String)
 
     public static var knownValues: [String: VoiceTakeFailureCode] {
         [
             "transcription_failed": .transcriptionFailed,
             "transcription_not_configured": .transcriptionNotConfigured, "internal": .internalError,
+            "audio_missing": .audioMissing,
         ]
     }
 
@@ -107,6 +110,7 @@ public enum VoiceTakeFailureCode: WireStringEnum {
         case .transcriptionFailed: "transcription_failed"
         case .transcriptionNotConfigured: "transcription_not_configured"
         case .internalError: "internal"
+        case .audioMissing: "audio_missing"
         case let .unrecognized(raw): raw
         }
     }
@@ -122,7 +126,9 @@ public struct VoiceTakeFailure: Codable, Sendable, Equatable {
     }
 }
 
-/// `held`: waiting on the take; `released`: sent; `withdrawn`: pulled back by Undo send.
+/// `held`: waiting on the take; `released`: sent by the server — with the take's text, or, once
+/// its retries ran out, with what existed and a marker that the transcript is incomplete;
+/// `withdrawn`: pulled back by Undo send.
 public enum HeldMessageState: WireStringEnum {
     case held, released, withdrawn
     case unrecognized(String)
@@ -161,8 +167,7 @@ public struct VoiceTakeHeldMessage: Codable, Sendable, Equatable {
     }
 }
 
-/// `GET /api/voice/takes/{take_id}`; also the answer of seal and retry, and `take` in an upload's
-/// answer.
+/// `GET /api/voice/takes/{take_id}`; also the answer of seal, and `take` in an upload's answer.
 public struct VoiceTake: Codable, Sendable, Equatable {
     public let takeId: String
     public let mode: VoiceSttMode

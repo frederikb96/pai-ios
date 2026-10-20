@@ -1411,12 +1411,6 @@ public struct PaiApiClient: Sendable {
         return response.take
     }
 
-    /// Returns a `failed` take to `sealed` and re-enqueues its resolver; any other state comes
-    /// back unchanged.
-    public func retryVoiceTake(takeId: String) async throws -> VoiceTake {
-        try await send(path: "/api/voice/takes/\(takeId)/retry", method: "POST", body: Data("{}".utf8))
-    }
-
     // MARK: Claude sign-in on the VM
 
     public func getClaudeAuth() async throws -> ClaudeAuth {
