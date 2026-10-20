@@ -328,7 +328,8 @@ private struct RecordingRow: View {
 
     /// What the stored transcript is worth: missing, possibly cut short, or a full batch pass.
     private var transcriptLine: String? {
-        if owed != nil {
+        if let owed {
+            if let stuck = owed.stuckReason { return "Stuck: \(stuck)" }
             return meta.transcript?.isEmpty ?? true ? "Transcribing on the server…" : "Finishing on the server…"
         }
         if meta.transcript?.isEmpty ?? true {
@@ -340,7 +341,8 @@ private struct RecordingRow: View {
     }
 
     private var transcriptLineColor: Color {
-        meta.transcriptComplete == false && owed == nil
+        if owed?.stuckReason != nil { return PaiPalette.Semantic.warningText }
+        return meta.transcriptComplete == false && owed == nil
             ? PaiPalette.Semantic.warningText : PaiPalette.Semantic.textMuted
     }
 

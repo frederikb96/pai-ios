@@ -159,6 +159,9 @@ struct ComposerBar: View {
             } else if voiceController.isTranscribingBatch(draftKey: sessionID) {
                 BatchTranscribingLine()
                     .frame(maxWidth: .infinity, alignment: .leading)
+            } else if voiceController.hasStuckBatchTake(draftKey: sessionID) {
+                BatchTranscribingLine(isStuck: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if let voiceFailureMessage = voiceFailureMessage(controller: voiceController) {

@@ -27,11 +27,15 @@ public struct PendingServerTake: Codable, Sendable, Equatable {
     /// Nothing is owed any more: the result was applied, or the take finished cleanly on the
     /// socket.
     public var settled: Bool
+    /// Why the last attempt stopped for good — a refusal no retry changes, or audio this device
+    /// does not have. Still owed, and tried again on the next resume, but nothing a later send
+    /// should wait on.
+    public var stuckReason: String?
 
     public init(
         mode: VoiceSttMode, standalone: Bool = false, standaloneName: String? = nil, capturedSamples: Int? = nil,
         withheld: [SampleRange] = [], insertedText: String? = nil, heldClientMessageId: String? = nil,
-        lastState: VoiceTakeState? = nil, settled: Bool = false
+        lastState: VoiceTakeState? = nil, settled: Bool = false, stuckReason: String? = nil
     ) {
         self.mode = mode
         self.standalone = standalone
@@ -42,6 +46,7 @@ public struct PendingServerTake: Codable, Sendable, Equatable {
         self.heldClientMessageId = heldClientMessageId
         self.lastState = lastState
         self.settled = settled
+        self.stuckReason = stuckReason
     }
 
     /// Stopped and still waiting on the server.
@@ -293,8 +298,12 @@ public struct OwedTakeSummary: Sendable, Equatable {
         self.serverTake = serverTake
     }
 
+    /// A batch take on its way: the server is transcribing it, or will once this device's
+    /// uploads land.
+    public var isTranscribing: Bool { serverTake.mode == .batch && serverTake.stuckReason == nil }
+
     /// The take a Send in `draftKey`'s composer should wait on, if any: the newest owed take of
-    /// that draft that no send carries yet and whose words the message would contain — a batch
+    /// that draft that no send carries yet, is not stuck, and whose words the message would contain — a batch
     /// take's always (they are added after everything typed), a live take's only while its words
     /// are still in the composer. A take whose words were deleted or edited away is not waited
     /// on; its result comes back into the draft instead.
@@ -304,7 +313,8 @@ public struct OwedTakeSummary: Sendable, Equatable {
         owed
             .filter { summary in
                 let take = summary.serverTake
-                guard summary.draftKey == draftKey, !take.standalone, take.isOwed, take.heldClientMessageId == nil
+                guard summary.draftKey == draftKey, !take.standalone, take.isOwed, take.heldClientMessageId == nil,
+                    take.stuckReason == nil
                 else { return false }
                 switch take.mode {
                 case .batch: return true

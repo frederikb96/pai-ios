@@ -752,6 +752,7 @@ final class VoiceRecorderController {
             settleFailedTake(takeId: takeId)
         case let .stuck(reason):
             AppVoiceDiagnosticsLog.shared.log(.warning, .mode, "take \(takeId) stuck: \(reason)")
+            markStuck(takeId: takeId, reason: reason)
         case .cancelled:
             break
         }
@@ -769,6 +770,14 @@ final class VoiceRecorderController {
             settingsStore.updateRecording(
                 existing.withTranscript(existing.transcript, source: existing.transcriptSource, complete: false))
         }
+    }
+
+    /// A take nothing this device does can finish right now. It stays owed and is tried again on
+    /// the next resume, but no later send waits on it and no composer calls it transcribing.
+    private func markStuck(takeId: String, reason: String) {
+        guard let ledger = readLedger(takeId: takeId), var server = ledger.serverTake else { return }
+        server.stuckReason = reason
+        writeServerTake(takeId: takeId, ledger: ledger.withServerTake(server))
     }
 
     /// The server's state for an owed take, kept on its ledger for the recordings list.
@@ -1013,7 +1022,14 @@ final class VoiceRecorderController {
 
     /// A batch take of `draftKey`'s composer being transcribed — what the composer labels.
     func isTranscribingBatch(draftKey: String) -> Bool {
-        owedTakes.values.contains { $0.draftKey == draftKey && $0.serverTake.mode == .batch }
+        owedTakes.values.contains { $0.draftKey == draftKey && $0.isTranscribing }
+    }
+
+    /// A batch take of `draftKey`'s composer that is stuck — shown as such, never as transcribing.
+    func hasStuckBatchTake(draftKey: String) -> Bool {
+        owedTakes.values.contains {
+            $0.draftKey == draftKey && $0.serverTake.mode == .batch && $0.serverTake.stuckReason != nil
+        }
     }
 
     /// Ties the send `clientMessageId` to the take its message is waiting on, and stops waiting

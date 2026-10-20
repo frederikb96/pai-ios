@@ -514,6 +514,9 @@ struct CreateSessionView: View {
             } else if voiceController.isTranscribingBatch(draftKey: DraftKey.newSession) {
                 BatchTranscribingLine()
                     .frame(maxWidth: .infinity, alignment: .leading)
+            } else if voiceController.hasStuckBatchTake(draftKey: DraftKey.newSession) {
+                BatchTranscribingLine(isStuck: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if pregrantArmed, !createSession.isUltrafastSelected {
