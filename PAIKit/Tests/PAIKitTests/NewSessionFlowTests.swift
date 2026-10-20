@@ -49,7 +49,7 @@ private final class FlakyOutboxApi: OutboxSending, @unchecked Sendable {
     func postMessage(
         sessionId: String?, message: String, clientMessageId: String, files: [PaiFileUpload],
         draftAttachmentIds: [String], sessionType: String?, workingDir: String?, agent: String?, model: String?,
-        thinking: String?, clientMode: String?
+        thinking: String?, clientMode: String?, heldTake: HeldTake?
     ) async throws -> PostMessageResponse {
         if let failure = recordAttempt(claiming: draftAttachmentIds) { throw failure }
         return response

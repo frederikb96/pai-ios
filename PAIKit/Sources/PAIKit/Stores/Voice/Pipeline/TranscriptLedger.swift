@@ -174,13 +174,16 @@ public struct TranscriptLedger: Codable, Sendable, Equatable {
     /// The live transcription's committed text, in take order. Optional so a ledger written
     /// before this field existed still decodes.
     public let liveText: [LiveTextSegment]?
+    /// The server-side take this one mirrors. `nil` for a ledger written before takes lived on
+    /// the server: such a take heals its gaps by plain re-transcription instead.
+    public let serverTake: PendingServerTake?
 
     public init(
         takeId: String, mode: VoiceMode, sampleRate: Int, draftKey: String?, preText: String,
         segments: [Segment] = [], capturedUpTo: Int = 0, gaps: [Gap] = [],
         boundaries: [MessageBoundary] = [], collecting: [SampleRange] = [],
         events: [PipelineEvent] = [], delivered: Bool = false, acknowledged: [SampleRange]? = nil,
-        liveText: [LiveTextSegment]? = nil
+        liveText: [LiveTextSegment]? = nil, serverTake: PendingServerTake? = nil
     ) {
         self.takeId = takeId
         self.mode = mode
@@ -196,6 +199,7 @@ public struct TranscriptLedger: Codable, Sendable, Equatable {
         self.delivered = delivered
         self.acknowledged = acknowledged
         self.liveText = liveText
+        self.serverTake = serverTake
     }
 }
 
@@ -279,7 +283,7 @@ extension TranscriptLedger {
             takeId: takeId, mode: mode, sampleRate: sampleRate, draftKey: draftKey, preText: preText,
             segments: mergedSegments, capturedUpTo: capturedUpTo, gaps: gaps, boundaries: boundaries,
             collecting: resolvedCollecting, events: events, delivered: delivered, acknowledged: mergedAcknowledged,
-            liveText: resolvedLiveText
+            liveText: resolvedLiveText, serverTake: serverTake
         )
         return TranscriptLedger(
             takeId: takeId, mode: mode, sampleRate: sampleRate, draftKey: draftKey, preText: preText,
@@ -287,7 +291,7 @@ extension TranscriptLedger {
             gaps: withoutGaps.derivedGaps(capturedUpTo: capturedUpTo, pendingLiveRange: pendingLiveRange),
             boundaries: boundaries,
             collecting: resolvedCollecting, events: events, delivered: delivered, acknowledged: mergedAcknowledged,
-            liveText: resolvedLiveText
+            liveText: resolvedLiveText, serverTake: serverTake
         )
     }
 
@@ -310,7 +314,8 @@ extension TranscriptLedger {
     /// consulting `gaps`' own current, already-healed state) would silently reopen the very gap
     /// this pass just closed.
     public func applyingBackfill(
-        newSegments: [Segment], resolved: [SampleRange], failed: [(range: SampleRange, error: String)]
+        newSegments: [Segment], resolved: [SampleRange],
+        failed: [(range: SampleRange, error: String, countsTowardDemotion: Bool)]
     ) -> TranscriptLedger {
         let mergedSegments = SeamMerge.merge(segments + newSegments)
         var updatedGaps: [Gap] = []
@@ -323,14 +328,15 @@ extension TranscriptLedger {
         }
         for failure in failed {
             guard let index = updatedGaps.firstIndex(where: { $0.range.overlaps(failure.range) }) else { continue }
-            updatedGaps[index] = BackfillPlanner.recordFailure(updatedGaps[index], error: failure.error)
+            updatedGaps[index] = BackfillPlanner.recordFailure(
+                updatedGaps[index], error: failure.error, countsTowardDemotion: failure.countsTowardDemotion)
         }
         let mergedAcknowledged = Self.merge((acknowledged ?? []) + resolved)
         return TranscriptLedger(
             takeId: takeId, mode: mode, sampleRate: sampleRate, draftKey: draftKey, preText: preText,
             segments: mergedSegments, capturedUpTo: capturedUpTo, gaps: updatedGaps, boundaries: boundaries,
             collecting: collecting, events: events, delivered: delivered, acknowledged: mergedAcknowledged,
-            liveText: liveText
+            liveText: liveText, serverTake: serverTake
         )
     }
 
@@ -340,12 +346,35 @@ extension TranscriptLedger {
         TranscriptLedger(
             takeId: takeId, mode: mode, sampleRate: sampleRate, draftKey: draftKey, preText: preText,
             segments: segments, capturedUpTo: capturedUpTo, gaps: gaps, boundaries: boundaries,
-            collecting: collecting, events: events, delivered: true, acknowledged: acknowledged, liveText: liveText
+            collecting: collecting, events: events, delivered: true, acknowledged: acknowledged, liveText: liveText,
+            serverTake: serverTake
+        )
+    }
+
+    /// The same ledger mirroring `serverTake` instead.
+    public func withServerTake(_ serverTake: PendingServerTake?) -> TranscriptLedger {
+        TranscriptLedger(
+            takeId: takeId, mode: mode, sampleRate: sampleRate, draftKey: draftKey, preText: preText,
+            segments: segments, capturedUpTo: capturedUpTo, gaps: gaps, boundaries: boundaries,
+            collecting: collecting, events: events, delivered: delivered, acknowledged: acknowledged,
+            liveText: liveText,
+            serverTake: serverTake
+        )
+    }
+
+    /// Every gap back in the running with its attempts cleared — an explicit "try again", which
+    /// is the one thing that may undo a demotion.
+    public func undemotingGaps() -> TranscriptLedger {
+        TranscriptLedger(
+            takeId: takeId, mode: mode, sampleRate: sampleRate, draftKey: draftKey, preText: preText,
+            segments: segments, capturedUpTo: capturedUpTo, gaps: gaps.map { Gap(range: $0.range) },
+            boundaries: boundaries, collecting: collecting, events: events, delivered: delivered,
+            acknowledged: acknowledged, liveText: liveText, serverTake: serverTake
         )
     }
 
     /// Merges overlapping or adjacent ranges into a sorted, disjoint set.
-    static func merge(_ ranges: [SampleRange]) -> [SampleRange] {
+    public static func merge(_ ranges: [SampleRange]) -> [SampleRange] {
         let sorted = ranges.filter { !$0.isEmpty }.sorted { $0.lowerBound < $1.lowerBound }
         var result: [SampleRange] = []
         for range in sorted {
@@ -359,7 +388,7 @@ extension TranscriptLedger {
     }
 
     /// Every stretch of each `bound` range not covered by any range in `covered`.
-    static func uncoveredRanges(in bounds: [SampleRange], covered: [SampleRange]) -> [SampleRange] {
+    public static func uncoveredRanges(in bounds: [SampleRange], covered: [SampleRange]) -> [SampleRange] {
         let coveredSorted = merge(covered)
         return bounds.flatMap { bound -> [SampleRange] in
             guard !bound.isEmpty else { return [] }

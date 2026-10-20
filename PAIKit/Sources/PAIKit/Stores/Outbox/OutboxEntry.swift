@@ -106,6 +106,10 @@ public struct OutboxEntry: Codable, Sendable, Equatable, Identifiable {
     /// How this message was produced — `"call"` for one dictated during a Computer call,
     /// `nil` for an ordinary typed or dictated send.
     public var clientMode: String?
+    /// The voice take this send waits on — Send pressed while the take was still finishing or
+    /// transcribing. Fixed when the entry is made and sent unchanged on every retry, so the
+    /// server composes the message from the same `before`/`after` however often it is resent.
+    public var heldTake: HeldTake?
     public var state: OutboxEntryState
     public var attempts: Int
     public var lastError: String?
@@ -115,7 +119,8 @@ public struct OutboxEntry: Codable, Sendable, Equatable, Identifiable {
     public init(
         clientMessageId: String = UUID().uuidString, target: OutboxTarget, text: String,
         draftAttachmentIds: [String] = [], inlineFiles: [OutboxInlineFile] = [], clientMode: String? = nil,
-        state: OutboxEntryState = .queued, attempts: Int = 0, lastError: String? = nil, createdAt: Date = Date(),
+        heldTake: HeldTake? = nil, state: OutboxEntryState = .queued, attempts: Int = 0, lastError: String? = nil,
+        createdAt: Date = Date(),
         result: OutboxResult? = nil
     ) {
         self.clientMessageId = clientMessageId
@@ -124,6 +129,7 @@ public struct OutboxEntry: Codable, Sendable, Equatable, Identifiable {
         self.draftAttachmentIds = draftAttachmentIds
         self.inlineFiles = inlineFiles
         self.clientMode = clientMode
+        self.heldTake = heldTake
         self.state = state
         self.attempts = attempts
         self.lastError = lastError

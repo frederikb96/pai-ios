@@ -84,12 +84,26 @@ public enum BackfillPlanner {
         return requests
     }
 
-    /// Applies a failed attempt to one gap — incrementing its count and demoting it once the
-    /// stable-link attempt budget is spent. A new stable episode resets nothing: the count belongs
-    /// to the gap, not to the episode that failed it.
-    public static func recordFailure(_ gap: Gap, error: String) -> Gap {
+    /// Applies a failed attempt to one gap. Only a failure that says something about the request
+    /// itself counts toward demotion (``countsTowardDemotion(_:)``); a server outage or a dead
+    /// link only delays the gap, however long it lasts. A new stable episode resets nothing: the
+    /// count belongs to the gap, not to the episode that failed it.
+    public static func recordFailure(_ gap: Gap, error: String, countsTowardDemotion: Bool) -> Gap {
+        guard countsTowardDemotion else {
+            return Gap(range: gap.range, attempts: gap.attempts, lastError: error, demoted: gap.demoted)
+        }
         let attempts = gap.attempts + 1
         return Gap(
             range: gap.range, attempts: attempts, lastError: error, demoted: attempts >= maxAttemptsBeforeDemotion)
+    }
+
+    /// The protocol's retry classes: a 4xx other than 401, 403, 404, 408 and 429, or an answer
+    /// that would not decode, is the request's own fault and is not fixed by sending it again.
+    /// A transport error, a 5xx and the excluded statuses are the link's or the server's, and
+    /// clear up on their own.
+    public static func countsTowardDemotion(_ error: Error) -> Bool {
+        guard let paiError = error as? PaiError else { return false }
+        if case .decoding = paiError { return true }
+        return paiError.isPermanentRejection
     }
 }

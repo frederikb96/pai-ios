@@ -11,7 +11,9 @@ public enum BatchBackfiller {
         /// distinction `VoiceBatchTranscriber.Result.noSpeechDetected` already draws. The caller
         /// still needs to mark the gap as attempted, or a silent stretch would be retried forever.
         case noSpeechDetected
-        case failed(String)
+        /// `countsTowardDemotion` is ``BackfillPlanner/countsTowardDemotion(_:)``'s verdict: a
+        /// stretch the device cannot even read back always counts.
+        case failed(String, countsTowardDemotion: Bool)
     }
 
     /// `transcribe` is the batch-transcribe closure's shape — bytes in at offset
@@ -27,9 +29,11 @@ public enum BatchBackfiller {
         do {
             pcm = try await audioReader.readSamples(id: takeId, range: byteRange)
         } catch {
-            return .failed("\(error)")
+            return .failed("\(error)", countsTowardDemotion: true)
         }
-        guard !pcm.isEmpty else { return .failed("no audio available for the requested range") }
+        guard !pcm.isEmpty else {
+            return .failed("no audio available for the requested range", countsTowardDemotion: true)
+        }
 
         let samples = PcmWavWriter.samples(fromPCM16LE: pcm)
         let wav = PcmWavWriter.wrap(pcm16le: samples, sampleRate: sampleRate)
@@ -38,7 +42,7 @@ public enum BatchBackfiller {
         do {
             result = try await transcribe(wav)
         } catch {
-            return .failed("\(error)")
+            return .failed("\(error)", countsTowardDemotion: BackfillPlanner.countsTowardDemotion(error))
         }
         guard !result.text.isEmpty else { return .noSpeechDetected }
 

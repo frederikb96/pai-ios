@@ -139,21 +139,44 @@ final class SilenceGateTests: XCTestCase {
         XCTAssertEqual(run.sent.last?.endOffset, 160_000)
     }
 
-    /// V8 — once acks reach where withholding began, every captured frame older than the
-    /// pre-roll ring counts as accounted for; the ring itself is still to be sent on resume, so
-    /// it is never claimed. Before the ack reaches the start, the watermark is left alone.
-    func testV8WithheldAudioIsAccountedOnceTheAckReachesTheStart() {
+    /// V8 — while withholding, every captured frame older than the pre-roll ring is settled;
+    /// the ring itself is still to be sent on resume, so it is never claimed.
+    func testV8WithheldAudioIsSettledUpToThePrerollRing() {
         var run = Run()
         run.feed(db: -40, count: 30)
         run.feed(db: -75, count: 50)
         run.feed(db: -75, count: 3)
-        XCTAssertEqual(run.gate.accountedWatermark(acked: 120_000, capturedUpTo: run.offset), 120_000)
-        XCTAssertEqual(run.gate.accountedWatermark(acked: 128_000, capturedUpTo: run.offset), 128_000)
+        XCTAssertEqual(run.gate.openWithheldRange, 128_000..<128_000)
 
         // Twenty withheld frames: the ring keeps the last ten, so only what precedes them is settled.
         run.feed(db: -75, count: 17)
         XCTAssertEqual(run.offset, 160_000)
-        XCTAssertEqual(run.gate.accountedWatermark(acked: 128_000, capturedUpTo: run.offset), 144_000)
+        XCTAssertEqual(run.gate.openWithheldRange, 128_000..<144_000)
+        XCTAssertEqual(run.gate.heldBackFrom, 144_000)
+    }
+
+    /// The take's seal reports every withheld stretch, however it ended: speech resuming (up to
+    /// the first pre-roll frame sent), a reconnect resetting the gate (up to what was captured,
+    /// since the dropped ring never goes up), and a silent stop.
+    func testEveryWithheldStretchIsRecordedForTheSeal() {
+        var run = Run()
+        run.feed(db: -40, count: 30)
+        run.feed(db: -75, count: 70)
+        run.feed(db: -40, count: 2)
+        XCTAssertFalse(run.gate.isWithholding)
+        XCTAssertEqual(run.gate.withheldRanges, [128_000..<145_600], "up to the first pre-roll frame that went up")
+
+        run.feed(db: -75, count: 60)
+        XCTAssertTrue(run.gate.isWithholding)
+        run.gate.reset()
+        XCTAssertEqual(run.gate.withheldRanges.last, 243_200..<259_200)
+        _ = run.gate.setAllowed(true)
+
+        run.feed(db: -40, count: 30)
+        run.feed(db: -75, count: 60)
+        XCTAssertTrue(run.gate.stopFlush().isEmpty)
+        XCTAssertEqual(run.gate.withheldRanges.count, 3)
+        XCTAssertEqual(run.gate.withheldRanges.last?.upperBound, run.offset)
     }
 
     /// Stop while withholding with nothing above open in the ring: nothing is sent.

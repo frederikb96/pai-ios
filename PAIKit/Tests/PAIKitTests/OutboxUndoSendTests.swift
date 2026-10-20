@@ -69,7 +69,7 @@ private final class ScriptedApi: OutboxSending, OutboxWithdrawing, @unchecked Se
     func postMessage(
         sessionId: String?, message: String, clientMessageId: String, files: [PaiFileUpload],
         draftAttachmentIds: [String], sessionType: String?, workingDir: String?, agent: String?, model: String?,
-        thinking: String?, clientMode: String?
+        thinking: String?, clientMode: String?, heldTake: HeldTake?
     ) async throws -> PostMessageResponse {
         let (gate, fails) = lock.withLock { () -> (Rendezvous?, Bool) in
             _postedIds.append(clientMessageId)

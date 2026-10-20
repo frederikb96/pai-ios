@@ -80,16 +80,21 @@ public enum VoiceUpFrame: Sendable, Equatable {
     /// launcher's own call tiles and a composer's "Call this session" send. Only ever read on a
     /// FRESH bus: a reconnect keeps whatever engine it already had, so sending it again on every
     /// hello costs nothing and keeps it a property of the session rather than of one connect.
+    ///
+    /// `sttMode` and `standalone` describe a take: `standalone` is a recording with no draft,
+    /// which never routes to Computer; `sttMode` `nil` means live.
     case hello(
         transport: String, caps: VoiceSocketCapabilities, auth: String, resumeToken: String?,
-        draftKey: String?, connectSession: String? = nil, device: VoiceDeviceInfo? = nil
+        draftKey: String?, connectSession: String? = nil, device: VoiceDeviceInfo? = nil,
+        sttMode: VoiceSttMode? = nil, standalone: Bool = false
     )
-    /// `takeId` is the client-minted identity of the take this `open: true` starts — present only
-    /// for a take dictating into a draft (`docs/VOICE_PROTOCOL.md` "Addressing a take"), carried
-    /// through unchanged so a later backfill, or a `PUT /api/drafts/{key}/takes/{take_id}`
-    /// recovering a long outage, addresses the exact same draft region rather than opening a new
-    /// one. `nil` on `open: false` and on any gate this take's own identity does not apply to.
-    case gate(open: Bool, reason: String, takeId: String? = nil)
+    /// `takeId` is the client-minted identity of the take (`docs/VOICE_PROTOCOL.md` "Addressing a
+    /// take"), re-sent on every open of the same take and on its close. The close is also the
+    /// take's seal: `capturedSamples` is how many samples the take holds in all, `withheld` every
+    /// stretch the silence gate held back.
+    case gate(
+        open: Bool, reason: String, takeId: String? = nil, capturedSamples: Int? = nil,
+        withheld: [SampleRange]? = nil)
     case played(ref: Int)
     /// From `atSample` on, this client is withholding audio below its level gate; the take
     /// continues, and the next audio frame is the resume. Sent only while the backend last said
@@ -107,7 +112,7 @@ public enum VoiceUpFrame: Sendable, Equatable {
     func encoded() throws -> String {
         var object: [String: Any] = ["type": type]
         switch self {
-        case let .hello(transport, caps, auth, resumeToken, draftKey, connectSession, device):
+        case let .hello(transport, caps, auth, resumeToken, draftKey, connectSession, device, sttMode, standalone):
             object["transport"] = transport
             object["caps"] = caps.jsonObject
             object["auth"] = auth
@@ -115,10 +120,14 @@ public enum VoiceUpFrame: Sendable, Equatable {
             if let draftKey { object["draft_key"] = draftKey }
             if let connectSession { object["connect_session"] = connectSession }
             if let device { object["device"] = device.jsonObject }
-        case let .gate(open, reason, takeId):
+            if let sttMode { object["stt_mode"] = sttMode.wireValue }
+            if standalone { object["standalone"] = true }
+        case let .gate(open, reason, takeId, capturedSamples, withheld):
             object["open"] = open
             object["reason"] = reason
             if let takeId { object["take_id"] = takeId }
+            if let capturedSamples { object["captured_samples"] = capturedSamples }
+            if let withheld { object["withheld"] = withheld.map { [$0.lowerBound, $0.upperBound] } }
         case let .played(ref):
             object["ref"] = ref
         case let .silence(atSample):
@@ -186,6 +195,10 @@ public enum VoiceDownFrame: Sendable, Equatable {
     /// `ended` is one of `committed`, `recovered`, `empty`, `abandoned`, `unavailable` — the stop
     /// UX's own exit branches on this, never on inferring an outcome from a partial going quiet.
     case takeDone(takeId: String, finalSeq: Int, ended: String)
+    /// The take store's view of a take attached to this bus — the answer to a sealing gate close,
+    /// and pushed again on every later state change while the bus is attached. Everything in it
+    /// is also `GET /api/voice/takes/{take_id}`.
+    case takeState(takeId: String, state: VoiceTakeState, capturedSamples: Int?, missing: [SampleRange])
     /// A `type` this build does not recognize — logged and otherwise ignored, matching the
     /// protocol doc: "a client that does not recognise a code falls back to showing `text`
     /// plainly", generalized here to the whole frame so a backend release ahead of this app never
@@ -236,6 +249,15 @@ public enum VoiceDownFrame: Sendable, Equatable {
                 let ended = raw["ended"] as? String
             else { return nil }
             return .takeDone(takeId: takeId, finalSeq: finalSeq, ended: ended)
+        case "take_state":
+            guard let takeId = raw["take_id"] as? String, let state = raw["state"] as? String else { return nil }
+            let missing = (raw["missing"] as? [[Int]] ?? []).compactMap { pair -> SampleRange? in
+                guard pair.count == 2, pair[0] <= pair[1] else { return nil }
+                return pair[0]..<pair[1]
+            }
+            return .takeState(
+                takeId: takeId, state: VoiceTakeState.knownValues[state] ?? .unrecognized(state),
+                capturedSamples: raw["captured_samples"] as? Int, missing: missing)
         default:
             return .unrecognized(type: type)
         }

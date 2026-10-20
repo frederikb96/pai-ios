@@ -572,7 +572,8 @@ public struct PaiApiClient: Sendable {
         agent: String? = nil,
         model: String? = nil,
         thinking: String? = nil,
-        clientMode: String? = nil
+        clientMode: String? = nil,
+        heldTake: HeldTake? = nil
     ) async throws -> PostMessageResponse {
         let boundary = "PAIKit-\(UUID().uuidString)"
         var body = Data()
@@ -600,6 +601,12 @@ public struct PaiApiClient: Sendable {
         // spoken aloud.
         if let clientMode {
             Self.appendFormField(&body, boundary: boundary, name: "client_mode", value: clientMode)
+        }
+        // Send pressed while a take was still finishing: the server seals the take, holds the row
+        // and composes `before`, the take's text and `after` once the take is done.
+        if let heldTake {
+            let json = String(decoding: try JSONEncoder().encode(heldTake), as: UTF8.self)
+            Self.appendFormField(&body, boundary: boundary, name: "held_take", value: json)
         }
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 
@@ -1362,6 +1369,52 @@ public struct PaiApiClient: Sendable {
             contentType: "multipart/form-data; boundary=\(boundary)"
         )
         return response.text
+    }
+
+    /// `GET /api/voice/takes/{take_id}` — the server's record of a take; 404 while no gate open,
+    /// seal or held send has reached the server for it yet.
+    public func getVoiceTake(takeId: String) async throws -> VoiceTake {
+        try await send(path: "/api/voice/takes/\(takeId)")
+    }
+
+    /// Fixes the take's length, creating the take when the server has never heard of it.
+    /// Idempotent for the same `capturedSamples`; a different one on a sealed take is a 409.
+    public func sealVoiceTake(takeId: String, seal: VoiceTakeSeal) async throws -> VoiceTake {
+        try await send(path: "/api/voice/takes/\(takeId)/seal", method: "POST", body: try Self.jsonBody(seal))
+    }
+
+    /// Stores `wav` (exactly `range.count` samples) in the take at `range`. Idempotent by range,
+    /// so a failed upload is retried verbatim. No text comes back: the take's own `text`, once
+    /// `done`, is the only transcript.
+    public func uploadVoiceTakeAudio(
+        takeId: String, range: SampleRange, wav: Data, device: String? = nil
+    ) async throws -> VoiceTake {
+        let boundary = "PAIKit-\(UUID().uuidString)"
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append(
+            "Content-Disposition: form-data; name=\"audio\"; filename=\"take.wav\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: audio/wav\r\n\r\n".data(using: .utf8)!)
+        body.append(wav)
+        body.append("\r\n".data(using: .utf8)!)
+        Self.appendFormField(&body, boundary: boundary, name: "into_take", value: "true")
+        Self.appendFormField(&body, boundary: boundary, name: "start_sample", value: String(range.lowerBound))
+        Self.appendFormField(&body, boundary: boundary, name: "end_sample", value: String(range.upperBound))
+        if let device { Self.appendFormField(&body, boundary: boundary, name: "device", value: device) }
+        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        let response: VoiceTakeUploadResponse = try await send(
+            path: "/api/voice/takes/\(takeId)/audio",
+            method: "POST",
+            body: body,
+            contentType: "multipart/form-data; boundary=\(boundary)"
+        )
+        return response.take
+    }
+
+    /// Returns a `failed` take to `sealed` and re-enqueues its resolver; any other state comes
+    /// back unchanged.
+    public func retryVoiceTake(takeId: String) async throws -> VoiceTake {
+        try await send(path: "/api/voice/takes/\(takeId)/retry", method: "POST", body: Data("{}".utf8))
     }
 
     // MARK: Claude sign-in on the VM

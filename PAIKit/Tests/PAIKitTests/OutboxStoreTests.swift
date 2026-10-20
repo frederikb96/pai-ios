@@ -31,6 +31,13 @@ private final class FakeOutboxApi: OutboxSending, @unchecked Sendable {
         return _calls
     }
 
+    private var _heldTakes: [HeldTake?] = []
+    var heldTakes: [HeldTake?] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _heldTakes
+    }
+
     var gate: SendGate?
     /// Consecutive attempts left to fail with the given error before succeeding — keyed by
     /// nothing, since a test using this only ever drives one entry at a time.
@@ -46,6 +53,12 @@ private final class FakeOutboxApi: OutboxSending, @unchecked Sendable {
         lock.unlock()
     }
 
+    private func recordHeldTake(_ heldTake: HeldTake?) {
+        lock.lock()
+        _heldTakes.append(heldTake)
+        lock.unlock()
+    }
+
     private func consumeFailure() -> PaiError? {
         lock.lock()
         defer { lock.unlock() }
@@ -57,8 +70,9 @@ private final class FakeOutboxApi: OutboxSending, @unchecked Sendable {
     func postMessage(
         sessionId: String?, message: String, clientMessageId: String, files: [PaiFileUpload],
         draftAttachmentIds: [String], sessionType: String?, workingDir: String?, agent: String?, model: String?,
-        thinking: String?, clientMode: String?
+        thinking: String?, clientMode: String?, heldTake: HeldTake?
     ) async throws -> PostMessageResponse {
+        recordHeldTake(heldTake)
         record(
             (
                 clientMessageId: clientMessageId, sessionId: sessionId, message: message,
@@ -67,6 +81,13 @@ private final class FakeOutboxApi: OutboxSending, @unchecked Sendable {
         if let gate { await gate.wait() }
         if let error = consumeFailure() { throw error }
         return result
+    }
+}
+
+/// A short sleep rather than none, so a backoff still suspends (see `NewSessionFlowTests`).
+private struct BriefOutboxScheduler: DraftScheduler {
+    func sleep(seconds: TimeInterval) async throws {
+        try await Task.sleep(nanoseconds: 1_000_000)
     }
 }
 
@@ -286,6 +307,32 @@ final class OutboxStoreTests: XCTestCase {
 
         await waitUntil { store.entries.first?.state == .sent }
         XCTAssertEqual(sending.calls.first?.clientMessageId, entry.clientMessageId)
+    }
+
+    /// A send waiting on a take survives the app being killed before it left, on disk, and goes
+    /// out with the identical `held_take` on every attempt — the server composes the message
+    /// from those strings, so a retry that re-derived them from a composer edited since would
+    /// send something the person never saw.
+    func testAHeldSendSurvivesARelaunchAndCarriesTheSameTakeOnEveryAttempt() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("outbox-held-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let held = HeldTake(
+            takeId: "1760000000000", mode: .live, before: "fix the bug", after: "thanks", capturedSamples: 48_000,
+            withheld: [16_000..<32_000])
+        let entry = OutboxEntry(
+            target: .session(sessionId: "s1"), text: "fix the bug stt-rec: and add thanks", heldTake: held)
+        FileOutboxStorage(rootURL: root).saveEntries([entry])
+
+        let sending = FakeOutboxApi()
+        sending.failuresRemaining = 1
+        sending.failureToThrow = .http(statusCode: 502, reason: "Bad Gateway")
+        let store = OutboxStore(
+            api: sending, storage: FileOutboxStorage(rootURL: root), scheduler: BriefOutboxScheduler())
+
+        await waitUntil { sending.calls.count == 2 }
+        XCTAssertEqual(sending.heldTakes, [held, held])
+        XCTAssertEqual(Set(sending.calls.map(\.clientMessageId)), [entry.clientMessageId])
+        _ = store
     }
 
     // MARK: - retryNow()

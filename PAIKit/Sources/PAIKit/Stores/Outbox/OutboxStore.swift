@@ -7,7 +7,7 @@ public protocol OutboxSending: Sendable {
     func postMessage(
         sessionId: String?, message: String, clientMessageId: String, files: [PaiFileUpload],
         draftAttachmentIds: [String], sessionType: String?, workingDir: String?, agent: String?, model: String?,
-        thinking: String?, clientMode: String?
+        thinking: String?, clientMode: String?, heldTake: HeldTake?
     ) async throws -> PostMessageResponse
 }
 
@@ -327,7 +327,7 @@ public final class OutboxStore {
                 sessionId: entry.target.sessionId, message: entry.text, clientMessageId: entry.clientMessageId,
                 files: files, draftAttachmentIds: entry.draftAttachmentIds, sessionType: entry.target.sessionType,
                 workingDir: entry.target.workingDir, agent: entry.target.agent, model: entry.target.model,
-                thinking: entry.target.thinking, clientMode: entry.clientMode
+                thinking: entry.target.thinking, clientMode: entry.clientMode, heldTake: entry.heldTake
             )
             guard let current = entries.firstIndex(where: { $0.id == entry.id }) else { return }
             if response.withdrawn {

@@ -156,6 +156,9 @@ struct ComposerBar: View {
                 if voiceController.state.showsMicrophoneLevel {
                     VoiceVolumeOverlay(controller: voiceController)
                 }
+            } else if voiceController.isTranscribingBatch(draftKey: sessionID) {
+                BatchTranscribingLine()
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if let voiceFailureMessage = voiceFailureMessage(controller: voiceController) {
@@ -221,14 +224,20 @@ struct ComposerBar: View {
                 VoiceRecorderButton(
                     controller: voiceController,
                     isMine: voiceController.state == .idle || isRecordingHere(voiceController),
-                    canStartOverride: micButtonCanStartOverride(voiceController)
+                    canStartOverride: micButtonCanStartOverride(voiceController),
+                    onStart: { sttMode in
+                        Task {
+                            await toggleRecording(
+                                draftStore: draftStore, voiceController: voiceController, sttMode: sttMode)
+                        }
+                    }
                 ) {
                     Task { await toggleRecording(draftStore: draftStore, voiceController: voiceController) }
                 }
 
                 // Mute holds the slot while a take is actively recording; Finishing gives it back
-                // to Send, since that is exactly when pressing it means something (abandon and
-                // send what has arrived so far) — the stop-recording design's own rule.
+                // to Send, since that is exactly when pressing it means something: the message
+                // goes now and waits on the server for the take's last words.
                 if isRecordingHere(voiceController), voiceController.state != .stopping {
                     MuteButton(controller: voiceController) { voiceController.toggleMute() }
                 } else {
@@ -255,7 +264,7 @@ struct ComposerBar: View {
         // looking at — the same escape a tap or typing gives the user while they are still looking.
         .onDisappear {
             guard isRecordingHere(voiceController), voiceController.state == .stopping else { return }
-            Task { await voiceController.abandonCurrentTake() }
+            voiceController.stopWaiting()
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -319,11 +328,10 @@ struct ComposerBar: View {
                 // Only `ComposerTextEditor` reaches this setter — the live take writes its own
                 // words straight through `DraftStore` without going through this binding at all —
                 // so landing here IS the user typing, unambiguously. Typed straight into a Finishing
-                // composer means the same thing tapping the button now does: stop waiting on it,
-                // since the next arriving segment would otherwise heal right back over what the user
-                // just typed.
+                // composer means the same thing tapping the button now does: stop waiting on it.
+                // The take's final words still come back, in place of its partial ones.
                 if isRecordingHere(voiceController), voiceController.state == .stopping {
-                    Task { await voiceController.abandonCurrentTake() }
+                    voiceController.stopWaiting()
                 }
             }
         )
@@ -398,16 +406,15 @@ struct ComposerBar: View {
         }
     }
 
-    private func toggleRecording(draftStore: DraftStore, voiceController: VoiceRecorderController) async {
+    private func toggleRecording(
+        draftStore: DraftStore, voiceController: VoiceRecorderController, sttMode: VoiceSttMode = .live
+    ) async {
         if isRecordingHere(voiceController) {
             // A tap during Finishing means "stop waiting" rather than "start a second stop" —
-            // `stop()`'s own wait is already running by the time the button reads `.stopping`, and
-            // `abandonCurrentTake()` is what tells that wait to give up immediately instead of
-            // sitting out `take_done` or the deadline. Every other mid-take state ends through the
-            // ordinary `stop()`, which `VoiceUplinkSession.stop` accepts from all of them — the
-            // text itself is already in the draft by then either way.
+            // `stop()`'s own wait is already running by the time the button reads `.stopping`.
+            // Every other mid-take state ends through the ordinary `stop()`.
             if voiceController.state == .stopping {
-                await voiceController.abandonCurrentTake()
+                voiceController.stopWaiting()
                 return
             }
             await voiceController.stop()
@@ -423,14 +430,18 @@ struct ComposerBar: View {
         case .startOnly, .alreadyHere:
             break
         }
-        await voiceController.start(draftKey: sessionID, preText: draftStore.draft(for: sessionID).text)
+        await voiceController.start(
+            draftKey: sessionID, preText: draftStore.draft(for: sessionID).text, sttMode: sttMode)
     }
 
     // MARK: - Send
 
+    /// Enabled with nothing typed while a take of this composer is still on its way: the send
+    /// then waits on the server for the take's words.
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !stagedAttachments.isEmpty
             || !drafts.draft(for: sessionID).attachments.isEmpty
+            || (environment.connection?.voice.sendWaitsOnTake(draftKey: sessionID) ?? false)
     }
 
     private func send(draftStore: DraftStore, voiceController: VoiceRecorderController) {
@@ -438,27 +449,30 @@ struct ComposerBar: View {
         isSending = true
         sendErrorMessage = nil
         let isRecordingHereNow = isRecordingHere(voiceController)
-        // Finishing (the drain between pressing stop and the take actually completing) is the
-        // ordinary way Send is reachable while a take still exists — the send button's own slot
-        // shows Mute for every other non-idle state, so this is what the button press actually
-        // hits. The wire contract's own rule: seal it, tell the server to abandon rather than
-        // wait, and send whatever the box already shows. The `else` below is a defensive fallback
-        // for any OTHER caller of this function while genuinely still `.recording` — none exists
-        // today — which takes the graceful path instead: stop and let the take's own tail land
-        // before reading the text.
-        let isFinishing = isRecordingHereNow && voiceController.state == .stopping
+        let waitsOnTake = voiceController.sendWaitsOnTake(draftKey: sessionID)
+        let clientMessageId = UUID().uuidString
 
         Task {
-            if isFinishing {
-                await voiceController.abandonCurrentTake()
+            // Send while this composer's take is finishing or transcribing goes now and waits on
+            // the server for the take's last words: the take is never abandoned. The only other
+            // way here with a take still running is a defensive one — stop, and send what landed.
+            var held: VoiceRecorderController.HeldSend?
+            if waitsOnTake {
+                held = await voiceController.holdTakeForSend(draftKey: sessionID, clientMessageId: clientMessageId)
             } else if isRecordingHereNow {
                 await voiceController.stop()
                 await draftStore.syncFromServer()
             }
 
-            let messageText = draftStore.draft(for: sessionID).text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let messageText =
+                held?.message ?? draftStore.draft(for: sessionID).text.trimmingCharacters(in: .whitespacesAndNewlines)
             let attachmentsSnapshot = stagedAttachments
             let uploadedAttachmentIds = draftStore.draft(for: sessionID).attachments.map(\.id)
+            guard held != nil || !messageText.isEmpty || !attachmentsSnapshot.isEmpty || !uploadedAttachmentIds.isEmpty
+            else {
+                isSending = false
+                return
+            }
             // An attachment already uploaded onto this draft is claimed explicitly by id — never
             // "whatever the draft happens to hold" — so a photo staged for the *next* message
             // while this one is still queued is never swept into it. Only what never made it to
@@ -476,8 +490,8 @@ struct ComposerBar: View {
             let inlineFileData = Dictionary(
                 uniqueKeysWithValues: zip(inlineFiles.map(\.localId), inlineAttachments.map(\.data)))
             let entry = OutboxEntry(
-                target: .session(sessionId: sessionID), text: messageText, draftAttachmentIds: uploadedAttachmentIds,
-                inlineFiles: inlineFiles)
+                clientMessageId: clientMessageId, target: .session(sessionId: sessionID), text: messageText,
+                draftAttachmentIds: uploadedAttachmentIds, inlineFiles: inlineFiles, heldTake: held?.heldTake)
 
             // Cleared before the request even leaves — the whole point of the outbox is that the
             // bubble it drives (`OutboxBubbleStack`) exists, and survives a kill, before any

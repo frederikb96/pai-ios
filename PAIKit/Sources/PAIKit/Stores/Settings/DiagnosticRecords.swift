@@ -125,13 +125,17 @@ public struct RecordingMeta: Codable, Sendable, Equatable, Identifiable {
     /// the standalone recording: no session, no uplink. Nothing here ever produces `.call`, which
     /// lives entirely server-side.
     public let mode: VoiceMode?
+    /// Live or batch, as the take was started; `nil` on a recording from before the choice
+    /// existed, which was live unless it is standalone.
+    public let sttMode: VoiceSttMode?
 
     public init(
         timestampMs: Double, durationMs: Double, sampleRate: Double? = nil, mic: MicDiagnostics? = nil,
         endedBy: RecordingEndReason? = nil, transcript: String? = nil,
         transcriptSource: RecordingTranscriptSource? = nil, transcriptComplete: Bool? = nil,
         levels: LevelStats? = nil, narrowband: Bool? = nil, mutedMs: Double? = nil,
-        transcription: TranscriptionMeta? = nil, name: String? = nil, mode: VoiceMode? = nil
+        transcription: TranscriptionMeta? = nil, name: String? = nil, mode: VoiceMode? = nil,
+        sttMode: VoiceSttMode? = nil
     ) {
         self.timestampMs = timestampMs
         self.durationMs = durationMs
@@ -147,6 +151,7 @@ public struct RecordingMeta: Codable, Sendable, Equatable, Identifiable {
         self.transcription = transcription
         self.name = name
         self.mode = mode
+        self.sttMode = sttMode
     }
 
     public init(from decoder: Decoder) throws {
@@ -165,6 +170,7 @@ public struct RecordingMeta: Codable, Sendable, Equatable, Identifiable {
         transcription = try? container.decodeIfPresent(TranscriptionMeta.self, forKey: .transcription)
         name = try? container.decodeIfPresent(String.self, forKey: .name)
         mode = try? container.decodeIfPresent(VoiceMode.self, forKey: .mode)
+        sttMode = try? container.decodeIfPresent(VoiceSttMode.self, forKey: .sttMode)
     }
 
     /// A copy with the transcript fields replaced — what a re-transcribe, a backfill heal and
@@ -178,7 +184,7 @@ public struct RecordingMeta: Codable, Sendable, Equatable, Identifiable {
             timestampMs: timestampMs, durationMs: durationMs, sampleRate: sampleRate, mic: mic, endedBy: endedBy,
             transcript: transcript, transcriptSource: source, transcriptComplete: complete, levels: levels,
             narrowband: narrowband, mutedMs: mutedMs, transcription: transcription ?? self.transcription, name: name,
-            mode: mode
+            mode: mode, sttMode: sttMode
         )
     }
 }

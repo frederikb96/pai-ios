@@ -44,11 +44,24 @@ public struct PendingSend: Codable, Sendable, Equatable, Identifiable {
     /// The outgoing row's id, echoed by the entry that eventually confirms it — see
     /// `Message.outboxId`.
     public let id: Int
+    /// While ``held``, the text the composer showed at Send; once released, the composed text
+    /// that is relayed.
     public let text: String
+    /// Waiting on a voice take's transcript before it may be relayed. Absent means `false`.
+    public let held: Bool?
+    /// The take the row waits on or was released from; `nil` for an ordinary send.
+    public let takeId: String?
 
-    public init(id: Int, text: String) {
+    enum CodingKeys: String, CodingKey {
+        case id, text, held
+        case takeId = "take_id"
+    }
+
+    public init(id: Int, text: String, held: Bool? = nil, takeId: String? = nil) {
         self.id = id
         self.text = text
+        self.held = held
+        self.takeId = takeId
     }
 }
 

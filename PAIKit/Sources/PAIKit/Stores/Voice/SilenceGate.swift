@@ -85,6 +85,12 @@ public struct SilenceGate: Sendable {
     /// The end offset of the last frame sent before withholding began — the `silence` frame's
     /// `at_sample`.
     public private(set) var withheldFrom: Int?
+    /// Every finished withheld stretch of the take, from where withholding began to the first
+    /// sample that went up again — or, when nothing did, to the end of what was captured. Kept
+    /// across `reset()`, since the gate lives exactly one take: this is what the take's seal
+    /// reports as `withheld`, including stretches whose `silence` frame the server never saw.
+    public private(set) var withheldRanges: [SampleRange] = []
+    private var capturedEnd = 0
 
     private var floorHistory: [(levelDb: Double, durationMs: Double)] = []
     private var quietMs = 0.0
@@ -111,6 +117,7 @@ public struct SilenceGate: Sendable {
     /// input route change — a different microphone has a different floor. Whatever the ring held
     /// is dropped; it was already accounted for locally and never needs sending.
     public mutating func reset() {
+        closeWithheld(at: capturedEnd)
         isWithholding = false
         withheldFrom = nil
         floorHistory = []
@@ -129,6 +136,7 @@ public struct SilenceGate: Sendable {
 
     public mutating func push(offset: Int, samples: [Int16]) -> Output {
         let frame = Frame(offset: offset, samples: samples)
+        capturedEnd = max(capturedEnd, frame.endOffset)
         recordFloor(frame)
         let thresholds = currentThresholds()
 
@@ -160,23 +168,35 @@ public struct SilenceGate: Sendable {
         guard isWithholding else { return [] }
         let open = currentThresholds().open
         let flushed = ring.contains { $0.levelDb >= open } ? ring : []
+        if let first = flushed.first { closeWithheld(at: first.offset) }
         reset()
         return flushed
     }
 
-    /// The ack watermark to keep while withheld audio counts as accounted for: once everything up
-    /// to where withholding began has been acknowledged, every frame captured since is settled
-    /// too — recorded locally, deliberately never sent, never to be backfilled — except the
-    /// frames still in the pre-roll ring, which go up on resume and so are not settled until the
-    /// backend acknowledges them.
-    public func accountedWatermark(acked: Int, capturedUpTo: Int) -> Int {
-        guard isWithholding, let withheldFrom, acked >= withheldFrom else { return acked }
-        return max(acked, min(capturedUpTo, ring.first?.offset ?? capturedUpTo))
+    /// The stretch being withheld right now, up to the pre-roll the ring still holds — settled
+    /// audio, never sent and never owed. `nil` while streaming.
+    public var openWithheldRange: SampleRange? {
+        guard isWithholding, let withheldFrom else { return nil }
+        let end = max(withheldFrom, ring.first?.offset ?? capturedEnd)
+        return withheldFrom..<end
+    }
+
+    /// Where the pre-roll ring starts while withholding: audio from here on may still go up live,
+    /// so nothing past it is owed over another route yet.
+    public var heldBackFrom: Int? {
+        isWithholding ? (ring.first?.offset ?? capturedEnd) : nil
     }
 
     // MARK: - Internals
 
+    private mutating func closeWithheld(at end: Int) {
+        guard let withheldFrom else { return }
+        if withheldFrom < end { withheldRanges.append(withheldFrom..<end) }
+        self.withheldFrom = nil
+    }
+
     private mutating func resume() -> [Frame] {
+        closeWithheld(at: ring.first?.offset ?? capturedEnd)
         let flushed = ring
         isWithholding = false
         withheldFrom = nil

@@ -538,6 +538,52 @@ final class PaiApiClientTests: XCTestCase {
         XCTAssertFalse(body.contains("name=\"client_mode\""), body)
     }
 
+    /// A held send carries its take as one JSON form field with the contract's key names; the
+    /// server composes the message from it, so a renamed key is a message sent without its words.
+    func testPostMessageCarriesTheHeldTakeAsJSONOnlyWhenOneIsGiven() async throws {
+        stubJSON(#"{"session_id":"s1","message_id":9,"held":true,"take_state":"sealed"}"#)
+        let client = try makeClient()
+        let held = HeldTake(
+            takeId: "1760000000000", mode: .batch, before: "fix it", after: "", capturedSamples: 32_000,
+            withheld: [0..<16_000])
+
+        let response = try await client.postMessage(sessionId: "s1", message: "fix it", heldTake: held)
+        XCTAssertEqual(response.held, true)
+        XCTAssertEqual(response.takeState, .sealed)
+        let body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
+        let marker = "name=\"held_take\"\r\n\r\n"
+        let start = try XCTUnwrap(body.range(of: marker), body).upperBound
+        let json = String(body[start...]).components(separatedBy: "\r\n")[0]
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        XCTAssertEqual(object["take_id"] as? String, "1760000000000")
+        XCTAssertEqual(object["mode"] as? String, "batch")
+        XCTAssertEqual(object["before"] as? String, "fix it")
+        XCTAssertEqual(object["after"] as? String, "")
+        XCTAssertEqual(object["captured_samples"] as? Int, 32_000)
+        XCTAssertEqual(object["withheld"] as? [[Int]], [[0, 16_000]])
+
+        _ = try await client.postMessage(sessionId: "s1", message: "hello")
+        let plain = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertFalse(plain.contains("held_take"), plain)
+    }
+
+    /// An upload into a take names the take and the range it fills; without `into_take` the
+    /// server transcribes and stores nothing.
+    func testUploadIntoATakeSendsTheRangeAndReadsTheTakeBack() async throws {
+        stubJSON(
+            #"{"take":{"take_id":"t1","mode":"live","state":"sealed","draft_key":"s1","standalone_name":null,"device":null,"captured_samples":32000,"received":[[0,32000]],"withheld":[],"missing":[],"text":null,"ended":null,"held_message":null,"failure":null,"created_at":"2026-10-20T10:00:00.123456+00:00","sealed_at":"2026-10-20T10:01:00.123456+00:00","done_at":null}}"#
+        )
+        let client = try makeClient()
+        let take = try await client.uploadVoiceTakeAudio(takeId: "t1", range: 16_000..<32_000, wav: Data([1, 2]))
+        XCTAssertEqual(take.received, [0..<32_000])
+        XCTAssertEqual(take.state, .sealed)
+        XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.url?.path, "/api/voice/takes/t1/audio")
+        let body = String(decoding: PaiStubURLProtocol.capturedBody ?? Data(), as: UTF8.self)
+        XCTAssertTrue(body.contains("name=\"into_take\"\r\n\r\ntrue"), body)
+        XCTAssertTrue(body.contains("name=\"start_sample\"\r\n\r\n16000"), body)
+        XCTAssertTrue(body.contains("name=\"end_sample\"\r\n\r\n32000"), body)
+    }
+
     /// The regression this guards: `.urlPathAllowed` alone leaves `/` untouched (it is a legal
     /// *path* character), so a slash inside a draft key was previously carried straight through
     /// into a second path segment instead of staying part of the key.

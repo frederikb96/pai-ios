@@ -639,6 +639,12 @@ public struct PostMessageResponse: Codable, Sendable, Equatable {
     /// With ``withdrawn``: the server's own draft already holds this text (a row withdrawn after
     /// it arrived). `false` means the sender holds the only copy and must put it back itself.
     public let textInDraft: Bool
+    /// The send named a take (`held_take`) that was not yet `done`: the row is held and relays
+    /// once the transcript exists. `false` when the take was already done and the send was
+    /// composed at once; `nil` without `held_take`.
+    public let held: Bool?
+    /// With `held_take`: the state of the take at the time of the answer.
+    public let takeState: VoiceTakeState?
 
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
@@ -647,11 +653,13 @@ public struct PostMessageResponse: Codable, Sendable, Equatable {
         case draftVersion = "draft_version"
         case withdrawn
         case textInDraft = "text_in_draft"
+        case held
+        case takeState = "take_state"
     }
 
     public init(
         sessionId: String, messageId: Int, duplicate: Bool = false, draftVersion: Int? = nil,
-        withdrawn: Bool = false, textInDraft: Bool = false
+        withdrawn: Bool = false, textInDraft: Bool = false, held: Bool? = nil, takeState: VoiceTakeState? = nil
     ) {
         self.sessionId = sessionId
         self.messageId = messageId
@@ -659,6 +667,8 @@ public struct PostMessageResponse: Codable, Sendable, Equatable {
         self.draftVersion = draftVersion
         self.withdrawn = withdrawn
         self.textInDraft = textInDraft
+        self.held = held
+        self.takeState = takeState
     }
 
     /// A hand-written `init` rather than the synthesized one: `duplicate` defaults to `false`
@@ -672,6 +682,8 @@ public struct PostMessageResponse: Codable, Sendable, Equatable {
         draftVersion = try container.decodeIfPresent(Int.self, forKey: .draftVersion)
         withdrawn = try container.decodeIfPresent(Bool.self, forKey: .withdrawn) ?? false
         textInDraft = try container.decodeIfPresent(Bool.self, forKey: .textInDraft) ?? false
+        held = try container.decodeIfPresent(Bool.self, forKey: .held)
+        takeState = try container.decodeIfPresent(VoiceTakeState.self, forKey: .takeState)
     }
 }
 
@@ -682,17 +694,24 @@ public struct WithdrawnSend: Codable, Sendable, Equatable {
     public let text: String
     /// Ties the row back to the caller's own entry; `nil` for a row some other client sent.
     public let clientMessageId: String?
+    /// See ``PendingSend/held``: a held row is withdrawn with the text the composer showed.
+    public let held: Bool?
+    public let takeId: String?
 
     enum CodingKeys: String, CodingKey {
         case id
         case text
         case clientMessageId = "client_message_id"
+        case held
+        case takeId = "take_id"
     }
 
-    public init(id: Int, text: String, clientMessageId: String? = nil) {
+    public init(id: Int, text: String, clientMessageId: String? = nil, held: Bool? = nil, takeId: String? = nil) {
         self.id = id
         self.text = text
         self.clientMessageId = clientMessageId
+        self.held = held
+        self.takeId = takeId
     }
 }
 

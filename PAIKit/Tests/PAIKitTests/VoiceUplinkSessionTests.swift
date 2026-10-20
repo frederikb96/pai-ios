@@ -129,7 +129,7 @@ final class VoiceUplinkSessionTests: XCTestCase {
 
         await waitUntil { await transport.sentFrames.count >= 2 }
         let frames = await transport.sentFrames
-        guard case .gate(let open, let reason, let takeId) = frames.last else {
+        guard case .gate(let open, let reason, let takeId, _, _) = frames.last else {
             return XCTFail("expected a gate frame, got \(String(describing: frames.last))")
         }
         XCTAssertTrue(open)
@@ -167,7 +167,7 @@ final class VoiceUplinkSessionTests: XCTestCase {
         await waitUntil { await transport.sentFrames.count >= 3 }
 
         let frames = await transport.sentFrames
-        guard case .gate(_, _, let secondTakeId) = frames.last else {
+        guard case .gate(_, _, let secondTakeId, _, _) = frames.last else {
             return XCTFail("expected a second gate frame, got \(String(describing: frames.last))")
         }
         XCTAssertEqual(secondTakeId, "take-1", "a reopen within the same take must still carry its own id")
@@ -179,9 +179,10 @@ final class VoiceUplinkSessionTests: XCTestCase {
     // MARK: - Silence gate accounting
 
     /// A stop that drops the kept pre-roll as silence settles it too: the ring will never be
-    /// sent, so leaving it below the ack watermark would hand a second of silence to the backfill
-    /// at every stop. While withholding, the ring is claimed only after that.
-    func testASilentStopAccountsForThePreRollItDrops() async {
+    /// sent, so leaving it unsettled would hand a second of silence to the upload at every stop.
+    /// While withholding, the ring is claimed only after that. The closing gate is the seal: it
+    /// states the take's length and the withheld stretch, so the server never asks for it.
+    func testASilentStopSettlesThePreRollAndSealsTheWithheldStretch() async {
         let transport = FakeVoiceSocketTransport()
         let session = VoiceUplinkSession(
             dependencies: VoiceUplinkDependencies(
@@ -197,7 +198,6 @@ final class VoiceUplinkSessionTests: XCTestCase {
                     resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: true))
         )
         await waitUntil { await transport.sentFrames.count >= 2 }
-
         func samples(amplitude: Int16) -> [Int16] {
             (0..<1600).map { $0.isMultiple(of: 2) ? amplitude : -amplitude }
         }
@@ -208,12 +208,20 @@ final class VoiceUplinkSessionTests: XCTestCase {
         }
         XCTAssertEqual(session.capturedUpTo, 160_000)
         await transport.enqueue(.control(.ack(throughSeq: 79)))
-        await waitUntil { session.ackedUpTo >= 128_000 }
-        XCTAssertLessThan(
-            session.ackedUpTo, 160_000, "the ring is still to be sent, so it is not claimed while withholding")
+        await waitUntil { session.acknowledgedRanges.first?.lowerBound == 0 }
+        XCTAssertEqual(
+            session.acknowledgedRanges, [0..<144_000],
+            "the ring is still to be sent, so it is not claimed while withholding")
 
         await stopAfterTakeDone(session, transport: transport, takeId: "take-1")
-        XCTAssertEqual(session.ackedUpTo, 160_000)
+        XCTAssertEqual(session.acknowledgedRanges, [0..<160_000])
+        let seals = await transport.sentFrames.compactMap { frame -> (Int?, [SampleRange]?)? in
+            guard case let .gate(false, _, _, captured, withheld) = frame else { return nil }
+            return (captured, withheld)
+        }
+        XCTAssertEqual(seals.count, 1)
+        XCTAssertEqual(seals.first?.0, 160_000)
+        XCTAssertEqual(seals.first?.1, [128_000..<160_000])
         _ = await startTask.value
     }
 
@@ -252,13 +260,11 @@ final class VoiceUplinkSessionTests: XCTestCase {
         _ = await startTask.value
     }
 
-    /// `end_sample` restarts near zero on every fresh bus, the same way `seq` does (see
-    /// `testASecondGateOpenWithinTheSameTakeRepeatsTheTakeId`'s sibling `testSeqRestartsAtZero…`
-    /// above) — so a reconnect must offset it by a gate base before comparing it to anything
-    /// committed on the bus before it, or a batch recovered after the reconnect sorts ahead of
-    /// speech that came first. Two frames delivered out of arrival order, after the offset, must
-    /// still assemble in spoken order.
-    func testEndSampleIsOffsetByTheGateBaseAcrossAReconnectSoSegmentsSortInSpokenOrder() async {
+    /// Positions are take-absolute across a fresh bus: the server's `end_sample` continues the
+    /// take's own numbering, so it is used exactly as it arrives. A segment that lands after the
+    /// reconnect for a stretch spoken before it — a resolver's piece — still sorts in spoken order,
+    /// which shifting it by any per-bus base would break.
+    func testEndSampleIsTakeAbsoluteAcrossAFreshBus() async {
         let transport = FakeVoiceSocketTransport()
         let session = makeSession(transport: transport)
         let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
@@ -273,8 +279,6 @@ final class VoiceUplinkSessionTests: XCTestCase {
             .control(.transcript(takeId: "take-1", seq: 0, isFinal: true, text: "hello", endSample: 16_000)))
         await waitUntil { await session.committedText == "hello" }
 
-        // A fresh bus past the resume grace window: `resumed: false` again, and its own
-        // `end_sample` numbering starts back near zero.
         await transport.enqueue(
             .control(
                 .ready(
@@ -282,26 +286,24 @@ final class VoiceUplinkSessionTests: XCTestCase {
         )
         await waitUntil { await transport.sentFrames.count >= 3 }
 
-        // Delivered out of temporal order: "world" (the later utterance, the larger end_sample on
-        // the new bus) arrives before "there" (the earlier one) sends its own frame.
         await transport.enqueue(
-            .control(.transcript(takeId: "take-1", seq: 0, isFinal: true, text: "world", endSample: 16_000)))
+            .control(.transcript(takeId: "take-1", seq: 0, isFinal: true, text: "world", endSample: 40_000)))
         await waitUntil { await session.committedText == "hello world" }
-
         await transport.enqueue(
-            .control(.transcript(takeId: "take-1", seq: 1, isFinal: true, text: "there", endSample: 8_000)))
-        await waitUntil { await session.committedText == "hello there world" }
+            .control(.transcript(takeId: "take-1", seq: 1, isFinal: true, text: "first", endSample: 8_000)))
+        await waitUntil { await session.committedText == "first hello world" }
+        XCTAssertEqual(session.committedLiveText.map(\.endSample), [8_000, 16_000, 40_000])
 
         await stopAfterTakeDone(session, transport: transport, takeId: "take-1")
         _ = await startTask.value
     }
 
-    /// A frame for a take this client has already sealed (Send/Skip during Finishing) must never
-    /// land — the composed text is frozen at whatever it showed the moment it was sealed.
-    func testAFrameForASealedTakeIsDroppedOnArrival() async {
+    /// A frame naming another take — the previous take's tail on a bus this one reused — never
+    /// lands in this take's text.
+    func testAFrameForAnotherTakeIsDropped() async {
         let transport = FakeVoiceSocketTransport()
         let session = makeSession(transport: transport)
-        let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
+        let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-2") }
         await transport.enqueue(
             .control(
                 .ready(
@@ -309,21 +311,48 @@ final class VoiceUplinkSessionTests: XCTestCase {
         )
         await waitUntil { await transport.sentFrames.count >= 2 }
         await transport.enqueue(
-            .control(.transcript(takeId: "take-1", seq: 0, isFinal: true, text: "before sealing", endSample: 1000)))
-        await waitUntil { await session.committedText == "before sealing" }
+            .control(.transcript(takeId: "take-1", seq: 0, isFinal: true, text: "old tail", endSample: 1000)))
+        await transport.enqueue(
+            .control(.transcript(takeId: "take-2", seq: 1, isFinal: true, text: "new", endSample: 2000)))
+        await waitUntil { await session.committedText == "new" }
+        XCTAssertEqual(session.committedText, "new")
+        await stopAfterTakeDone(session, transport: transport, takeId: "take-2")
+        _ = await startTask.value
+    }
 
-        session.sealTake("take-1")
+    // MARK: - Outage buffer
+
+    /// Thirty seconds captured with no connection: only the newest twenty stay in memory and go
+    /// up when the socket comes back; the older ten are left unacknowledged, below the frontier
+    /// the socket can still deliver — a gap to upload from the file, not a backlog in memory.
+    func testAnOutageQueuesAtMostTwentySecondsAndLeavesTheRestAsAGap() async {
+        let transport = FakeVoiceSocketTransport()
+        let session = makeSession(transport: transport)
+        let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
+        await waitUntil { await session.state == .connecting }
+        let chunk = [Int16](repeating: 7, count: 1600)
+        for index in 0..<300 {
+            await session.ingestAudioChunk(pcm16le: chunk, at: index * 1600)
+        }
+        XCTAssertEqual(session.capturedUpTo, 480_000)
+        XCTAssertEqual(session.uplinkFrontier, 160_000, "everything before the newest 20 s is out of the queue")
+
         await transport.enqueue(
             .control(
-                .transcript(takeId: "take-1", seq: 1, isFinal: true, text: "arrived after sealing", endSample: 2000)))
-        for _ in 0..<20 { await Task.yield() }
+                .ready(
+                    resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: false))
+        )
+        await waitUntil { await transport.sentAudioFrames.count >= 200 }
+        let sent = await transport.sentAudioFrames
+        XCTAssertEqual(sent.count, 200)
+        XCTAssertEqual(Self.offsets(of: sent).first, 160_000)
 
-        XCTAssertEqual(session.committedText, "before sealing", "a frame arriving after sealing must be dropped")
+        await transport.enqueue(.control(.ack(throughSeq: 199)))
+        await waitUntil { await !session.acknowledgedRanges.isEmpty }
+        XCTAssertEqual(session.acknowledgedRanges, [160_000..<480_000])
+        XCTAssertEqual(session.uplinkFrontier, 480_000)
 
-        // Cleanup via `abandon()`, matching real usage: a sealed take is always followed by an
-        // abandon, never an ordinary `stop()` — which would otherwise wait out the deadline here,
-        // since a `take_done` for an already-sealed take is dropped like any other frame for it.
-        await session.abandon()
+        await stopAfterTakeDone(session, transport: transport, takeId: "take-1")
         _ = await startTask.value
     }
 
@@ -344,7 +373,7 @@ final class VoiceUplinkSessionTests: XCTestCase {
 
         let stopTask = Task { await session.stop() }
         await waitUntil {
-            await transport.sentFrames.contains { if case .gate(false, _, _) = $0 { true } else { false } }
+            await transport.sentFrames.contains { if case .gate(false, _, _, _, _) = $0 { true } else { false } }
         }
         // Give the stop every chance to (wrongly) race ahead to `bye` before the receipt arrives.
         for _ in 0..<20 { await Task.yield() }
@@ -389,9 +418,9 @@ final class VoiceUplinkSessionTests: XCTestCase {
         XCTAssertTrue(frames.contains { if case .bye = $0 { true } else { false } })
     }
 
-    /// Abandon skips the wait entirely and sends the `abandon` reason — a send pressed during
-    /// Finishing must not sit through the deadline the ordinary stop would.
-    func testAbandonSkipsTheWaitAndSendsTheAbandonReason() async {
+    /// Leaving or sending during Finishing ends the wait at once and abandons nothing: the only
+    /// closing gate is the ordinary one, which already carried the seal.
+    func testStopWaitingEndsTheWaitWithoutAbandoningTheTake() async {
         let transport = FakeVoiceSocketTransport()
         let session = makeSession(transport: transport)
         let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
@@ -401,28 +430,40 @@ final class VoiceUplinkSessionTests: XCTestCase {
                     resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: false))
         )
         await waitUntil { await transport.sentFrames.count >= 2 }
+        await session.ingestAudioChunk(pcm16le: [1, 2, 3, 4], at: 0)
 
-        session.sealTake("take-1")
-        await session.abandon()
+        let stopTask = Task { await session.stop() }
+        await waitUntil {
+            await transport.sentFrames.contains { if case .gate(false, _, _, _, _) = $0 { true } else { false } }
+        }
+        let asked = Date()
+        session.stopWaiting()
+        await stopTask.value
         _ = await startTask.value
 
-        let frames = await transport.sentFrames
-        let closeGates = frames.compactMap { frame -> String? in
-            guard case let .gate(open, reason, _) = frame, !open else { return nil }
-            return reason
+        XCTAssertLessThan(Date().timeIntervalSince(asked), 5, "the wait ends when asked, not at its deadline")
+        XCTAssertEqual(session.state, .idle)
+        let closes = await transport.sentFrames.compactMap { frame -> (String, String?, Int?)? in
+            guard case let .gate(false, reason, takeId, captured, _) = frame else { return nil }
+            return (reason, takeId, captured)
         }
-        XCTAssertEqual(closeGates, ["abandon"])
-        XCTAssertTrue(frames.contains { if case .bye = $0 { true } else { false } })
+        XCTAssertEqual(closes.map(\.0), ["button"], "nothing may abandon the take")
+        XCTAssertEqual(closes.first?.1, "take-1")
+        XCTAssertEqual(closes.first?.2, 4)
     }
 
-    /// Sending during Finishing calls this while an ordinary `stop()` is already mid-wait — it
-    /// must short-circuit that SAME wait (never start a second teardown), and the gate frame it
-    /// sends must carry the abandon reason even though the ordinary close (reason `button`) has
-    /// already gone out.
-    func testRequestAbandonWhileFinishingShortCircuitsAnInFlightStop() async {
+    /// A batch take says so on `hello`, and its stop waits for the seal to be stored
+    /// (`take_state` past `open`), never for a `take_done` that may be minutes away.
+    func testABatchTakeAnnouncesItselfAndItsStopWaitsForTheStoredSeal() async {
         let transport = FakeVoiceSocketTransport()
         let session = makeSession(transport: transport)
-        let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
+        let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1", sttMode: .batch) }
+        await waitUntil { await !transport.sentFrames.isEmpty }
+        guard case let .hello(_, _, _, _, draftKey, _, _, sttMode, standalone) = await transport.sentFrames.first
+        else { return XCTFail("expected hello first") }
+        XCTAssertEqual(draftKey, "session-1")
+        XCTAssertEqual(sttMode, .batch)
+        XCTAssertFalse(standalone)
         await transport.enqueue(
             .control(
                 .ready(
@@ -431,21 +472,38 @@ final class VoiceUplinkSessionTests: XCTestCase {
         await waitUntil { await transport.sentFrames.count >= 2 }
 
         let stopTask = Task { await session.stop() }
-        await waitUntil { await session.state == .stopping }
         await waitUntil {
-            await transport.sentFrames.contains { if case .gate(false, "button", _) = $0 { true } else { false } }
+            await transport.sentFrames.contains { if case .gate(false, _, _, _, _) = $0 { true } else { false } }
         }
-
-        await session.requestAbandonWhileFinishing()
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(session.state, .stopping, "still waiting for the seal to be stored")
+        await transport.enqueue(
+            .control(.takeState(takeId: "take-1", state: .sealed, capturedSamples: 0, missing: [])))
         await stopTask.value
         _ = await startTask.value
-
         XCTAssertEqual(session.state, .idle)
-        let closeGates = await transport.sentFrames.compactMap { frame -> String? in
-            guard case let .gate(open, reason, _) = frame, !open else { return nil }
-            return reason
-        }
-        XCTAssertEqual(closeGates, ["button", "abandon"], "the abandon gate must follow the ordinary close")
+    }
+
+    /// The frames the server reads a take's identity and seal from, as JSON.
+    func testHelloAndTheClosingGateCarryTheTakeFields() throws {
+        let hello = try VoiceUpFrame.hello(
+            transport: "ios", caps: VoiceSocketCapabilities(), auth: "t", resumeToken: nil, draftKey: nil,
+            sttMode: .batch, standalone: true
+        ).encoded()
+        let helloObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(hello.utf8)) as? [String: Any])
+        XCTAssertEqual(helloObject["stt_mode"] as? String, "batch")
+        XCTAssertEqual(helloObject["standalone"] as? Bool, true)
+        XCTAssertNil(helloObject["draft_key"])
+
+        let close = try VoiceUpFrame.gate(
+            open: false, reason: "button", takeId: "take-1", capturedSamples: 48_000, withheld: [16_000..<32_000]
+        ).encoded()
+        let closeObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(close.utf8)) as? [String: Any])
+        XCTAssertEqual(closeObject["take_id"] as? String, "take-1")
+        XCTAssertEqual(closeObject["captured_samples"] as? Int, 48_000)
+        XCTAssertEqual(closeObject["withheld"] as? [[Int]], [[16_000, 32_000]])
     }
 
     /// Stopping when there was never a live connection (still `.connecting`, nothing acked yet)
@@ -601,7 +659,7 @@ final class VoiceUplinkSessionTests: XCTestCase {
         let session = makeGatedSession(transport: transport)
         let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
         await waitUntil { await !transport.sentFrames.isEmpty }
-        guard case let .hello(_, caps, _, _, _, _, _) = await transport.sentFrames.first else {
+        guard case let .hello(_, caps, _, _, _, _, _, _, _) = await transport.sentFrames.first else {
             return XCTFail("expected hello first")
         }
         XCTAssertTrue(caps.silenceGate)

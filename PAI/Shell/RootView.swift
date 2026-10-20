@@ -199,6 +199,10 @@ struct RootView: View {
                         AppVoiceDiagnosticsLog.shared.log(.info, .lifecycle, "app active")
                         connectNotificationStream(connection)
                         connection.wakeWordSamples.drain()
+                        // A send or a dictation still owed to the server picks up at once rather
+                        // than after whatever backoff it was waiting out while suspended.
+                        connection.outbox.retryNow()
+                        connection.voice.resumeOwedTakes()
                         // Sync at once instead of up to a poll interval from now, and let the
                         // open transcript replace a connection the OS suspended while away.
                         connection.sessions.requestSync()

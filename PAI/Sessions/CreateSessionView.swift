@@ -511,6 +511,9 @@ struct CreateSessionView: View {
                 if voiceController.state.showsMicrophoneLevel {
                     VoiceVolumeOverlay(controller: voiceController)
                 }
+            } else if voiceController.isTranscribingBatch(draftKey: DraftKey.newSession) {
+                BatchTranscribingLine()
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if pregrantArmed, !createSession.isUltrafastSelected {
@@ -568,7 +571,10 @@ struct CreateSessionView: View {
 
                 VoiceRecorderButton(
                     controller: voiceController,
-                    isMine: voiceController.state == .idle || isRecordingHere(voiceController)
+                    isMine: voiceController.state == .idle || isRecordingHere(voiceController),
+                    onStart: { sttMode in
+                        Task { await toggleRecording(voiceController: voiceController, sttMode: sttMode) }
+                    }
                 ) {
                     Task { await toggleRecording(voiceController: voiceController) }
                 }
@@ -601,7 +607,7 @@ struct CreateSessionView: View {
         // unattended behind a screen nobody is looking at.
         .onDisappear {
             guard isRecordingHere(voiceController), voiceController.state == .stopping else { return }
-            Task { await voiceController.abandonCurrentTake() }
+            voiceController.stopWaiting()
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -629,6 +635,7 @@ struct CreateSessionView: View {
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !stagedAttachments.isEmpty
             || !drafts.draft(for: DraftKey.newSession).attachments.isEmpty
+            || (environment.connection?.voice.sendWaitsOnTake(draftKey: DraftKey.newSession) ?? false)
     }
 
     /// Hands the message to the outbox and clears the composer. **Nothing here waits for the
@@ -644,9 +651,10 @@ struct CreateSessionView: View {
     /// composer / Discard, exactly as a session's own composer shows one.
     private func send(_ createSession: CreateSessionStore, _ voiceController: VoiceRecorderController) {
         let isRecordingHereNow = isRecordingHere(voiceController)
-        // Finishing is the one case Send is reachable while a take still exists — see
-        // `ComposerBar.send(draftStore:voiceController:)`'s identical reasoning.
-        let isFinishing = isRecordingHereNow && voiceController.state == .stopping
+        // A take still finishing or transcribing is carried by the send rather than abandoned —
+        // see `ComposerBar.send(draftStore:voiceController:)`'s identical reasoning.
+        let waitsOnTake = voiceController.sendWaitsOnTake(draftKey: DraftKey.newSession)
+        let clientMessageId = UUID().uuidString
         let attachmentsSnapshot = stagedAttachments
         let uploadedAttachmentIds = drafts.draft(for: DraftKey.newSession).attachments.map(\.id)
         // Already-uploaded bytes are claimed explicitly by id — only what never made it to the
@@ -658,19 +666,25 @@ struct CreateSessionView: View {
         }.map { PaiFileUpload(filename: $0.filename, mimeType: $0.mimeType, data: $0.data) }
         Task {
             errorMessage = nil
-            if isFinishing {
-                await voiceController.abandonCurrentTake()
+            var held: VoiceRecorderController.HeldSend?
+            if waitsOnTake {
+                held = await voiceController.holdTakeForSend(
+                    draftKey: DraftKey.newSession, clientMessageId: clientMessageId)
             } else if isRecordingHereNow {
                 await voiceController.stop()
                 await drafts.syncFromServer()
             }
-            let messageText = text
+            let messageText = held?.message ?? text
+            guard
+                held != nil || !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || !files.isEmpty || !uploadedAttachmentIds.isEmpty
+            else { return }
             if !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 settings.saveSentMessage(messageText)
             }
             createSession.enqueueSend(
                 message: messageText, files: files, draftAttachmentIds: uploadedAttachmentIds, outbox: outbox,
-                drafts: drafts)
+                drafts: drafts, clientMessageId: clientMessageId, heldTake: held?.heldTake)
             staging.set([], for: DraftKey.newSession)
         }
     }
@@ -768,7 +782,7 @@ struct CreateSessionView: View {
             set: { newValue in
                 drafts.setDraftText(key: DraftKey.newSession, text: newValue)
                 if isRecordingHere(voiceController), voiceController.state == .stopping {
-                    Task { await voiceController.abandonCurrentTake() }
+                    voiceController.stopWaiting()
                 }
             }
         )
@@ -812,14 +826,14 @@ struct CreateSessionView: View {
         controller.activeDraftKey == DraftKey.newSession && controller.state != .idle
     }
 
-    private func toggleRecording(voiceController: VoiceRecorderController) async {
+    private func toggleRecording(voiceController: VoiceRecorderController, sttMode: VoiceSttMode = .live) async {
         guard voiceController.state == .idle || isRecordingHere(voiceController) else {
             errorMessage = "A recording is already running somewhere else."
             return
         }
         switch voiceController.state {
         case .idle:
-            await voiceController.start(draftKey: DraftKey.newSession, preText: text)
+            await voiceController.start(draftKey: DraftKey.newSession, preText: text, sttMode: sttMode)
         case .recording, .connecting, .paused, .reconnecting, .transcriptionStopped:
             // A tap always means "end the take", regardless of which of these mid-take states it
             // caught. Same rule as `ComposerBar`'s own record button: one control, one behaviour,
@@ -828,8 +842,8 @@ struct CreateSessionView: View {
             await voiceController.stop()
         case .stopping:
             // Same escape `ComposerBar` gives during Finishing: stop waiting on `take_done` or the
-            // deadline instead of sitting it out. See `VoiceRecorderController.abandonCurrentTake`.
-            await voiceController.abandonCurrentTake()
+            // deadline instead of sitting it out. See `VoiceRecorderController.stopWaiting`.
+            voiceController.stopWaiting()
         }
     }
 

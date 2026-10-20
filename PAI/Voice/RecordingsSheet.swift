@@ -45,11 +45,11 @@ struct RecordingsSheet: View {
                             .font(PaiTypography.caption.font)
                             .foregroundStyle(PaiPalette.Semantic.warningText)
                     }
-                    if controller.isRecordingOffline {
-                        offlineRecordingInProgressRow
+                    if controller.isRecordingStandalone {
+                        standaloneRecordingInProgressRow
                     }
                 }
-                if settings.recordings.isEmpty && !controller.isRecordingOffline {
+                if settings.recordings.isEmpty && !controller.isRecordingStandalone {
                     Text("No recordings yet. Recordings you make are kept on this device only.")
                         .font(PaiTypography.caption.font)
                         .foregroundStyle(PaiPalette.Semantic.textMuted)
@@ -57,6 +57,7 @@ struct RecordingsSheet: View {
                 ForEach(settings.recordings) { meta in
                     RecordingRow(
                         meta: meta, isTranscribing: controller.retranscribingIds.contains(meta.id),
+                        owed: controller.owedTakes[meta.id]?.serverTake,
                         transcriptIcon: onInsertTranscript == nil ? "text.bubble" : "text.insert",
                         transcriptLabel: onInsertTranscript == nil ? "Show transcript" : "Insert transcript",
                         onTapRetranscribe: { retranscribe(meta) },
@@ -91,13 +92,13 @@ struct RecordingsSheet: View {
             }
             .alert("New Recording", isPresented: $showingNewRecordingPrompt) {
                 TextField("Name", text: $newRecordingName)
-                Button("Start") {
-                    let trimmed = newRecordingName.trimmingCharacters(in: .whitespacesAndNewlines)
-                    Task { await controller.startOfflineRecording(name: trimmed.isEmpty ? "Recording" : trimmed) }
-                }
+                Button("Start live") { startStandalone(.live) }
+                Button("Start batch") { startStandalone(.batch) }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Not tied to a session. Transcribed automatically once it stops and the phone is online.")
+                Text(
+                    "Not tied to a session. Live shows the words as you speak; batch transcribes the whole "
+                        + "recording once it stops, uploading whenever the phone is online.")
             }
             .alert("Couldn't transcribe recording", isPresented: errorBinding) {
                 Button("OK", role: .cancel) {}
@@ -153,16 +154,34 @@ struct RecordingsSheet: View {
     /// `VoiceVolumeOverlay` from animating on a flat input applies to a row that would otherwise
     /// redraw once a second for as long as this sheet stays open in the background. The take's
     /// real duration is measured from the captured samples once it stops, same as any other
-    /// recording — this row only needs to say that one is running.
-    private var offlineRecordingInProgressRow: some View {
-        HStack {
-            Image(systemName: "record.circle.fill")
-                .foregroundStyle(PaiPalette.Semantic.errorText)
-            Text("Recording…")
-                .font(PaiTypography.bodyEmphasized.font)
-            Spacer()
-            Button("Stop") { Task { await controller.stop() } }
+    /// recording — this row only needs to say that one is running, and, live, what it has heard.
+    private var standaloneRecordingInProgressRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Image(systemName: "record.circle.fill")
+                    .foregroundStyle(PaiPalette.Semantic.errorText)
+                Text(standaloneHeadline)
+                    .font(PaiTypography.bodyEmphasized.font)
+                Spacer()
+                Button("Stop") { Task { await controller.stop() } }
+            }
+            if controller.activeSttMode == .live, !controller.voiceSession.composedText.isEmpty {
+                Text(controller.voiceSession.composedText)
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Semantic.textSecondary)
+                    .lineLimit(4)
+            }
         }
+    }
+
+    private var standaloneHeadline: String {
+        let name = controller.activeStandaloneName ?? "Recording"
+        return controller.activeSttMode == .batch ? "\(name) · Batch · recording…" : "\(name) · recording…"
+    }
+
+    private func startStandalone(_ sttMode: VoiceSttMode) {
+        let trimmed = newRecordingName.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task { await controller.startStandalone(name: trimmed.isEmpty ? "Recording" : trimmed, sttMode: sttMode) }
     }
 
     private var errorBinding: Binding<Bool> {
@@ -238,6 +257,8 @@ private struct TranscriptPopup: View {
 private struct RecordingRow: View {
     let meta: RecordingMeta
     let isTranscribing: Bool
+    /// What this device still owes the server for this take, or waits on — `nil` once settled.
+    let owed: PendingServerTake?
     let transcriptIcon: String
     let transcriptLabel: String
     var onTapRetranscribe: () -> Void
@@ -281,7 +302,7 @@ private struct RecordingRow: View {
                 ProgressView()
             } else {
                 HStack(spacing: 16) {
-                    if hasOpenGaps {
+                    if hasOpenGaps || owed?.lastState == .failed {
                         Button(action: onTranscribeRemaining) {
                             Image(systemName: "waveform.badge.magnifyingglass")
                         }
@@ -307,6 +328,10 @@ private struct RecordingRow: View {
 
     /// What the stored transcript is worth: missing, possibly cut short, or a full batch pass.
     private var transcriptLine: String? {
+        if let owed {
+            if owed.lastState == .failed { return "Transcription failed on the server · tap the wave to retry" }
+            return meta.transcript?.isEmpty ?? true ? "Transcribing on the server…" : "Finishing on the server…"
+        }
         if meta.transcript?.isEmpty ?? true {
             return meta.mode == .offline ? "Transcribing once online…" : "No transcript · tap to transcribe"
         }
@@ -315,7 +340,9 @@ private struct RecordingRow: View {
     }
 
     private var transcriptLineColor: Color {
-        meta.transcriptComplete == false ? PaiPalette.Semantic.warningText : PaiPalette.Semantic.textMuted
+        if owed?.lastState == .failed { return PaiPalette.Semantic.errorText }
+        return meta.transcriptComplete == false && owed == nil
+            ? PaiPalette.Semantic.warningText : PaiPalette.Semantic.textMuted
     }
 
     private var coverageLine: String? {
@@ -351,12 +378,15 @@ private struct RecordingRow: View {
 
     /// A standalone recording's own name, plus what tells it apart from a dictation take.
     private var nameLine: String? {
-        switch (meta.name, meta.mode) {
-        case (let name?, .offline): "\(name) · Standalone"
-        case (.some(let name), _): name
-        case (.none, .offline): "Standalone"
-        case (.none, _): nil
-        }
+        let base: String? =
+            switch (meta.name, meta.mode) {
+            case (let name?, .offline): "\(name) · Standalone"
+            case (.some(let name), _): name
+            case (.none, .offline): "Standalone"
+            case (.none, _): nil
+            }
+        guard meta.sttMode == .batch else { return base }
+        return base.map { "\($0) · Batch" } ?? "Batch"
     }
 
     private var micLine: String? {
