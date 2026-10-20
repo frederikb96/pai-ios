@@ -86,8 +86,10 @@ final class ComputerAudioIO: @unchecked Sendable {
         micSendFormat = sendFormat
         micConverter = converter
 
+        // `format: nil` for the reason `MicrophoneCapture.start()` gives; `processMic` re-keys the
+        // converter to each buffer's actual format.
         input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { [weak self] buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 2048, format: nil) { [weak self] buffer, _ in
             self?.processMic(buffer)
         }
 
@@ -189,9 +191,16 @@ final class ComputerAudioIO: @unchecked Sendable {
     /// Runs on the tap's real-time thread — see `MicrophoneCapture.process(_:)`'s own doc comment
     /// for why `AVAudioConverter.convert` is accepted here despite allocating internally.
     private func processMic(_ buffer: AVAudioPCMBuffer) {
-        guard let micSendFormat, let micConverter,
-            let samples = Self.convert(buffer, using: micConverter, to: micSendFormat)
-        else { return }
+        guard let micSendFormat else { return }
+        let converter: AVAudioConverter
+        if let micConverter, micConverter.inputFormat == buffer.format {
+            converter = micConverter
+        } else {
+            guard let fresh = AVAudioConverter(from: buffer.format, to: micSendFormat) else { return }
+            micConverter = fresh
+            converter = fresh
+        }
+        guard let samples = Self.convert(buffer, using: converter, to: micSendFormat) else { return }
         onMicChunk?(samples)
     }
 
