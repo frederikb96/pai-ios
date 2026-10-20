@@ -52,6 +52,19 @@ final class DebugRecordingsStoreTests: XCTestCase {
         XCTAssertNil(recordings.first?.events[2].detail)
     }
 
+    /// The clipping badge is the server's judgement: a few full-scale samples on a loud word are
+    /// not clipping, and a server that does not judge it shows none.
+    func testTheClippingBadgeFollowsTheServedJudgementOnly() throws {
+        func recording(_ extra: String) throws -> DebugRecording {
+            let json = Self.listBody.replacingOccurrences(of: #""clipped_samples": 0,"#, with: extra)
+            return try XCTUnwrap(
+                JSONDecoder().decode(DebugRecordingList.self, from: Data(json.utf8)).recordings.first)
+        }
+        XCTAssertFalse(try recording(#""clipped_samples": 12, "clipping": false,"#).showsClippingBadge)
+        XCTAssertTrue(try recording(#""clipped_samples": 900, "clipping": true,"#).showsClippingBadge)
+        XCTAssertFalse(try recording(#""clipped_samples": 900,"#).showsClippingBadge, "an older server shows no badge")
+    }
+
     /// A recording made from an uploaded take has no device, mics or session, and its own engine,
     /// transport and end reason strings — it must list like any other.
     func testAnUploadedTakeRecordingDecodes() async throws {

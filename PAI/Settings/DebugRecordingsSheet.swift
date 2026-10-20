@@ -274,7 +274,7 @@ private struct DebugRecordingRow: View {
         var parts: [String] = []
         if recording.status != "complete" { parts.append(recording.status) }
         if recording.truncated { parts.append("truncated") }
-        if recording.clippedSamples > 0 { parts.append("clipped") }
+        if recording.showsClippingBadge { parts.append("clipping") }
         if sameCall { parts.append("same call") }
         return parts.joined(separator: " · ")
     }

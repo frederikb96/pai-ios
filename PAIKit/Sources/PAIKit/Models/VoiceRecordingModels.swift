@@ -67,6 +67,9 @@ public struct DebugRecording: Codable, Sendable, Equatable, Identifiable {
     public let peakDbfs: Double?
     public let rmsDbfs: Double?
     public let clippedSamples: Int
+    /// Enough full-scale samples to call it clipping — the server's own threshold. `nil` from a
+    /// server that does not judge it, which shows no badge.
+    public let clipping: Bool?
     /// `recording` | `complete` | `interrupted` | `failed`.
     public let status: String
     public let endReason: String?
@@ -87,10 +90,14 @@ public struct DebugRecording: Codable, Sendable, Equatable, Identifiable {
         case peakDbfs = "peak_dbfs"
         case rmsDbfs = "rms_dbfs"
         case clippedSamples = "clipped_samples"
+        case clipping
         case endReason = "end_reason"
     }
 
     public var isStillRecording: Bool { status == "recording" }
+
+    /// Whether the list marks this recording as clipping.
+    public var showsClippingBadge: Bool { clipping == true }
 }
 
 public struct DebugRecordingList: Codable, Sendable, Equatable {
