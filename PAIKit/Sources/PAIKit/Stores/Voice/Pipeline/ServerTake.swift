@@ -110,12 +110,10 @@ public enum OwedTakeDriver {
                 }
                 await onTake(current)
             }
-            switch current.state {
-            case .done: return .done(current)
-            case .failed: return .failed(current)
-            case .open, .sealed, .resolving, .unrecognized: break
-            }
+            if current.state == .done { return .done(current) }
 
+            // A failed take still takes audio — a fresh upload returns it to `sealed` — so a
+            // device that comes back after the server gave up on it still delivers what it holds.
             if !current.missing.isEmpty {
                 guard current.missing.allSatisfy({ $0.upperBound <= recordedSamples }) else {
                     return .stuck("the server is missing audio this device does not have")
@@ -137,6 +135,7 @@ public enum OwedTakeDriver {
                 }
                 continue
             }
+            if current.state == .failed { return .failed(current) }
 
             await sleep(.seconds(pollSeconds))
             guard !Task.isCancelled else { break }
