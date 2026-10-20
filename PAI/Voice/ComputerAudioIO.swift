@@ -16,7 +16,7 @@ import PAIKit
 ///
 /// Not an actor and not `@MainActor`, matching `MicrophoneCapture`: the tap block runs on a
 /// real-time audio thread, where neither actor kind may be entered.
-final class ComputerAudioIO: @unchecked Sendable {
+final class ComputerAudioIO: RecoverableAudioInput, @unchecked Sendable {
     enum SetupError: Error {
         case formatUnavailable
         case converterUnavailable
@@ -29,7 +29,9 @@ final class ComputerAudioIO: @unchecked Sendable {
     /// and connection on the engine; nothing here restarts itself. Delivered on the main actor.
     var onConfigurationChange: (@Sendable () -> Void)?
 
-    private let engine = AVAudioEngine()
+    /// Replaced by ``rebuildEngine()`` between start attempts — see
+    /// `MicrophoneCapture.rebuildEngine()` for why a stale engine needs a fresh one.
+    private var engine = AVAudioEngine()
     private let audioSession = AVAudioSession.sharedInstance()
     private var configurationObserver: NSObjectProtocol?
     private var micConverter: AVAudioConverter?
@@ -42,6 +44,32 @@ final class ComputerAudioIO: @unchecked Sendable {
             commonFormat: .pcmFormatInt16, sampleRate: Double(VoiceSocketProtocol.audioDownlinkHz),
             channels: 1, interleaved: true
         )
+        observeConfigurationChanges()
+    }
+
+    /// Activates the session and starts the graph, retrying briefly on a fresh engine
+    /// (`MicrophoneStartRecovery`) — the same recovery dictation's capture starts through.
+    @MainActor
+    func start() async throws {
+        try await MicrophoneStartRecovery.start(
+            self,
+            onFailure: { index, error in
+                AppVoiceDiagnosticsLog.shared.log(
+                    .warning, .audioSession, "call audio start attempt \(index) failed: \(error)")
+            },
+            sleep: { try? await Task.sleep(for: $0) })
+    }
+
+    func rebuildEngine() {
+        tearDownGraph()
+        if let configurationObserver {
+            NotificationCenter.default.removeObserver(configurationObserver)
+        }
+        engine = AVAudioEngine()
+        observeConfigurationChanges()
+    }
+
+    private func observeConfigurationChanges() {
         configurationObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { [weak self] _ in
@@ -56,9 +84,9 @@ final class ComputerAudioIO: @unchecked Sendable {
     }
 
     /// Activates the session, wires the microphone tap, and readies the player — mirrors
-    /// `MicrophoneCapture.start()`'s shape, plus the downlink half it has no use
-    /// for.
-    func start() throws {
+    /// `MicrophoneCapture.startOnce()`'s shape, plus the downlink half it has no use
+    /// for. One attempt; ``start()`` is what callers use.
+    func startOnce() throws {
         try activateSession()
 
         let node = AVAudioPlayerNode()
@@ -86,7 +114,7 @@ final class ComputerAudioIO: @unchecked Sendable {
         micSendFormat = sendFormat
         micConverter = converter
 
-        // `format: nil` for the reason `MicrophoneCapture.start()` gives; `processMic` re-keys the
+        // `format: nil` for the reason `MicrophoneCapture.startOnce()` gives; `processMic` re-keys the
         // converter to each buffer's actual format.
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 2048, format: nil) { [weak self] buffer, _ in
@@ -108,7 +136,7 @@ final class ComputerAudioIO: @unchecked Sendable {
     /// the very route change being recovered from.
     func restart() throws {
         tearDownGraph()
-        try start()
+        try startOnce()
     }
 
     private func tearDownGraph() {

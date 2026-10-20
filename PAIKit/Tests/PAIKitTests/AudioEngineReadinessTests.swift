@@ -63,3 +63,34 @@ final class MicrophoneStartRecoveryTests: XCTestCase {
         XCTAssertEqual(log.events, ["attempt"])
     }
 }
+
+/// The call's audio and the dictation capture share this start. An engine that went stale
+/// stays stale however often it is started; only a fresh one starts.
+@MainActor
+final class RecoverableAudioInputTests: XCTestCase {
+    private struct StaleInput: Error {}
+
+    private final class StaleEngine: RecoverableAudioInput {
+        var isFresh = false
+        var starts = 0
+        var failures: [Int] = []
+
+        func startOnce() throws {
+            starts += 1
+            guard isFresh else { throw StaleInput() }
+        }
+
+        func rebuildEngine() { isFresh = true }
+    }
+
+    func testAStaleEngineIsReplacedBeforeTheRetryThatStartsIt() async throws {
+        let engine = StaleEngine()
+        var prepared = 0
+        try await MicrophoneStartRecovery.start(
+            engine, prepareRetry: { prepared += 1 }, onFailure: { index, _ in engine.failures.append(index) },
+            sleep: { _ in })
+        XCTAssertEqual(engine.starts, 2)
+        XCTAssertEqual(engine.failures, [0])
+        XCTAssertEqual(prepared, 1)
+    }
+}

@@ -1430,22 +1430,12 @@ final class VoiceRecorderController {
     /// reported, since that is the only trace of it a device keeps.
     private func startMicrophone() async throws {
         try await MicrophoneStartRecovery.start(
-            attempt: { index in
-                do {
-                    if index > 0 { try configureAudioSession() }
-                    try capture.start()
-                    if index > 0 {
-                        AppVoiceDiagnosticsLog.shared.log(
-                            .info, .audioSession, "microphone started on attempt \(index)")
-                    }
-                } catch {
-                    AppVoiceDiagnosticsLog.shared.log(
-                        .warning, .audioSession,
-                        "microphone start attempt \(index) failed: \(error) (input \(capture.inputFormatDescription))")
-                    throw error
-                }
+            capture, prepareRetry: { try configureAudioSession() },
+            onFailure: { index, error in
+                AppVoiceDiagnosticsLog.shared.log(
+                    .warning, .audioSession,
+                    "microphone start attempt \(index) failed: \(error) (input \(capture.inputFormatDescription))")
             },
-            recover: { _ in capture.rebuildEngine() },
             sleep: { try? await Task.sleep(for: $0) })
     }
 
