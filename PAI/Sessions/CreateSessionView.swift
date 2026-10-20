@@ -508,7 +508,7 @@ struct CreateSessionView: View {
             if isRecordingHere(voiceController) {
                 VoiceRecordingIndicator(controller: voiceController)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                if voiceController.state != .recording || voiceController.isWithholding {
+                if voiceController.state.showsMicrophoneLevel {
                     VoiceVolumeOverlay(controller: voiceController)
                 }
             }

@@ -71,6 +71,10 @@ final class ComputerAudioIO: @unchecked Sendable {
         let input = engine.inputNode
         let inputFormat = input.inputFormat(forBus: 0)
         guard
+            AudioEngineReadiness.isUsableInputFormat(
+                sampleRate: inputFormat.sampleRate, channelCount: Int(inputFormat.channelCount))
+        else { throw SetupError.formatUnavailable }
+        guard
             let sendFormat = AVAudioFormat(
                 commonFormat: .pcmFormatInt16, sampleRate: Double(VoiceSocketProtocol.audioUplinkHz),
                 channels: 1, interleaved: true
@@ -165,6 +169,10 @@ final class ComputerAudioIO: @unchecked Sendable {
     /// anything scheduled after this call will ever render.
     func clearPlayback() {
         playerNode?.stop()
+        // `play()` on a stopped engine raises an Objective-C exception, which ends the app; a
+        // configuration change stops the engine until the call's own restart rebuilds the graph,
+        // and that restart plays the fresh node itself.
+        guard engine.isRunning else { return }
         playerNode?.play()
     }
 
