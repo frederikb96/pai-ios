@@ -23,16 +23,24 @@ private final class FlakyOutboxApi: OutboxSending, @unchecked Sendable {
         return _attempts
     }
 
+    private var _claimedIds: [[String]] = []
+    var claimedIds: [[String]] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _claimedIds
+    }
+
     var failuresRemaining = 0
     var failureToThrow: PaiError = .transport("no network")
     var response = PostMessageResponse(sessionId: "created-id", messageId: 7, duplicate: false, draftVersion: 11)
 
     /// Synchronous, because `NSLock` may not be held across a suspension point — the same split
     /// `OutboxStoreTests`' own fake uses.
-    private func recordAttempt() -> PaiError? {
+    private func recordAttempt(claiming ids: [String]) -> PaiError? {
         lock.lock()
         defer { lock.unlock() }
         _attempts += 1
+        _claimedIds.append(ids)
         guard failuresRemaining > 0 else { return nil }
         failuresRemaining -= 1
         return failureToThrow
@@ -43,7 +51,7 @@ private final class FlakyOutboxApi: OutboxSending, @unchecked Sendable {
         draftAttachmentIds: [String], sessionType: String?, workingDir: String?, agent: String?, model: String?,
         thinking: String?, clientMode: String?
     ) async throws -> PostMessageResponse {
-        if let failure = recordAttempt() { throw failure }
+        if let failure = recordAttempt(claiming: draftAttachmentIds) { throw failure }
         return response
     }
 }
@@ -60,6 +68,40 @@ private struct SilentDraftsApi: DraftsFetching {
     }
     func deleteDraft(key: String) async throws -> PaiDraftDeleteResult {
         PaiDraftDeleteResult(key: key, version: 1, previousText: nil)
+    }
+    func addDraftAttachment(key: String, file: PaiFileUpload) async throws -> DraftAttachment {
+        throw PaiError.transport("not used")
+    }
+    func removeDraftAttachment(key: String, attachmentId: String) async throws {}
+}
+
+/// Records every `DELETE /api/drafts/{key}` — the request that removes a draft's uploaded
+/// attachments along with it.
+private final class DeleteRecordingDraftsApi: DraftsFetching, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _deletedKeys: [String] = []
+    var deletedKeys: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _deletedKeys
+    }
+
+    private func recordDelete(_ key: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        _deletedKeys.append(key)
+    }
+
+    func getDrafts() async throws -> [Draft] { [] }
+    func putDraft(
+        key: String, text: String, deviceId: String?, sessionType: String?, workingDir: String?, model: String?,
+        thinking: String?
+    ) async throws -> DraftWriteResult {
+        DraftWriteResult(key: key, version: 1, previousText: nil)
+    }
+    func deleteDraft(key: String) async throws -> PaiDraftDeleteResult {
+        recordDelete(key)
+        return PaiDraftDeleteResult(key: key, version: 1, previousText: nil)
     }
     func addDraftAttachment(key: String, file: PaiFileUpload) async throws -> DraftAttachment {
         throw PaiError.transport("not used")
@@ -183,6 +225,34 @@ final class NewSessionFlowTests: XCTestCase {
 
         await waitUntil { h.outbox.entries.isEmpty }
         XCTAssertEqual(h.sessions.syncedSessions.map(\.id), ["older", "newer"])
+    }
+
+    // MARK: - Attachments uploaded before the send
+
+    /// The uploads sit on the server's draft until the create request names them. A `DELETE` of
+    /// the draft removes them, so none may be issued by the send — not while the entry waits for
+    /// the link, and not when the retry that finally lands it claims them.
+    func testUploadedAttachmentsSurviveASendThatHasToBeRetried() async {
+        let h = makeHarness()
+        let draftsApi = DeleteRecordingDraftsApi()
+        let drafts = DraftStore(api: draftsApi)
+        h.outbox.installHandover(drafts: drafts, sessions: h.sessions, handoff: h.handoff)
+        h.api.failuresRemaining = 2
+        drafts.setDraftText(key: DraftKey.newSession, text: "look at these")
+        await drafts.flush(key: DraftKey.newSession)
+
+        h.create.enqueueSend(
+            message: "look at these", draftAttachmentIds: ["att-1", "att-2"], outbox: h.outbox, drafts: drafts)
+        await drafts.flush(key: DraftKey.newSession)
+
+        await waitUntil { h.api.attempts >= 1 }
+        XCTAssertTrue(draftsApi.deletedKeys.isEmpty, "the draft was discarded before the create landed")
+        XCTAssertEqual(drafts.draft(for: DraftKey.newSession).text, "", "the composer still clears at once")
+
+        await waitUntil(timeout: 5) { h.handoff.createdSessionID != nil }
+        XCTAssertEqual(h.handoff.createdSessionID, "created-id", "the fixture has to reach a landed send")
+        XCTAssertEqual(h.api.claimedIds.last, ["att-1", "att-2"], "the landing request names the uploads")
+        XCTAssertTrue(draftsApi.deletedKeys.isEmpty, "the draft was discarded around the create")
     }
 
     // MARK: - No link at the moment of sending
