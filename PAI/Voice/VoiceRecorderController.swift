@@ -184,6 +184,9 @@ final class VoiceRecorderController {
     /// Whether the microphone route was narrowband when the take began — judged on the hardware
     /// rate, read back by `persistRecording()`.
     private var currentNarrowband = false
+    /// The input rate the take started on — read back by `persistRecording()`, which runs after
+    /// the session is deactivated, when the engine's input no longer reports one.
+    private var currentHardwareRate = 0
     private static let sampleRate = VoiceSocketProtocol.audioUplinkHz
 
     /// `VoiceRecordingSession` can end a take entirely on its own — a reconnect exhausting its
@@ -369,17 +372,6 @@ final class VoiceRecorderController {
         AppVoiceDiagnosticsLog.shared.log(
             .info, .mode,
             "\(standaloneName == nil ? "microphone" : "standalone") take started stt_mode=\(sttMode.wireValue)")
-        let hardwareRate = capture.hardwareSampleRate
-        // Told once, at the start of the take — matching the web's `startRecording`, which warns
-        // here rather than waiting for `RecordingsSheet` to show it after the fact. Nothing
-        // downstream can undo a narrowband route; the only useful move is naming what is costing
-        // the accuracy while there is still time to disconnect it.
-        currentNarrowband = VoiceAudioRatePolicy.isNarrowband(rate: hardwareRate)
-        if currentNarrowband {
-            toasts.show(
-                "Mic is narrowband (\(hardwareRate / 1000) kHz, \(currentInputLabel())) — "
-                    + "transcription will be poor. Disconnect the headset to use the phone mic.")
-        }
         openStreamingFile(id: takeId)
         wireCaptureCallbacks()
         // Written before the first sample: a kill at any point after this leaves a ledger that
@@ -407,8 +399,20 @@ final class VoiceRecorderController {
         }
 
         do {
-            try capture.start()
+            try await startMicrophone()
             isCapturing = true
+            // Read from the running engine: before it starts, a stale or not yet active input
+            // can report no rate at all. Told once, at the start of the take — matching the web's
+            // `startRecording`. Nothing downstream can undo a narrowband route; the only useful
+            // move is naming what is costing the accuracy while there is still time to disconnect it.
+            let hardwareRate = capture.hardwareSampleRate
+            currentHardwareRate = hardwareRate
+            currentNarrowband = VoiceAudioRatePolicy.isNarrowband(rate: hardwareRate)
+            if currentNarrowband {
+                toasts.show(
+                    "Mic is narrowband (\(hardwareRate / 1000) kHz, \(currentInputLabel())) — "
+                        + "transcription will be poor. Disconnect the headset to use the phone mic.")
+            }
             beginCaptureWatchdog()
             sessionWatcherTask?.cancel()
             sessionWatcherTask = Task { [weak self] in await self?.watchForSessionEndingOnItsOwn() }
@@ -427,6 +431,9 @@ final class VoiceRecorderController {
             setupFailure = .audioSessionFailed
             capture.stop()
             await voiceSession.stop(reason: .error)
+            // Released, so whatever it paused plays again and the next tap starts from a clean
+            // session rather than one this attempt left half set up.
+            try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
             await persistRecording()
         }
         await startTask.value
@@ -1394,7 +1401,7 @@ final class VoiceRecorderController {
             try configureAudioSession()
             // Converted to the socket's fixed rate whatever the hardware's own rate is now — a
             // route change while paused (an AirPod reconnecting, say) changes only the input side.
-            try capture.start()
+            try await startMicrophone()
             isCapturing = true
             beginCaptureWatchdog()
             voiceSession.resumeAfterInterruption()
@@ -1415,6 +1422,32 @@ final class VoiceRecorderController {
     }
 
     // MARK: - Capture wiring
+
+    /// Starts capture, retrying briefly on a fresh engine with the session re-activated
+    /// (`MicrophoneStartRecovery`): an input reporting no format for a moment, or an engine left
+    /// stale by a route change or another engine's run, recovers by itself instead of failing
+    /// every tap until the app is restarted. Each failed attempt is logged with what the input
+    /// reported, since that is the only trace of it a device keeps.
+    private func startMicrophone() async throws {
+        try await MicrophoneStartRecovery.start(
+            attempt: { index in
+                do {
+                    if index > 0 { try configureAudioSession() }
+                    try capture.start()
+                    if index > 0 {
+                        AppVoiceDiagnosticsLog.shared.log(
+                            .info, .audioSession, "microphone started on attempt \(index)")
+                    }
+                } catch {
+                    AppVoiceDiagnosticsLog.shared.log(
+                        .warning, .audioSession,
+                        "microphone start attempt \(index) failed: \(error) (input \(capture.inputFormatDescription))")
+                    throw error
+                }
+            },
+            recover: { _ in capture.rebuildEngine() },
+            sleep: { try? await Task.sleep(for: $0) })
+    }
 
     private func openStreamingFile(id: String) {
         peakAmplitude = 0
@@ -1554,7 +1587,7 @@ final class VoiceRecorderController {
             // `capture.start` re-reads the input node's own format, so the tap is reinstalled
             // against whatever the hardware is now — which is the half of this that matters, and
             // the half a restart at a remembered format would get wrong.
-            try capture.start()
+            try await startMicrophone()
             lastChunkAt = Date()
         } catch {
             // Same ordering rule as `recoverSilentMicrophone`'s give-up branch, and for the same
@@ -1603,8 +1636,8 @@ final class VoiceRecorderController {
         }
         let averageLevel = levelCount > 0 ? levelSum / Double(levelCount) : 0
         let mic = MicDiagnostics(
-            label: currentInputLabel(), trackSampleRate: Double(capture.hardwareSampleRate),
-            contextSampleRate: Double(capture.hardwareSampleRate), channelCount: 1,
+            label: currentInputLabel(), trackSampleRate: Double(currentHardwareRate),
+            contextSampleRate: Double(currentHardwareRate), channelCount: 1,
             echoCancellation: nil, noiseSuppression: nil, autoGainControl: nil, userAgent: "iOS"
         )
         let transcript = takeLedger.map { VoiceTextAssembly.assembledText(from: $0) }.flatMap { $0.isEmpty ? nil : $0 }

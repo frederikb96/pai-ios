@@ -34,7 +34,10 @@ final class MicrophoneCapture: @unchecked Sendable {
     /// main actor.
     var onConfigurationChange: (@Sendable () -> Void)?
 
-    private let engine = AVAudioEngine()
+    /// Replaced by ``rebuildEngine()``. An engine that sat stopped through a route change or
+    /// another engine's run can keep an input that reports no format, and no later start on the
+    /// same engine clears it — a fresh engine reads the hardware as it is now.
+    private var engine = AVAudioEngine()
     private var configurationObserver: NSObjectProtocol?
     private var sendConverter: AVAudioConverter?
     private var sendFormat: AVAudioFormat?
@@ -45,6 +48,26 @@ final class MicrophoneCapture: @unchecked Sendable {
     }
 
     init() {
+        observeConfigurationChanges()
+    }
+
+    /// The input format as the engine reports it right now — what a failed start logs.
+    var inputFormatDescription: String {
+        let format = engine.inputNode.inputFormat(forBus: 0)
+        return "\(format.sampleRate) Hz, \(format.channelCount) ch"
+    }
+
+    /// Drops the engine for a fresh one, the step between two start attempts.
+    func rebuildEngine() {
+        stop()
+        if let configurationObserver {
+            NotificationCenter.default.removeObserver(configurationObserver)
+        }
+        engine = AVAudioEngine()
+        observeConfigurationChanges()
+    }
+
+    private func observeConfigurationChanges() {
         configurationObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { [weak self] _ in

@@ -15,3 +15,36 @@ public enum AudioEngineReadiness {
         sampleRate > 0 && sampleRate.isFinite && channelCount > 0
     }
 }
+
+/// Starting the microphone, the way it is allowed to fail: an input can report no usable format
+/// for a moment after the session activates or while a route settles, and an engine that sat
+/// stopped through another engine's run (a call, wake-word samples) or a route change can keep a
+/// stale input that no later start clears. Each failed attempt is followed by a short wait and a
+/// recovery step — the caller re-activates its session and builds a fresh engine — before the
+/// next attempt, so a start only fails once the budget is spent.
+public enum MicrophoneStartRecovery {
+    /// Waits before each retry; the whole budget stays under two seconds, short enough that a
+    /// tap still feels answered.
+    public static let retryDelaysMs = [100, 250, 500, 1000]
+
+    /// `attempt` gets the attempt number from 0; `recover` runs before every retry. The last
+    /// error is rethrown once every retry failed. On the main actor, where the audio session and
+    /// the engine are driven from.
+    @MainActor
+    public static func start(
+        attempt: (Int) throws -> Void, recover: (Int) -> Void, sleep: (Duration) async -> Void
+    ) async throws {
+        var index = 0
+        while true {
+            do {
+                try attempt(index)
+                return
+            } catch {
+                guard index < retryDelaysMs.count else { throw error }
+                await sleep(.milliseconds(retryDelaysMs[index]))
+                index += 1
+                recover(index)
+            }
+        }
+    }
+}
