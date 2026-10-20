@@ -95,8 +95,7 @@ final class WakeWordSampleCaptureController {
         queue = WakeWordUploadQueue(
             storage: storage, transport: apiClient, files: WakeWordSampleFiles(),
             log: { AppVoiceDiagnosticsLog.shared.log(.warning, "wake-word", $0) })
-        pathObserver.onEvent = { [weak self] event in
-            guard case .pathSatisfied(true) = event else { return }
+        pathObserver.onRegained = { [weak self] in
             Task { @MainActor [weak self] in self?.drain() }
         }
         pathObserver.start()
