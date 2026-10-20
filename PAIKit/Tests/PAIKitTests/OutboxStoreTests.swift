@@ -288,10 +288,44 @@ final class OutboxStoreTests: XCTestCase {
 
         let sending = FakeOutboxApi()
         let freshProcess = OutboxStore(api: sending, storage: storage)
+        freshProcess.resume()
 
         await waitUntil { freshProcess.entries.first?.state == .sent }
         XCTAssertEqual(freshProcess.entries.first?.text, "typed before the kill")
         XCTAssertEqual(sending.calls.first?.clientMessageId, entry.clientMessageId)
+    }
+
+    /// Building a store must not touch the network. SwiftUI builds the object behind a `@State`
+    /// default again for every re-created view and keeps only the first, so a constructor that
+    /// sends puts one POST on the wire per discarded copy, each resending the same persisted entry.
+    func testBuildingAStoreOverPersistedEntriesSendsNothing() async {
+        let storage = OutboxInMemoryStorage()
+        storage.saveEntries([
+            OutboxEntry(target: .session(sessionId: "s1"), text: "queued"),
+            OutboxEntry(target: .session(sessionId: "s2"), text: "mid-flight", state: .sending),
+        ])
+        let sending = FakeOutboxApi()
+
+        let stores = (0..<5).map { _ in OutboxStore(api: sending, storage: storage) }
+        for _ in 0..<50 { await Task.yield() }
+
+        XCTAssertEqual(stores.count, 5)
+        XCTAssertEqual(sending.calls.count, 0)
+    }
+
+    func testResumeSendsEachPersistedEntryOnceHoweverOftenItIsCalled() async {
+        let storage = OutboxInMemoryStorage()
+        let entry = OutboxEntry(target: .session(sessionId: "s1"), text: "queued")
+        storage.saveEntries([entry])
+        let sending = FakeOutboxApi()
+        let store = OutboxStore(api: sending, storage: storage)
+
+        store.resume()
+        store.resume()
+        store.resume()
+
+        await waitUntil { store.entries.first?.state == .sent }
+        XCTAssertEqual(sending.calls.map(\.clientMessageId), [entry.clientMessageId])
     }
 
     /// An entry the previous process had already marked `sending` when it died must be retried —
@@ -304,6 +338,7 @@ final class OutboxStoreTests: XCTestCase {
 
         let sending = FakeOutboxApi()
         let store = OutboxStore(api: sending, storage: storage)
+        store.resume()
 
         await waitUntil { store.entries.first?.state == .sent }
         XCTAssertEqual(sending.calls.first?.clientMessageId, entry.clientMessageId)
@@ -328,6 +363,7 @@ final class OutboxStoreTests: XCTestCase {
         sending.failureToThrow = .http(statusCode: 502, reason: "Bad Gateway")
         let store = OutboxStore(
             api: sending, storage: FileOutboxStorage(rootURL: root), scheduler: BriefOutboxScheduler())
+        store.resume()
 
         await waitUntil { sending.calls.count == 2 }
         XCTAssertEqual(sending.heldTakes, [held, held])
