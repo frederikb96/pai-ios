@@ -10,8 +10,9 @@ import PAIKit
 final class NetworkPathObserver: @unchecked Sendable {
     /// Every path update, as `ConnectionHealth` wants it.
     var onEvent: (@Sendable (ConnectionHealthEvent) -> Void)?
-    /// Only the update that follows an unsatisfied one — what "retry now" and "refetch" belong on.
-    /// `onEvent` also fires for a link that stays up while its interface or DNS changes.
+    /// Only an update that is a new network: the path came back, or its primary interface changed
+    /// (Wi-Fi to cellular) — what "retry now" belongs on. `onEvent` also fires for a link that
+    /// stays up while its gateway or DNS changes.
     var onRegained: (@Sendable () -> Void)?
 
     private let monitor = NWPathMonitor()
@@ -24,9 +25,19 @@ final class NetworkPathObserver: @unchecked Sendable {
             guard let self else { return }
             let satisfied = path.status == .satisfied
             onEvent?(.pathSatisfied(satisfied))
-            if regainFilter.regained(satisfied: satisfied) { onRegained?() }
+            let interface = path.availableInterfaces.first.map(Self.interface(for:))
+            if regainFilter.regained(satisfied: satisfied, interface: interface) { onRegained?() }
         }
         monitor.start(queue: queue)
+    }
+
+    private static func interface(for interface: NWInterface) -> PathInterface {
+        switch interface.type {
+        case .wifi: .wifi
+        case .cellular: .cellular
+        case .wiredEthernet: .wired
+        default: .other
+        }
     }
 
     func stop() {

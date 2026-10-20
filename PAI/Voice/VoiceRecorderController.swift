@@ -965,12 +965,16 @@ final class VoiceRecorderController {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 Self.applyConnectionHealthEvent(event, box: self.connectionHealthBox, notifier: self.feedbackNotifier)
-                // "On path satisfied, attempt immediately" — skips whatever backoff a reconnect
-                // is still waiting out, per the design's own reconnection rule.
-                if case .pathSatisfied(true) = event {
-                    if self.voiceSession.state == .reconnecting { self.voiceSession.retryReconnectNow() }
-                    self.resumeOwedTakes()
-                }
+            }
+        }
+        // "On a new network, attempt immediately" — skips whatever backoff a reconnect is still
+        // waiting out, per the design's own reconnection rule. Not on every satisfied update: a
+        // link that stays up while it reconfigures reports one repeatedly.
+        pathObserver.onRegained = { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if self.voiceSession.state == .reconnecting { self.voiceSession.retryReconnectNow() }
+                self.resumeOwedTakes()
             }
         }
         pathObserver.start()

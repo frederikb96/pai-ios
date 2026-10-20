@@ -4,22 +4,37 @@ import XCTest
 
 final class PathRegainFilterTests: XCTestCase {
 
-    private func regains(_ updates: [Bool]) -> [Bool] {
+    private typealias Update = (satisfied: Bool, interface: PathInterface?)
+
+    private func news(_ updates: [Update]) -> [Bool] {
         var filter = PathRegainFilter()
-        return updates.map { filter.regained(satisfied: $0) }
+        return updates.map { filter.regained(satisfied: $0.satisfied, interface: $0.interface) }
     }
 
-    func testARunOfSatisfiedUpdatesIsNotARegain() {
-        XCTAssertEqual(regains([true, true, true, true]), [false, false, false, false])
+    func testARunOfIdenticalSatisfiedUpdatesIsNotNews() {
+        XCTAssertEqual(
+            news([(true, .wifi), (true, .wifi), (true, .wifi), (true, .wifi)]), [false, false, false, false])
     }
 
     func testOnlyTheUpdateAfterAnUnsatisfiedOneIsARegain() {
         XCTAssertEqual(
-            regains([true, false, false, true, true, false, true]),
+            news([(true, .wifi), (false, nil), (false, nil), (true, .wifi), (true, .wifi), (false, nil), (true, .wifi)]
+            ),
             [false, false, false, true, false, false, true])
     }
 
     func testStartingUnsatisfiedThenSatisfiedIsARegain() {
-        XCTAssertEqual(regains([false, true, true]), [false, true, false])
+        XCTAssertEqual(news([(false, nil), (true, .wifi), (true, .wifi)]), [false, true, false])
+    }
+
+    func testAHandoffToAnotherInterfaceWhileStayingUpIsNews() {
+        XCTAssertEqual(
+            news([(true, .wifi), (true, .cellular), (true, .cellular), (true, .wifi)]),
+            [false, true, false, true])
+    }
+
+    func testTheInterfaceBeforeAnOutageDoesNotCountAsAChange() {
+        XCTAssertEqual(news([(true, .wifi), (false, nil), (true, .wifi)]), [false, false, true])
+        XCTAssertEqual(news([(true, .wifi), (false, nil), (true, .cellular)]), [false, false, true])
     }
 }
