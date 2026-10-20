@@ -111,7 +111,14 @@ final class AppEnvironment {
     private static let backendURLKey = "backendURL"
     static let defaultBackendURL = "https://pai.frederikberg.com"
 
-    init(defaults: UserDefaults = .standard, tokens: KeychainTokenStore = KeychainTokenStore()) {
+    /// The one environment of the process. A view that declares its own `@State` default would run
+    /// the initializer — and with it `connect()`, which builds the stores and starts three network
+    /// path monitors — again every time SwiftUI re-creates the view, then discard the result.
+    static let shared = AppEnvironment()
+
+    private init(defaults: UserDefaults = .standard, tokens: KeychainTokenStore = KeychainTokenStore()) {
+        // One line per process is the expected count; more means something builds a second one.
+        AppVoiceDiagnosticsLog.shared.log(.info, .lifecycle, "environment created")
         self.defaults = defaults
         self.tokens = tokens
         self.backendURL = defaults.string(forKey: Self.backendURLKey) ?? Self.defaultBackendURL
@@ -283,6 +290,10 @@ final class AppEnvironment {
     /// unconfigured one.
     func loadStartupState() async {
         guard let connection else { return }
+        // First, before any fetch: a send left on disk by the last run goes out at once. Here and
+        // not in the store's initializer because this runs only for the environment that is
+        // installed in the view tree.
+        connection.outbox.resume()
         await connection.settings.refreshSecretPresence()
         await connection.machines.refresh()
         await connection.me.refresh()

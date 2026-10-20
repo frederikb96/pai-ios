@@ -4,7 +4,7 @@ import UserNotifications
 
 /// The app's outermost screen: the gate, and the navigation stack behind it.
 struct RootView: View {
-    @State private var environment = AppEnvironment()
+    @State private var environment = AppEnvironment.shared
     /// Whatever `CrashReporter` captured before this launch, if any — read once on appear rather
     /// than continuously, since nothing after launch can change what already happened before it.
     @State private var pendingCrash: CrashRecord?

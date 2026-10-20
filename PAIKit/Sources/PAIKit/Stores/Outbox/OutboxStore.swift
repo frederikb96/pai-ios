@@ -124,7 +124,16 @@ public final class OutboxStore {
         }
         entries = loaded
         storage.saveEntries(loaded)
-        for key in Set(loaded.filter { $0.state == .queued }.map(\.target.workerKey)) {
+    }
+
+    /// Starts a worker for every target that has a queued entry — what sends the entries a
+    /// previous process left on disk. Idempotent: a target that already has a worker keeps it.
+    ///
+    /// Not called from `init`, which only loads: a store can be built more than once for the same
+    /// storage (SwiftUI re-runs a `@State` default for each re-created view and discards the
+    /// result), and every build that sent would resend the same persisted entry.
+    public func resume() {
+        for key in Set(entries.filter { $0.state == .queued }.map(\.target.workerKey)) {
             ensureWorker(for: key)
         }
     }
