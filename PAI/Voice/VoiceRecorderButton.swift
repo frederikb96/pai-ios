@@ -17,6 +17,9 @@ struct VoiceRecorderButton: View {
     /// or call over to). The composer passes an explicit value so a tap can take over a take or a
     /// call running elsewhere, which `controller.canStart` alone always refuses.
     var canStartOverride: Bool?
+    /// Starts a take in the mode picked from the long-press menu. `nil` offers no menu — a plain
+    /// tap always starts live.
+    var onStart: ((VoiceSttMode) -> Void)? = nil
     var onTap: () -> Void
 
     private var displayState: VoiceRecordingState {
@@ -39,10 +42,10 @@ struct VoiceRecorderButton: View {
         // reaches it from `.connecting` too) and returns to idle, on every client. Never cancels
         // the recording itself — the recorder has no idea a connection exists at all.
         //
-        // `.stopping` (Finishing) is tappable too, for the same reason: waiting out the drain
-        // used to be the only option. A tap here seals the take locally instead of waiting for
-        // `take_done` or the deadline — nothing is lost, the audio is already in Recordings.
+        // `.stopping` (Finishing) is tappable too: a tap stops waiting for `take_done` or the
+        // deadline. Nothing is lost — the server holds the take and its words still come back.
         .disabled(!canStart && displayState == .idle)
+        .modifier(StartModeMenu(onStart: displayState == .idle && canStart ? onStart : nil))
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier("voice-recorder-button")
     }
@@ -85,6 +88,48 @@ struct VoiceRecorderButton: View {
     }
 }
 
+/// The long-press menu on an idle microphone: live dictation (what a plain tap starts) or batch,
+/// which only records while it runs and puts the whole take's transcript in afterwards — no words
+/// appear while speaking, nothing is billed until the end, and a bad connection costs nothing but
+/// the wait.
+private struct StartModeMenu: ViewModifier {
+    let onStart: ((VoiceSttMode) -> Void)?
+
+    func body(content: Content) -> some View {
+        if let onStart {
+            content.contextMenu {
+                Button {
+                    onStart(.live)
+                } label: {
+                    Label("Dictate live", systemImage: "waveform")
+                }
+                Button {
+                    onStart(.batch)
+                } label: {
+                    Label("Dictate in batch", systemImage: "tray.and.arrow.up")
+                }
+            }
+        } else {
+            content
+        }
+    }
+}
+
+/// Shown above a composer whose batch take is being transcribed on the server — its words land
+/// in the field by themselves, and a Send made meanwhile waits for them.
+struct BatchTranscribingLine: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "tray.and.arrow.up")
+                .font(.system(size: 11))
+            Text("Batch dictation transcribing — Send waits for it")
+                .font(PaiTypography.caption.font)
+        }
+        .foregroundStyle(PaiPalette.Semantic.textSecondary)
+        .accessibilityIdentifier("voice-batch-transcribing")
+    }
+}
+
 /// The red pulsing "Rec" / amber "Muted" indicator shown above the composer while a take is in
 /// progress — the same live feedback `MessageInput.tsx` renders beside the offline-agent notice.
 ///
@@ -111,7 +156,7 @@ struct VoiceRecordingIndicator: View {
 
     private var label: String? {
         switch controller.state {
-        case .recording: controller.isMuted ? "Muted" : (controller.isWithholding ? "Rec · holding silence" : "Rec")
+        case .recording: recordingLabel
         // Finishing, never "Rec" — the microphone has genuinely stopped by now, and claiming
         // otherwise is exactly the false-liveness reading `.paused`'s own case already avoids.
         case .stopping: "Finishing…"
@@ -121,6 +166,13 @@ struct VoiceRecordingIndicator: View {
         case .transcriptionStopped: "Not transcribing"
         case .idle: nil
         }
+    }
+
+    /// A plain property rather than an inline chain in the `switch`, which the type checker
+    /// handles poorly inside a view builder.
+    private var recordingLabel: String {
+        let base = controller.isMuted ? "Muted" : (controller.isWithholding ? "Rec · holding silence" : "Rec")
+        return controller.activeSttMode == .batch ? "\(base) · Batch" : base
     }
 
     private var color: Color {

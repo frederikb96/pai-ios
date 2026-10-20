@@ -177,10 +177,20 @@ extension TranscriptStore {
                     !localOutboxIds.contains($0.id) && !confirmedOutboxIds.contains($0.id)
                         && !excludingOutboxIds.contains($0.id)
                 }
-                .map(\.text)
+                .map(Self.bubbleText(for:))
 
         return serverPending + localPending.map(\.text)
     }
+
+    /// A held send shows what the composer held at Send plus why it has not gone yet — it waits
+    /// on a dictation still being transcribed, and is relayed with the full text once it is.
+    /// Part of the bubble's own text, so the measured row height already includes it.
+    static func bubbleText(for send: PendingSend) -> String {
+        guard send.held == true else { return send.text }
+        return send.text.isEmpty ? heldBubbleNote : "\(send.text)\n\n\(heldBubbleNote)"
+    }
+
+    static let heldBubbleNote = "(Sends once the dictation is transcribed)"
 }
 
 extension Message {

@@ -281,7 +281,7 @@ final class TranscriptLedgerTests: XCTestCase {
             capturedUpTo: 10000, gaps: [Gap(range: 0..<1000, attempts: 1)]
         )
         let applied = ledger.applyingBackfill(
-            newSegments: [], resolved: [], failed: [(range: 0..<1000, error: "timeout")])
+            newSegments: [], resolved: [], failed: [(range: 0..<1000, error: "timeout", countsTowardDemotion: true)])
         XCTAssertEqual(applied.gaps.first?.attempts, 2)
         XCTAssertEqual(applied.gaps.first?.lastError, "timeout")
     }

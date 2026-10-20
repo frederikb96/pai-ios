@@ -81,22 +81,21 @@ public enum VoiceUplinkReconnectPolicy {
 }
 
 /// The uplink half of the two-module split: the module that knows a backend exists at all. Reads
-/// PCM the recorder is already writing to its durable file (`ingestAudioChunk`, unchanged
-/// contract from the ElevenLabs-era `VoiceRecordingSession`), ships it as binary frames over
-/// `docs/VOICE_PROTOCOL.md`'s `/api/voice/socket`, and owns everything about whether that
-/// shipment is currently succeeding — the gate, the ack watermark, reconnect and its backoff, and
-/// the liveness this socket's own `ping`/`pong` pair is the sole authority for.
+/// PCM the recorder is already writing to its durable file (`ingestAudioChunk`), ships it as binary
+/// frames over `docs/VOICE_PROTOCOL.md`'s `/api/voice/socket`, and owns everything about whether
+/// that shipment is currently succeeding — the gate, which stretches the backend has stored
+/// (`acknowledgedRanges`), reconnect and its backoff, and the liveness this socket's own
+/// `ping`/`pong` pair is the sole authority for.
 ///
-/// What this type deliberately does NOT hold, unlike its ElevenLabs-era predecessor: no partial
-/// or committed transcript text. The backend writes committed words straight into the session's
-/// draft region (`DraftRegionSink`, server-side) — a client dictating into a draft never receives
-/// them back over this socket at all (`docs/VOICE_PROTOCOL.md`: "Composer text sync ... is REST +
-/// SSE, not this socket"). What a caller renders while this runs is `DraftStore`'s own composed
-/// text for the draft key this session is pointed at, not anything here.
+/// A live take's words come back as `transcript` frames, which this type assembles
+/// (`composedText`); the caller writes them into the draft. A batch take sends no words while it
+/// records. Either way the take itself is a server-side resource that outlives this socket: what
+/// the socket never delivered is uploaded into the take over REST from the durable file, so audio
+/// this type cannot send is simply left unacknowledged, never replayed in bulk.
 ///
-/// `@MainActor` for the same reason `VoiceRecordingSession` was: every realistic caller is a
-/// UI-driven view model, and the event rate (an ack every audio frame, a ping every 5s) is
-/// nowhere near where hopping onto the main actor per call would cost anything.
+/// `@MainActor` because every realistic caller is a UI-driven view model, and the event rate (an
+/// ack every audio frame, a ping every 5s) is nowhere near where hopping onto the main actor per
+/// call would cost anything.
 @MainActor
 @Observable
 public final class VoiceUplinkSession {
@@ -108,21 +107,25 @@ public final class VoiceUplinkSession {
     /// rule.
     static let watchdogTimeoutSeconds: TimeInterval = 12
 
-    /// How long `stop()` waits, once the gate is closed, for `take_done` to arrive before giving
-    /// up and closing anyway — above the backend's own worst case for finishing a take (its
-    /// commit ceiling plus a batch recovery of the tail), so the last words are waited for rather
-    /// than cut off. The finishing control stays pressable meanwhile, so leaving early is always
-    /// a choice rather than a timeout.
+    /// How long `stop()` waits, once the gate is closed, for the take's receipt — `take_done` for
+    /// a live take, a `take_state` past `open` for a batch one — before closing anyway. The
+    /// finishing control stays pressable meanwhile, and leaving early loses nothing: the server
+    /// holds the audio and finishes the take on its own.
     public static let finishingDeadlineSeconds: TimeInterval = 30
+
+    /// The most audio held in memory while the socket is down or still connecting. Anything older
+    /// is dropped from the queue — it is already on disk, stays unacknowledged, and is uploaded
+    /// into the take over REST — so an hour without signal costs twenty seconds of memory rather
+    /// than an hour of it, and a reconnect never pushes more into realtime transcription than the
+    /// backend accepts as a replay.
+    public static let maxQueuedSeconds = 20
 
     public private(set) var state: VoiceRecordingState = .idle
     public private(set) var isMuted = false
     /// How much of this take has been captured (handed to `ingestAudioChunk`) so far.
     public private(set) var capturedUpTo = 0
-    /// The highest take-sample-offset the backend has acknowledged as durably received — what
-    /// `TranscriptLedger.derivedGaps` reads as "delivered" once the caller folds this into an
-    /// `acknowledged` range, and what a reconnect resumes sending from.
-    public private(set) var ackedUpTo = 0
+    /// What the backend has acknowledged as stored, merged and sorted.
+    private var ackedRanges: [SampleRange] = []
     public private(set) var lastEndReason: RecordingEndReason?
     public private(set) var lastStartFailure: VoiceUplinkStartFailure?
     /// Why the socket last went away mid-take — a close reason, or a `notice` the backend sent
@@ -136,40 +139,47 @@ public final class VoiceUplinkSession {
     /// The level gate for this take, built from the setting at start.
     private var gate: SilenceGate?
 
+    /// Every stretch of the take that needs nothing more from this device: stored by the backend,
+    /// or withheld by the silence gate. Everything captured outside these is owed — still on its
+    /// way over the socket, or a gap to upload.
+    public var acknowledgedRanges: [SampleRange] {
+        var settled = ackedRanges + (gate?.withheldRanges ?? [])
+        if let open = gate?.openWithheldRange { settled.append(open) }
+        return TranscriptLedger.merge(settled)
+    }
+
+    /// The stretches the silence gate withheld — what the seal reports as `withheld`.
+    public var withheldRanges: [SampleRange] { gate?.withheldRanges ?? [] }
+
+    /// The first sample the socket may still deliver: the oldest frame sent and not yet
+    /// acknowledged, the oldest queued for the next connection, or the pre-roll the gate holds
+    /// back. Unacknowledged audio before this is a gap nothing here will ever send.
+    public var uplinkFrontier: Int {
+        let candidates = [pendingChunks.first?.offset, inFlight.values.map(\.lowerBound).min(), gate?.heldBackFrom]
+        return candidates.compactMap { $0 }.reduce(capturedUpTo) { min($0, $1) }
+    }
+
     /// One committed segment, addressed by its take-absolute end sample rather than by arrival
     /// order — a batch-recovered stretch for an earlier gap can arrive after live segments that
-    /// followed it in time, and only the absolute sample position sorts them back into spoken
-    /// order.
+    /// followed it in time, and only the sample position sorts them back into spoken order.
     private struct CommittedSegment {
-        let absoluteEndSample: Int
+        let endSample: Int
         let seq: Int
         let text: String
     }
     private var committedSegments: [CommittedSegment] = []
-    /// What every `end_sample` on the current gate is measured from — the engine's own numbering
-    /// restarts at (or near) zero on every fresh bus, exactly like `seq` does, so a reconnect mid-
-    /// take needs this added on top to keep segments comparable across the boundary. Bumped to the
-    /// take's own highest absolute position whenever a **fresh** bus opens after the take's first
-    /// (a genuine reconnect) — never touched on a resumed bus, which keeps the same engine and the
-    /// same numbering.
-    private var gateBaseSample = 0
-    /// Whether this take has opened a bus at all yet — the first `ready` never bumps
-    /// `gateBaseSample` (there is nothing prior to carry forward); every one after it might.
-    private var hasOpenedFirstBus = false
 
-    /// Every committed segment for the current take, joined in take-absolute order — never arrival
-    /// order, so a batch-recovered stretch for an earlier gap lands where it was actually spoken
-    /// rather than wherever it happened to arrive.
+    /// Every committed segment for the current take, joined in take order — never arrival order.
     public var committedText: String {
-        committedSegments.sorted { ($0.absoluteEndSample, $0.seq) < ($1.absoluteEndSample, $1.seq) }
-            .map(\.text)
-            .joined(separator: " ")
+        sortedSegments.map(\.text).joined(separator: " ")
     }
     /// The same committed segments, placed by their take-absolute end sample — what the take's
     /// ledger keeps as its live text.
     public var committedLiveText: [LiveTextSegment] {
-        committedSegments.sorted { ($0.absoluteEndSample, $0.seq) < ($1.absoluteEndSample, $1.seq) }
-            .map { LiveTextSegment(endSample: $0.absoluteEndSample, text: $0.text) }
+        sortedSegments.map { LiveTextSegment(endSample: $0.endSample, text: $0.text) }
+    }
+    private var sortedSegments: [CommittedSegment] {
+        committedSegments.sorted { ($0.endSample, $0.seq) < ($1.endSample, $1.seq) }
     }
     /// The current take's own live partial — replaced whole by every `is_final: false` frame,
     /// cleared the moment its words are committed. Never persisted anywhere on its own; a caller
@@ -183,15 +193,14 @@ public final class VoiceUplinkSession {
     }
     /// The last `seq` this take has actually applied (committed or partial alike) — compared
     /// against `take_done.finalSeq` to tell a complete take from one that lost a frame across a
-    /// reconnect and needs its own backfill rather than a wait.
+    /// reconnect.
     public private(set) var highestAppliedSeq = -1
-    /// Set once `take_done` arrives for the current take — the stop sequence's own completion
-    /// signal, read rather than inferred from a partial going quiet (R3).
+    /// Set once `take_done` arrives for the current take.
     public private(set) var lastTakeDone: (takeId: String, finalSeq: Int, ended: String)?
-    /// Takes this client has sealed locally (Send or Skip pressed during Finishing) — every later
-    /// `transcript` frame naming one of these is dropped on arrival, so words already in flight
-    /// when the take was abandoned can never resurrect text the composer has moved past.
-    private var abandonedTakeIds: Set<String> = []
+    /// The take store's last word on the current take over this socket (`take_state`).
+    public private(set) var lastTakeState: VoiceTakeState?
+    /// What the take asks of the transcription engine, fixed at `start`.
+    public private(set) var sttMode: VoiceSttMode = .live
 
     private let dependencies: VoiceUplinkDependencies
     private var transport: (any VoiceSocketTransportProtocol)?
@@ -203,16 +212,14 @@ public final class VoiceUplinkSession {
     /// alike (`docs/VOICE_PROTOCOL.md`, "Framing": "`seq` always restarts at 0 on the reconnected
     /// socket, even when `ready.resumed` is `true`" — `seq` is scoped to this client connection,
     /// never to the bus). `inFlight` is cleared alongside it in the `.ready` handler for the same
-    /// reason: its keys are this socket's own `seq` values, and a stale entry from the connection
-    /// this one replaced would otherwise collide with the new socket's own seq 0, 1, 2, ….
+    /// reason: its keys are this socket's own `seq` values.
     private var nextSeq = 0
     private var resumeToken: String?
     private var currentDraftKey: String?
-    /// This take's own client-minted identity, carried on `gate open` so the backend's
-    /// `start_take(take_id:)` addresses the same draft region on every reconnect within this
-    /// take, and a long-outage recovery can still reach it by name once the bus itself is gone
-    /// (`docs/VOICE_PROTOCOL.md` "Addressing a take"). `nil` for a caller not dictating into a
-    /// draft at all.
+    private var isStandalone = false
+    /// This take's own client-minted identity, carried on every `gate open` and on the close, so
+    /// every reconnect within the take addresses the same server-side take
+    /// (`docs/VOICE_PROTOCOL.md` "Addressing a take").
     private var currentTakeId: String?
     private var recordingStart: Date?
     private var mutedMs = 0
@@ -220,18 +227,16 @@ public final class VoiceUplinkSession {
     private var lastReceiveAt: Date?
     private var isStopping = false
     /// Set the instant the receive loop dies while `isStopping` — `handleConnectionLost` itself
-    /// no-ops in that state (reconnecting mid-teardown would be wrong), so this is the one signal
-    /// ``waitForTakeDone(takeId:)`` has that the socket it is waiting on is already gone. Reset on
-    /// every fresh `start()`.
+    /// no-ops in that state, so this is the one signal the finishing wait has that the socket it
+    /// is waiting on is already gone. Reset on every fresh `start()`.
     private var socketDiedDuringStop = false
-    /// Set by ``requestAbandonWhileFinishing()`` — the third exit ``waitForTakeDone(takeId:)``
-    /// checks, alongside the receipt itself and the deadline, for a Send pressed while an ordinary
-    /// `stop()` call is already mid-wait. Reset on every fresh `start()`.
-    private var abandonRequestedDuringWait = false
-    /// Audio captured while the socket is down or still connecting — flushed in `sampleOffset`
-    /// order the moment a `ready` (fresh or resumed) arrives, so nothing captured during a brief
-    /// drop is lost even though it could not be sent live.
+    /// Set by ``stopWaiting()``: the person left, typed, or sent — the finishing wait returns at
+    /// once. Reset on every fresh `start()`.
+    private var stopWaitingRequested = false
+    /// Audio captured while the socket is down or still connecting, oldest first, capped at
+    /// ``maxQueuedSeconds`` — flushed the moment a `ready` arrives.
     private var pendingChunks: [(offset: Int, samples: [Int16])] = []
+    private var pendingSampleCount = 0
 
     public init(dependencies: VoiceUplinkDependencies) {
         self.dependencies = dependencies
@@ -254,7 +259,11 @@ public final class VoiceUplinkSession {
 
     // MARK: - Start
 
-    public func start(draftKey: String?, takeId: String? = nil) async {
+    /// `draftKey` names the draft a dictation is typed into; `standalone` is a recording with no
+    /// draft. A take carries exactly one of the two.
+    public func start(
+        draftKey: String?, takeId: String? = nil, sttMode: VoiceSttMode = .live, standalone: Bool = false
+    ) async {
         guard state == .idle else { return }
         lastStartFailure = nil
         lastDisconnectDetail = nil
@@ -263,24 +272,26 @@ public final class VoiceUplinkSession {
         mutedMs = 0
         lastMuteToggle = nil
         capturedUpTo = 0
-        ackedUpTo = 0
+        ackedRanges = []
+        inFlight = [:]
         nextSeq = 0
         resumeToken = nil
         currentDraftKey = draftKey
+        isStandalone = standalone
         currentTakeId = takeId
+        self.sttMode = sttMode
         recordingStart = dependencies.now()
         reconnectAttempt = 0
         isStopping = false
         socketDiedDuringStop = false
-        abandonRequestedDuringWait = false
+        stopWaitingRequested = false
         pendingChunks = []
+        pendingSampleCount = 0
         committedSegments = []
-        gateBaseSample = 0
-        hasOpenedFirstBus = false
         currentPartial = ""
         highestAppliedSeq = -1
         lastTakeDone = nil
-        abandonedTakeIds = []
+        lastTakeState = nil
         gate = dependencies.silenceGate().map { SilenceGate(settings: $0) }
 
         guard let token = dependencies.authToken(), !token.isEmpty else {
@@ -314,8 +325,10 @@ public final class VoiceUplinkSession {
                         audioDownlink: true, dtmf: false, silenceGate: gate?.settings.enabled == true),
                     auth: token,
                     resumeToken: resumeToken,
-                    draftKey: currentDraftKey,
-                    device: dependencies.device()
+                    draftKey: isStandalone ? nil : currentDraftKey,
+                    device: dependencies.device(),
+                    sttMode: currentTakeId == nil ? nil : sttMode,
+                    standalone: isStandalone
                 )
             )
         } catch {
@@ -341,9 +354,8 @@ public final class VoiceUplinkSession {
                     return "\(error)"
                 }()
                 // `handleConnectionLost` itself no-ops while `isStopping` — reconnecting mid-stop
-                // would be wrong — so this is what tells `waitForTakeDone(takeId:)` the socket it
-                // is waiting on has already died, rather than leaving it to run out the full
-                // deadline for no reason.
+                // would be wrong — so this is what tells the finishing wait the socket it is
+                // waiting on has already died, rather than leaving it to run out the deadline.
                 if isStopping {
                     socketDiedDuringStop = true
                     return
@@ -376,34 +388,15 @@ public final class VoiceUplinkSession {
             dependencies.connectionEvent(.mintSucceeded)
             let wasReconnecting = state == .reconnecting
             state = isStopping ? state : .recording
-            // `seq` restarts at 0 on every socket regardless of `resumed` — the socket's own
-            // counter, never the bus's (`docs/VOICE_PROTOCOL.md`, "Framing"). `inFlight`'s keys
-            // are this socket's own `seq` values, so a stale entry from the connection this one
-            // replaced would otherwise collide with the new socket's own seq 0, 1, 2, ….
+            // `seq` restarts at 0 on every socket regardless of `resumed`. Frames sent on the
+            // socket this one replaced and never acknowledged stay unacknowledged: their audio is
+            // a gap uploaded over REST, never resent here.
             nextSeq = 0
             inFlight = [:]
             if !resumed {
-                // A genuinely fresh bus needs this, including the very first connect of a
-                // brand-new take: the take must be (re)opened server-side, or every word
-                // transcribed from here has nowhere to land. A fresh bus also means the ack
-                // watermark reset to nothing on the server's side; resume sending from wherever
-                // local delivery is actually confirmed, so nothing already acked is resent, but
-                // nothing captured since is skipped either.
-                ackedUpTo = 0
-                // The new engine's own `end_sample` numbering starts over too — carrying forward
-                // the take's highest absolute position (never touched on the very first bus, where
-                // there is nothing yet to carry) is what keeps every segment comparable across the
-                // reconnect rather than colliding near zero with what came before it.
-                if hasOpenedFirstBus {
-                    gateBaseSample = max(gateBaseSample, committedSegments.map(\.absoluteEndSample).max() ?? 0)
-                }
-                hasOpenedFirstBus = true
-                // `takeId` rides on EVERY open now, not only the first — there is no server-side
-                // region any more whose own stored `seq` a resent id could collide with (that
-                // hazard was specific to `DraftRegionSink`'s region model, and drafts v2 has none).
-                // Re-sending the same id is what keeps a take addressable across a reconnect at
-                // all (wire contract §3 R4): the server writes no draft for dictation any more, so
-                // there is nothing left for a fresh id to mint in its place.
+                // A fresh bus — the first of the take, or one after the old bus is gone — opens
+                // the same take again. Positions stay take-absolute across it, so nothing is
+                // re-based: what was acknowledged before is stored, whichever bus stored it.
                 try? await transport?.send(.gate(open: true, reason: "button", takeId: currentTakeId))
             }
             if wasReconnecting {
@@ -412,16 +405,9 @@ public final class VoiceUplinkSession {
             await flushPending()
         case let .ack(throughSeq):
             dependencies.connectionEvent(.socketDelivered)
-            // `throughSeq` addresses this connection's own `seq` numbering, not a sample offset —
-            // this session sends one frame per `ingestAudioChunk` call, so the watermark is
-            // whatever sample offset the frame with that `seq` carried, plus its own sample count.
-            // Tracked via `inFlight` rather than recomputed, since frame sizes are not uniform.
-            if let acked = inFlight[throughSeq] {
-                ackedUpTo = max(ackedUpTo, acked)
-            }
-            if let gate {
-                ackedUpTo = gate.accountedWatermark(acked: ackedUpTo, capturedUpTo: capturedUpTo)
-            }
+            let acked = inFlight.filter { $0.key <= throughSeq }
+            guard !acked.isEmpty else { break }
+            ackedRanges = TranscriptLedger.merge(ackedRanges + acked.values)
             inFlight = inFlight.filter { $0.key > throughSeq }
         case .clear:
             break
@@ -435,46 +421,37 @@ public final class VoiceUplinkSession {
             lastNotice = (severity, code, text)
             if code == VoiceNoticeCode.authExpired {
                 lastDisconnectDetail = text
-                await stopInternal(reason: .connectionLost, abandon: false)
+                await stopInternal(reason: .connectionLost)
             } else if severity == "warning" || severity == "error" {
                 dependencies.feedback(.serverNotice(text))
             }
         case .ping:
             try? await transport?.send(.pong)
         case let .transcript(takeId, seq, isFinal, text, endSample):
-            // A frame naming a take this client has already sealed (Send/Skip pressed during
-            // Finishing) is dropped on arrival — the composed text is frozen at what the box
-            // showed the moment it was sealed, and nothing arriving after may reopen it.
-            if let takeId, abandonedTakeIds.contains(takeId) { break }
+            // A frame for another take — the previous one's tail on a reused bus — never lands
+            // in this one.
+            if let takeId, takeId != currentTakeId { break }
             highestAppliedSeq = max(highestAppliedSeq, seq)
             if isFinal {
-                let absolute = gateBaseSample + (endSample ?? 0)
-                committedSegments.append(CommittedSegment(absoluteEndSample: absolute, seq: seq, text: text))
+                committedSegments.append(CommittedSegment(endSample: endSample ?? 0, seq: seq, text: text))
                 currentPartial = ""
             } else {
                 currentPartial = text
             }
         case let .takeDone(takeId, finalSeq, ended):
-            guard !abandonedTakeIds.contains(takeId) else { break }
+            guard takeId == currentTakeId else { break }
             lastTakeDone = (takeId, finalSeq, ended)
+        case let .takeState(takeId, takeState, _, _):
+            guard takeId == currentTakeId else { break }
+            lastTakeState = takeState
         case .unrecognized:
             break
         }
     }
 
-    /// Seals a take locally — every later `transcript`/`take_done` frame naming it is dropped, and
-    /// the composed text is frozen at whatever the caller already captured. Call this BEFORE
-    /// sending the abandon gate (the wire contract's own ordering: seal, then tell the server),
-    /// never after — a frame that arrives in the gap between would otherwise still land.
-    public func sealTake(_ takeId: String) {
-        abandonedTakeIds.insert(takeId)
-    }
-
-    /// Frames sent, keyed by their own `seq`, to the take-relative sample offset they end at —
-    /// what an `ack` resolves into `ackedUpTo`. Pruned as acks arrive; unbounded only while a
-    /// connection genuinely owes more acks than it has received, which the backend's own 5s ping
-    /// cadence bounds in practice.
-    private var inFlight: [Int: Int] = [:]
+    /// Frames sent, keyed by their own `seq`, to the take samples they carried — what an `ack`
+    /// resolves into `ackedRanges`. Pruned as acks arrive and cleared on every `ready`.
+    private var inFlight: [Int: SampleRange] = [:]
 
     private func handleConnectionLost(detail: String?) async {
         guard state != .idle, !isStopping else { return }
@@ -541,18 +518,18 @@ public final class VoiceUplinkSession {
 
     // MARK: - Ingest
 
-    /// Hands one already-captured, already-durable-file-written buffer to the uplink. Contract
-    /// unchanged from the ElevenLabs-era `VoiceRecordingSession.ingestAudioChunk`: the caller
-    /// resamples to the transport rate first, this never does its own conversion, and a chunk
-    /// arriving while `canIngestAudio` is false is silently dropped (the recorder itself never
-    /// stops — only this session's opinion about sending it changes).
+    /// Hands one already-captured, already-durable-file-written buffer to the uplink. The caller
+    /// resamples to the transport rate first and awaits each call from one consuming task, which
+    /// is what keeps chunks in order. A chunk arriving while `canIngestAudio` is false is not
+    /// sent (the recorder itself never stops — only this session's opinion about sending it
+    /// changes), but it still counts as captured, so the seal covers the whole file.
     ///
     /// With a silence gate, every chunk goes through it first: a withheld chunk is neither sent
-    /// nor queued, and once the backend has acknowledged everything up to where withholding
-    /// began, it counts as accounted for — recorded locally, never sent, never backfilled.
+    /// nor queued, and counts as settled — recorded locally, never sent, never uploaded.
     public func ingestAudioChunk(pcm16le samples: [Int16], at offset: Int) async {
-        guard canIngestAudio, !samples.isEmpty else { return }
+        guard state != .idle, !samples.isEmpty else { return }
         capturedUpTo = max(capturedUpTo, offset + samples.count)
+        guard canIngestAudio else { return }
         let toSend = isMuted ? [Int16](repeating: 0, count: samples.count) : samples
         guard var gate else {
             await sendOrQueue(offset: offset, samples: toSend)
@@ -560,7 +537,6 @@ public final class VoiceUplinkSession {
         }
         let wasWithholding = gate.isWithholding
         let output = gate.push(offset: offset, samples: toSend)
-        ackedUpTo = gate.accountedWatermark(acked: ackedUpTo, capturedUpTo: capturedUpTo)
         self.gate = gate
         await sendGated(output, resumed: wasWithholding && !gate.isWithholding)
     }
@@ -591,6 +567,11 @@ public final class VoiceUplinkSession {
     private func sendOrQueue(offset: Int, samples: [Int16]) async {
         guard state == .recording, let transport else {
             pendingChunks.append((offset, samples))
+            pendingSampleCount += samples.count
+            let cap = Self.maxQueuedSeconds * VoiceSocketProtocol.audioUplinkHz
+            while pendingSampleCount > cap, !pendingChunks.isEmpty {
+                pendingSampleCount -= pendingChunks.removeFirst().samples.count
+            }
             return
         }
         await send(offset: offset, samples: samples, transport: transport)
@@ -599,7 +580,7 @@ public final class VoiceUplinkSession {
     private func send(offset: Int, samples: [Int16], transport: any VoiceSocketTransportProtocol) async {
         let seq = nextSeq
         nextSeq += 1
-        inFlight[seq] = offset + samples.count
+        inFlight[seq] = offset..<(offset + samples.count)
         let frame = VoiceSocketProtocol.packUplinkAudio(seq: seq, sampleOffset: offset, pcm16le: samples)
         do {
             try await transport.sendAudio(frame)
@@ -614,6 +595,7 @@ public final class VoiceUplinkSession {
         guard let transport, !pendingChunks.isEmpty else { return }
         let queued = pendingChunks
         pendingChunks = []
+        pendingSampleCount = 0
         for chunk in queued {
             await send(offset: chunk.offset, samples: chunk.samples, transport: transport)
         }
@@ -667,51 +649,44 @@ public final class VoiceUplinkSession {
 
     // MARK: - Stop
 
-    /// The ordinary stop: closes the gate, then holds the socket open through Finishing —
-    /// answering pings, still receiving frames — until `take_done` arrives for this take, the
-    /// deadline passes, or the socket itself dies, whichever comes first (R1–R5). Exits
-    /// immediately, with none of that waiting, when there was no live connection to drain in the
-    /// first place: `state` at the moment of the call is what decides whether waiting can mean
-    /// anything at all.
-    public func stop(reason: RecordingEndReason = .user) async {
+    /// The ordinary stop: closes the gate with the take's seal, then holds the socket open —
+    /// answering pings, still receiving frames — until the take's receipt arrives, the deadline
+    /// passes, the socket dies, or ``stopWaiting()`` is called, whichever comes first. Exits
+    /// without waiting when there was no live connection in the first place: the seal then goes
+    /// over REST, which is the caller's. `waitForReceipt: false` closes the gate and leaves at
+    /// once — the person already said they are not waiting.
+    public func stop(reason: RecordingEndReason = .user, waitForReceipt: Bool = true) async {
         guard state != .idle else { return }
-        await stopInternal(reason: reason, abandon: false)
+        await stopInternal(reason: reason, waitForReceipt: waitForReceipt)
     }
 
-    /// Ends the take WITHOUT waiting for its tail — what a send pressed during Finishing does
-    /// (wire contract §3). The server skips its own forced commit and batch recovery and closes
-    /// immediately, so waiting here would only be waiting on a wait the server itself is not
-    /// doing. The caller must call ``sealTake(_:)`` with this take's id BEFORE this, not after —
-    /// a frame already in flight when this is called could otherwise still land afterwards.
-    public func abandon() async {
-        guard state != .idle else { return }
-        await stopInternal(reason: .user, abandon: true)
+    /// Ends the finishing wait now. Nothing is abandoned: the gate already carried the seal, and
+    /// the server finishes the take whether or not this device is still listening.
+    public func stopWaiting() {
+        guard state == .stopping else { return }
+        stopWaitingRequested = true
     }
 
-    private func stopInternal(reason: RecordingEndReason, abandon: Bool) async {
+    private func stopInternal(reason: RecordingEndReason, waitForReceipt: Bool = true) async {
         isStopping = true
         // Only `.recording` names a socket actually worth talking to — `.connecting`/
-        // `.reconnecting`/`.paused` have no live gate to close and nothing to wait on, which is
-        // exactly the "no connection" exit: Finishing is never entered for them at all, by
-        // construction, rather than by a timer that happens to expire instantly.
+        // `.reconnecting`/`.paused` have no live gate to close and nothing to wait on.
         let wasConnected = state == .recording
         state = .stopping
-        let takeId = currentTakeId
+        // Stopped while withholding: the ring goes out only if it caught the start of speech.
+        // Without a socket it stays unsent, and so owed.
+        let owed = gate?.stopFlush() ?? []
         if wasConnected, let transport {
-            // Stopped while withholding: the ring goes out only if it caught the start of speech.
-            let withheldFrom = gate?.withheldFrom
-            let owed = gate?.stopFlush() ?? []
-            for frame in owed where !abandon {
+            for frame in owed {
                 await send(offset: frame.offset, samples: frame.samples, transport: transport)
             }
-            // Dropped as silence, the kept pre-roll will never be sent: it is accounted for like
-            // the rest of the withheld stretch, or the backfill would transcribe it as a gap.
-            if owed.isEmpty, let withheldFrom, ackedUpTo >= withheldFrom {
-                ackedUpTo = max(ackedUpTo, capturedUpTo)
-            }
-            try? await transport.send(.gate(open: false, reason: abandon ? "abandon" : "button"))
-            if !abandon, let takeId {
-                await waitForTakeDone(takeId: takeId)
+            try? await transport.send(
+                .gate(
+                    open: false, reason: "button", takeId: currentTakeId,
+                    capturedSamples: currentTakeId == nil ? nil : capturedUpTo,
+                    withheld: currentTakeId == nil ? nil : withheldRanges))
+            if let takeId = currentTakeId, waitForReceipt {
+                await self.waitForReceipt(takeId: takeId)
             }
         }
         stopWatchdog()
@@ -727,31 +702,21 @@ public final class VoiceUplinkSession {
         isStopping = false
     }
 
-    /// R1 ∧ R3: waits for the one positive completion signal there is — `take_done` for this
-    /// exact take — never for a partial merely going quiet, which looks identical to a stalled
-    /// connection. Exits early on the deadline (R2's own budget), on the socket dying mid-wait
-    /// (`socketDiedDuringStop`, since `handleConnectionLost` itself no-ops while stopping), or on
-    /// an abandon requested while this exact wait is already running.
-    private func waitForTakeDone(takeId: String) async {
+    /// Waits for the one positive signal there is — `take_done` for a live take, a `take_state`
+    /// past `open` (the seal stored) for a batch one — never for a partial merely going quiet,
+    /// which looks identical to a stalled connection.
+    private func waitForReceipt(takeId: String) async {
         let deadlineAt = dependencies.now().addingTimeInterval(Self.finishingDeadlineSeconds)
         while true {
-            if lastTakeDone?.takeId == takeId { return }
-            if socketDiedDuringStop { return }
-            if abandonRequestedDuringWait { return }
+            switch sttMode {
+            case .batch:
+                if let lastTakeState, lastTakeState != .open { return }
+            case .live, .unrecognized:
+                if lastTakeDone?.takeId == takeId { return }
+            }
+            if socketDiedDuringStop || stopWaitingRequested { return }
             if dependencies.now() >= deadlineAt { return }
             await dependencies.sleep(.milliseconds(100))
         }
-    }
-
-    /// Sending during Finishing: an ordinary `stop()` is already mid-wait when this is called, so
-    /// this does not start a second `stopInternal` — it seals the take, sends the SAME wire
-    /// contract abandon gate a fresh `abandon()` would, and flags the wait already running to
-    /// return immediately rather than sitting out the rest of its deadline. A no-op outside
-    /// `.stopping`, or once the take has already been sealed.
-    public func requestAbandonWhileFinishing() async {
-        guard state == .stopping, let takeId = currentTakeId, !abandonedTakeIds.contains(takeId) else { return }
-        sealTake(takeId)
-        try? await transport?.send(.gate(open: false, reason: "abandon"))
-        abandonRequestedDuringWait = true
     }
 }

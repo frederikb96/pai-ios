@@ -187,7 +187,7 @@ final class ComputerCallSessionTests: XCTestCase {
 
         let frames = await transport.sentFrames
         guard
-            case let .hello(transportName, caps, _, resumeToken, draftKey, connectSession, _) =
+            case let .hello(transportName, caps, _, resumeToken, draftKey, connectSession, _, _, _) =
                 frames.first
         else {
             return XCTFail("expected a hello frame, got \(String(describing: frames.first))")
@@ -215,7 +215,7 @@ final class ComputerCallSessionTests: XCTestCase {
         await waitUntil { await !transport.sentFrames.isEmpty }
 
         let frames = await transport.sentFrames
-        guard case let .hello(_, _, _, _, draftKey, connectSession, _) = frames.first else {
+        guard case let .hello(_, _, _, _, draftKey, connectSession, _, _, _) = frames.first else {
             return XCTFail("expected a hello frame, got \(String(describing: frames.first))")
         }
         XCTAssertEqual(connectSession, "s-42")
@@ -246,7 +246,7 @@ final class ComputerCallSessionTests: XCTestCase {
         XCTAssertEqual(session.busOwner, .computer)
 
         let frames = await transport.sentFrames
-        guard case let .gate(open, reason, takeId) = frames.last else {
+        guard case let .gate(open, reason, takeId, _, _) = frames.last else {
             return XCTFail("expected a gate frame, got \(String(describing: frames.last))")
         }
         XCTAssertTrue(open)
@@ -481,7 +481,7 @@ final class ComputerCallSessionTests: XCTestCase {
 
         let frames = await transport.sentFrames
         guard frames.count >= 4 else { return XCTFail("expected hello, gate open, gate close, bye") }
-        guard case .gate(false, _, _) = frames[frames.count - 2] else {
+        guard case .gate(false, _, _, _, _) = frames[frames.count - 2] else {
             return XCTFail("expected a gate-close frame before bye, got \(frames[frames.count - 2])")
         }
         guard case .bye = frames.last else {

@@ -79,7 +79,7 @@ public enum RecordingReconciliation {
             preText: base.preText, segments: base.segments, capturedUpTo: capturedSampleCount,
             gaps: base.derivedGaps(capturedUpTo: capturedSampleCount), boundaries: base.boundaries,
             collecting: base.collecting, events: base.events, delivered: base.delivered,
-            acknowledged: base.acknowledged, liveText: base.liveText
+            acknowledged: base.acknowledged, liveText: base.liveText, serverTake: base.serverTake
         )
     }
 }

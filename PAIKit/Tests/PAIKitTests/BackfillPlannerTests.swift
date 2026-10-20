@@ -93,13 +93,13 @@ final class BackfillPlannerTests: XCTestCase {
     /// (three attempts) that the flag flips.
     func testAGapIsDemotedOnceItsFailureCountReachesTheAttemptBudget() {
         var gap = Gap(range: 0..<16000)
-        gap = BackfillPlanner.recordFailure(gap, error: "timeout")
+        gap = BackfillPlanner.recordFailure(gap, error: "422 audio", countsTowardDemotion: true)
         XCTAssertEqual(gap.attempts, 1)
         XCTAssertFalse(gap.demoted)
-        gap = BackfillPlanner.recordFailure(gap, error: "timeout")
+        gap = BackfillPlanner.recordFailure(gap, error: "422 audio", countsTowardDemotion: true)
         XCTAssertEqual(gap.attempts, 2)
         XCTAssertFalse(gap.demoted)
-        gap = BackfillPlanner.recordFailure(gap, error: "timeout")
+        gap = BackfillPlanner.recordFailure(gap, error: "422 audio", countsTowardDemotion: true)
         XCTAssertEqual(gap.attempts, 3)
         XCTAssertTrue(gap.demoted, "the third stable-link failure spends the attempt budget")
     }
@@ -108,8 +108,34 @@ final class BackfillPlannerTests: XCTestCase {
     /// gap, and a genuinely undecodable stretch must eventually stop being retried at all.
     func testRecordFailureNeverResetsTheCountItOnlyEverIncrementsIt() {
         var gap = Gap(range: 0..<16000, attempts: 2)
-        gap = BackfillPlanner.recordFailure(gap, error: "still failing")
+        gap = BackfillPlanner.recordFailure(gap, error: "still failing", countsTowardDemotion: true)
         XCTAssertEqual(gap.attempts, 3)
+        XCTAssertTrue(gap.demoted)
+    }
+
+    /// A deploy takes REST down for a minute and the phone is on a link that keeps failing: every
+    /// attempt in that window fails with a 5xx or a transport error, and none of them may spend
+    /// the gap's budget — otherwise the take's audio is given up on for good during an outage
+    /// that heals by itself. A 4xx is the request's own fault and still counts.
+    func testOnlyARequestsOwnFaultCountsTowardDemotion() {
+        let outage: [Error] = [
+            PaiError.http(statusCode: 502, reason: "Bad Gateway"), PaiError.detail("down", statusCode: 503),
+            PaiError.transport("The network connection was lost."), PaiError.http(statusCode: 429, reason: "Slow"),
+            PaiError.http(statusCode: 408, reason: "Timeout"), URLError(.notConnectedToInternet),
+        ]
+        var gap = Gap(range: 0..<16000)
+        for error in outage + outage {
+            gap = BackfillPlanner.recordFailure(
+                gap, error: "\(error)", countsTowardDemotion: BackfillPlanner.countsTowardDemotion(error))
+        }
+        XCTAssertEqual(gap.attempts, 0)
+        XCTAssertFalse(gap.demoted, "a server outage only delays a gap")
+
+        for _ in 0..<3 {
+            let rejected = PaiError.detail("bad audio", statusCode: 422)
+            gap = BackfillPlanner.recordFailure(
+                gap, error: "422", countsTowardDemotion: BackfillPlanner.countsTowardDemotion(rejected))
+        }
         XCTAssertTrue(gap.demoted)
     }
 }

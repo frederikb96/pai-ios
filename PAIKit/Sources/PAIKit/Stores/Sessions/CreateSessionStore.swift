@@ -261,7 +261,7 @@ public final class CreateSessionStore {
     /// itself when the create lands.
     public func enqueueSend(
         message: String, files: [PaiFileUpload] = [], draftAttachmentIds: [String] = [], outbox: OutboxStore,
-        drafts: DraftStore? = nil
+        drafts: DraftStore? = nil, clientMessageId: String = UUID().uuidString, heldTake: HeldTake? = nil
     ) {
         let inlineFiles = files.map { file in
             OutboxInlineFile(localId: UUID().uuidString, filename: file.filename, mimeType: file.mimeType)
@@ -274,12 +274,13 @@ public final class CreateSessionStore {
         // before the ultra-fast pill is picked) must never reach the request.
         outbox.enqueue(
             OutboxEntry(
+                clientMessageId: clientMessageId,
                 target: .newSession(
                     agent: selectedMachine, sessionType: selectedSessionTypeId,
                     workingDir: isUltrafastSelected ? nil : workingDir,
                     model: isUltrafastSelected ? nil : selectedModel,
                     thinking: isUltrafastSelected ? nil : selectedThinking),
-                text: message, draftAttachmentIds: draftAttachmentIds, inlineFiles: inlineFiles
+                text: message, draftAttachmentIds: draftAttachmentIds, inlineFiles: inlineFiles, heldTake: heldTake
             ),
             inlineFileData: inlineFileData)
         drafts?.setDraftText(key: DraftKey.newSession, text: "")

@@ -61,7 +61,7 @@ struct HistorySection: View {
                         DebugRecordingsSheet(
                             apiClient: connection.apiClient,
                             microphoneBusy: {
-                                connection.voice.state != .idle || connection.voice.isRecordingOffline
+                                connection.voice.state != .idle
                                     || connection.computerCall.isLive || connection.wakeWordSamples.isRunning
                             })
                     }

@@ -58,7 +58,7 @@ private struct OutboxEntryBubbleView: View {
 
     private var label: String {
         switch entry.state {
-        case .queued: "Waiting to send"
+        case .queued: entry.heldTake == nil ? "Waiting to send" : "Waiting to send · then for the dictation"
         case .sending: "Sending…"
         case .failed: entry.lastError ?? "Could not be sent"
         case .sent: ""

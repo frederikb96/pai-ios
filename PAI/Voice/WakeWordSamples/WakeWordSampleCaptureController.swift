@@ -112,7 +112,7 @@ final class WakeWordSampleCaptureController {
         pathObserver.stop()
     }
 
-    var canStart: Bool { !isRunning && voice.state == .idle && !voice.isRecordingOffline && !computerCall.isLive }
+    var canStart: Bool { !isRunning && voice.state == .idle && !computerCall.isLive }
 
     // MARK: - Listing, deleting, uploading
 
