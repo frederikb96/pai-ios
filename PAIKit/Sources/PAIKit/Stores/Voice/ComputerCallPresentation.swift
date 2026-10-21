@@ -105,6 +105,8 @@ public struct ComputerCallPresentation: Equatable, Sendable {
     /// `start` sends what is being dictated, so it means nothing when no dictation is open, and
     /// `wake` opens one, so it means nothing when one already is. `stop` always applies: from
     /// dictation it sends and goes to Computer, from the quiet phase it simply goes to Computer.
+    /// `skip` applies in both: a reply can play in either phase, and only the backend knows
+    /// whether one is playing, so the browser offers it the same way.
     ///
     /// Hanging up is deliberately not in here: it is not a frame at all (see `VoiceCallCommand`),
     /// so the End control stays available on every face and in every connection state, including
@@ -114,8 +116,8 @@ public struct ComputerCallPresentation: Equatable, Sendable {
     /// addressed at a state nothing here can vouch for may do the wrong thing.
     private static func commands(inPhase phase: String) -> Set<VoiceCallCommand> {
         switch phase {
-        case recordingPhase: [.start, .stop]
-        case quietPhase: [.wake, .stop]
+        case recordingPhase: [.start, .stop, .skip]
+        case quietPhase: [.wake, .stop, .skip]
         default: []
         }
     }

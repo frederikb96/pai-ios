@@ -120,14 +120,14 @@ struct ComputerCallView: View {
 
     // MARK: - Call controls
 
-    /// The two spoken commands and the wake word, as buttons — the same row the browser's call
-    /// panel shows. Each keeps its position whatever the phase; a control that does nothing right
+    /// The two spoken commands, the wake word and skipping the reply, as buttons — the same row
+    /// the browser's call panel shows. Each keeps its position whatever the phase; a control that does nothing right
     /// now is drawn disabled rather than moved, so the row is learnt by position.
     @ViewBuilder
     private func callControls(presentation: ComputerCallPresentation, controller: ComputerCallController)
         -> some View
     {
-        HStack(spacing: 28) {
+        HStack(spacing: 20) {
             commandButton(
                 .wake, systemImage: "mic.fill", title: "Talk", label: "Start dictating",
                 identifier: "computer-call-wake", presentation: presentation, controller: controller
@@ -142,6 +142,10 @@ struct ComputerCallView: View {
                     ? "Send and go back to Computer" : "Go back to Computer",
                 identifier: "computer-call-stop",
                 presentation: presentation, controller: controller
+            )
+            commandButton(
+                .skip, systemImage: "forward.end.fill", title: "Skip", label: "Skip this reply",
+                identifier: "computer-call-skip", presentation: presentation, controller: controller
             )
         }
     }
