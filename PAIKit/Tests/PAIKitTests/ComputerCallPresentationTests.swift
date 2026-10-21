@@ -43,15 +43,16 @@ final class ComputerCallPresentationTests: XCTestCase {
     }
 
     /// The same cases as the browser's `callControls.test.ts`, so the two clients offer the same
-    /// buttons in the same phase. Dictating: send-and-pause and send-and-go-to-Computer, never a
-    /// second "start dictating".
-    func testDictatingOffersStartAndStopOnly() {
-        XCTAssertEqual(make(busOwner: .call, phase: "recording", sessionId: "s-1").enabledCommands, [.start, .stop])
+    /// buttons in the same phase. Dictating: send-and-pause, send-and-go-to-Computer and skip,
+    /// never a second "start dictating".
+    func testDictatingOffersStartStopAndSkip() {
+        XCTAssertEqual(
+            make(busOwner: .call, phase: "recording", sessionId: "s-1").enabledCommands, [.start, .stop, .skip])
     }
 
-    /// Paused: talk again, or go to Computer — nothing to send.
-    func testTheQuietPhaseOffersWakeAndStopOnly() {
-        XCTAssertEqual(make(busOwner: .call, phase: "wake", sessionId: "s-1").enabledCommands, [.wake, .stop])
+    /// Paused: talk again, go to Computer, or skip the reply — nothing to send.
+    func testTheQuietPhaseOffersWakeStopAndSkip() {
+        XCTAssertEqual(make(busOwner: .call, phase: "wake", sessionId: "s-1").enabledCommands, [.wake, .stop, .skip])
     }
 
     /// A phase a newer backend invents offers no button, the same as the browser: a control

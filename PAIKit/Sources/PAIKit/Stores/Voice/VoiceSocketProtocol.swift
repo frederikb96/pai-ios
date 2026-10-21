@@ -71,6 +71,9 @@ public enum VoiceCallCommand: String, Sendable, Equatable, CaseIterable {
     case start
     /// "computer stop": send the session's whole draft and go back to Computer.
     case stop
+    /// Stop the reply playing right now, count it as heard and go on with the next one. No spoken
+    /// form; with nothing playing the backend does nothing.
+    case skip
 }
 
 // The spoken grammar's "end" has no case here on purpose: hanging up is something this client
