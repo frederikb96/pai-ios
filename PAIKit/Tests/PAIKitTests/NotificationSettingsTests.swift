@@ -77,13 +77,16 @@ private actor FakeAlertRoutingApi: AlertRoutingApiClient {
     private(set) var updates: [AlertRoutingUpdate] = []
     var tasks: [ScheduledTask] = []
 
-    init(routes: [String: AlertRoute] = [:], taskId: String? = nil, problem: String? = nil) {
+    init(
+        routes: [String: AlertRoute] = [:], taskId: String? = nil, problem: String? = nil,
+        kindTasks: [String: String] = [:], kindProblems: [String: String] = [:]
+    ) {
         current = AlertRoutingSettings(
             kinds: [
                 AlertKindInfo(id: "relay", label: "Relayed reports", patterns: ["relay:*"]),
                 AlertKindInfo(id: "other", label: "Other", patterns: []),
             ], routes: routes, agentTaskId: taskId, agentTaskName: nil, agentTaskProblem: problem,
-            updatedAt: "2026-10-12T00:00:00Z")
+            kindTasks: kindTasks, kindTaskProblems: kindProblems, updatedAt: "2026-10-12T00:00:00Z")
     }
 
     func getAlertRouting() async throws -> AlertRoutingSettings { current }
@@ -92,7 +95,8 @@ private actor FakeAlertRoutingApi: AlertRoutingApiClient {
         updates.append(update)
         current = AlertRoutingSettings(
             kinds: current.kinds, routes: update.routes, agentTaskId: update.agentTaskId,
-            agentTaskName: nil, agentTaskProblem: current.agentTaskProblem, updatedAt: current.updatedAt)
+            agentTaskName: nil, agentTaskProblem: current.agentTaskProblem, kindTasks: update.kindTasks,
+            kindTaskProblems: current.kindTaskProblems, updatedAt: current.updatedAt)
         return current
     }
 
@@ -114,7 +118,7 @@ final class AlertRoutingStoreTests: XCTestCase {
         await store.setRoute(.notify, forKind: "relay")
 
         let updates = await api.updates
-        XCTAssertEqual(updates, [AlertRoutingUpdate(routes: ["other": .agent], agentTaskId: "t1")])
+        XCTAssertEqual(updates, [AlertRoutingUpdate(routes: ["other": .agent], agentTaskId: "t1", kindTasks: [:])])
         XCTAssertEqual(store.route(forKind: "relay"), .notify)
     }
 
@@ -128,13 +132,65 @@ final class AlertRoutingStoreTests: XCTestCase {
         await store.setAgentTask(id: "t9")
 
         let updates = await api.updates
-        XCTAssertEqual(updates, [AlertRoutingUpdate(routes: ["relay": .agent], agentTaskId: "t9")])
+        XCTAssertEqual(updates, [AlertRoutingUpdate(routes: ["relay": .agent], agentTaskId: "t9", kindTasks: [:])])
     }
 
     func testTheClearedTaskIsWrittenAsAnExplicitNull() throws {
-        let body = try JSONEncoder().encode(AlertRoutingUpdate(routes: [:], agentTaskId: nil))
+        let body = try JSONEncoder().encode(AlertRoutingUpdate(routes: [:], agentTaskId: nil, kindTasks: [:]))
         let text = String(decoding: body, as: UTF8.self)
         XCTAssertTrue(text.contains(#""agent_task_id":null"#), text)
+        // Omitted, the server keeps the stored per-kind tasks; `{}` is how they are cleared.
+        XCTAssertTrue(text.contains(#""kind_tasks":{}"#), text)
+    }
+
+    /// The task is written beside the whole map, and every other write carries the stored
+    /// per-kind tasks along instead of resetting them.
+    func testAKindTaskIsSetClearedAndCarriedThroughOtherWrites() async {
+        let api = FakeAlertRoutingApi(routes: ["relay": .agent, "other": .both], kindTasks: ["other": "t3"])
+        let store = AlertRoutingStore(api: api)
+        await store.load()
+
+        await store.setTask(id: "t7", forKind: "relay")
+        await store.setRoute(.notify, forKind: "other")
+        await store.setTask(id: nil, forKind: "relay")
+
+        let updates = await api.updates
+        XCTAssertEqual(
+            updates,
+            [
+                AlertRoutingUpdate(
+                    routes: ["relay": .agent, "other": .both], agentTaskId: nil,
+                    kindTasks: ["relay": "t7", "other": "t3"]),
+                AlertRoutingUpdate(
+                    routes: ["relay": .agent], agentTaskId: nil, kindTasks: ["relay": "t7", "other": "t3"]),
+                AlertRoutingUpdate(
+                    routes: ["relay": .agent], agentTaskId: nil, kindTasks: ["other": "t3"]),
+            ])
+    }
+
+    /// The default task's problem only matters to a kind that depends on it.
+    func testTheDefaultTaskProblemIgnoresKindsWithATaskOfTheirOwn() async {
+        let own = AlertRoutingStore(
+            api: FakeAlertRoutingApi(
+                routes: ["relay": .agent], problem: "the task is disabled", kindTasks: ["relay": "t2"]))
+        await own.load()
+        XCTAssertNil(own.agentProblem)
+
+        let mixed = AlertRoutingStore(
+            api: FakeAlertRoutingApi(
+                routes: ["relay": .agent, "other": .both], problem: "the task is disabled",
+                kindTasks: ["relay": "t2"]))
+        await mixed.load()
+        XCTAssertEqual(mixed.agentProblem, "the task is disabled")
+    }
+
+    func testAKindTaskProblemIsLookedUpPerKind() async {
+        let store = AlertRoutingStore(
+            api: FakeAlertRoutingApi(
+                routes: ["relay": .agent], kindTasks: ["relay": "t2"], kindProblems: ["relay": "it is stopped"]))
+        await store.load()
+        XCTAssertEqual(store.problem(forKind: "relay"), "it is stopped")
+        XCTAssertNil(store.problem(forKind: "other"))
     }
 
     /// The server's explanation is only relevant once something is actually routed to the agent.
@@ -164,11 +220,12 @@ final class AlertRoutingStoreTests: XCTestCase {
     /// failing the screen or being rewritten to something else.
     func testAnUnknownRouteValueRoundTrips() throws {
         let json = Data(
-            #"{"kinds":[],"routes":{"x":"escalate"},"agent_task_id":null,"agent_task_name":null,"agent_task_problem":null,"updated_at":"t"}"#
+            #"{"kinds":[],"routes":{"x":"escalate"},"agent_task_id":null,"agent_task_name":null,"agent_task_problem":null,"kind_tasks":{},"kind_task_problems":{},"updated_at":"t"}"#
                 .utf8)
         let settings = try JSONDecoder().decode(AlertRoutingSettings.self, from: json)
         XCTAssertEqual(settings.routes["x"], .unrecognized("escalate"))
-        let body = try JSONEncoder().encode(AlertRoutingUpdate(routes: settings.routes, agentTaskId: nil))
+        let body = try JSONEncoder().encode(
+            AlertRoutingUpdate(routes: settings.routes, agentTaskId: nil, kindTasks: [:]))
         XCTAssertTrue(String(decoding: body, as: UTF8.self).contains(#""x":"escalate""#))
     }
 }
@@ -218,17 +275,21 @@ final class NotificationSettingsWireTests: XCTestCase {
 
     func testAlertRoutingIsReadAndWrittenAtItsSettingsRoute() async throws {
         stub(
-            #"{"kinds":[{"id":"other","label":"Other","patterns":[]}],"routes":{},"agent_task_id":null,"agent_task_name":null,"agent_task_problem":null,"updated_at":"t"}"#
+            #"{"kinds":[{"id":"other","label":"Other","patterns":[]}],"routes":{},"agent_task_id":null,"agent_task_name":null,"agent_task_problem":null,"kind_tasks":{"other":"t5"},"kind_task_problems":{"other":"gone"},"updated_at":"t"}"#
         )
         let client = try makeClient()
-        _ = try await client.getAlertRouting()
+        let settings = try await client.getAlertRouting()
+        XCTAssertEqual(settings.kindTasks, ["other": "t5"])
+        XCTAssertEqual(settings.kindTaskProblems, ["other": "gone"])
         XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.url?.path, "/api/settings/alert-routing")
         XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.httpMethod, "GET")
 
-        _ = try await client.updateAlertRouting(AlertRoutingUpdate(routes: ["other": .both], agentTaskId: "t1"))
+        _ = try await client.updateAlertRouting(
+            AlertRoutingUpdate(routes: ["other": .both], agentTaskId: "t1", kindTasks: ["other": "t5"]))
         XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.httpMethod, "PUT")
         let body = String(data: PaiStubURLProtocol.capturedBody ?? Data(), encoding: .utf8) ?? ""
         XCTAssertTrue(body.contains(#""other":"both""#), body)
         XCTAssertTrue(body.contains(#""agent_task_id":"t1""#), body)
+        XCTAssertTrue(body.contains(#""kind_tasks":{"other":"t5"}"#), body)
     }
 }

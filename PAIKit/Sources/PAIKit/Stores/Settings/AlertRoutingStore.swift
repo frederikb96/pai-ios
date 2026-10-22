@@ -58,12 +58,38 @@ public final class AlertRoutingStore {
         var routes = settings.routes
         // `notify` is the default and is not stored: an explicit entry would never clear.
         if route == .notify { routes.removeValue(forKey: kindId) } else { routes[kindId] = route }
-        await save(AlertRoutingUpdate(routes: routes, agentTaskId: settings.agentTaskId))
+        await save(
+            AlertRoutingUpdate(routes: routes, agentTaskId: settings.agentTaskId, kindTasks: settings.kindTasks))
     }
 
     public func setAgentTask(id: String?) async {
         guard let settings else { return }
-        await save(AlertRoutingUpdate(routes: settings.routes, agentTaskId: id))
+        await save(AlertRoutingUpdate(routes: settings.routes, agentTaskId: id, kindTasks: settings.kindTasks))
+    }
+
+    /// `nil` puts the kind back on the default agent task.
+    public func setTask(id: String?, forKind kindId: String) async {
+        guard let settings else { return }
+        var kindTasks = settings.kindTasks
+        if let id { kindTasks[kindId] = id } else { kindTasks.removeValue(forKey: kindId) }
+        await save(
+            AlertRoutingUpdate(routes: settings.routes, agentTaskId: settings.agentTaskId, kindTasks: kindTasks))
+    }
+
+    public func task(forKind kindId: String) -> String? {
+        settings?.kindTasks[kindId]
+    }
+
+    /// Why the kind's own task cannot be woken; the server then notifies instead.
+    public func problem(forKind kindId: String) -> String? {
+        settings?.kindTaskProblems[kindId]
+    }
+
+    /// Whether a task chosen for the kind is among the loaded ones; when it is not, its picker
+    /// still has to offer it.
+    public func kindTaskIsListed(_ kindId: String) -> Bool {
+        guard let id = task(forKind: kindId) else { return true }
+        return tasks.contains { $0.id == id }
     }
 
     /// Whether the chosen task is among the loaded ones; when it is not, the picker still has to
@@ -73,11 +99,14 @@ public final class AlertRoutingStore {
         return tasks.contains { $0.id == id }
     }
 
-    /// Shown only when something is actually routed to the agent: the server then notifies
-    /// instead, and says why in the alert itself.
+    /// Shown only when a kind routed to the agent depends on the default task: the server then
+    /// notifies instead, and says why in the alert itself.
     public var agentProblem: String? {
-        guard let settings, settings.routes.values.contains(where: { $0 != .notify }) else { return nil }
-        return settings.agentTaskProblem
+        guard let settings else { return nil }
+        let usesDefault = settings.routes.contains { kindId, route in
+            route != .notify && settings.kindTasks[kindId] == nil
+        }
+        return usesDefault ? settings.agentTaskProblem : nil
     }
 
     /// One line for the settings row.
