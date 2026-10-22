@@ -1,0 +1,203 @@
+{
+  "names": [
+    "all",
+    "anthropic-skills:docx",
+    "arc",
+    "auto",
+    "dummy",
+    "enrich",
+    "evidence-reasoning-research",
+    "home-assistant",
+    "pai",
+    "pai-update",
+    "short",
+    "subagents"
+  ],
+  "mentions": [
+    {
+      "case": "a leading chain runs; a word in between ends it, and later names are mentions",
+      "text": "/all all /dummy /auto live do it",
+      "expect": [
+        { "kind": "runs", "token": "all", "name": "all" },
+        { "kind": "mention", "token": "dummy", "name": "dummy" },
+        { "kind": "mention", "token": "auto", "name": "auto" }
+      ]
+    },
+    {
+      "case": "every name of an unbroken leading run runs",
+      "text": "/dummy /short explain",
+      "expect": [
+        { "kind": "runs", "token": "dummy", "name": "dummy" },
+        { "kind": "runs", "token": "short", "name": "short" }
+      ]
+    },
+    {
+      "case": "punctuation glued to a name makes it no mention, trailing dots included",
+      "text": "please /dummy, then /dummy. and /dummy!",
+      "expect": []
+    },
+    {
+      "case": "paths, URLs and a slash inside a word are never mentions",
+      "text": "see /tmp/notes.md and https://x.com/y and a/b",
+      "expect": []
+    },
+    {
+      "case": "CJK punctuation before the slash is not whitespace",
+      "text": "ok。/dummy run",
+      "expect": []
+    },
+    {
+      "case": "an unknown name one edit away from a real one is a near miss",
+      "text": "do /dumy now",
+      "expect": [{ "kind": "nearMiss", "token": "dumy", "name": "dummy" }]
+    },
+    {
+      "case": "a near miss in the leading chain too",
+      "text": "/dumy now",
+      "expect": [{ "kind": "nearMiss", "token": "dumy", "name": "dummy" }]
+    },
+    {
+      "case": "a long name tolerates two edits",
+      "text": "/evidence-reasoning-resarch go",
+      "expect": [{ "kind": "nearMiss", "token": "evidence-reasoning-resarch", "name": "evidence-reasoning-research" }]
+    },
+    {
+      "case": "a short name tolerates one edit only",
+      "text": "x /dumyy",
+      "expect": [{ "kind": "nearMiss", "token": "dumyy", "name": "dummy" }]
+    },
+    {
+      "case": "two edits away from a short name is nothing",
+      "text": "x /dmmyy",
+      "expect": []
+    },
+    {
+      "case": "the closest name wins",
+      "text": "x /pai-updat",
+      "expect": [{ "kind": "nearMiss", "token": "pai-updat", "name": "pai-update" }]
+    },
+    {
+      "case": "a name shorter than three letters is never a near miss",
+      "text": "x /ab /x",
+      "expect": []
+    },
+    {
+      "case": "an ordinary unknown word stays silent",
+      "text": "/home and /tmp",
+      "expect": []
+    },
+    {
+      "case": "a plugin skill matches by its full name",
+      "text": "use /anthropic-skills:docx please",
+      "expect": [{ "kind": "mention", "token": "anthropic-skills:docx", "name": "anthropic-skills:docx" }]
+    },
+    {
+      "case": "a name repeated shows once",
+      "text": "/dummy /dummy then /dummy",
+      "expect": [{ "kind": "runs", "token": "dummy", "name": "dummy" }]
+    },
+    {
+      "case": "line breaks are whitespace, CRLF included",
+      "text": "line one\r\n/dummy\r\nnext",
+      "expect": [{ "kind": "mention", "token": "dummy", "name": "dummy" }]
+    },
+    {
+      "case": "a paste marker beside a name changes nothing",
+      "text": "look [📎 paste-1] /dummy",
+      "expect": [{ "kind": "mention", "token": "dummy", "name": "dummy" }]
+    },
+    {
+      "case": "offsets are UTF-16 code units",
+      "text": "🙂 /dummy",
+      "expect": [{ "kind": "mention", "token": "dummy", "name": "dummy", "start": 3, "end": 9 }]
+    }
+  ],
+  "completions": [
+    {
+      "case": "a prefix at the caret offers the names it starts",
+      "text": "do /ev",
+      "caret": 6,
+      "expect": { "start": 3, "end": 6, "candidates": ["evidence-reasoning-research"] }
+    },
+    {
+      "case": "shorter names first, then alphabetical",
+      "text": "do /pa",
+      "caret": 6,
+      "expect": { "start": 3, "end": 6, "candidates": ["pai", "pai-update"] }
+    },
+    {
+      "case": "a name already typed in full is not offered again",
+      "text": "do /pai",
+      "caret": 7,
+      "expect": { "start": 3, "end": 7, "candidates": ["pai-update"] }
+    },
+    {
+      "case": "a plugin skill completes from its bare name",
+      "text": "do /docx",
+      "caret": 8,
+      "expect": { "start": 3, "end": 8, "candidates": ["anthropic-skills:docx"] }
+    },
+    {
+      "case": "text after the caret is fine when it starts with whitespace",
+      "text": "do /ev more",
+      "caret": 6,
+      "expect": { "start": 3, "end": 6, "candidates": ["evidence-reasoning-research"] }
+    },
+    {
+      "case": "a caret inside a word offers nothing",
+      "text": "do /evi",
+      "caret": 5,
+      "expect": null
+    },
+    {
+      "case": "a path offers nothing",
+      "text": "/tmp/x",
+      "caret": 4,
+      "expect": null
+    },
+    {
+      "case": "a slash inside a word offers nothing",
+      "text": "a/ev",
+      "caret": 4,
+      "expect": null
+    },
+    {
+      "case": "a bare slash offers nothing",
+      "text": "do /",
+      "caret": 4,
+      "expect": null
+    },
+    {
+      "case": "no name matching offers nothing",
+      "text": "do /zz",
+      "caret": 6,
+      "expect": null
+    }
+  ],
+  "replacements": [
+    {
+      "case": "a completion at the end of the text adds the space",
+      "text": "do /ev",
+      "start": 3,
+      "end": 6,
+      "name": "evidence-reasoning-research",
+      "expect": { "text": "do /evidence-reasoning-research ", "caret": 32 }
+    },
+    {
+      "case": "a completion before a space lands the caret on it",
+      "text": "do /ev more",
+      "start": 3,
+      "end": 6,
+      "name": "evidence-reasoning-research",
+      "expect": { "text": "do /evidence-reasoning-research more", "caret": 32 }
+    },
+    {
+      "case": "a near-miss fix replaces only its token",
+      "text": "do /dumy now",
+      "start": 3,
+      "end": 8,
+      "name": "dummy",
+      "expect": { "text": "do /dummy now", "caret": 10 }
+    }
+  ]
+}
