@@ -126,6 +126,7 @@ extension PaiFixtures {
           "computer_voice": "cedar", "computer_delivery": null, "computer_speed": 1.25,
           "call_voice_id": null, "call_speed": 1.2,
           "stt_keyterms": ["Computer", "Kai", "PAI"], "stt_language": null, "stt_no_verbatim": false,
+          "stt_batch_pause_s": 15,
           "debug_recordings_enabled": true,
           "updated_at": "2026-09-20T12:00:00.123456+00:00"
         }

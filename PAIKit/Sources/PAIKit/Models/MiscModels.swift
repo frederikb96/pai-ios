@@ -1036,6 +1036,11 @@ public let callSpeedRange: ClosedRange<Double> = 0.7...1.2
 /// OpenAI Realtime's `audio.output.speed` range.
 public let computerSpeedRange: ClosedRange<Double> = 0.25...1.5
 
+/// Seconds of silence after which a batch take is transcribed in the background.
+public let sttBatchPauseRange: ClosedRange<Int> = 5...120
+/// What switching the setting on starts from; the backend's own default.
+public let sttBatchPauseDefault = 15
+
 /// ElevenLabs realtime's limits on key terms — stricter than batch's, and both receive the list.
 public enum SttKeytermRules {
     public static let maxCount = 50
@@ -1066,6 +1071,9 @@ public struct SpokenVoiceSettings: Codable, Sendable, Equatable {
     /// ISO 639 code; `nil` auto-detects.
     public let sttLanguage: String?
     public let sttNoVerbatim: Bool
+    /// Seconds of pause after which a batch take is transcribed in the background; `nil` is off.
+    /// A backend that predates the setting does not send the key, which reads as off.
+    public let sttBatchPauseS: Int?
     /// Whether the backend keeps debug recordings of what each engine heard. Toggled from the
     /// Debug Recordings sheet, not from the voice groups.
     public let debugRecordingsEnabled: Bool
@@ -1080,6 +1088,7 @@ public struct SpokenVoiceSettings: Codable, Sendable, Equatable {
         case sttKeyterms = "stt_keyterms"
         case sttLanguage = "stt_language"
         case sttNoVerbatim = "stt_no_verbatim"
+        case sttBatchPauseS = "stt_batch_pause_s"
         case debugRecordingsEnabled = "debug_recordings_enabled"
         case updatedAt = "updated_at"
     }
@@ -1087,7 +1096,7 @@ public struct SpokenVoiceSettings: Codable, Sendable, Equatable {
     public init(
         computerVoice: String?, computerDelivery: String?, computerSpeed: Double?, callVoiceId: String?,
         callSpeed: Double, sttKeyterms: [String], sttLanguage: String?, sttNoVerbatim: Bool,
-        debugRecordingsEnabled: Bool, updatedAt: String
+        sttBatchPauseS: Int?, debugRecordingsEnabled: Bool, updatedAt: String
     ) {
         self.computerVoice = computerVoice
         self.computerDelivery = computerDelivery
@@ -1097,6 +1106,7 @@ public struct SpokenVoiceSettings: Codable, Sendable, Equatable {
         self.sttKeyterms = sttKeyterms
         self.sttLanguage = sttLanguage
         self.sttNoVerbatim = sttNoVerbatim
+        self.sttBatchPauseS = sttBatchPauseS
         self.debugRecordingsEnabled = debugRecordingsEnabled
         self.updatedAt = updatedAt
     }
@@ -1115,6 +1125,7 @@ public struct SpokenVoiceSettingsUpdate: Encodable, Sendable, Equatable {
     public var sttKeyterms: [String]
     public var sttLanguage: String?
     public var sttNoVerbatim: Bool
+    public var sttBatchPauseS: Int?
 
     enum CodingKeys: String, CodingKey {
         case computerVoice = "computer_voice"
@@ -1125,11 +1136,13 @@ public struct SpokenVoiceSettingsUpdate: Encodable, Sendable, Equatable {
         case sttKeyterms = "stt_keyterms"
         case sttLanguage = "stt_language"
         case sttNoVerbatim = "stt_no_verbatim"
+        case sttBatchPauseS = "stt_batch_pause_s"
     }
 
     public init(
         computerVoice: String?, computerDelivery: String?, computerSpeed: Double?, callVoiceId: String?,
-        callSpeed: Double, sttKeyterms: [String], sttLanguage: String?, sttNoVerbatim: Bool
+        callSpeed: Double, sttKeyterms: [String], sttLanguage: String?, sttNoVerbatim: Bool,
+        sttBatchPauseS: Int?
     ) {
         self.computerVoice = computerVoice
         self.computerDelivery = computerDelivery
@@ -1139,6 +1152,7 @@ public struct SpokenVoiceSettingsUpdate: Encodable, Sendable, Equatable {
         self.sttKeyterms = sttKeyterms
         self.sttLanguage = sttLanguage
         self.sttNoVerbatim = sttNoVerbatim
+        self.sttBatchPauseS = sttBatchPauseS
     }
 
     /// Nullable fields are always written, `null` included — the synthesised encoder would
@@ -1153,6 +1167,7 @@ public struct SpokenVoiceSettingsUpdate: Encodable, Sendable, Equatable {
         try container.encode(sttKeyterms, forKey: .sttKeyterms)
         try container.encode(sttLanguage, forKey: .sttLanguage)
         try container.encode(sttNoVerbatim, forKey: .sttNoVerbatim)
+        try container.encode(sttBatchPauseS, forKey: .sttBatchPauseS)
     }
 }
 
