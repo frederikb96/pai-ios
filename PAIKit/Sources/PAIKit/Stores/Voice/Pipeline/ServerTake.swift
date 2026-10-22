@@ -245,13 +245,15 @@ extension PaiError {
 /// text was. Strings cross the wire, never offsets.
 public enum HeldTakeSplit {
     /// `insertedText` is the take's own words as this device wrote them (`stt-rec: ` included);
-    /// `nil` for a batch take, which writes nothing while it records, so its text goes after
-    /// everything typed. `nil` when the take's words are no longer in the composer — edited or
-    /// deleted — and the send is then an ordinary one: nothing typed is ever dropped to make
-    /// room for the take.
+    /// `nil` for a batch take, which writes nothing while it records, so its text goes on a line of
+    /// its own after everything typed — `before` then ends in the line break, which the server's
+    /// composition follows without a space. `nil` when the take's words are no longer in the
+    /// composer — edited or deleted — and the send is then an ordinary one: nothing typed is ever
+    /// dropped to make room for the take.
     public static func split(composerText: String, insertedText: String?) -> (before: String, after: String)? {
         guard let insertedText else {
-            return (composerText.trimmingCharacters(in: .whitespacesAndNewlines), "")
+            let typed = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (typed.isEmpty ? "" : "\(typed)\n", "")
         }
         guard !insertedText.isEmpty, let range = composerText.range(of: insertedText, options: .backwards) else {
             return nil
@@ -265,12 +267,15 @@ public enum HeldTakeSplit {
 /// Applies a finished take's text — authoritative for the whole take — to the draft it was
 /// dictated into, as `docs/VOICE_PROTOCOL.md` "Takes" lays down for every client: nothing when
 /// the draft already holds exactly those words, the take's own earlier words replaced where they
-/// can still be found, appended where they cannot. Unlike ``DraftHeal``, which only ever replaces,
-/// this one appends: the server's text is the only copy of words this device never showed, and
-/// leaving them out loses them.
+/// can still be found, appended where they cannot — a batch take, which showed no words while it
+/// recorded and left the composer to typing, on a line of its own after everything typed. Unlike
+/// ``DraftHeal``, which only ever replaces, this one appends: the server's text is the only copy of
+/// words this device never showed, and leaving them out loses them.
 public enum TakeResultHeal {
     /// `nil` means leave the draft as it is.
-    public static func apply(currentDraftText: String, previousInsertedText: String?, takeText: String) -> String? {
+    public static func apply(
+        currentDraftText: String, previousInsertedText: String?, takeText: String, sttMode: VoiceSttMode
+    ) -> String? {
         let text = takeText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
         let healed = "\(VoiceRecordingResult.sttPrefix)\(text)"
@@ -280,6 +285,10 @@ public enum TakeResultHeal {
                 currentDraftText: currentDraftText, previousInsertedText: previousInsertedText, healedText: healed)
         {
             return updated
+        }
+        if sttMode == .batch {
+            let typed = String(currentDraftText.reversed().drop(while: \.isWhitespace).reversed())
+            return typed.isEmpty ? healed : "\(typed)\n\(healed)"
         }
         return currentDraftText.isEmpty ? healed : "\(currentDraftText) \(healed)"
     }

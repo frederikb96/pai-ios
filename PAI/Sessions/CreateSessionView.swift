@@ -594,8 +594,10 @@ struct CreateSessionView: View {
         // Keeps the editor scrolled to the tail as a take's own live text grows — the words
         // themselves arrive through `VoiceRecorderController` writing straight into `DraftStore`,
         // not through any poll here.
+        // A batch take writes nothing while it records, so text changing then is typing, which the
+        // caret already governs.
         .task(id: isRecordingHere(voiceController)) {
-            guard isRecordingHere(voiceController) else { return }
+            guard isRecordingHere(voiceController), voiceController.activeSttMode == .live else { return }
             var lastText = drafts.draft(for: DraftKey.newSession).text
             while !Task.isCancelled, isRecordingHere(voiceController) {
                 let currentText = drafts.draft(for: DraftKey.newSession).text

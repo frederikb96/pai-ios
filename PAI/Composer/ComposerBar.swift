@@ -251,8 +251,10 @@ struct ComposerBar: View {
         // Keeps the field scrolled to the tail while a take's own live text grows. `.task(id:)`
         // cancels on disappear, where a free-standing `Task` would leave one more loop running
         // per visit.
+        // A batch take writes nothing while it records, so text changing then is typing, which the
+        // caret already governs.
         .task(id: isRecordingHere(voiceController)) {
-            guard isRecordingHere(voiceController) else { return }
+            guard isRecordingHere(voiceController), voiceController.activeSttMode == .live else { return }
             var lastText = drafts.draft(for: sessionID).text
             while !Task.isCancelled, isRecordingHere(voiceController) {
                 let text = drafts.draft(for: sessionID).text
