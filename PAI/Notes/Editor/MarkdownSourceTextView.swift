@@ -88,9 +88,12 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         // merely touching it on a TextKit 2 view silently falls back anyway; asking for it up
         // front makes that a decision rather than a side effect.
         let view = PasteAwareTextView(usingTextLayoutManager: false)
+        // The note writes its own embed links for a paste, so nothing comes back for the view to
+        // insert.
         view.onPasteImages = { [weak view] images in
-            guard let view else { return }
+            guard let view else { return nil }
             context.coordinator.handlePaste(images, at: view.selectedRange.location)
+            return nil
         }
         view.delegate = context.coordinator
         view.backgroundColor = .clear
