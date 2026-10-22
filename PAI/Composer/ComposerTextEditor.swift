@@ -28,6 +28,11 @@ struct ComposerTextEditor: UIViewRepresentable {
     /// the size limit stay the composer's business, exactly as they are for the photo picker; it
     /// answers the markers to put at the caret (`PasteMarkers`), or `nil` to attach unmarked.
     var onPasteImages: ([PastedImage]) -> String?
+    /// The skills this composer's context offers. Empty offers no completions.
+    var skillNames: [String] = []
+    /// True while a live take owns the text: nothing is suggested, because the take rewrites the
+    /// field and the caret is not the reader's.
+    var skillSuggestionsPaused = false
 
     func makeUIView(context: Context) -> UITextView {
         let textView = PasteAwareTextView()
@@ -45,8 +50,18 @@ struct ComposerTextEditor: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UITextView, context: Context) {
+        let coordinator = context.coordinator
+        let suggestionInputsChanged =
+            coordinator.skillNames != skillNames || coordinator.suggestionsPaused != skillSuggestionsPaused
+        coordinator.skillNames = skillNames
+        coordinator.suggestionsPaused = skillSuggestionsPaused
         if uiView.text != text {
-            uiView.text = text
+            // A programmatic write (a take, a synced draft) is not an edit by the reader, so it
+            // offers nothing; the next edit or caret move does.
+            coordinator.withProgrammaticWrite { uiView.text = text }
+            coordinator.clearSuggestions()
+        } else if suggestionInputsChanged {
+            coordinator.refreshSuggestions(in: uiView)
         }
         (uiView as? PasteAwareTextView)?.onPasteImages = { images in onPasteImages(images) }
         context.coordinator.applyPlaceholder(to: uiView, placeholder: placeholder, isEmpty: text.isEmpty)
@@ -78,12 +93,91 @@ struct ComposerTextEditor: UIViewRepresentable {
         private let parent: ComposerTextEditor
         private var placeholderLabel: UILabel?
 
+        var skillNames: [String] = []
+        var suggestionsPaused = false
+        private var isWritingProgrammatically = false
+        private var keyboardBar: UIToolbar?
+        private var dismissItem: UIBarButtonItem?
+        private var shownCandidates: [String] = []
+
         init(_ parent: ComposerTextEditor) {
             self.parent = parent
         }
 
         func textViewDidChange(_ textView: UITextView) {
             parent.text = textView.text
+            refreshSuggestions(in: textView)
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            guard !isWritingProgrammatically else { return }
+            refreshSuggestions(in: textView)
+        }
+
+        func withProgrammaticWrite(_ write: () -> Void) {
+            isWritingProgrammatically = true
+            write()
+            isWritingProgrammatically = false
+        }
+
+        // MARK: Skill completions
+
+        /// Recomputes the completions for the caret. Called only for edits and caret moves the
+        /// reader made; `SkillComposer.completion` decides when to stay silent (marked text, a
+        /// selection, a live take).
+        func refreshSuggestions(in textView: UITextView) {
+            guard !skillNames.isEmpty else { return clearSuggestions() }
+            let completion = SkillComposer.completion(
+                text: textView.text, selection: textView.selectedRange, names: skillNames,
+                hasMarkedText: textView.markedTextRange != nil, liveTake: suggestionsPaused)
+            show(completion?.candidates ?? [], in: textView)
+        }
+
+        func clearSuggestions() {
+            show([], in: nil)
+        }
+
+        private func show(_ candidates: [String], in textView: UITextView?) {
+            guard candidates != shownCandidates, let keyboardBar, let dismissItem else { return }
+            shownCandidates = candidates
+            let room = max(0, (keyboardBar.bounds.width > 0 ? keyboardBar.bounds.width : 320) - 72)
+            let font = UIFont.systemFont(ofSize: 15)
+            var used: CGFloat = 0
+            var chips: [UIBarButtonItem] = []
+            for name in candidates {
+                let width = (("/" + name) as NSString).size(withAttributes: [.font: font]).width + 24
+                if !chips.isEmpty, used + width > room { break }
+                used += width
+                let action = UIAction(title: "/" + name) { [weak self, weak textView] _ in
+                    guard let self, let textView else { return }
+                    self.complete(with: name, in: textView)
+                }
+                chips.append(UIBarButtonItem(primaryAction: action))
+            }
+            keyboardBar.setItems(chips + [UIBarButtonItem(systemItem: .flexibleSpace), dismissItem], animated: false)
+        }
+
+        /// Replaces the partial token at the caret through the text view's own edit path, so undo
+        /// and the delegate see an ordinary edit.
+        private func complete(with name: String, in textView: UITextView) {
+            guard
+                let completion = SkillComposer.completion(
+                    text: textView.text, selection: textView.selectedRange, names: skillNames,
+                    hasMarkedText: textView.markedTextRange != nil, liveTake: suggestionsPaused),
+                completion.candidates.contains(name)
+            else { return clearSuggestions() }
+            let insertion = SkillComposer.insertion(replacing: completion.range, with: name, in: textView.text)
+            guard
+                let start = textView.position(from: textView.beginningOfDocument, offset: insertion.range.location),
+                let end = textView.position(from: start, offset: insertion.range.length),
+                let range = textView.textRange(from: start, to: end)
+            else { return }
+            textView.replace(range, withText: insertion.replacement)
+            if parent.text != textView.text { parent.text = textView.text }
+            if textView.selectedRange != NSRange(location: insertion.caret, length: 0) {
+                textView.selectedRange = NSRange(location: insertion.caret, length: 0)
+            }
+            refreshSuggestions(in: textView)
         }
 
         /// One explicit way down, always visible while the keyboard is up.
@@ -100,6 +194,8 @@ struct ComposerTextEditor: UIViewRepresentable {
             dismiss.accessibilityLabel = "Hide keyboard"
             bar.items = [UIBarButtonItem(systemItem: .flexibleSpace), dismiss]
             bar.sizeToFit()
+            keyboardBar = bar
+            dismissItem = dismiss
             return bar
         }
 

@@ -70,6 +70,9 @@ final class AppEnvironment {
         /// The channels this account's devices can mute — what the notification switches are
         /// drawn from.
         let pushChannels: PushChannelsStore
+        /// The skill names each composer context offers, for the mentions row and the keyboard
+        /// bar's completions.
+        let skills: SkillStore
         /// The note index and every note currently open, with whatever is unsaved in each.
         /// App-wide rather than per-screen: an unsaved edit has to survive the editor being
         /// closed, and a note is reachable from three places at once — see `NotesStore`.
@@ -271,6 +274,7 @@ final class AppEnvironment {
                 try await client.registerDevice(token: token, mutedChannels: mutedChannels)
             },
             pushChannels: PushChannelsStore(api: client),
+            skills: SkillStore(api: client),
             notes: NotesStore(api: client),
             notesBrowse: notesBrowse,
             noteMeaning: NoteMeaningSearchStore { query, window in
