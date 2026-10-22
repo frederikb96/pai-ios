@@ -33,6 +33,9 @@ struct ComposerTextEditor: UIViewRepresentable {
     /// True while a live take owns the text: nothing is suggested, because the take rewrites the
     /// field and the caret is not the reader's.
     var skillSuggestionsPaused = false
+    /// The caret as the reader last placed it (`nil` for a selection), so the mentions row can
+    /// leave out the token the keyboard bar is completing.
+    var onCaretChange: (Int?) -> Void = { _ in }
 
     func makeUIView(context: Context) -> UITextView {
         let textView = PasteAwareTextView()
@@ -60,6 +63,7 @@ struct ComposerTextEditor: UIViewRepresentable {
             // offers nothing; the next edit or caret move does.
             coordinator.withProgrammaticWrite { uiView.text = text }
             coordinator.clearSuggestions()
+            DispatchQueue.main.async { coordinator.reportCaret(of: uiView) }
         } else if suggestionInputsChanged {
             coordinator.refreshSuggestions(in: uiView)
         }
@@ -111,7 +115,13 @@ struct ComposerTextEditor: UIViewRepresentable {
 
         func textViewDidChangeSelection(_ textView: UITextView) {
             guard !isWritingProgrammatically else { return }
+            reportCaret(of: textView)
             refreshSuggestions(in: textView)
+        }
+
+        func reportCaret(of textView: UITextView) {
+            let selection = textView.selectedRange
+            parent.onCaretChange(selection.length == 0 ? selection.location : nil)
         }
 
         func withProgrammaticWrite(_ write: () -> Void) {
@@ -266,11 +276,17 @@ final class PasteAwareTextView: UITextView {
             super.paste(sender)
         }
         guard let markers = onPasteImages?(images) else { return }
-        // Setting `text` reaches no delegate on its own, so the change is handed on explicitly —
-        // the binding behind the delegate is what the draft is.
-        let placed = PasteMarkers.insert(markers, into: text, replacing: selectedRange)
-        text = placed.text
-        selectedRange = NSRange(location: placed.caret, length: 0)
+        // The change is handed to the delegate explicitly: the binding behind it is what the draft
+        // is, and nothing guarantees `replace` reaches it.
+        // Applied as an edit through the text view, not by assigning `text`, so shake-to-undo
+        // takes the marker back and the typing before it stays undoable.
+        let planned = PasteMarkers.edit(markers, in: text, replacing: selectedRange)
+        guard let start = position(from: beginningOfDocument, offset: planned.range.location),
+            let end = position(from: start, offset: planned.range.length),
+            let range = textRange(from: start, to: end)
+        else { return }
+        replace(range, withText: planned.replacement)
+        selectedRange = NSRange(location: planned.caret, length: 0)
         delegate?.textViewDidChange?(self)
     }
 

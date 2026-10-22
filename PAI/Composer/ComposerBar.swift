@@ -38,6 +38,7 @@ struct ComposerBar: View {
 
     @State private var textHeight: CGFloat = ComposerTextEditor.minHeight
     @State private var scrollToTailOnNextUpdate = false
+    @State private var composerCaret: Int?
 
     @State private var isSending = false
     @State private var sendErrorMessage: String?
@@ -180,7 +181,7 @@ struct ComposerBar: View {
 
             SkillMentionRow(
                 items: SkillComposer.rowItems(
-                    text: draftStore.draft(for: sessionID).text, names: skillNames,
+                    text: draftStore.draft(for: sessionID).text, caret: composerCaret, names: skillNames,
                     liveTake: liveTakeOwnsBox(voiceController)),
                 onFix: { item in fixSkillMention(item, draftStore: draftStore, voiceController: voiceController) })
 
@@ -201,7 +202,8 @@ struct ComposerBar: View {
                     scrollToTailOnNextUpdate: $scrollToTailOnNextUpdate,
                     onPasteImages: { images in stagePastedImages(images, voiceController: voiceController) },
                     skillNames: skillNames,
-                    skillSuggestionsPaused: liveTakeOwnsBox(voiceController)
+                    skillSuggestionsPaused: liveTakeOwnsBox(voiceController),
+                    onCaretChange: { composerCaret = $0 }
                 )
                 .frame(height: textHeight)
                 .background(PaiPalette.Semantic.raisedSurface)

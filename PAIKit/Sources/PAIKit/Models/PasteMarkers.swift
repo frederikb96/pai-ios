@@ -55,15 +55,29 @@ public enum PasteMarkers {
     public static func insert(_ insert: String, into text: String, replacing selection: NSRange) -> (
         text: String, caret: Int
     ) {
+        let planned = edit(insert, in: text, replacing: selection)
+        let replaced = (text as NSString).replacingCharacters(in: planned.range, with: planned.replacement)
+        return (replaced, planned.caret)
+    }
+
+    /// The same insertion as one edit — the clamped range to replace and what replaces it — for a
+    /// text view that applies it through its own edit path, so undo keeps the typing before it.
+    public static func edit(_ insert: String, in text: String, replacing selection: NSRange) -> (
+        range: NSRange, replacement: String, caret: Int
+    ) {
         let source = text as NSString
         let start = min(max(selection.location, 0), source.length)
         let end = min(start + max(selection.length, 0), source.length)
-        let before = source.substring(to: start)
-        let after = source.substring(from: end)
-        let lead = before.last.map { $0.isWhitespace ? "" : " " } ?? ""
-        let trail = after.first.map { $0.isWhitespace ? "" : " " } ?? ""
-        let caret = (before as NSString).length + (lead as NSString).length + (insert as NSString).length
-        return (before + lead + insert + trail + after, caret)
+        let lead = start > 0 ? padding(beforeUnitAt: start - 1, in: source) : ""
+        let trail = end < source.length ? padding(beforeUnitAt: end, in: source) : ""
+        let caret = start + (lead as NSString).length + (insert as NSString).length
+        return (NSRange(location: start, length: end - start), lead + insert + trail, caret)
+    }
+
+    /// A space unless the character containing the UTF-16 unit at `index` is whitespace.
+    private static func padding(beforeUnitAt index: Int, in source: NSString) -> String {
+        let character = source.substring(with: source.rangeOfComposedCharacterSequence(at: index))
+        return (character.first?.isWhitespace ?? false) ? "" : " "
     }
 
     private static func numbers(in text: String, pattern: String) -> [Int] {
