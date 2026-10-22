@@ -52,13 +52,26 @@
       "expect": [{ "kind": "nearMiss", "token": "dumy", "name": "dummy" }]
     },
     {
-      "case": "a near miss in the leading chain too",
+      "case": "a typo in the leading chain gets no hint: built-ins and user-only skills are not in the listing",
       "text": "/dumy now",
-      "expect": [{ "kind": "nearMiss", "token": "dumy", "name": "dummy" }]
+      "expect": []
+    },
+    {
+      "case": "valid commands the listing does not name are left alone at the start",
+      "text": "/pta /plan go",
+      "expect": []
+    },
+    {
+      "case": "a hint still comes for a typo after the chain",
+      "text": "/dummy then /autp",
+      "expect": [
+        { "kind": "runs", "token": "dummy", "name": "dummy" },
+        { "kind": "nearMiss", "token": "autp", "name": "auto" }
+      ]
     },
     {
       "case": "a long name tolerates two edits",
-      "text": "/evidence-reasoning-resarch go",
+      "text": "go /evidence-reasoning-resarch",
       "expect": [{ "kind": "nearMiss", "token": "evidence-reasoning-resarch", "name": "evidence-reasoning-research" }]
     },
     {

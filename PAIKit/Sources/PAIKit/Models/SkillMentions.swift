@@ -6,7 +6,8 @@ import Foundation
 /// `.:-_`, with trailing dots cut off, and it counts only with whitespace or the edge of the text
 /// on both sides — so `/dummy,` and `/tmp/x` never do. When the message starts with a slash, the
 /// leading run of tokens separated by nothing but whitespace is the invocation chain: those run,
-/// everything later is a mention, which Claude Code reads as permission to use that skill.
+/// everything later is a mention, which Claude Code reads as permission to use that skill. Typo
+/// hints are offered for mentions only.
 ///
 /// Only names from the session's own listing count, so a typo is visible here exactly when Claude
 /// Code would ignore it. The web composer (`utils/skillMentions.ts`) answers the same; the case
@@ -53,8 +54,12 @@ public enum SkillMentions {
         var chainEnd = 0
         var unknownScanned = 0
         for range in tokens(in: source) {
-            let gap = source.substring(with: NSRange(location: chainEnd, length: range.location - chainEnd))
-            let runs = inChain && gap.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            // Only read while the chain lasts: past it, the gap would copy everything from the
+            // chain's end to each token, quadratic over a long path-heavy draft.
+            let runs =
+                inChain
+                && source.substring(with: NSRange(location: chainEnd, length: range.location - chainEnd))
+                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             if runs { chainEnd = NSMaxRange(range) } else { inChain = false }
             guard isBounded(source, range) else { continue }
             let token = source.substring(with: NSRange(location: range.location + 1, length: range.length - 1))
@@ -63,7 +68,9 @@ public enum SkillMentions {
                 result.append(Mention(kind: runs ? .runs : .mention, token: token, name: token, range: range))
                 continue
             }
-            guard unknownScanned < nearMissScanLimit, seen.insert("?" + token).inserted else { continue }
+            // A command at the start may be a built-in or a user-only skill, neither of which the
+            // listing names: a hint there would offer to rewrite a valid `/pta` into `/pt`.
+            guard !runs, unknownScanned < nearMissScanLimit, seen.insert("?" + token).inserted else { continue }
             unknownScanned += 1
             if let name = nearestName(token, names: names) {
                 result.append(Mention(kind: .nearMiss, token: token, name: name, range: range))
