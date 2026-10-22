@@ -192,7 +192,7 @@ struct ComposerBar: View {
                     text: textBinding(draftStore: draftStore, voiceController: voiceController), height: $textHeight,
                     placeholder: "Message PAI...",
                     scrollToTailOnNextUpdate: $scrollToTailOnNextUpdate,
-                    onPasteImages: { images in stagePastedImages(images) }
+                    onPasteImages: { images in stagePastedImages(images, voiceController: voiceController) }
                 )
                 .frame(height: textHeight)
                 .background(PaiPalette.Semantic.raisedSurface)
@@ -529,9 +529,25 @@ struct ComposerBar: View {
     /// Pasted images go through the same door as the photo picker's — the same compression, the
     /// same size limit, the same preview strip. Nothing about a paste makes it a different kind
     /// of attachment.
-    private func stagePastedImages(_ images: [PastedImage]) {
+    ///
+    /// Each pasted image is named for the marker left at the caret (`PasteMarkers`), except while
+    /// a live take is writing into the box: a marker in its words would be carried off as the take
+    /// rewrites its tail, so the image attaches unmarked and the spoken words do the referring.
+    private func stagePastedImages(_ images: [PastedImage], voiceController: VoiceRecorderController) -> String? {
+        if isRecordingHere(voiceController), voiceController.activeSttMode == .live {
+            stageAttachments(
+                images.map { AttachmentCompression.stage(data: $0.data, filename: $0.filename, mimeType: $0.mimeType) })
+            return nil
+        }
+        let named = PasteMarkers.name(
+            images.map(\.filename), text: text,
+            filenames: stagedAttachments.map(\.filename)
+                + (draftStore?.draft(for: sessionID).attachments.map(\.filename) ?? []))
         stageAttachments(
-            images.map { AttachmentCompression.stage(data: $0.data, filename: $0.filename, mimeType: $0.mimeType) })
+            zip(images, named.filenames).map {
+                AttachmentCompression.stage(data: $0.data, filename: $1, mimeType: $0.mimeType)
+            })
+        return named.markers
     }
 
     private func stageAttachments(_ staged: [StagedAttachment]) {

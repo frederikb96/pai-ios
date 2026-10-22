@@ -1,3 +1,4 @@
+import PAIKit
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -24,8 +25,9 @@ struct ComposerTextEditor: UIViewRepresentable {
     /// the caret is sitting at, not at it.
     @Binding var scrollToTailOnNextUpdate: Bool
     /// Called with whatever images a paste carried, in pasteboard order. Staging, compression and
-    /// the size limit stay the composer's business, exactly as they are for the photo picker.
-    var onPasteImages: ([PastedImage]) -> Void
+    /// the size limit stay the composer's business, exactly as they are for the photo picker; it
+    /// answers the markers to put at the caret (`PasteMarkers`), or `nil` to attach unmarked.
+    var onPasteImages: ([PastedImage]) -> String?
 
     func makeUIView(context: Context) -> UITextView {
         let textView = PasteAwareTextView()
@@ -143,7 +145,7 @@ struct PastedImage {
 /// stock paste succeed, but by embedding the picture *in the text* as an attachment character,
 /// which is not a file the send path can upload.
 final class PasteAwareTextView: UITextView {
-    var onPasteImages: (([PastedImage]) -> Void)?
+    var onPasteImages: (([PastedImage]) -> String?)?
 
     /// Ordered by preference, not by likelihood: the first type an item actually carries wins, so
     /// a screenshot that offers both PNG and JPEG is taken in the losslessly-encoded one.
@@ -167,7 +169,13 @@ final class PasteAwareTextView: UITextView {
         if UIPasteboard.general.hasStrings {
             super.paste(sender)
         }
-        onPasteImages?(images)
+        guard let markers = onPasteImages?(images) else { return }
+        // Setting `text` reaches no delegate on its own, so the change is handed on explicitly —
+        // the binding behind the delegate is what the draft is.
+        let placed = PasteMarkers.insert(markers, into: text, replacing: selectedRange)
+        text = placed.text
+        selectedRange = NSRange(location: placed.caret, length: 0)
+        delegate?.textViewDidChange?(self)
     }
 
     /// `pasteboard.images` is deliberately not the primary route: it hands back decoded
