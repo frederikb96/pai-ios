@@ -528,6 +528,11 @@ struct CreateSessionView: View {
                     attachments: displayAttachments, onRemove: removeAttachment, onRetry: retryAttachment)
             }
 
+            SkillMentionRow(
+                items: SkillComposer.rowItems(
+                    text: text, names: skillNames(createSession), liveTake: liveTakeOwnsBox(voiceController)),
+                onFix: { item in fixSkillMention(item, createSession, voiceController) })
+
             // Same left-to-right order as `ComposerBar`: field, plus, mic, send. Two composers
             // that look alike and put their controls in different places is worse than either
             // arrangement on its own.
@@ -536,7 +541,9 @@ struct CreateSessionView: View {
                     text: textBinding(voiceController: voiceController), height: $textHeight,
                     placeholder: "What would you like to work on?",
                     scrollToTailOnNextUpdate: $scrollToTailOnNextUpdate,
-                    onPasteImages: { images in stagePastedImages(images, voiceController: voiceController) }
+                    onPasteImages: { images in stagePastedImages(images, voiceController: voiceController) },
+                    skillNames: skillNames(createSession),
+                    skillSuggestionsPaused: liveTakeOwnsBox(voiceController)
                 )
                 .focused($isComposerFocused)
                 .frame(height: textHeight)
@@ -601,6 +608,13 @@ struct CreateSessionView: View {
                 }
                 try? await Task.sleep(for: .milliseconds(150))
             }
+        }
+        .task(id: skillContext(createSession)) {
+            await environment.connection?.skills.load(skillContext(createSession))
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task { await environment.connection?.skills.load(skillContext(createSession)) }
         }
         // Same escape as `ComposerBar`'s own: leaving mid-drain must not leave the wait running
         // unattended behind a screen nobody is looking at.
@@ -808,6 +822,32 @@ struct CreateSessionView: View {
 
     private var text: String {
         drafts.draft(for: DraftKey.newSession).text
+    }
+
+    // MARK: - Skill mentions
+
+    /// The listing of the environment the session would start in; nothing until a type is picked.
+    private func skillContext(_ createSession: CreateSessionStore) -> SkillContext? {
+        guard let sessionType = createSession.selectedSessionTypeId else { return nil }
+        return .newSession(
+            agent: createSession.selectedMachine, sessionType: sessionType,
+            workingDir: createSession.isUltrafastSelected ? nil : createSession.workingDir)
+    }
+
+    private func skillNames(_ createSession: CreateSessionStore) -> [String] {
+        environment.connection?.skills.names(for: skillContext(createSession)) ?? []
+    }
+
+    /// See `ComposerBar.liveTakeOwnsBox`.
+    private func liveTakeOwnsBox(_ controller: VoiceRecorderController) -> Bool {
+        isRecordingHere(controller) && controller.activeSttMode == .live
+    }
+
+    private func fixSkillMention(
+        _ item: SkillComposer.RowItem, _ createSession: CreateSessionStore, _ voiceController: VoiceRecorderController
+    ) {
+        guard let fixed = SkillComposer.fixing(item, in: text, names: skillNames(createSession)) else { return }
+        textBinding(voiceController: voiceController).wrappedValue = fixed
     }
 
     /// See `ComposerBar.canRestorePreviousText`'s own doc comment — the same gate, same reasoning.

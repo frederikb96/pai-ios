@@ -30,6 +30,7 @@ struct ComposerBar: View {
     @Environment(StagedAttachmentStore.self) private var staging
     @Environment(OutboxStore.self) private var outbox
     @Environment(ToastCenter.self) private var toasts
+    @Environment(\.scenePhase) private var scenePhase
 
     let sessionID: String
 
@@ -177,6 +178,12 @@ struct ComposerBar: View {
                     attachments: displayAttachments, onRemove: removeAttachment, onRetry: retryAttachment)
             }
 
+            SkillMentionRow(
+                items: SkillComposer.rowItems(
+                    text: draftStore.draft(for: sessionID).text, names: skillNames,
+                    liveTake: liveTakeOwnsBox(voiceController)),
+                onFix: { item in fixSkillMention(item, draftStore: draftStore, voiceController: voiceController) })
+
             if let sendErrorMessage {
                 Text(sendErrorMessage)
                     .font(PaiTypography.caption.font)
@@ -192,7 +199,9 @@ struct ComposerBar: View {
                     text: textBinding(draftStore: draftStore, voiceController: voiceController), height: $textHeight,
                     placeholder: "Message PAI...",
                     scrollToTailOnNextUpdate: $scrollToTailOnNextUpdate,
-                    onPasteImages: { images in stagePastedImages(images, voiceController: voiceController) }
+                    onPasteImages: { images in stagePastedImages(images, voiceController: voiceController) },
+                    skillNames: skillNames,
+                    skillSuggestionsPaused: liveTakeOwnsBox(voiceController)
                 )
                 .frame(height: textHeight)
                 .background(PaiPalette.Semantic.raisedSurface)
@@ -264,6 +273,10 @@ struct ComposerBar: View {
                 }
                 try? await Task.sleep(for: .milliseconds(150))
             }
+        }
+        .task(id: sessionID) { await environment.connection?.skills.load(.session(sessionID)) }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await environment.connection?.skills.load(.session(sessionID)) } }
         }
         // Leaving mid-drain must not leave the wait running unattended behind a screen nobody is
         // looking at — the same escape a tap or typing gives the user while they are still looking.
@@ -344,6 +357,26 @@ struct ComposerBar: View {
 
     private var text: String {
         draftStore?.draft(for: sessionID).text ?? ""
+    }
+
+    // MARK: - Skill mentions
+
+    private var skillNames: [String] {
+        environment.connection?.skills.names(for: .session(sessionID)) ?? []
+    }
+
+    /// A live take rewrites the text continuously and the call writes its turns into it: neither
+    /// leaves a caret or a token for the reader to act on.
+    private func liveTakeOwnsBox(_ controller: VoiceRecorderController) -> Bool {
+        (isRecordingHere(controller) && controller.activeSttMode == .live) || callIsInThisSession
+    }
+
+    private func fixSkillMention(
+        _ item: SkillComposer.RowItem, draftStore: DraftStore, voiceController: VoiceRecorderController
+    ) {
+        guard let fixed = SkillComposer.fixing(item, in: draftStore.draft(for: sessionID).text, names: skillNames)
+        else { return }
+        textBinding(draftStore: draftStore, voiceController: voiceController).wrappedValue = fixed
     }
 
     /// Only when the server is holding a different earlier text than what's on screen — two
