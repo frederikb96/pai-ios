@@ -95,6 +95,7 @@ extension PaiFixtures {
           ],
           "routes": { "relay": "both" },
           "agent_task_id": null, "agent_task_name": null, "agent_task_problem": null,
+          "kind_tasks": {}, "kind_task_problems": {},
           "updated_at": "2026-07-02T09:00:00Z"
         }
         """#

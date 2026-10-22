@@ -69,10 +69,33 @@ struct AlertRoutingScreen: View {
                     .pickerStyle(.segmented)
                     .labelsHidden()
                     .disabled(routing.isSaving)
+                    if routing.route(forKind: kind.id) != .notify {
+                        kindTaskPicker(kind)
+                        if let problem = routing.problem(forKind: kind.id) {
+                            Text("This kind reaches you instead: \(problem).")
+                                .font(PaiTypography.caption.font)
+                                .foregroundStyle(PaiPalette.Semantic.warningText)
+                        }
+                    }
                 }
                 .accessibilityIdentifier("alert-routing-kind-\(kind.id)")
             }
         }
+    }
+
+    private func kindTaskPicker(_ kind: AlertKindInfo) -> some View {
+        Picker("Agent task for \(kind.label)", selection: kindTaskBinding(kind.id)) {
+            Text("Default agent task").tag("")
+            if let chosen = routing.task(forKind: kind.id), !routing.kindTaskIsListed(kind.id) {
+                Text(chosen).tag(chosen)
+            }
+            ForEach(routing.tasks) { task in
+                Text(task.name).tag(task.id)
+            }
+        }
+        .font(PaiTypography.caption.font)
+        .disabled(routing.isSaving)
+        .accessibilityIdentifier("alert-routing-kind-task-\(kind.id)")
     }
 
     /// A route this build has never heard of gets a segment of its own so the picker never shows
@@ -86,6 +109,13 @@ struct AlertRoutingScreen: View {
         Binding(
             get: { routing.route(forKind: kindId) },
             set: { route in Task { await routing.setRoute(route, forKind: kindId) } }
+        )
+    }
+
+    private func kindTaskBinding(_ kindId: String) -> Binding<String> {
+        Binding(
+            get: { routing.task(forKind: kindId) ?? "" },
+            set: { id in Task { await routing.setTask(id: id.isEmpty ? nil : id, forKind: kindId) } }
         )
     }
 
