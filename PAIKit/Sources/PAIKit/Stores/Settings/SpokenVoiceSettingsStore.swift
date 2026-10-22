@@ -17,6 +17,10 @@ public struct SpokenVoiceSettingsDraft: Sendable, Equatable {
     public var sttKeyterms: String
     public var sttLanguage: String
     public var sttNoVerbatim: Bool
+    /// Whether batch takes are transcribed in the background at all. Kept apart from the seconds
+    /// so switching off and on again does not lose the typed value.
+    public var sttBatchPauseEnabled: Bool
+    public var sttBatchPauseS: String
 
     public init(loaded: SpokenVoiceSettings) {
         computerVoice = loaded.computerVoice ?? ""
@@ -27,6 +31,8 @@ public struct SpokenVoiceSettingsDraft: Sendable, Equatable {
         sttKeyterms = loaded.sttKeyterms.joined(separator: ", ")
         sttLanguage = loaded.sttLanguage ?? ""
         sttNoVerbatim = loaded.sttNoVerbatim
+        sttBatchPauseEnabled = loaded.sttBatchPauseS != nil
+        sttBatchPauseS = String(loaded.sttBatchPauseS ?? sttBatchPauseDefault)
     }
 
     /// `nil` when the speed is not a number this can send — the caller gates Save on it rather
@@ -45,6 +51,15 @@ public struct SpokenVoiceSettingsDraft: Sendable, Equatable {
         return .some(value)
     }
 
+    /// `.some(nil)` when the setting is off, `nil` for seconds that cannot be sent.
+    var batchPauseValue: Int?? {
+        guard sttBatchPauseEnabled else { return .some(nil) }
+        guard let value = Int(sttBatchPauseS.trimmingCharacters(in: .whitespaces)),
+            sttBatchPauseRange.contains(value)
+        else { return nil }
+        return .some(value)
+    }
+
     var keyterms: [String] {
         sttKeyterms.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
@@ -57,7 +72,9 @@ public struct SpokenVoiceSettingsDraft: Sendable, Equatable {
     }
 
     func asUpdate() -> SpokenVoiceSettingsUpdate? {
-        guard let speed, let computerSpeed = computerSpeedValue, keytermProblem == nil else { return nil }
+        guard let speed, let computerSpeed = computerSpeedValue, let batchPause = batchPauseValue,
+            keytermProblem == nil
+        else { return nil }
         let language = sttLanguage.trimmingCharacters(in: .whitespaces).lowercased()
         return SpokenVoiceSettingsUpdate(
             computerVoice: computerVoice.isEmpty ? nil : computerVoice,
@@ -67,7 +84,8 @@ public struct SpokenVoiceSettingsDraft: Sendable, Equatable {
             callSpeed: speed,
             sttKeyterms: keyterms,
             sttLanguage: language.isEmpty ? nil : language,
-            sttNoVerbatim: sttNoVerbatim
+            sttNoVerbatim: sttNoVerbatim,
+            sttBatchPauseS: batchPause
         )
     }
 
@@ -111,6 +129,10 @@ public final class SpokenVoiceSettingsStore {
 
     public var isComputerSpeedValid: Bool {
         draft?.computerSpeedValue != nil
+    }
+
+    public var isBatchPauseValid: Bool {
+        draft?.batchPauseValue != nil
     }
 
     public var canSave: Bool {

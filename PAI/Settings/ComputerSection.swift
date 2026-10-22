@@ -138,13 +138,30 @@ struct SpokenVoiceSection: View {
                 .accessibilityIdentifier("stt-language")
             Toggle("Drop filler words", isOn: noVerbatim)
                 .accessibilityIdentifier("stt-no-verbatim")
+            Toggle("Transcribe batch takes while recording", isOn: batchPauseEnabled)
+                .accessibilityIdentifier("stt-batch-pause-enabled")
+            if store.draft?.sttBatchPauseEnabled == true {
+                LabeledContent("After a pause of (seconds)") {
+                    TextField("\(sttBatchPauseDefault)", text: field(\.sttBatchPauseS))
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                        .accessibilityIdentifier("stt-batch-pause-seconds")
+                }
+                if !store.isBatchPauseValid {
+                    invalid(
+                        "Seconds must be a whole number between \(sttBatchPauseRange.lowerBound) and \(sttBatchPauseRange.upperBound)."
+                    )
+                }
+            }
         } header: {
             Text("Dictation — ElevenLabs Scribe")
         } footer: {
             Text(
                 "Applies to every dictation: the composer, a call, the laptop, and re-transcribing a recording. "
                     + "Key terms bias recognition toward names it would otherwise miss, and cost extra. "
-                    + "Dropping filler words also drops false starts."
+                    + "Dropping filler words also drops false starts. "
+                    + "A batch take is transcribed in the background after each pause of the set length, "
+                    + "so a long take does not wait until the end."
             )
         }
     }
@@ -163,6 +180,13 @@ struct SpokenVoiceSection: View {
         Binding(
             get: { store.draft?.sttNoVerbatim ?? false },
             set: { store.draft?.sttNoVerbatim = $0 }
+        )
+    }
+
+    private var batchPauseEnabled: Binding<Bool> {
+        Binding(
+            get: { store.draft?.sttBatchPauseEnabled ?? false },
+            set: { store.draft?.sttBatchPauseEnabled = $0 }
         )
     }
 

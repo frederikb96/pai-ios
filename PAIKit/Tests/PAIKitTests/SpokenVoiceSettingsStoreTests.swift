@@ -41,12 +41,14 @@ final class SpokenVoiceSettingsStoreTests: XCTestCase {
 
     private func loaded(
         computerVoice: String? = nil, computerDelivery: String? = nil,
-        callVoiceId: String? = nil, callSpeed: Double = 1.0, sttKeyterms: [String] = []
+        callVoiceId: String? = nil, callSpeed: Double = 1.0, sttKeyterms: [String] = [],
+        sttBatchPauseS: Int? = nil
     ) -> SpokenVoiceSettings {
         SpokenVoiceSettings(
             computerVoice: computerVoice, computerDelivery: computerDelivery, computerSpeed: nil,
             callVoiceId: callVoiceId, callSpeed: callSpeed, sttKeyterms: sttKeyterms, sttLanguage: nil,
-            sttNoVerbatim: false, debugRecordingsEnabled: true, updatedAt: "2026-09-20T12:00:00Z")
+            sttNoVerbatim: false, sttBatchPauseS: sttBatchPauseS, debugRecordingsEnabled: true,
+            updatedAt: "2026-09-20T12:00:00Z")
     }
 
     /// An unset field and an empty text field are the same thing to a person, and have to be the
@@ -116,6 +118,56 @@ final class SpokenVoiceSettingsStoreTests: XCTestCase {
         draft.sttKeyterms = "Computer, Supercalifragilistic word"
         XCTAssertNotNil(draft.keytermProblem)
         XCTAssertNil(draft.asUpdate())
+    }
+
+    /// Off has to reach the backend as `null`: an omitted key leaves the stored seconds in force,
+    /// so a switch that turned off locally would silently stay on.
+    func testSwitchingTheBatchPauseOffSendsNullAndOnSendsTheSeconds() throws {
+        var draft = SpokenVoiceSettingsDraft(loaded: loaded(sttBatchPauseS: 30))
+        XCTAssertTrue(draft.sttBatchPauseEnabled)
+        XCTAssertEqual(draft.sttBatchPauseS, "30")
+        XCTAssertEqual(draft.asUpdate()?.sttBatchPauseS, 30)
+
+        draft.sttBatchPauseEnabled = false
+        let body = try JSONSerialization.jsonObject(with: JSONEncoder().encode(XCTUnwrap(draft.asUpdate())))
+        let object = try XCTUnwrap(body as? [String: Any])
+        XCTAssertTrue(object.keys.contains("stt_batch_pause_s"))
+        XCTAssertTrue(object["stt_batch_pause_s"] is NSNull)
+    }
+
+    /// While the setting is off the seconds field is not shown, so whatever it holds must not
+    /// block Save; while on, a value outside the backend's 5...120 must.
+    func testOnlyAnEnabledBatchPauseHasToBeInRange() {
+        var draft = SpokenVoiceSettingsDraft(loaded: loaded(sttBatchPauseS: nil))
+        XCTAssertFalse(draft.sttBatchPauseEnabled)
+        draft.sttBatchPauseS = "abc"
+        XCTAssertNotNil(draft.asUpdate())
+
+        draft.sttBatchPauseEnabled = true
+        for bad in ["", "4", "121", "7.5", "abc"] {
+            draft.sttBatchPauseS = bad
+            XCTAssertNil(draft.asUpdate(), "expected no update for \(bad.debugDescription)")
+        }
+        for good in ["5", "120", " 15 "] {
+            draft.sttBatchPauseS = good
+            XCTAssertNotNil(draft.asUpdate(), "expected an update for \(good.debugDescription)")
+        }
+    }
+
+    /// A backend that predates the setting leaves the key out; that must decode (as off), not
+    /// fail the whole screen's load.
+    func testSettingsFromABackendWithoutTheBatchPauseKeyStillDecode() async throws {
+        stubSettings()
+        let store = try await Self.makeStore()
+
+        await store.load()
+
+        let loadError = await store.loadError
+        let pause = await store.loaded?.sttBatchPauseS
+        let enabled = await store.draft?.sttBatchPauseEnabled
+        XCTAssertNil(loadError)
+        XCTAssertNil(pause)
+        XCTAssertEqual(enabled, false)
     }
 
     func testBeforeLoadNothingIsDirtyOrSaveable() async throws {
