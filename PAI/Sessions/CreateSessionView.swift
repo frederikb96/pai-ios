@@ -536,13 +536,7 @@ struct CreateSessionView: View {
                     text: textBinding(voiceController: voiceController), height: $textHeight,
                     placeholder: "What would you like to work on?",
                     scrollToTailOnNextUpdate: $scrollToTailOnNextUpdate,
-                    onPasteImages: { images in
-                        stageAttachments(
-                            images.map {
-                                AttachmentCompression.stage(
-                                    data: $0.data, filename: $0.filename, mimeType: $0.mimeType)
-                            })
-                    }
+                    onPasteImages: { images in stagePastedImages(images, voiceController: voiceController) }
                 )
                 .focused($isComposerFocused)
                 .frame(height: textHeight)
@@ -750,6 +744,25 @@ struct CreateSessionView: View {
 
     /// The one entry point every attachment source funnels through — a 50MB file discovered here
     /// fails immediately with a named reason, matching `ComposerBar`'s own guard.
+    /// See `ComposerBar.stagePastedImages`'s own doc comment — the same naming, same live-take
+    /// exception.
+    private func stagePastedImages(_ images: [PastedImage], voiceController: VoiceRecorderController) -> String? {
+        if isRecordingHere(voiceController), voiceController.activeSttMode == .live {
+            stageAttachments(
+                images.map { AttachmentCompression.stage(data: $0.data, filename: $0.filename, mimeType: $0.mimeType) })
+            return nil
+        }
+        let named = PasteMarkers.name(
+            images.map(\.filename), text: text,
+            filenames: stagedAttachments.map(\.filename)
+                + drafts.draft(for: DraftKey.newSession).attachments.map(\.filename))
+        stageAttachments(
+            zip(images, named.filenames).map {
+                AttachmentCompression.stage(data: $0.data, filename: $1, mimeType: $0.mimeType)
+            })
+        return named.markers
+    }
+
     private func stageAttachments(_ staged: [StagedAttachment]) {
         let oversize = staged.filter { $0.currentSize > maxAttachmentBytes }
         let accepted = staged.filter { $0.currentSize <= maxAttachmentBytes }
