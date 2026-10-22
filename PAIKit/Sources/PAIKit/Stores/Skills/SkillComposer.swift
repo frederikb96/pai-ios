@@ -24,11 +24,15 @@ public enum SkillComposer {
 
     /// The skills the text names, in order. Empty while a live take owns the box (it rewrites
     /// the text constantly and nothing can be edited) and when the context has no listing.
-    public static func rowItems(text: String, names: [String], liveTake: Bool) -> [RowItem] {
+    ///
+    /// The token the caret is completing is left out: the keyboard bar already offers it, and the
+    /// row calling it a typo or a mention as well would say it twice.
+    public static func rowItems(text: String, caret: Int?, names: [String], liveTake: Bool) -> [RowItem] {
         guard !liveTake, !names.isEmpty, text.contains("/") else { return [] }
-        return SkillMentions.find(in: text, names: names).map {
-            RowItem(kind: $0.kind, token: $0.token, name: $0.name)
-        }
+        let completing = caret.flatMap { SkillMentions.completion(in: text, caret: $0, names: names)?.range.location }
+        return SkillMentions.find(in: text, names: names)
+            .filter { $0.range.location != completing }
+            .map { RowItem(kind: $0.kind, token: $0.token, name: $0.name) }
     }
 
     /// The text with the near-miss token corrected, or `nil` when the text no longer holds it.

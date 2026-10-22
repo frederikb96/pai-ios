@@ -47,4 +47,17 @@ struct PasteMarkersTests {
         #expect(placed.text == "🙂 x M")
         #expect((placed.text as NSString).substring(to: placed.caret) == "🙂 x M")
     }
+
+    /// The text view applies this through `replace(_:withText:)` over exactly this range, so the
+    /// range must be the selection (clamped) and the replacement carry the padding.
+    @Test("The planned edit replaces only the selection and carries the padding")
+    func editReplacesOnlyTheSelection() {
+        let planned = PasteMarkers.edit("M", in: "look atTHISnow", replacing: NSRange(location: 7, length: 4))
+        #expect(planned.range == NSRange(location: 7, length: 4))
+        #expect(planned.replacement == " M ")
+        #expect(planned.caret == 9)
+
+        let spaced = PasteMarkers.edit("M", in: "a  b", replacing: NSRange(location: 2, length: 0))
+        #expect(spaced.replacement == "M")
+    }
 }

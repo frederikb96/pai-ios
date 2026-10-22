@@ -43,6 +43,7 @@ struct CreateSessionView: View {
 
     @State private var textHeight: CGFloat = ComposerTextEditor.minHeight
     @State private var scrollToTailOnNextUpdate = false
+    @State private var composerCaret: Int?
     @FocusState private var isComposerFocused: Bool
 
     @State private var showingPhotoPicker = false
@@ -530,7 +531,8 @@ struct CreateSessionView: View {
 
             SkillMentionRow(
                 items: SkillComposer.rowItems(
-                    text: text, names: skillNames(createSession), liveTake: liveTakeOwnsBox(voiceController)),
+                    text: text, caret: composerCaret, names: skillNames(createSession),
+                    liveTake: liveTakeOwnsBox(voiceController)),
                 onFix: { item in fixSkillMention(item, createSession, voiceController) })
 
             // Same left-to-right order as `ComposerBar`: field, plus, mic, send. Two composers
@@ -543,7 +545,8 @@ struct CreateSessionView: View {
                     scrollToTailOnNextUpdate: $scrollToTailOnNextUpdate,
                     onPasteImages: { images in stagePastedImages(images, voiceController: voiceController) },
                     skillNames: skillNames(createSession),
-                    skillSuggestionsPaused: liveTakeOwnsBox(voiceController)
+                    skillSuggestionsPaused: liveTakeOwnsBox(voiceController),
+                    onCaretChange: { composerCaret = $0 }
                 )
                 .focused($isComposerFocused)
                 .frame(height: textHeight)
