@@ -17,8 +17,8 @@ struct VoiceRecorderButton: View {
     /// or call over to). The composer passes an explicit value so a tap can take over a take or a
     /// call running elsewhere, which `controller.canStart` alone always refuses.
     var canStartOverride: Bool?
-    /// Starts a take in the mode picked from the long-press menu. `nil` offers no menu — a plain
-    /// tap always starts live.
+    /// Starts a take in the given mode: a long press on the idle microphone starts batch. `nil`
+    /// leaves the long press inert — a plain tap always starts live.
     var onStart: ((VoiceSttMode) -> Void)? = nil
     var onTap: () -> Void
 
@@ -45,7 +45,7 @@ struct VoiceRecorderButton: View {
         // `.stopping` (Finishing) is tappable too: a tap stops waiting for `take_done` or the
         // deadline. Nothing is lost — the server holds the take and its words still come back.
         .disabled(!canStart && displayState == .idle)
-        .modifier(StartModeMenu(onStart: displayState == .idle && canStart ? onStart : nil))
+        .modifier(BatchLongPress(onStart: displayState == .idle && canStart ? onStart : nil))
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier("voice-recorder-button")
     }
@@ -88,27 +88,25 @@ struct VoiceRecorderButton: View {
     }
 }
 
-/// The long-press menu on an idle microphone: live dictation (what a plain tap starts) or batch,
-/// which only records while it runs and puts the whole take's transcript in afterwards — no words
-/// appear while speaking, nothing is billed until the end, and a bad connection costs nothing but
-/// the wait.
-private struct StartModeMenu: ViewModifier {
+/// A long press on an idle microphone starts batch dictation straight away: it only records while
+/// it runs and puts the whole take's transcript in afterwards — no words appear while speaking,
+/// nothing is billed until the end, and a bad connection costs nothing but the wait. The composer
+/// stays open for typing meanwhile.
+///
+/// `.highPriorityGesture`, as on the session list's rows: a bare long-press modifier competes with
+/// the button's own tap and can fire both, which here would start a take and stop it on release.
+/// A press released before the duration fails cleanly and leaves the tap to the button.
+private struct BatchLongPress: ViewModifier {
     let onStart: ((VoiceSttMode) -> Void)?
 
     func body(content: Content) -> some View {
         if let onStart {
-            content.contextMenu {
-                Button {
-                    onStart(.live)
-                } label: {
-                    Label("Dictate live", systemImage: "waveform")
-                }
-                Button {
-                    onStart(.batch)
-                } label: {
-                    Label("Dictate in batch", systemImage: "tray.and.arrow.up")
-                }
-            }
+            content
+                .highPriorityGesture(
+                    LongPressGesture(minimumDuration: 0.45)
+                        .onEnded { _ in onStart(.batch) }
+                )
+                .accessibilityAction(named: "Dictate in batch") { onStart(.batch) }
         } else {
             content
         }

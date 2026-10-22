@@ -207,11 +207,11 @@ final class ServerTakeTests: XCTestCase {
 
     /// Words edited or deleted since they were written: nothing to wait on — never a split that
     /// would drop what was typed. A batch take writes nothing while recording, so its words go
-    /// after everything.
+    /// on their own line after everything.
     func testTheSplitRefusesEditedWordsAndPutsABatchTakeLast() {
         XCTAssertNil(HeldTakeSplit.split(composerText: "stt-rec: hello world", insertedText: "stt-rec: hullo"))
         let batch = HeldTakeSplit.split(composerText: "  check this  ", insertedText: nil)
-        XCTAssertEqual(batch?.before, "check this")
+        XCTAssertEqual(batch?.before, "check this\n")
         XCTAssertEqual(batch?.after, "")
     }
 
@@ -221,15 +221,23 @@ final class ServerTakeTests: XCTestCase {
         XCTAssertEqual(
             TakeResultHeal.apply(
                 currentDraftText: "pre stt-rec: half the sen tail", previousInsertedText: "stt-rec: half the sen",
-                takeText: "half the sentence"),
+                takeText: "half the sentence", sttMode: .live),
             "pre stt-rec: half the sentence tail")
         XCTAssertEqual(
-            TakeResultHeal.apply(currentDraftText: "typed", previousInsertedText: nil, takeText: "batch words"),
-            "typed stt-rec: batch words")
+            TakeResultHeal.apply(
+                currentDraftText: "typed\nwhile it recorded ", previousInsertedText: nil, takeText: "batch words",
+                sttMode: .batch),
+            "typed\nwhile it recorded\nstt-rec: batch words")
+        XCTAssertEqual(
+            TakeResultHeal.apply(
+                currentDraftText: "typed", previousInsertedText: nil, takeText: "live words", sttMode: .live),
+            "typed stt-rec: live words")
         XCTAssertNil(
             TakeResultHeal.apply(
-                currentDraftText: "stt-rec: all here", previousInsertedText: "stt-rec: all here", takeText: "all here"))
-        XCTAssertNil(TakeResultHeal.apply(currentDraftText: "x", previousInsertedText: nil, takeText: "  "))
+                currentDraftText: "stt-rec: all here", previousInsertedText: "stt-rec: all here", takeText: "all here",
+                sttMode: .live))
+        XCTAssertNil(
+            TakeResultHeal.apply(currentDraftText: "x", previousInsertedText: nil, takeText: "  ", sttMode: .batch))
     }
 
     // MARK: - Which take a send waits on

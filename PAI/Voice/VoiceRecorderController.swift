@@ -805,7 +805,7 @@ final class VoiceRecorderController {
             let draftKey = ledger.draftKey,
             let healed = TakeResultHeal.apply(
                 currentDraftText: drafts.draft(for: draftKey).text, previousInsertedText: server.insertedText,
-                takeText: text)
+                takeText: text, sttMode: server.mode)
         {
             drafts.setDraftText(key: draftKey, text: healed)
             lastWrittenTakeText[takeId] = "\(VoiceRecordingResult.sttPrefix)\(text)"
