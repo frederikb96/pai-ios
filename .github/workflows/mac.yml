@@ -110,8 +110,11 @@ jobs:
       # between them is exactly what shipped a client that connected, reported itself live and
       # delivered nothing forever — green on one says nothing about the other. This is the only
       # place the streaming clients meet Apple's own URL loading system. Keep it.
+      #
+      # The notes cache's file storage runs here too: atomic renames, directory listings and file
+      # sizes are Foundation's platform shims, which differ between the two.
       - name: Test what Linux cannot
-        run: swift test --package-path PAIKit --filter 'Sse|Terminal'
+        run: swift test --package-path PAIKit --filter 'Sse|Terminal|NotesCacheStorage'
 
       - name: Boot a simulator
         id: sim
@@ -355,6 +358,64 @@ jobs:
             screenshot "$name" -PaiFixtureRoute "$name"
             xcrun simctl terminate "$udid" "$bundle" || true
           done <<< "$names"
+
+          # The notes without a connection. `-PaiFixtureOffline` fails every request the way
+          # URLSession does in flight mode; the seed flags put the fixture index, note, files and an
+          # unsynced edit on disk as if opened before. `/notes/cache` answers what the store holds,
+          # and `/notes/offline` + `/notes/sync` take the edit back online the way the network
+          # returning does.
+          notes_assert() {
+            label="$1"; file="$2"; shift 2
+            python3 - "$file" "$@" <<'PY' || { echo "::error::$label: see $file"; fail=1; }
+          import json, sys
+          state = json.load(open(sys.argv[1]))
+          for check in sys.argv[2:]:
+              if not eval(check, {}, {"s": state}):
+                  print(f"failed: {check}")
+                  print(json.dumps(state, indent=2))
+                  sys.exit(1)
+          print("ok:", ", ".join(sys.argv[2:]))
+          PY
+          }
+
+          screenshot notes-offline -PaiFixtureRoute notes -PaiFixtureOffline -PaiFixtureNotesCacheSeeded
+          curl -sS --max-time 5 "http://127.0.0.1:8765/notes/cache" -o artifacts/notes-cache-notes-offline.json || true
+          notes_assert notes-offline artifacts/notes-cache-notes-offline.json "s['isOffline']" "s['indexCount'] == 3"
+          xcrun simctl terminate "$udid" "$bundle" || true
+
+          screenshot note-offline -PaiFixtureRoute note -PaiFixtureOffline -PaiFixtureNotesCacheSeeded \
+            -PaiFixtureNotePendingEdit
+          curl -sS --max-time 5 "http://127.0.0.1:8765/notes/cache" -o artifacts/notes-cache-note-offline.json || true
+          notes_assert note-offline artifacts/notes-cache-note-offline.json \
+            "s['isOffline']" "len([p for p in s['pending'] if p['kind'] == 'body']) == 1"
+          curl -sS --max-time 5 -X POST "http://127.0.0.1:8765/notes/offline?on=false" || true
+          curl -sS --max-time 70 -X POST "http://127.0.0.1:8765/notes/sync" -o artifacts/notes-sync-note-offline.json || true
+          curl -sS --max-time 5 "http://127.0.0.1:8765/notes/cache" -o artifacts/notes-cache-note-offline-synced.json || true
+          notes_assert note-offline-synced artifacts/notes-cache-note-offline-synced.json \
+            "s['pending'] == []" "s['lastSyncReport']['replayed'] == 1"
+          sleep 3
+          xcrun simctl io "$udid" screenshot artifacts/screen-note-offline-synced.png || true
+          xcrun simctl terminate "$udid" "$bundle" || true
+
+          # The conflict policy: the first save meets a 409 with a different body, and the edit is
+          # written over it, marked source=offline, without asking.
+          screenshot note-offline-conflict -PaiFixtureRoute note -PaiFixtureOffline -PaiFixtureNotesCacheSeeded \
+            -PaiFixtureNotePendingEdit -PaiFixtureNoteConflict
+          curl -sS --max-time 5 -X POST "http://127.0.0.1:8765/notes/offline?on=false" || true
+          curl -sS --max-time 70 -X POST "http://127.0.0.1:8765/notes/sync" -o artifacts/notes-sync-note-offline-conflict.json || true
+          notes_assert note-offline-conflict artifacts/notes-sync-note-offline-conflict.json \
+            "s['conflictsResolved'] == 1" "s['stillPending'] == 0"
+          curl -sS --max-time 3 "http://127.0.0.1:8765/logs?level=info&limit=200" \
+            -o artifacts/logs-note-offline-conflict-synced.json || true
+          grep -q 'source=offline' artifacts/logs-note-offline-conflict-synced.json \
+            || { echo "::error::note-offline-conflict: no log line for the write carrying source=offline"; fail=1; }
+          sleep 3
+          xcrun simctl io "$udid" screenshot artifacts/screen-note-offline-conflict-synced.png || true
+          xcrun simctl terminate "$udid" "$bundle" || true
+
+          # A note never opened on this phone, opened without a connection.
+          screenshot note-offline-unavailable -PaiFixtureRoute noteUncached -PaiFixtureOffline
+          xcrun simctl terminate "$udid" "$bundle" || true
 
           # Where a jump into UNLOADED history actually lands — a screenshot alone shows the
           # result, not the row id the controller computed, so this is what proves the .replaced
