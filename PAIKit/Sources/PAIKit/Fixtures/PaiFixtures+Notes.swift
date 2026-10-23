@@ -73,6 +73,35 @@ extension PaiFixtures {
         ]}
         """#
 
+    /// The 409 a save of ``noteDetail`` meets when the note was edited elsewhere: a newer hash and
+    /// a body that differs from the one the fixture note was opened with.
+    public static let noteConflict = #"""
+        {
+          "current_hash":"sha256:9c8b7a6f5e4d3c2b1a09f8e7d6c5b4a39c8b7a6f5e4d3c2b1a09f8e7d6c5b4a3",
+          "updated_at_ms":1756602000000,
+          "frontmatter":"tags:\n  - pai\n  - memory\n",
+          "body":"# Engram\n\nEdited in the browser while the phone was offline.\n"
+        }
+        """#
+
+    /// The text a seeded offline edit appends to ``noteDetail``'s body.
+    public static let notePendingEditSuffix = "\n\nWritten on the plane, not yet synced.\n"
+
+    /// What `PATCH /api/notes/{id}` answers: the fixture note with the fields the request sent,
+    /// under a new hash, so a save in fixture mode reads back as the text that was sent.
+    public static func notePatched(requestBody: Data?) -> Data {
+        guard var note = (try? JSONSerialization.jsonObject(with: data(noteDetail))) as? [String: Any] else {
+            return data(noteDetail)
+        }
+        let sent = requestBody.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] } ?? [:]
+        for key in ["body", "name", "favourite"] where sent[key] != nil { note[key] = sent[key] }
+        let body = note["body"] as? String ?? ""
+        note["content_hash"] = "sha256:patched-\(body.utf8.count)"
+        note["last_write_source"] = sent["source"] as? String ?? "ui"
+        note["updated_at_ms"] = 1_756_602_060_000
+        return (try? JSONSerialization.data(withJSONObject: note)) ?? data(noteDetail)
+    }
+
     public static let noteAttachments = #"""
         {"attachments":[
           {"rel_path":"attachments/diagram.png","basename":"diagram.png","ext":"png","size_bytes":184320,"mtime_ms":1756500000000,"link_count":1},
