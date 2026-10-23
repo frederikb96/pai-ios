@@ -138,17 +138,36 @@ struct TaskEditorView: View {
                     Text("Standing instructions (optional)")
                 }
 
-                Section("Schedule") {
-                    TextField("Cadence (5-field cron, blank = manual only)", text: cadenceBinding(store))
-                        .font(PaiTypography.monoLabel.font)
+                Section {
+                    Picker("When", selection: scheduleModeBinding(store)) {
+                        Text("On a cadence").tag(TaskScheduleMode.cadence)
+                        Text("Once, at a date and time").tag(TaskScheduleMode.once)
+                        Text("Only by hand").tag(TaskScheduleMode.manual)
+                    }
+                    switch store.scheduleMode {
+                    case .cadence:
+                        TextField("Cadence (5-field cron)", text: cadenceBinding(store))
+                            .font(PaiTypography.monoLabel.font)
+                    case .once:
+                        DatePicker("Run at", selection: runAtBinding(store))
+                            .environment(\.timeZone, store.pickerTimeZone)
+                    case .manual:
+                        EmptyView()
+                    }
                     TextField("Timezone", text: timezoneBinding(store))
+                } header: {
+                    Text("Schedule")
+                } footer: {
+                    if store.scheduleMode == .once {
+                        Text(Self.onceFooter)
+                    }
                 }
 
                 Section("Session policy") {
                     Picker("Session policy", selection: sessionPolicyBinding(store)) {
                         Text("Fresh conversation every fire").tag(TaskSessionPolicy.fresh)
                         Text("Resume the same conversation").tag(TaskSessionPolicy.reuse)
-                        Text("Fire once, then clean up").tag(TaskSessionPolicy.oneShot)
+                        Text("Fire once, then delete the conversation").tag(TaskSessionPolicy.oneShot)
                     }
                     .pickerStyle(.navigationLink)
                     Stepper(
@@ -440,6 +459,17 @@ struct TaskEditorView: View {
     }
     private func cadenceBinding(_ store: TaskEditorStore) -> Binding<String> {
         Binding(get: { store.fields.cadence ?? "" }, set: { store.fields.cadence = $0.isEmpty ? nil : $0 })
+    }
+    private static let onceFooter = """
+        Fires once in a conversation that stays open to resume. The task removes itself once that \
+        run is over; if the fire fails, it stays here with its history.
+        """
+
+    private func scheduleModeBinding(_ store: TaskEditorStore) -> Binding<TaskScheduleMode> {
+        Binding(get: { store.scheduleMode }, set: { store.setScheduleMode($0) })
+    }
+    private func runAtBinding(_ store: TaskEditorStore) -> Binding<Date> {
+        Binding(get: { store.runAtDate }, set: { store.runAtDate = $0 })
     }
     private func timezoneBinding(_ store: TaskEditorStore) -> Binding<String> {
         Binding(get: { store.fields.timezone }, set: { store.fields.timezone = $0 })

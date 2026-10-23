@@ -202,8 +202,14 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
     /// reaches a `reuse` task's conversation only after its next compaction or a reset. Never a
     /// system prompt, whatever the wire name says.
     public let appendSystemPrompt: String?
-    /// Five-field cron. `nil` means the task only fires by hand.
+    /// Five-field cron. `nil` means the task fires once at `runAt` when that is set, otherwise
+    /// only by hand.
     public let cadence: String?
+    /// The one instant a task without a cadence fires at, ISO-8601 with an offset (read it with
+    /// ``IsoTimestamp``). Once the run it starts is over, the server deletes the task and its
+    /// session stays an ordinary resumable one; any other outcome of that fire leaves the task
+    /// listed. `nil`: not a one-time task, or a backend that predates the field.
+    public let runAt: String?
     public let timezone: String
     public let hasGate: Bool
     public let gateRuntime: TaskGateRuntime?
@@ -290,7 +296,8 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
         stopped: Bool,
         stoppedReason: String?, lastFireAtMs: Int?, lastSuccessAtMs: Int?, nextFireAtMs: Int?,
-        createdAtMs: Int, updatedAtMs: Int, lastRun: TaskRun? = nil, rerunPendingAtMs: Int? = nil
+        createdAtMs: Int, updatedAtMs: Int, lastRun: TaskRun? = nil, rerunPendingAtMs: Int? = nil,
+        runAt: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -300,6 +307,7 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         self.prompt = prompt
         self.appendSystemPrompt = appendSystemPrompt
         self.cadence = cadence
+        self.runAt = runAt
         self.timezone = timezone
         self.hasGate = hasGate
         self.gateRuntime = gateRuntime
@@ -368,6 +376,7 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         case updatedAtMs = "updated_at_ms"
         case lastRun = "last_run"
         case rerunPendingAtMs = "rerun_pending_at_ms"
+        case runAt = "run_at"
     }
 }
 
@@ -381,6 +390,8 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
     public let prompt: String
     public let appendSystemPrompt: String?
     public let cadence: String?
+    /// See ``ScheduledTask/runAt``.
+    public let runAt: String?
     public let timezone: String
     public let hasGate: Bool
     public let gateRuntime: TaskGateRuntime?
@@ -460,7 +471,7 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         stopped: Bool,
         stoppedReason: String?, lastFireAtMs: Int?, lastSuccessAtMs: Int?, nextFireAtMs: Int?,
         createdAtMs: Int, updatedAtMs: Int, gateSource: String?, lastRun: TaskRun? = nil,
-        rerunPendingAtMs: Int? = nil
+        rerunPendingAtMs: Int? = nil, runAt: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -470,6 +481,7 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         self.prompt = prompt
         self.appendSystemPrompt = appendSystemPrompt
         self.cadence = cadence
+        self.runAt = runAt
         self.timezone = timezone
         self.hasGate = hasGate
         self.gateRuntime = gateRuntime
@@ -540,6 +552,7 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         case gateSource = "gate_source"
         case lastRun = "last_run"
         case rerunPendingAtMs = "rerun_pending_at_ms"
+        case runAt = "run_at"
     }
 }
 
@@ -912,6 +925,8 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
     public var prompt: String
     public var appendSystemPrompt: String?
     public var cadence: String?
+    /// ISO-8601 with an offset, in the future whenever it changes; exclusive with `cadence`.
+    public var runAt: String?
     public var timezone: String
     public var gateSource: String?
     public var gateRuntime: TaskGateRuntime?
@@ -949,7 +964,7 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         supervisionThinking: String? = nil, supervisionAppendPrompt: String? = nil,
         supervisionCompactionThresholdTokens: Int? = nil,
         supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
-        enabled: Bool
+        enabled: Bool, runAt: String? = nil
     ) {
         self.name = name
         self.environment = environment
@@ -981,6 +996,7 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         self.supervisionChunkIntervalSeconds = supervisionChunkIntervalSeconds
         self.supervisionChunkTokenThreshold = supervisionChunkTokenThreshold
         self.enabled = enabled
+        self.runAt = runAt
     }
 
     /// The default a brand-new, not-yet-saved task starts from — mirrors the web's own
@@ -1017,7 +1033,7 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
             supervisionCompactionThresholdTokens: task.supervisionCompactionThresholdTokens,
             supervisionChunkIntervalSeconds: task.supervisionChunkIntervalSeconds,
             supervisionChunkTokenThreshold: task.supervisionChunkTokenThreshold,
-            enabled: task.enabled)
+            enabled: task.enabled, runAt: task.runAt)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -1044,6 +1060,7 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         case supervisionCompactionThresholdTokens = "supervision_compaction_threshold_tokens"
         case supervisionChunkIntervalSeconds = "supervision_chunk_interval_seconds"
         case supervisionChunkTokenThreshold = "supervision_chunk_token_threshold"
+        case runAt = "run_at"
     }
 
     /// Every key is written, `nil` as an explicit `null`. The server's PATCH treats an omitted key
@@ -1058,6 +1075,7 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         try c.encode(prompt, forKey: .prompt)
         try c.encode(appendSystemPrompt, forKey: .appendSystemPrompt)
         try c.encode(cadence, forKey: .cadence)
+        try c.encode(runAt, forKey: .runAt)
         try c.encode(timezone, forKey: .timezone)
         try c.encode(gateSource, forKey: .gateSource)
         // The server takes source and runtime as a pair — both set or both null.
