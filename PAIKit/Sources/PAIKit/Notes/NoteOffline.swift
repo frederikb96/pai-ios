@@ -54,10 +54,16 @@ public enum NoteSyncFailure: Equatable, Sendable {
     case noteGone
     /// The server refused the request itself; sending it again gets the same answer.
     case rejected(String)
+    /// The caller stopped waiting (a view went away, a newer pass replaced this one). Says
+    /// nothing about the network or the server.
+    case cancelled
 
-    /// Anything that is not a `PaiError` is the transport's own error (`URLError` above all),
-    /// the same reading `OutboxStore` gives it: the request never got an answer.
+    /// Anything that is not a `PaiError` and not a cancellation is the transport's own error
+    /// (`URLError` above all), the same reading `OutboxStore` gives it: the request never got an
+    /// answer.
     public static func classify(_ error: Error) -> NoteSyncFailure {
+        if error is CancellationError { return .cancelled }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return .cancelled }
         guard let paiError = error as? PaiError else { return .transport }
         switch paiError {
         case .transport:
@@ -74,26 +80,37 @@ public enum NoteSyncFailure: Equatable, Sendable {
     public static func isTransport(_ error: Error) -> Bool {
         classify(error) == .transport
     }
+
+    public static func isCancellation(_ error: Error) -> Bool {
+        classify(error) == .cancelled
+    }
 }
 
-/// What the store tells the app after syncing edits made offline, to be shown as a toast.
+/// What the store tells the app after syncing edits that waited on this phone, to be shown as a
+/// toast. `madeOffline` tells an edit made without a connection apart from one typed online that
+/// waited because the server answered with an error.
 public enum NoteSyncNotice: Equatable, Sendable {
-    /// Offline edits that reached the server with nothing in the way.
-    case synced(count: Int)
-    /// An offline edit was written over a version the server had meanwhile; that version is in
+    /// Waiting edits that reached the server with nothing in the way.
+    case synced(count: Int, madeOffline: Bool = true)
+    /// A waiting edit was written over a version the server had meanwhile; that version is in
     /// the note's history.
-    case overwroteNewerVersion(noteId: String, name: String)
+    case overwroteNewerVersion(noteId: String, name: String, madeOffline: Bool = true)
     /// A rename made offline was refused (most often: the name is taken); the note keeps its name.
     case renameRefused(noteId: String, attempted: String, reason: String)
 
     public var message: String {
         switch self {
-        case .synced(let count):
-            count == 1 ? "Synced 1 offline edit" : "Synced \(count) offline edits"
-        case .overwroteNewerVersion(_, let name):
-            "Synced your offline edit of '\(name)' over a newer version. That version is in the note's history."
+        case .synced(let count, let madeOffline):
+            let edits = count == 1 ? "1 offline edit" : "\(count) offline edits"
+            let waiting =
+                count == 1
+                ? "1 edit that was waiting for the server" : "\(count) edits that were waiting for the server"
+            return madeOffline ? "Synced \(edits)" : "Saved \(waiting)"
+        case .overwroteNewerVersion(_, let name, let madeOffline):
+            let edit = madeOffline ? "Synced your offline edit" : "Saved your waiting edit"
+            return "\(edit) of '\(name)' over a newer version. That version is in the note's history."
         case .renameRefused(_, let attempted, let reason):
-            "Could not rename to '\(attempted)': \(reason)"
+            return "Could not rename to '\(attempted)': \(reason)"
         }
     }
 
@@ -101,14 +118,14 @@ public enum NoteSyncNotice: Equatable, Sendable {
     public var noteId: String? {
         switch self {
         case .synced: nil
-        case .overwroteNewerVersion(let noteId, _), .renameRefused(let noteId, _, _): noteId
+        case .overwroteNewerVersion(let noteId, _, _), .renameRefused(let noteId, _, _): noteId
         }
     }
 }
 
 /// The outcome of the last ``NotesStore/resumeSync()``.
 public struct NoteSyncReport: Codable, Equatable, Sendable {
-    /// Edits made offline that reached the server.
+    /// Waiting edits (made offline, or parked by a server error) that reached the server.
     public var replayed = 0
     /// Of those, the ones written over a newer server version.
     public var conflictsResolved = 0
@@ -143,4 +160,35 @@ public struct NotesCacheStatus: Codable, Equatable, Sendable {
     public let budgetBytes: Int
     public let pending: [NotePendingSummary]
     public let lastSyncReport: NoteSyncReport?
+}
+
+/// Text kept on this phone that will not reach the server by itself: an edit the server refused
+/// (most often because the note was deleted elsewhere), or an outbox file this build could not
+/// read. The reader copies it somewhere else or discards it; nothing removes it otherwise.
+public struct NoteKeptText: Identifiable, Equatable, Sendable {
+    public enum Origin: Equatable, Sendable {
+        case refusedEdit(noteId: String)
+        case unreadable(fileId: String)
+    }
+
+    public let origin: Origin
+    /// The note's name as this phone last knew it, or a stand-in for a file that no longer says.
+    public let title: String
+    /// Why the text is here, in the reader's words.
+    public let reason: String
+    public let text: String
+
+    public var id: String {
+        switch origin {
+        case .refusedEdit(let noteId): "edit:\(noteId)"
+        case .unreadable(let fileId): "unreadable:\(fileId)"
+        }
+    }
+
+    public init(origin: Origin, title: String, reason: String, text: String) {
+        self.origin = origin
+        self.title = title
+        self.reason = reason
+        self.text = text
+    }
 }

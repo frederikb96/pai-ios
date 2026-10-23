@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "noteId": "6a0b5f2e-6f1e-4c55-9a43-1c1f4d2b7e10",
+  "body": "# Trip\n\n- tent\n- stove, typed on the plane\n",
+  "editedAtMs": 1792656000000,
+  "attempts": 2,
+  "awaitingSync": false,
+  "waitedForServer": false,
+  "raisedConflict": {
+    "current_hash": "sha256:5d41402abc4b2a76b9719d911017c592",
+    "updated_at_ms": 1792655900000,
+    "frontmatter": "tags: [trip]",
+    "body": "# Trip\n\n- tent\n- sleeping bag\n"
+  },
+  "base": {
+    "id": "6a0b5f2e-6f1e-4c55-9a43-1c1f4d2b7e10",
+    "name": "Trip",
+    "summary": "What to pack",
+    "container_id": "c1",
+    "favourite": true,
+    "tags": ["trip"],
+    "updated_at_ms": 1792655000000,
+    "pending_delete": false,
+    "frontmatter": "tags: [trip]",
+    "body": "# Trip\n\n- tent\n",
+    "content_hash": "sha256:7d793037a0760186574b0282f2f435e7",
+    "created_at": "2026-10-01T08:30:00.506812+00:00",
+    "created_at_ms": 1790843400506,
+    "last_write_source": "phone",
+    "shared": false
+  }
+}

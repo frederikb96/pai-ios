@@ -31,7 +31,7 @@ final class NotesCacheStorageTests: XCTestCase {
         let cache = FileNotesCacheStorage(rootURL: parent.appendingPathComponent("NotesCache"))
         let outbox = FileNoteOutboxStorage(rootURL: parent.appendingPathComponent("NoteOutbox"))
         cache.saveBody(detail(id: "n1", body: "server"))
-        cache.saveIndex(CachedNoteIndex(notes: [], fetchedAtMs: 1))
+        cache.saveIndex(CachedNoteIndex(notes: []))
         XCTAssertTrue(cache.writeAttachment(Data([1, 2, 3]), fileId: "f1"))
         outbox.saveEdit(
             NotePendingEdit(noteId: "n1", body: "typed offline", base: detail(id: "n1", body: "server"), editedAtMs: 2))

@@ -23,7 +23,7 @@
                 if cache.loadIndex() == nil,
                     let page = try? decoder.decode(IndexPage.self, from: PaiFixtures.data(PaiFixtures.notesIndex))
                 {
-                    cache.saveIndex(CachedNoteIndex(notes: page.notes, fetchedAtMs: detail.updatedAtMs))
+                    cache.saveIndex(CachedNoteIndex(notes: page.notes))
                 }
                 if cache.loadBody(noteId: detail.id) == nil { cache.saveBody(detail) }
                 if let containerId = detail.containerId,

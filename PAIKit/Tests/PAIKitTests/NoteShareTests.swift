@@ -415,7 +415,7 @@ final class NoteShareDisplayTests: XCTestCase {
     func testAShareWriteIsLabelledAsAVisitorEverywhereItIsShown() {
         XCTAssertEqual(NoteWriteSource.infoLabel("share"), "a visitor through a share link")
         XCTAssertEqual(NoteWriteSource.historyLabel("share"), "edited through a share link")
-        XCTAssertEqual(NoteWriteSource.infoLabel("ui"), "this app")
+        XCTAssertEqual(NoteWriteSource.infoLabel("ui"), "the web app")
         XCTAssertEqual(NoteWriteSource.historyLabel("somethingNew"), "somethingNew")
     }
 }

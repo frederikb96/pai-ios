@@ -174,6 +174,16 @@ public final class NotesStore {
     /// `source: offline`, and a conflict it meets is settled by keeping this edit, which the
     /// server's version history makes safe — see ``resumeSync()``.
     public internal(set) var awaitingSync: Set<String> = []
+    /// Edits restored at launch that were typed while the server was reachable and never failed
+    /// to reach it (the app was killed first). They are sent as ordinary saves on the next sync,
+    /// so a conflict they meet raises the banner rather than being settled by the offline policy.
+    public internal(set) var unsentAtLaunch: Set<String> = []
+    /// Edits the server refused, by note id, with what it said: the note was deleted elsewhere,
+    /// or the request itself was rejected. Never sent again by themselves; the reader keeps or
+    /// discards the text (``keptTexts``).
+    public internal(set) var editRefusals: [String: String] = [:]
+    /// Outbox files this build could not read, moved aside at launch.
+    public internal(set) var quarantined: [NoteQuarantinedEdit] = []
     /// Notes opened without a connection and without a copy on this phone.
     public internal(set) var unavailableOffline: Set<String> = []
     public internal(set) var cacheBudgetBytes = NotesCacheBudget.defaultBytes
@@ -186,6 +196,13 @@ public final class NotesStore {
 
     @ObservationIgnored let cache: NotesCacheStorage
     @ObservationIgnored let outbox: NoteOutboxStorage
+    /// Every write of a pending edit goes through this, so a keystroke's deferred write can never
+    /// land after the synchronous one a request or a settled save makes.
+    @ObservationIgnored let outboxWriter: NoteOutboxWriter
+    /// Waiting edits parked only by a server error while the network was up.
+    @ObservationIgnored var waitedForServer: Set<String> = []
+    /// Of this sync pass's plain replays, the ones that had waited for the server.
+    @ObservationIgnored var serverWaitReplays = 0
     @ObservationIgnored let now: @Sendable () -> Date
     /// The index rows exactly as the server last sent them, which a local rename is laid over.
     @ObservationIgnored var serverRows: [String: NoteSummary] = [:]
@@ -208,6 +225,10 @@ public final class NotesStore {
     @ObservationIgnored var parkedRetryAttempt = 0
     @ObservationIgnored let parkedRetryBaseDelay: Duration
 
+    /// How long typing has to pause before the draft is written to the note outbox. Short against
+    /// the autosave delay, so a kill between the two still finds the draft on disk.
+    public static let outboxWriteDelay: Duration = .milliseconds(250)
+
     /// Loads the cached index and every pending edit from disk before returning, so the list and
     /// any unsaved edit are on screen in the first frame. Nothing here touches the network.
     public init(
@@ -215,11 +236,13 @@ public final class NotesStore {
         cache: NotesCacheStorage = InMemoryNotesCacheStorage(),
         outbox: NoteOutboxStorage = InMemoryNoteOutboxStorage(),
         now: @escaping @Sendable () -> Date = { Date() },
-        parkedRetryBaseDelay: Duration = .seconds(10)
+        parkedRetryBaseDelay: Duration = .seconds(10),
+        outboxWriteDelay: Duration = NotesStore.outboxWriteDelay
     ) {
         self.api = api
         self.cache = cache
         self.outbox = outbox
+        self.outboxWriter = NoteOutboxWriter(storage: outbox, delay: outboxWriteDelay)
         self.now = now
         self.parkedRetryBaseDelay = parkedRetryBaseDelay
         restoreFromDisk()
@@ -245,10 +268,12 @@ public final class NotesStore {
             // The first answer after an outage is the moment to send what waited for it. Not
             // awaited: a sync ends with a refresh of its own.
             if wasOffline, hasPendingWork { Task { [weak self] in await self?.resumeSync() } }
+        } catch let error where NoteSyncFailure.isCancellation(error) {
+            // Abandoned by whoever asked; the next refresh answers.
         } catch {
             // The list keeps what it holds (the cached index, at worst); the error is shown only
             // over an empty one.
-            if NoteSyncFailure.isTransport(error) { transportDown = true }
+            if NoteSyncFailure.isTransport(error) { markTransportDown() }
             loadError = (error as? PaiError)?.userMessage ?? "Could not load notes"
         }
         if let config = await configFetch {
@@ -259,6 +284,7 @@ public final class NotesStore {
     public func refreshContainers() async {
         do {
             containers = try await api.getNoteContainers()
+            requestSucceeded()
         } catch {
             loadError = failureMessage(error, needing: .containers, otherwise: "Could not load note containers")
         }
@@ -281,6 +307,7 @@ public final class NotesStore {
             let created = try await api.createNote(
                 name: trimmed.isEmpty ? NoteNaming.untitled : trimmed, summary: nil, body: nil,
                 containerId: containerId)
+            requestSucceeded()
             setDetail(created, for: created.id)
             notes.insert(created.summaryRow, at: 0)
             loadError = nil
@@ -293,12 +320,15 @@ public final class NotesStore {
 
     /// Without a connection the new name is kept on this phone and shown at once, and sent when
     /// the network is back (``resumeSync()``); a name the server then refuses is reported and
-    /// reverted there.
+    /// reverted there. "Without a connection" is ``isOffline``, the same answer the screen shows.
+    ///
+    /// The answer is adopted through ``adoptFieldResult(_:id:)``: over an unsaved edit it moves
+    /// the name and never the body or hash the edit is conditional on.
     @discardableResult
     public func rename(id: String, name: String) async -> Bool {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
-        if pathSatisfied == false {
+        if isOffline {
             queueFieldPatch(id: id, name: trimmed, favourite: nil)
             return true
         }
@@ -306,13 +336,14 @@ public final class NotesStore {
             let result = try await api.patchNote(
                 id: id, body: nil, frontmatter: nil, name: trimmed, summary: nil, favourite: nil,
                 containerId: nil, expectedHash: nil, source: nil)
+            requestSucceeded()
             guard case .saved(let detail) = result else { return false }
-            setDetail(detail, for: id)
+            adoptFieldResult(detail, id: id)
             if let index = notes.firstIndex(where: { $0.id == id }) { notes[index] = detail.summaryRow }
             return true
         } catch {
             if NoteSyncFailure.isTransport(error) {
-                transportDown = true
+                markTransportDown()
                 queueFieldPatch(id: id, name: trimmed, favourite: nil)
                 return true
             }
@@ -330,6 +361,7 @@ public final class NotesStore {
     public func requestDelete(id: String) async -> Bool {
         do {
             _ = try await api.deleteNote(id: id)
+            requestSucceeded()
             if let index = notes.firstIndex(where: { $0.id == id }) {
                 let n = notes[index]
                 notes[index] = NoteSummary(
@@ -346,13 +378,14 @@ public final class NotesStore {
 
     /// Sets the share mark on a note's list row and on its loaded detail once a link is created or
     /// deleted, so the list shows it before the next index fetch confirms it. A no-op for a note
-    /// this store has not loaded.
+    /// this store has not loaded. Written through ``setDetail(_:for:)`` like any other change to a
+    /// detail, so this phone's copy carries the mark too.
     public func markShared(id: String, shared: Bool) {
         if let index = notes.firstIndex(where: { $0.id == id }), notes[index].shared != shared {
             notes[index] = notes[index].withShared(shared)
         }
         if let held = details[id], held.shared != shared {
-            details[id] = held.withShared(shared)
+            setDetail(held.withShared(shared), for: id)
         }
     }
 
@@ -360,6 +393,7 @@ public final class NotesStore {
     public func undelete(id: String) async -> Bool {
         do {
             let restored = try await api.undeleteNote(id: id)
+            requestSucceeded()
             setDetail(restored, for: id)
             if let index = notes.firstIndex(where: { $0.id == id }) {
                 notes[index] = restored.summaryRow
@@ -379,6 +413,7 @@ public final class NotesStore {
     public func createContainer(path: String, name: String) async -> NoteContainer? {
         do {
             let created = try await api.createNoteContainer(path: path, name: name, agentSlug: nil, isDefault: false)
+            requestSucceeded()
             containers.append(created)
             return created
         } catch {
@@ -407,6 +442,7 @@ public final class NotesStore {
     public func deleteContainer(_ id: String) async -> Bool {
         do {
             let deleted = try await api.deleteNoteContainer(id: id)
+            requestSucceeded()
             if deleted { containers.removeAll { $0.id == id } }
             return deleted
         } catch {
@@ -418,6 +454,7 @@ public final class NotesStore {
     private func patchContainer(_ id: String, _ request: @escaping () async throws -> NoteContainer) async -> Bool {
         do {
             let updated = try await request()
+            requestSucceeded()
             if let index = containers.firstIndex(where: { $0.id == id }) { containers[index] = updated }
             return true
         } catch {
@@ -433,6 +470,7 @@ public final class NotesStore {
     public func loadLinkGraph(id: String) async {
         do {
             linkGraphs[id] = try await api.getNoteLinks(id: id)
+            requestSucceeded()
             linkGraphErrors[id] = nil
         } catch {
             linkGraphErrors[id] = failureMessage(error, needing: .links, otherwise: "Could not load links")
@@ -444,6 +482,7 @@ public final class NotesStore {
     public func loadRevisions(id: String) async {
         do {
             revisions[id] = try await api.listNoteRevisions(id: id)
+            requestSucceeded()
             revisionErrors[id] = nil
         } catch {
             revisionErrors[id] = failureMessage(
@@ -462,6 +501,7 @@ public final class NotesStore {
     public func restoreRevision(noteId: String, revisionId: String) async -> Bool {
         do {
             let restored = try await api.restoreNoteRevision(noteId: noteId, revisionId: revisionId)
+            requestSucceeded()
             setDetail(restored, for: noteId)
             // The restored text is the whole point of the action, so it replaces whatever is on
             // screen — the one place a draft is deliberately dropped without asking, because
@@ -504,7 +544,7 @@ public final class NotesStore {
             return records
         } catch {
             guard NoteSyncFailure.isTransport(error) else { throw error }
-            transportDown = true
+            markTransportDown()
             if let known = freshInventories[containerId] { return known }
             let cache = self.cache
             if let stored = await Task.detached(operation: { cache.loadInventory(containerId: containerId) }).value {
@@ -519,6 +559,7 @@ public final class NotesStore {
     ) async throws -> NoteAttachmentUploaded {
         let uploaded = try await api.uploadNoteAttachment(
             containerId: containerId, filename: filename, mimeType: mimeType, data: data)
+        requestSucceeded()
         attachmentCache.remove(containerId: containerId, path: uploaded.relPath)
         await dropCachedAttachment(containerId: containerId, path: uploaded.relPath)
         return uploaded
@@ -528,6 +569,7 @@ public final class NotesStore {
         containerId: String, fromPath: String, toPath: String
     ) async throws -> NoteAttachmentRecord {
         let renamed = try await api.renameNoteAttachment(containerId: containerId, fromPath: fromPath, toPath: toPath)
+        requestSucceeded()
         attachmentCache.remove(containerId: containerId, path: fromPath)
         attachmentCache.remove(containerId: containerId, path: toPath)
         await dropCachedAttachment(containerId: containerId, path: fromPath)
@@ -537,6 +579,7 @@ public final class NotesStore {
 
     public func deleteAttachment(containerId: String, path: String) async throws -> Bool {
         let deleted = try await api.deleteNoteAttachment(containerId: containerId, path: path)
+        requestSucceeded()
         attachmentCache.remove(containerId: containerId, path: path)
         await dropCachedAttachment(containerId: containerId, path: path)
         return deleted
@@ -557,8 +600,13 @@ public final class NotesStore {
     /// connection it is served regardless. A file that is not on the server is never cached, so a
     /// later sync that brings it in is picked up.
     public func fetchAttachment(containerId: String, path: String) async throws -> NoteAttachmentResult {
-        if let data = attachmentCache.data(containerId: containerId, path: path) { return .ok(data) }
-        let stored = attachmentManifest[CachedAttachmentKey.of(containerId: containerId, path: path)]
+        let key = CachedAttachmentKey.of(containerId: containerId, path: path)
+        if let data = attachmentCache.data(containerId: containerId, path: path) {
+            // A file read from memory is still a file in use: eviction goes by this.
+            attachmentManifest[key]?.lastUsedMs = nowMs
+            return .ok(data)
+        }
+        let stored = attachmentManifest[key]
         if let stored {
             let record = freshInventories[containerId]?.first { $0.relPath == path }
             let current = record.map(stored.matches) ?? true
@@ -573,7 +621,7 @@ public final class NotesStore {
             requestSucceeded()
         } catch {
             guard NoteSyncFailure.isTransport(error) else { throw error }
-            transportDown = true
+            markTransportDown()
             // An older copy beats none when the server cannot be asked.
             if let stored, let data = await readCachedAttachment(stored) { return .ok(data) }
             throw error
@@ -600,9 +648,12 @@ public final class NotesStore {
     /// replaces it. Without a connection, that copy is all there is, and a note with none is
     /// marked ``unavailableOffline``.
     ///
-    /// A note with an edit waiting to sync is not refreshed at all: its baseline is the version
-    /// the edit was typed over, and moving it would let the edit overwrite whatever arrived in
-    /// between. The load sends the edit instead.
+    /// A note with an edit waiting to sync (``isWaitingToSend(_:)``) is not refreshed at all: its
+    /// baseline is the version the edit was typed over, and moving it would let the edit overwrite
+    /// whatever arrived in between. The load sends the edit instead.
+    ///
+    /// A load abandoned by its caller (the reader left before the answer) changes nothing: it
+    /// says nothing about the network.
     ///
     /// Over an unsaved edit, the fetched body is classified the way a save's conflict is
     /// (``NoteBodyDivergence``): unchanged under the edit, it is adopted as the new baseline;
@@ -616,7 +667,7 @@ public final class NotesStore {
     /// precondition — the client conflicting with its own successful save a moment earlier.
     public func loadNote(id: String) async {
         hydrateFromCache(id: id)
-        if awaitingSync.contains(id) || pendingFieldPatches[id] != nil {
+        if isWaitingToSend(id) {
             if pathSatisfied != false { await replayPending(id: id) }
             return
         }
@@ -677,12 +728,15 @@ public final class NotesStore {
                 notes[index] = detail.summaryRow
             }
         } catch {
-            if NoteSyncFailure.isTransport(error) {
-                transportDown = true
-                if details[id] == nil { unavailableOffline.insert(id) }
+            switch NoteSyncFailure.classify(error) {
+            case .cancelled:
                 return
+            case .transport:
+                markTransportDown()
+                if details[id] == nil { unavailableOffline.insert(id) }
+            default:
+                saveStates[id] = .failed((error as? PaiError)?.userMessage ?? "Could not open note")
             }
-            saveStates[id] = .failed((error as? PaiError)?.userMessage ?? "Could not open note")
         }
     }
 
@@ -730,9 +784,14 @@ public final class NotesStore {
         guard details[id]?.body != body || drafts[id] != nil else { return }
         drafts[id] = body
         editedAtMs[id] = Int(now().timeIntervalSince1970 * 1000)
-        // On disk before anything else happens, so a kill during the debounce or the request
-        // loses nothing.
-        syncOutbox(id: id)
+        // Typed with no network at all: an offline edit from the first keystroke, so a kill
+        // before the debounce still restores it as one.
+        if pathSatisfied == false { awaitingSync.insert(id) }
+        // More typing is a new attempt; a refusal of the text before it no longer describes it.
+        editRefusals[id] = nil
+        // On disk within ``outboxWriteDelay``, well inside the debounce; ``performSave`` writes
+        // synchronously before the request leaves.
+        persistDraftSoon(id: id)
         if case .conflict = saveState(for: id) {
             // A conflict is a question the reader has to answer. Typing over it does not answer
             // it, and quietly returning to `.dirty` would let the next save overwrite the vault
@@ -810,10 +869,16 @@ public final class NotesStore {
     private func performSave(id: String, adoptedHashRetries: Int) async {
         guard let pending = drafts[id], let baseline = details[id] else { return }
         if case .conflict = saveState(for: id) { return }
+        // Sent now, as whatever kind of save it is below; neither a restored edit's first send
+        // nor an earlier refusal describes it any more.
+        unsentAtLaunch.remove(id)
+        editRefusals[id] = nil
         // The edit is on disk before the request leaves; with no network it goes no further.
+        // A save is never held back by ``transportDown`` alone: the request is how the store
+        // learns the connection is back.
         syncOutbox(id: id)
         if pathSatisfied == false {
-            park(id: id)
+            park(id: id, forServer: false)
             return
         }
         // Captured before the request: whether this save is an offline edit catching up decides
@@ -824,26 +889,12 @@ public final class NotesStore {
             let result = try await api.patchNote(
                 id: id, body: pending, frontmatter: baseline.frontmatter, name: nil, summary: nil,
                 favourite: nil, containerId: nil, expectedHash: baseline.contentHash,
-                source: catchingUp ? NoteWriteSource.offline : nil)
+                source: catchingUp ? NoteWriteSource.offline : NoteWriteSource.phone)
             requestSucceeded()
             switch result {
             case .saved(let detail):
                 setDetail(detail, for: id)
-                // Only clear the draft if nothing was typed while the request was in flight —
-                // otherwise the newer keystrokes would be dropped and the editor would show text
-                // the server has never seen while reporting itself clean.
-                if drafts[id] == pending {
-                    drafts[id] = nil
-                    saveStates[id] = .clean
-                } else {
-                    saveStates[id] = .dirty
-                    scheduleSave(id: id)
-                }
-                if let index = notes.firstIndex(where: { $0.id == id }) {
-                    notes[index] = detail.summaryRow
-                } else {
-                    notes.insert(detail.summaryRow, at: 0)
-                }
+                finishWrite(id: id, sent: pending, row: detail.summaryRow, insertingRow: true)
                 settleSave(id: id, caughtUp: catchingUp, overwrote: false)
             case .conflict(let conflict):
                 #if DEBUG
@@ -862,13 +913,7 @@ public final class NotesStore {
                     await performSave(id: id, adoptedHashRetries: adoptedHashRetries - 1)
                 case .alreadyOurs:
                     setDetail(baseline.adoptingHash(conflict), for: id)
-                    if drafts[id] == pending {
-                        drafts[id] = nil
-                        saveStates[id] = .clean
-                    } else {
-                        saveStates[id] = .dirty
-                        scheduleSave(id: id)
-                    }
+                    finishWrite(id: id, sent: pending, row: nil)
                     settleSave(id: id, caughtUp: catchingUp, overwrote: false)
                 case .none, .real:
                     if catchingUp {
@@ -886,10 +931,12 @@ public final class NotesStore {
 
     /// Answer a conflict.
     ///
-    /// Keeping `mine` writes unconditionally — the whole point is that the hash no longer
-    /// matches, so a conditional retry would conflict again forever. Keeping `theirs` adopts the
-    /// server's body, which is the one path here that discards typing, and so is only ever
-    /// reached from an explicit choice.
+    /// Keeping `mine` writes conditionally on the hash the conflict reported — the version the
+    /// reader was shown — so a third version arriving meanwhile is another conflict rather than
+    /// something overwritten unseen. It is a save of this phone's (`source: phone`), so the
+    /// version it replaces stays in the history even when the web wrote it moments ago. Keeping
+    /// `theirs` adopts the server's body, which is the one path here that discards typing, and so
+    /// is only ever reached from an explicit choice.
     public func resolveConflict(id: String, keeping side: NoteConflictResolution) async {
         guard case .conflict(let conflict) = saveState(for: id) else { return }
         switch side {
@@ -905,17 +952,12 @@ public final class NotesStore {
                 let result = try await api.patchNote(
                     id: id, body: pending, frontmatter: baseline.frontmatter, name: nil,
                     summary: nil, favourite: nil, containerId: nil, expectedHash: conflict.currentHash,
-                    source: nil)
+                    source: NoteWriteSource.phone)
+                requestSucceeded()
                 switch result {
                 case .saved(let detail):
                     setDetail(detail, for: id)
-                    if drafts[id] == pending {
-                        drafts[id] = nil
-                        saveStates[id] = .clean
-                    } else {
-                        saveStates[id] = .dirty
-                        scheduleSave(id: id)
-                    }
+                    finishWrite(id: id, sent: pending, row: nil)
                     syncOutbox(id: id)
                 case .conflict(let again):
                     #if DEBUG
@@ -940,9 +982,10 @@ public final class NotesStore {
         await saveNow(id: id)
     }
 
-    /// Like ``rename(id:name:)``, kept on this phone and sent later when there is no connection.
+    /// Like ``rename(id:name:)``: kept on this phone and sent later when there is no connection,
+    /// and its answer adopted without moving an unsaved edit's baseline.
     public func setFavourite(id: String, favourite: Bool) async {
-        if pathSatisfied == false {
+        if isOffline {
             queueFieldPatch(id: id, name: nil, favourite: favourite)
             return
         }
@@ -950,14 +993,15 @@ public final class NotesStore {
             let result = try await api.patchNote(
                 id: id, body: nil, frontmatter: nil, name: nil, summary: nil, favourite: favourite,
                 containerId: nil, expectedHash: nil, source: nil)
+            requestSucceeded()
             guard case .saved(let detail) = result else { return }
-            setDetail(detail, for: id)
+            adoptFieldResult(detail, id: id)
             if let index = notes.firstIndex(where: { $0.id == id }) {
                 notes[index] = detail.summaryRow
             }
         } catch {
             if NoteSyncFailure.isTransport(error) {
-                transportDown = true
+                markTransportDown()
                 queueFieldPatch(id: id, name: nil, favourite: favourite)
                 return
             }
@@ -967,15 +1011,16 @@ public final class NotesStore {
 
     /// Updates the summary shown under a note's name and matched by semantic search. An empty
     /// string clears it — the server itself treats a falsy summary as "clear", so this never has
-    /// to send an explicit null.
+    /// to send an explicit null. Its answer is adopted like a rename's.
     @discardableResult
     public func updateSummary(id: String, summary: String) async -> Bool {
         do {
             let result = try await api.patchNote(
                 id: id, body: nil, frontmatter: nil, name: nil, summary: summary, favourite: nil,
                 containerId: nil, expectedHash: nil, source: nil)
+            requestSucceeded()
             guard case .saved(let detail) = result else { return false }
-            setDetail(detail, for: id)
+            adoptFieldResult(detail, id: id)
             if let index = notes.firstIndex(where: { $0.id == id }) { notes[index] = detail.summaryRow }
             return true
         } catch {

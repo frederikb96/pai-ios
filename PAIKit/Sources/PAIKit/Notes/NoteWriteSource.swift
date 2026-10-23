@@ -1,8 +1,8 @@
 import Foundation
 
 /// How a note's `last_write_source` and a revision's `source` are put to the owner. The values
-/// are the backend's `NoteWriteSource` (`ui`, `disk`, `mcp`, `rename`, `restore`, `share`,
-/// `offline`); one the app does not know is shown as it came, never mapped to a guess.
+/// are the backend's `NoteWriteSource` (`ui`, `phone`, `offline`, `disk`, `mcp`, `rename`,
+/// `restore`, `share`); one the app does not know is shown as it came, never mapped to a guess.
 public enum NoteWriteSource {
 
     /// What a save of an edit made offline sends as `source`. The server keeps a version per
@@ -10,10 +10,16 @@ public enum NoteWriteSource {
     /// replaces in the history instead of folding it into the same checkpoint.
     public static let offline = "offline"
 
+    /// What every other content save from this app sends. `ui` is the web's side; a save of its
+    /// own keeps a phone write and a browser burst from folding into one checkpoint, so each
+    /// leaves the version it replaced in the history.
+    public static let phone = "phone"
+
     /// "Last change from …" on the note's info tab.
     public static func infoLabel(_ source: String) -> String {
         switch source {
-        case "ui": return "this app"
+        case "ui": return "the web app"
+        case "phone": return "a save from the phone"
         case "disk": return "the synced folder on disk"
         case "mcp": return "an MCP tool call"
         case "rename": return "a link rewrite from renaming something else"
@@ -27,7 +33,8 @@ public enum NoteWriteSource {
     /// The second line of a history row.
     public static func historyLabel(_ source: String) -> String {
         switch source {
-        case "ui": return "edited here"
+        case "ui": return "edited on the web"
+        case "phone": return "edited on the phone"
         case "disk": return "edited on disk"
         case "mcp": return "edited by MCP"
         case "rename": return "link rewrite"
