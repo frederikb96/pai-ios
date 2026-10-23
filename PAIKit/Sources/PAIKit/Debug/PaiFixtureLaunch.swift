@@ -22,6 +22,20 @@
         static let autoCreateSessionFlag = "-PaiFixtureAutoCreateSession"
         static let secretPromptFlag = "-PaiFixtureSecretPrompt"
         static let notesFilterFocusFlag = "-PaiFixtureNotesFilterFocused"
+        static let offlineFlag = "-PaiFixtureOffline"
+        static let notesCacheSeededFlag = "-PaiFixtureNotesCacheSeeded"
+        static let notePendingEditFlag = "-PaiFixtureNotePendingEdit"
+        static let noteConflictFlag = "-PaiFixtureNoteConflict"
+
+        /// What the debug bridge can change while the app runs: the offline switch, and whether
+        /// the one-shot conflict has been served.
+        private final class RuntimeState: @unchecked Sendable {
+            let lock = NSLock()
+            var offlineOverride: Bool?
+            var conflictServed = false
+        }
+
+        private static let runtime = RuntimeState()
 
         /// The session id every session-scoped fixture route answers under, regardless of which
         /// id the request actually named — fixed so a screenshot workflow can always ask for this
@@ -108,6 +122,48 @@
         /// Absent leaves every other screenshot unaffected, exactly like the auth-state flag.
         public static func showsSecretPrompt(arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
             arguments.contains(secretPromptFlag)
+        }
+
+        /// Whether every fixture request fails the way `URLSession` does with no network. Starts
+        /// from `-PaiFixtureOffline`; the debug bridge flips it at run time with
+        /// ``setOffline(_:)``, which is how a screenshot run takes an offline edit back online.
+        public static func isOffline(arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
+            runtime.lock.withLock { runtime.offlineOverride } ?? arguments.contains(offlineFlag)
+        }
+
+        public static func setOffline(_ offline: Bool) {
+            runtime.lock.withLock { runtime.offlineOverride = offline }
+        }
+
+        /// `-PaiFixtureNotesCacheSeeded`: the notes cache starts holding the fixture index, the
+        /// fixture note, its inventory and both attachments, as if they had been opened before.
+        public static func seedsNotesCache(arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
+            arguments.contains(notesCacheSeededFlag)
+        }
+
+        /// `-PaiFixtureNotePendingEdit`: the fixture note starts with an edit made offline and not
+        /// yet synced.
+        public static func seedsNotePendingEdit(arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
+            arguments.contains(notePendingEditFlag)
+        }
+
+        /// `-PaiFixtureNoteConflict`: the first save of a note answers 409 with a different body,
+        /// the way a note edited elsewhere does; every later save succeeds. True exactly once.
+        static func takeNoteConflict(arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
+            guard arguments.contains(noteConflictFlag) else { return false }
+            return runtime.lock.withLock {
+                guard !runtime.conflictServed else { return false }
+                runtime.conflictServed = true
+                return true
+            }
+        }
+
+        /// For tests: forget what the bridge set and whether the conflict was served.
+        static func resetRuntimeState() {
+            runtime.lock.withLock {
+                runtime.offlineOverride = nil
+                runtime.conflictServed = false
+            }
         }
 
         static func value(for flag: String, in arguments: [String]) -> String? {

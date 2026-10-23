@@ -29,11 +29,17 @@
         }
 
         override public func startLoading() {
+            // The error `URLSession` itself reports with no network, so the app's offline paths
+            // run exactly as they do on a phone in flight mode.
+            if PaiFixtureLaunch.isOffline() {
+                client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+                return
+            }
             let method = request.httpMethod ?? "GET"
             let path = request.url?.path ?? ""
             let query =
                 request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.queryItems } ?? []
-            let match = Self.route(method: method, path: path, query: query)
+            let match = Self.route(method: method, path: path, query: query, body: requestBody())
 
             // Neither streaming client checks the content type — both look only at the status —
             // but sending the honest one costs nothing and stops a future reader concluding the
@@ -57,6 +63,22 @@
 
         override public func stopLoading() {}
 
+        /// `URLSession` hands a protocol the body as a stream rather than as `httpBody`.
+        private func requestBody() -> Data? {
+            if let body = request.httpBody { return body }
+            guard let stream = request.httpBodyStream else { return nil }
+            stream.open()
+            defer { stream.close() }
+            var data = Data()
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let read = stream.read(&buffer, maxLength: buffer.count)
+                if read <= 0 { break }
+                data.append(buffer, count: read)
+            }
+            return data
+        }
+
         // MARK: - Route table
 
         struct Match {
@@ -76,7 +98,10 @@
         /// `PaiFixtureURLProtocolTests` can assert on it directly without going through a real
         /// `URLRequest`. `query` defaults to empty so every existing call site (and every
         /// pre-existing test) keeps working unchanged.
-        static func route(method: String, path: String, query: [URLQueryItem] = []) -> Match {
+        static func route(
+            method: String, path: String, query: [URLQueryItem] = [], body: Data? = nil,
+            arguments: [String] = ProcessInfo.processInfo.arguments
+        ) -> Match {
             // These two are handled ahead of the plain table below because they are the only
             // routes whose answer genuinely depends on the query string — every other route
             // answers one fixed body regardless of what was asked for. Intercepted by exact path
@@ -89,6 +114,14 @@
                 if path.hasSuffix("/messages") {
                     return Match(status: 200) { messagesResponse(query: query) }
                 }
+            }
+            // A note save: answered with what was sent, or, once under `-PaiFixtureNoteConflict`,
+            // with the 409 a note edited elsewhere produces.
+            if method == "PATCH", path.hasPrefix("/api/notes/"), path.split(separator: "/").count == 3 {
+                if PaiFixtureLaunch.takeNoteConflict(arguments: arguments) {
+                    return Match(status: 409) { PaiFixtures.data(PaiFixtures.noteConflict) }
+                }
+                return Match(status: 200) { PaiFixtures.notePatched(requestBody: body) }
             }
             guard let fixture = routes.first(where: { $0.method == method && $0.matches(path) }) else {
                 let detail = "no fixture route for \(method) \(path)"
