@@ -1264,6 +1264,43 @@ final class NotesStoreOfflineTests: XCTestCase {
         XCTAssertTrue(outbox.loadEdits().isEmpty)
     }
 
+    /// Typing over a conflict and then taking the server's version ends the edit with no save in
+    /// between. The keystroke's deferred write must not land afterwards and bring the dropped
+    /// text back for the next launch to replay.
+    func testADeferredWriteNeverBringsBackADiscardedEdit() async throws {
+        server.seed(id: "n1", body: "base")
+        let store = makeStore()
+        await store.refresh()
+        await store.loadNote(id: "n1")
+        store.edit(id: "n1", body: "base, mine")
+        server.write(id: "n1", body: "base, theirs")
+        await store.flush(id: "n1")
+        guard case .conflict = store.saveState(for: "n1") else { return XCTFail("expected the banner") }
+
+        store.edit(id: "n1", body: "base, mine, typed over the banner")
+        await store.resolveConflict(id: "n1", keeping: .theirs)
+        try await Task.sleep(for: NotesStore.outboxWriteDelay * 3)
+
+        XCTAssertTrue(outbox.loadEdits().isEmpty)
+        XCTAssertNil(makeStore().drafts["n1"])
+    }
+
+    /// A keystroke's deferred write is older than the conflict a reload raises right after it. It
+    /// must not land on top and erase the conflict from disk.
+    func testADeferredWriteNeverOverwritesANewerRecord() async throws {
+        server.seed(id: "n1", body: "base")
+        let store = makeStore()
+        await store.refresh()
+        await store.loadNote(id: "n1")
+        store.edit(id: "n1", body: "base, mine")
+        server.write(id: "n1", body: "base, theirs")
+        await store.loadNote(id: "n1")
+        guard case .conflict = store.saveState(for: "n1") else { return XCTFail("expected the banner") }
+        try await Task.sleep(for: NotesStore.outboxWriteDelay * 3)
+
+        XCTAssertNotNil(outbox.loadEdits().first?.raisedConflict)
+    }
+
     // MARK: Notices
 
     /// An edit typed online that waited because the server answered 503 is not called an offline
