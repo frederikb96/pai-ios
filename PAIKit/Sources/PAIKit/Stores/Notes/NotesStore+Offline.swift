@@ -17,13 +17,29 @@ extension NotesStore {
 
     var nowMs: Int { Int(now().timeIntervalSince1970 * 1000) }
 
-    /// Whether an edit, rename or favourite is waiting to reach the server.
-    public var hasPendingWork: Bool { !awaitingSync.isEmpty || !pendingFieldPatches.isEmpty }
+    /// Whether an edit, rename or favourite is waiting to reach the server by itself. A refused
+    /// edit is not: it waits for the reader (``keptTexts``).
+    public var hasPendingWork: Bool {
+        !awaitingSync.isEmpty || !unsentAtLaunch.isEmpty || !pendingFieldPatches.isEmpty
+    }
+
+    /// Whether opening this note should send what this phone holds for it rather than reload it.
+    func isWaitingToSend(_ id: String) -> Bool {
+        awaitingSync.contains(id) || unsentAtLaunch.contains(id) || pendingFieldPatches[id] != nil
+    }
 
     // MARK: Startup
 
-    /// Reads the cached index, the attachment manifest and every pending edit. Synchronous on
-    /// purpose: the list and any unsaved text have to be there in the first frame.
+    /// Reads the cached index, the attachment manifest and every pending edit, and drops any
+    /// attachment file the manifest does not name. Synchronous on purpose: the list and any
+    /// unsaved text have to be there in the first frame, and nothing else touches the cache yet.
+    ///
+    /// Each edit comes back as what it was when the app went away:
+    /// - a conflict the reader was shown and never answered is asked again;
+    /// - an edit the server refused stays refused, with its text, until the reader acts;
+    /// - an edit that had failed to reach the server is an offline edit again (``awaitingSync``);
+    /// - an edit that never failed (typed online, the app killed first) is sent as an ordinary
+    ///   save, so a conflict it meets raises the banner exactly as it would have online.
     func restoreFromDisk() {
         let started = Date()
         let cachedRows = cache.loadIndex()?.notes ?? []
@@ -31,6 +47,7 @@ extension NotesStore {
         for entry in cache.loadAttachmentManifest() {
             attachmentManifest[CachedAttachmentKey.of(containerId: entry.containerId, path: entry.path)] = entry
         }
+        sweepUnlistedAttachments()
         for patch in outbox.loadFieldPatches() {
             pendingFieldPatches[patch.noteId] = patch
         }
@@ -41,17 +58,29 @@ extension NotesStore {
             detailVersion[id, default: 0] += 1
             editedAtMs[id] = edit.editedAtMs
             syncAttempts[id] = edit.attempts
+            if edit.waitedForServer { waitedForServer.insert(id) }
             if let conflict = edit.raisedConflict {
-                // Asked before the app went away and never answered: ask again rather than let a
-                // relaunch decide.
                 saveStates[id] = .conflict(conflict)
+            } else if let refusal = edit.refusal {
+                editRefusals[id] = refusal
+                saveStates[id] = .failed(refusal)
             } else {
                 saveStates[id] = .waitingForNetwork
-                awaitingSync.insert(id)
+                if edit.awaitingSync { awaitingSync.insert(id) } else { unsentAtLaunch.insert(id) }
             }
         }
+        quarantined = outbox.loadQuarantined()
         notes = overlaid(cachedRows)
         indexLoadMs = Date().timeIntervalSince(started) * 1000
+    }
+
+    /// A blob written just before the app died, before the manifest naming it was, is outside both
+    /// the budget and the usage figure, and nothing would ever read or evict it.
+    private func sweepUnlistedAttachments() {
+        let listed = Set(attachmentManifest.values.map(\.fileId))
+        for fileId in cache.attachmentFileIds() where !listed.contains(fileId) {
+            cache.removeAttachment(fileId: fileId)
+        }
     }
 
     /// Puts this phone's copy of a note on screen before its request goes out. Never over a
@@ -81,15 +110,23 @@ extension NotesStore {
     /// operation needs one (``NoteOnlineOnly``); otherwise what the server said.
     func failureMessage(_ error: Error, needing operation: NoteOnlineOnly, otherwise fallback: String) -> String {
         if NoteSyncFailure.isTransport(error) {
-            transportDown = true
+            markTransportDown()
             return operation.message
         }
         return (error as? PaiError)?.userMessage ?? fallback
     }
 
+    /// Any notes request that got an answer: the server is reachable, whatever this phone
+    /// concluded from an earlier failure.
     func requestSucceeded() {
         transportDown = false
-        parkedRetryAttempt = 0
+    }
+
+    /// A request failed in transport. Ignored while the caller is cancelled: a request abandoned
+    /// on purpose says nothing about the network.
+    func markTransportDown() {
+        guard !Task.isCancelled else { return }
+        transportDown = true
     }
 
     /// Re-fetches the index when this run has not fetched it in the last `maxAge` seconds. The
@@ -111,7 +148,7 @@ extension NotesStore {
 
     func persistIndex(_ fetched: [NoteSummary]) async {
         let cache = self.cache
-        let index = CachedNoteIndex(notes: fetched, fetchedAtMs: nowMs)
+        let index = CachedNoteIndex(notes: fetched)
         await Task.detached { cache.saveIndex(index) }.value
     }
 
@@ -191,9 +228,14 @@ extension NotesStore {
                 guard details[id] == nil, drafts[id] == nil else { continue }
                 cacheBody(detail)
             } catch {
-                if NoteSyncFailure.isTransport(error) {
-                    transportDown = true
+                switch NoteSyncFailure.classify(error) {
+                case .cancelled:
                     return
+                case .transport:
+                    markTransportDown()
+                    return
+                default:
+                    continue
                 }
             }
         }
@@ -201,30 +243,53 @@ extension NotesStore {
 
     // MARK: The outbox
 
-    /// Makes the note outbox agree with memory for one note: the current draft and the version it
-    /// was typed over, or nothing once there is no draft. Called wherever either changes.
+    /// Makes the note outbox agree with memory for one note, at once: the current draft and the
+    /// version it was typed over, or nothing once there is no draft. Called wherever either
+    /// changes, and before every request.
     func syncOutbox(id: String) {
-        guard let draft = drafts[id] else {
-            outbox.removeEdit(noteId: id)
+        guard drafts[id] != nil else {
+            outboxWriter.remove(noteId: id)
             editedAtMs[id] = nil
             syncAttempts[id] = nil
+            editRefusals[id] = nil
+            waitedForServer.remove(id)
+            unsentAtLaunch.remove(id)
             if awaitingSync.remove(id) != nil { reoverlayRow(id: id, base: serverRows[id]) }
             return
         }
-        // A draft with no detail cannot be saved either (`performSave` needs both); it never
-        // arises from the editor, which only shows a note it has a body for.
-        guard let base = details[id] else { return }
+        guard let record = pendingRecord(id: id) else { return }
+        outboxWriter.save(record)
+    }
+
+    /// ``syncOutbox(id:)`` for a keystroke: the record is written once typing pauses for
+    /// ``NotesStore/outboxWriteDelay``, off the main actor.
+    func persistDraftSoon(id: String) {
+        guard let record = pendingRecord(id: id) else { return }
+        outboxWriter.saveSoon(record)
+    }
+
+    /// Everything the outbox keeps for a note's draft. `nil` for a draft with no detail, which
+    /// cannot be saved either (`performSave` needs both) and never arises from the editor, which
+    /// only shows a note it has a body for.
+    private func pendingRecord(id: String) -> NotePendingEdit? {
+        guard let draft = drafts[id], let base = details[id] else { return nil }
         var conflict: NoteConflict?
         if case .conflict(let raised) = saveStates[id] { conflict = raised }
-        outbox.saveEdit(
-            NotePendingEdit(
-                noteId: id, body: draft, base: base, editedAtMs: editedAtMs[id] ?? nowMs,
-                attempts: syncAttempts[id] ?? 0, raisedConflict: conflict, awaitingSync: awaitingSync.contains(id)))
+        return NotePendingEdit(
+            noteId: id, body: draft, base: base, editedAtMs: editedAtMs[id] ?? nowMs,
+            attempts: syncAttempts[id] ?? 0, raisedConflict: conflict, awaitingSync: awaitingSync.contains(id),
+            waitedForServer: waitedForServer.contains(id), refusal: editRefusals[id])
     }
 
     /// The edit could not reach the server: it stays on this phone, marked as an offline edit,
-    /// and goes out on the next trigger.
-    func park(id: String) {
+    /// and goes out on the next trigger. `forServer` is a server error with the network up; an
+    /// edit that has been without a connection at any point stays an offline edit.
+    func park(id: String, forServer: Bool) {
+        if !forServer {
+            waitedForServer.remove(id)
+        } else if !awaitingSync.contains(id) {
+            waitedForServer.insert(id)
+        }
         saveStates[id] = .waitingForNetwork
         awaitingSync.insert(id)
         syncOutbox(id: id)
@@ -232,10 +297,18 @@ extension NotesStore {
         scheduleParkedRetry()
     }
 
+    /// Bookkeeping after the server accepted a save. The retry backoff starts over only here, on
+    /// a save that got through, never on some other request succeeding while this one keeps
+    /// failing.
     func settleSave(id: String, caughtUp: Bool, overwrote: Bool) {
+        parkedRetryAttempt = 0
         if drafts[id] == nil, caughtUp {
             syncCounters.replayed += 1
-            if overwrote { syncCounters.conflictsResolved += 1 }
+            if overwrote {
+                syncCounters.conflictsResolved += 1
+            } else if waitedForServer.contains(id) {
+                serverWaitReplays += 1
+            }
         }
         syncOutbox(id: id)
     }
@@ -243,17 +316,32 @@ extension NotesStore {
     func handleSaveFailure(id: String, error: Error) {
         switch NoteSyncFailure.classify(error) {
         case .transport:
-            transportDown = true
-            park(id: id)
+            markTransportDown()
+            park(id: id, forServer: false)
         case .retryLater:
-            park(id: id)
+            park(id: id, forServer: true)
         case .noteGone:
-            saveStates[id] = .failed("This note was deleted elsewhere. Your text is kept on this phone.")
-            syncOutbox(id: id)
+            refuse(id: id, "This note was deleted elsewhere. Your text is kept on this phone.")
         case .rejected(let message):
-            saveStates[id] = .failed(message)
+            refuse(id: id, message)
+        case .cancelled:
+            // Not an answer from anywhere; the edit is still unsaved, so it goes out again.
+            saveStates[id] = .dirty
             syncOutbox(id: id)
+            scheduleSave(id: id)
         }
+    }
+
+    /// The server will not take this edit as it stands. It leaves the sync queue, since sending it
+    /// again gets the same answer, and stays on this phone with the reason until the reader
+    /// keeps or discards it.
+    private func refuse(id: String, _ message: String) {
+        editRefusals[id] = message
+        saveStates[id] = .failed(message)
+        waitedForServer.remove(id)
+        unsentAtLaunch.remove(id)
+        if awaitingSync.remove(id) != nil { reoverlayRow(id: id, base: serverRows[id]) }
+        syncOutbox(id: id)
     }
 
     /// The conflict policy for an edit made offline: it is written over the server's version,
@@ -282,10 +370,13 @@ extension NotesStore {
             }
             switch result {
             case .saved(let detail):
+                let madeOffline = !waitedForServer.contains(id)
                 setDetail(detail, for: id)
                 finishWrite(id: id, sent: body, row: detail.summaryRow)
                 settleSave(id: id, caughtUp: true, overwrote: true)
-                onSyncNotice?(.overwroteNewerVersion(noteId: id, name: name(for: id) ?? NoteNaming.untitled))
+                onSyncNotice?(
+                    .overwroteNewerVersion(
+                        noteId: id, name: name(for: id) ?? NoteNaming.untitled, madeOffline: madeOffline))
                 return
             case .conflict(let again):
                 if (again.body ?? "") == body {
@@ -307,9 +398,12 @@ extension NotesStore {
         syncOutbox(id: id)
     }
 
-    /// What every accepted write does with the draft: clear it if nothing was typed while the
-    /// request was out, otherwise save again.
-    private func finishWrite(id: String, sent: String, row: NoteSummary?) {
+    /// What every accepted write does with the draft: clear it only if nothing was typed while
+    /// the request was out — otherwise the newer keystrokes would be dropped and the editor would
+    /// show text the server has never seen while reporting itself clean — and save again if
+    /// something was. `row` updates the note's list row; `insertingRow` adds it when the list
+    /// does not hold it.
+    func finishWrite(id: String, sent: String, row: NoteSummary?, insertingRow: Bool = false) {
         if drafts[id] == sent {
             drafts[id] = nil
             saveStates[id] = .clean
@@ -317,7 +411,12 @@ extension NotesStore {
             saveStates[id] = .dirty
             scheduleSave(id: id)
         }
-        if let row, let index = notes.firstIndex(where: { $0.id == id }) { notes[index] = row }
+        guard let row else { return }
+        if let index = notes.firstIndex(where: { $0.id == id }) {
+            notes[index] = row
+        } else if insertingRow {
+            notes.insert(row, at: 0)
+        }
     }
 
     /// Tries parked edits again on its own while the network looks up, backing off from
@@ -362,15 +461,17 @@ extension NotesStore {
                 containerId: nil, expectedHash: nil, source: nil)
             requestSucceeded()
             switch result {
-            case .saved(let detail): return .done(detail)
+            case .saved(let detail):
+                parkedRetryAttempt = 0
+                return .done(detail)
             case .conflict: return .refused("the note changed on the server")
             }
         } catch {
             switch NoteSyncFailure.classify(error) {
             case .transport:
-                transportDown = true
+                markTransportDown()
                 return .keep
-            case .retryLater: return .keep
+            case .retryLater, .cancelled: return .keep
             case .noteGone: return .refused("the note no longer exists")
             case .rejected(let message): return .refused(message)
             }
@@ -427,29 +528,44 @@ extension NotesStore {
         }
     }
 
-    /// A rename's answer is the whole note. It becomes the baseline only when no edit is typed
-    /// over the current one, since moving an edit's baseline would let it overwrite whatever the
-    /// server holds now.
-    private func adoptFieldResult(_ detail: NoteDetail?, id: String) {
+    /// The one rule for a rename's, favourite's or summary's answer, online or replayed. The answer
+    /// is the whole note. It becomes the baseline only when no edit is typed over the current one
+    /// and no save is out: moving an edit's baseline would let its next save pass the hash check
+    /// against a body it never saw and overwrite whatever the server holds now. Under an edit only
+    /// the fields the answer was about move (``NoteDetail/adoptingFields(of:)``), and the outbox
+    /// is brought along so memory and disk keep one baseline.
+    func adoptFieldResult(_ detail: NoteDetail?, id: String) {
         guard let detail else { return }
         serverRows[id] = detail.summaryRow
-        if drafts[id] == nil, inFlightSaves[id] == nil { setDetail(detail, for: id) }
+        guard drafts[id] != nil || inFlightSaves[id] != nil, let baseline = details[id] else {
+            setDetail(detail, for: id)
+            return
+        }
+        setDetail(baseline.adoptingFields(of: detail), for: id)
+        if drafts[id] != nil { syncOutbox(id: id) }
     }
 
     // MARK: Sync
 
-    /// Sends everything this phone holds for one note: a queued rename or favourite, then the
-    /// body. What ``loadNote(id:)`` does instead of refreshing a note with an edit waiting.
+    /// Sends everything this phone holds for one note: the body, then a queued rename or
+    /// favourite (the order ``resumeSync()`` explains). What ``loadNote(id:)`` does instead of
+    /// refreshing a note with an edit waiting.
     func replayPending(id: String) async {
+        if awaitingSync.contains(id) || unsentAtLaunch.contains(id), drafts[id] != nil {
+            if case .conflict = saveState(for: id) {} else { await flush(id: id) }
+        }
         await replayFieldPatch(id: id)
-        guard awaitingSync.contains(id), drafts[id] != nil else { return }
-        if case .conflict = saveState(for: id) { return }
-        await flush(id: id)
     }
 
-    /// Sends every edit, rename and favourite made offline, one note at a time, then refreshes
-    /// the index. Each body goes through the same single-flight save an online edit uses, so the
-    /// newest text is always the last one sent. Overlapping calls share one pass.
+    /// Sends every waiting edit, then every rename and favourite made offline, one note at a time,
+    /// then refreshes the index. Each body goes through the same single-flight save an online edit
+    /// uses, so the newest text is always the last one sent. Overlapping calls share one pass.
+    ///
+    /// Bodies go first because a rename makes the server rewrite `[[Old]]` to `[[New]]` in every
+    /// note linking to it. A linking note whose edit was still waiting would then meet that
+    /// rewrite as a conflict and, as an offline edit, write the old link back over it; sent first,
+    /// its body is what the rewrite applies to. A rename made on the web while this phone was
+    /// offline cannot be ordered away like that: the waiting edit still wins over the rewrite.
     ///
     /// Triggered by the network coming back, the app returning to the foreground, the first
     /// successful index fetch after an outage, pull-to-refresh, the offline banner's "Sync now"
@@ -469,6 +585,7 @@ extension NotesStore {
 
     private func runSync() async {
         syncCounters = NoteSyncReport()
+        serverWaitReplays = 0
         // Runs on every return to the foreground; with nothing waiting it costs nothing.
         guard hasPendingWork else {
             lastSyncReport = syncCounters
@@ -476,10 +593,9 @@ extension NotesStore {
         }
         parkedRetry?.cancel()
         parkedRetry = nil
-        for patch in pendingFieldPatches.values.sorted(by: { $0.editedAtMs < $1.editedAtMs }) {
-            await replayFieldPatch(id: patch.noteId)
+        let ids = awaitingSync.union(unsentAtLaunch).sorted {
+            (editedAtMs[$0] ?? 0, $0) < (editedAtMs[$1] ?? 0, $1)
         }
-        let ids = awaitingSync.sorted { (editedAtMs[$0] ?? 0, $0) < (editedAtMs[$1] ?? 0, $1) }
         for id in ids {
             guard drafts[id] != nil else {
                 syncOutbox(id: id)
@@ -490,11 +606,18 @@ extension NotesStore {
             // One edit that could not get through says the rest cannot either.
             if saveState(for: id) == .waitingForNetwork, transportDown || pathSatisfied == false { break }
         }
+        if !transportDown, pathSatisfied != false {
+            for patch in pendingFieldPatches.values.sorted(by: { $0.editedAtMs < $1.editedAtMs }) {
+                await replayFieldPatch(id: patch.noteId)
+            }
+        }
         if !transportDown, pathSatisfied != false { await refresh() }
-        syncCounters.stillPending = awaitingSync.count + pendingFieldPatches.count
+        syncCounters.stillPending = awaitingSync.count + unsentAtLaunch.count + pendingFieldPatches.count
         lastSyncReport = syncCounters
         let plain = syncCounters.replayed - syncCounters.conflictsResolved
-        if plain > 0 { onSyncNotice?(.synced(count: plain)) }
+        let offlinePlain = plain - serverWaitReplays
+        if offlinePlain > 0 { onSyncNotice?(.synced(count: offlinePlain)) }
+        if serverWaitReplays > 0 { onSyncNotice?(.synced(count: serverWaitReplays, madeOffline: false)) }
         if syncCounters.stillPending > 0 { scheduleParkedRetry() }
     }
 
@@ -577,11 +700,18 @@ extension NotesStore {
     }
 
     /// Empties the cache: index, bodies, inventories and files. Unsaved edits are a different
-    /// store and are not touched; what is on screen stays until the next fetch replaces it.
+    /// store and are not touched; what is on screen stays until the next fetch replaces it. The
+    /// index rows of notes with something waiting are written back, so a relaunch without a
+    /// connection still lists them and their edits stay reachable.
     public func clearCache() async {
         _ = await manifestWrite?.value
         let cache = self.cache
-        await Task.detached { cache.clear() }.value
+        let waiting = Set(drafts.keys).union(awaitingSync).union(pendingFieldPatches.keys)
+        let keptRows = serverRows.values.filter { waiting.contains($0.id) }.sorted { $0.id < $1.id }
+        await Task.detached {
+            cache.clear()
+            if !keptRows.isEmpty { cache.saveIndex(CachedNoteIndex(notes: keptRows)) }
+        }.value
         attachmentManifest = [:]
         bodyStamps = [:]
         freshInventories = [:]
@@ -605,6 +735,52 @@ extension NotesStore {
             indexLoadMs: indexLoadMs, cachedBodyCount: bodies, cachedAttachmentCount: attachmentManifest.count,
             cacheBytes: metadata + attachmentBytes, budgetBytes: cacheBudgetBytes, pending: pending,
             lastSyncReport: lastSyncReport)
+    }
+
+    // MARK: Text that cannot sync by itself
+
+    /// Every text this phone holds that will not reach the server without the reader: edits the
+    /// server refused (most often because the note was deleted elsewhere, which also takes it off
+    /// the list) and outbox files this build could not read.
+    public var keptTexts: [NoteKeptText] {
+        let refused = editRefusals.keys.sorted().compactMap { id -> NoteKeptText? in
+            guard let text = drafts[id], let reason = editRefusals[id] else { return nil }
+            return NoteKeptText(
+                origin: .refusedEdit(noteId: id), title: name(for: id) ?? NoteNaming.untitled, reason: reason,
+                text: text)
+        }
+        let unreadable = quarantined.map { kept in
+            NoteKeptText(
+                origin: .unreadable(fileId: kept.id),
+                title: kept.noteId.flatMap { name(for: $0) } ?? "An unsaved edit",
+                reason: "Kept by another version of the app in a form this one cannot read.", text: kept.text)
+        }
+        return refused + unreadable
+    }
+
+    /// Removes a kept text for good — the reader's answer once it is copied somewhere, or not
+    /// wanted.
+    public func discardKeptText(_ kept: NoteKeptText) {
+        switch kept.origin {
+        case .refusedEdit(let id):
+            discardEdit(id: id)
+        case .unreadable(let fileId):
+            outbox.removeQuarantined(id: fileId)
+            quarantined.removeAll { $0.id == fileId }
+        }
+    }
+
+    /// Drops the unsaved text of a note whose save failed, on disk too, and shows the note as the
+    /// server last sent it. Only for a failed save: any other state either sends the text by
+    /// itself or asks the reader a question of its own.
+    public func discardEdit(id: String) {
+        guard case .failed = saveState(for: id), drafts[id] != nil else { return }
+        saveTasks[id]?.cancel()
+        saveTasks[id] = nil
+        drafts[id] = nil
+        saveStates[id] = .clean
+        bumpExternalRevision(id)
+        syncOutbox(id: id)
     }
 
     public static func label(_ state: NoteSaveState) -> String {

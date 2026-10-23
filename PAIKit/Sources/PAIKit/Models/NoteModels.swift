@@ -129,6 +129,19 @@ public struct NoteDetail: Codable, Sendable, Equatable, Identifiable, Hashable {
             lastWriteSource: lastWriteSource, shared: shared)
     }
 
+    /// The same version of the note's content with the fields `other` reports around it: name,
+    /// summary, favourite, tags, container, share and delete marks. What a field change's answer
+    /// becomes while an edit is typed over this version — the name moves, the body, hash and
+    /// frontmatter an edit is conditional on stay. Every field is passed explicitly for the reason
+    /// ``adoptingHash(_:)`` spells out.
+    public func adoptingFields(of other: NoteDetail) -> NoteDetail {
+        NoteDetail(
+            id: id, name: other.name, summary: other.summary, containerId: other.containerId,
+            favourite: other.favourite, tags: other.tags, updatedAtMs: updatedAtMs, pendingDelete: other.pendingDelete,
+            frontmatter: frontmatter, body: body, contentHash: contentHash, createdAt: createdAt,
+            createdAtMs: createdAtMs, lastWriteSource: lastWriteSource, shared: other.shared)
+    }
+
     enum CodingKeys: String, CodingKey {
         case id, name, summary, favourite, tags, frontmatter, body, shared
         case containerId = "container_id"

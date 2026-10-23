@@ -10,11 +10,9 @@ import Foundation
 /// local overlay, so loading it back can never mistake an unsynced rename for the server's name.
 public struct CachedNoteIndex: Codable, Sendable, Equatable {
     public let notes: [NoteSummary]
-    public let fetchedAtMs: Int
 
-    public init(notes: [NoteSummary], fetchedAtMs: Int) {
+    public init(notes: [NoteSummary]) {
         self.notes = notes
-        self.fetchedAtMs = fetchedAtMs
     }
 }
 
@@ -74,6 +72,9 @@ public protocol NotesCacheStorage: Sendable {
     /// Whether the bytes reached disk. A failed write must not be recorded in the manifest.
     func writeAttachment(_ data: Data, fileId: String) -> Bool
     func removeAttachment(fileId: String)
+    /// Every blob on disk, by the `fileId` it was written under, whether the manifest names it
+    /// or not.
+    func attachmentFileIds() -> [String]
 
     /// Bytes held by everything except attachment blobs: the index, bodies, inventories and the
     /// manifest itself. Counted toward the budget, never evicted by it.
@@ -187,6 +188,12 @@ public struct FileNotesCacheStorage: NotesCacheStorage {
         try? fileManager.removeItem(at: attachmentsDirectory.appendingPathComponent(NotesFileName.safe(fileId)))
     }
 
+    public func attachmentFileIds() -> [String] {
+        let files =
+            (try? fileManager.contentsOfDirectory(at: attachmentsDirectory, includingPropertiesForKeys: nil)) ?? []
+        return files.map(\.lastPathComponent).filter { !$0.hasPrefix(".") }.map { $0.removingPercentEncoding ?? $0 }
+    }
+
     public func metadataBytes() -> Int {
         var total = NotesFileIO.size(of: indexURL) + NotesFileIO.size(of: manifestURL)
         for directory in [bodiesDirectory, inventoriesDirectory] {
@@ -279,6 +286,7 @@ public final class InMemoryNotesCacheStorage: NotesCacheStorage, @unchecked Send
         }
     }
     public func removeAttachment(fileId: String) { locked { blobs[fileId] = nil } }
+    public func attachmentFileIds() -> [String] { locked { Array(blobs.keys) } }
     public func metadataBytes() -> Int {
         locked {
             let encoder = JSONEncoder()

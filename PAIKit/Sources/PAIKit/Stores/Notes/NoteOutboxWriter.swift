@@ -1,0 +1,63 @@
+import Dispatch
+import Foundation
+
+/// Writes pending edits to the note outbox, either at once or a moment later.
+///
+/// Typing changes the draft on every keystroke, and writing the whole record (the draft plus the
+/// version it was typed over) each time costs a file create and rename on the main actor. So a
+/// keystroke only hands the latest record over (``saveSoon(_:)``) and one write per note follows
+/// after a short quiet period, encoded and written on a queue of its own.
+///
+/// 🚨 Every other write is synchronous (``save(_:)``, ``remove(noteId:)``) and is what the store
+/// calls before a request leaves and whenever a draft ends. Both run under one lock, and an
+/// immediate write drops the note's deferred one, so a deferred write can never land after a newer
+/// record or resurrect a removed one: it either finished before, and is replaced, or never runs.
+final class NoteOutboxWriter: @unchecked Sendable {
+    private let storage: NoteOutboxStorage
+    private let delay: DispatchTimeInterval
+    private let queue = DispatchQueue(label: "notes.outbox-writer", qos: .utility)
+    private let lock = NSLock()
+    private var deferred: [String: NotePendingEdit] = [:]
+    private var scheduled = false
+
+    init(storage: NoteOutboxStorage, delay: Duration) {
+        self.storage = storage
+        let (seconds, attoseconds) = delay.components
+        self.delay = .nanoseconds(Int(seconds) * 1_000_000_000 + Int(attoseconds / 1_000_000_000))
+    }
+
+    /// Keeps `edit` as the note's next record and writes it after the quiet period, together with
+    /// whatever other notes changed meanwhile.
+    func saveSoon(_ edit: NotePendingEdit) {
+        lock.withLock {
+            deferred[edit.noteId] = edit
+            guard !scheduled else { return }
+            scheduled = true
+            queue.asyncAfter(deadline: .now() + delay) { [self] in writeDeferred() }
+        }
+    }
+
+    func save(_ edit: NotePendingEdit) {
+        lock.withLock {
+            deferred[edit.noteId] = nil
+            storage.saveEdit(edit)
+        }
+    }
+
+    func remove(noteId: String) {
+        lock.withLock {
+            deferred[noteId] = nil
+            storage.removeEdit(noteId: noteId)
+        }
+    }
+
+    /// Writes every deferred record now. For a caller that is about to lose the process.
+    func writeDeferred() {
+        lock.withLock {
+            let pending = deferred
+            deferred = [:]
+            scheduled = false
+            for edit in pending.values { storage.saveEdit(edit) }
+        }
+    }
+}

@@ -7,8 +7,9 @@ import XCTest
 
 @testable import PAIKit
 
-/// What `PATCH /api/notes/{id}` carries on the wire. An ordinary save has to stay the request it
-/// always was; only an edit made offline names its side.
+/// What `PATCH /api/notes/{id}` carries on the wire. The client sends `source` only when asked;
+/// the store asks on every content save, naming the phone, so its writes never fold into the
+/// web's version history.
 final class PaiApiClientNotesPatchTests: XCTestCase {
 
     override func setUp() {
@@ -29,9 +30,30 @@ final class PaiApiClientNotesPatchTests: XCTestCase {
         return Set(object.keys)
     }
 
-    func testAnOrdinarySaveSendsNoSource() async throws {
+    func testTheClientSendsNoSourceUnlessAsked() async throws {
         _ = try await makeClient().patchNote(id: "n1", body: "text", frontmatter: "a: b", expectedHash: "h1")
         XCTAssertEqual(try sentKeys(), ["body", "frontmatter", "expected_hash"])
+    }
+
+    /// The store's online save over the real client: the request carries the body, the
+    /// frontmatter it was read with, the hash it is conditional on, and the phone as its side —
+    /// nothing else.
+    @MainActor
+    func testAnOnlineSaveFromTheStoreNamesThePhone() async throws {
+        let detail = try JSONDecoder().decode(NoteDetail.self, from: Data(PaiFixtures.noteDetail.utf8))
+        let store = NotesStore(api: try makeClient())
+        await store.loadNote(id: detail.id)
+        XCTAssertEqual(store.detail(for: detail.id)?.contentHash, detail.contentHash)
+
+        store.edit(id: detail.id, body: detail.body + " and one more line")
+        await store.flush(id: detail.id)
+
+        XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.httpMethod, "PATCH")
+        let body = try XCTUnwrap(PaiStubURLProtocol.capturedBody)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(Set(object.keys), ["body", "frontmatter", "expected_hash", "source"])
+        XCTAssertEqual(object["source"] as? String, "phone")
+        XCTAssertEqual(object["expected_hash"] as? String, detail.contentHash)
     }
 
     func testAnOfflineSaveNamesItsSource() async throws {
