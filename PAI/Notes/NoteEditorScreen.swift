@@ -69,6 +69,9 @@ struct NoteEditorScreen: View {
             if case .conflict(let conflict) = notes.saveState(for: noteID) {
                 NoteConflictBanner(noteID: noteID, conflict: conflict)
             }
+            if notes.isOffline {
+                NotesOfflineBanner(text: "Offline · your edits are saved on this phone and sync when you're back")
+            }
             titleRow
             content
         }
@@ -174,6 +177,8 @@ struct NoteEditorScreen: View {
                     highlight: highlight, isCoveredBySheet: isShowingTools || isShowingActions,
                     onChange: { notes.edit(id: noteID, body: $0) })
             }
+        } else if notes.unavailableOffline.contains(noteID) {
+            NoteUnavailableOfflineView(noteID: noteID)
         } else {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -210,7 +215,9 @@ struct NoteEditorScreen: View {
             NotePresenceBadge(viewers: presence?.viewers ?? 0)
         }
         ToolbarItem(placement: .topBarTrailing) {
-            NoteSaveStateBadge(state: notes.saveState(for: noteID))
+            NoteSaveStateBadge(state: notes.saveState(for: noteID)) {
+                Task { await notes.resumeSync() }
+            }
         }
         ToolbarItem(placement: .topBarTrailing) {
             Button {
@@ -249,12 +256,12 @@ struct NoteEditorScreen: View {
 
     /// The note's own name, unlike ``title`` empty rather than "Untitled" when it has none.
     private var selfName: String? {
-        let name = notes.detail(for: noteID)?.name ?? notes.summary(for: noteID)?.name ?? ""
+        let name = notes.name(for: noteID) ?? ""
         return name.isEmpty ? nil : name
     }
 
     private var title: String {
-        let name = notes.detail(for: noteID)?.name ?? notes.summary(for: noteID)?.name ?? ""
+        let name = notes.name(for: noteID) ?? ""
         return name.isEmpty ? "Untitled" : name
     }
 
@@ -365,6 +372,8 @@ private struct NotePresenceBadge: View {
 /// trains the eye to ignore it, and the two states that matter are the two nobody must miss.
 private struct NoteSaveStateBadge: View {
     let state: NoteSaveState
+    /// Sends what is waiting, for the reader who does not want to wait for the next retry.
+    let onSync: () -> Void
 
     var body: some View {
         switch state {
@@ -385,6 +394,13 @@ private struct NoteSaveStateBadge: View {
             Image(systemName: "exclamationmark.icloud.fill")
                 .foregroundStyle(PaiPalette.Semantic.errorText)
                 .accessibilityLabel("Not saved: \(message)")
+        case .waitingForNetwork:
+            Button(action: onSync) {
+                Image(systemName: "icloud.slash")
+                    .foregroundStyle(PaiPalette.Semantic.textMuted)
+            }
+            .accessibilityLabel("Saved on this phone, waiting for a connection")
+            .accessibilityIdentifier("note-save-waiting")
         }
     }
 }

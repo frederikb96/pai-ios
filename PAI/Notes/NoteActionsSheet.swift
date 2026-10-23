@@ -138,10 +138,17 @@ private struct RootNoteActionsList: View {
                     Label("Outline, links & history", systemImage: "sidebar.right")
                 }
 
-                Button(role: .destructive) {
-                    path.append(.deleteConfirm)
-                } label: {
-                    Label("Delete note", systemImage: "trash")
+                Section {
+                    Button(role: .destructive) {
+                        path.append(.deleteConfirm)
+                    } label: {
+                        Label("Delete note", systemImage: "trash")
+                    }
+                    .disabled(notes.isOffline)
+                } footer: {
+                    if notes.isOffline {
+                        Text(NoteOnlineOnly.deleteNote.message)
+                    }
                 }
             } else {
                 ProgressView()

@@ -46,7 +46,7 @@ struct NoteAttachmentsScreen: View {
                         Image(systemName: "plus")
                     }
                 }
-                .disabled(uploading)
+                .disabled(uploading || notes.isOffline)
             }
         }
         .task { await reload() }
@@ -123,7 +123,7 @@ struct NoteAttachmentsScreen: View {
                 containerId: containerId, filename: filename, mimeType: "image/jpeg", data: data)
             await reload()
         } catch {
-            toasts.show((error as? PaiError)?.userMessage ?? "Upload failed", kind: .error)
+            toasts.show(attachmentFailure(error, needing: .addFile, otherwise: "Upload failed"), kind: .error)
         }
     }
 
@@ -132,7 +132,9 @@ struct NoteAttachmentsScreen: View {
             _ = try await notes.deleteAttachment(containerId: containerId, path: attachment.relPath)
             attachments.removeAll { $0.relPath == attachment.relPath }
         } catch {
-            toasts.show((error as? PaiError)?.userMessage ?? "Could not delete the attachment", kind: .error)
+            toasts.show(
+                attachmentFailure(error, needing: .changeAttachment, otherwise: "Could not delete the attachment"),
+                kind: .error)
         }
     }
 
@@ -193,7 +195,15 @@ private struct RenameAttachmentView: View {
             _ = try await notes.renameAttachment(containerId: containerId, fromPath: attachment.relPath, toPath: toPath)
             onDone()
         } catch {
-            toasts.show((error as? PaiError)?.userMessage ?? "Could not rename the attachment", kind: .error)
+            toasts.show(
+                attachmentFailure(error, needing: .changeAttachment, otherwise: "Could not rename the attachment"),
+                kind: .error)
         }
     }
+}
+
+/// What a failed attachment change says: that it needs a connection when there is none, otherwise
+/// what the server answered.
+func attachmentFailure(_ error: Error, needing operation: NoteOnlineOnly, otherwise fallback: String) -> String {
+    NoteSyncFailure.isTransport(error) ? operation.message : ((error as? PaiError)?.userMessage ?? fallback)
 }

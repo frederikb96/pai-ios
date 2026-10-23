@@ -411,7 +411,10 @@ private struct NoteOutgoingLinksTab: View {
                             _ = try await notes.deleteAttachment(containerId: containerId, path: path)
                             await onReload()
                         } catch {
-                            toasts.show("Could not delete the attachment", kind: .error)
+                            toasts.show(
+                                attachmentFailure(
+                                    error, needing: .changeAttachment, otherwise: "Could not delete the attachment"),
+                                kind: .error)
                         }
                     }
                 } label: {
@@ -454,6 +457,7 @@ private struct NoteInfoTab: View {
                     )
                     .lineLimit(2...5)
                     .focused($isSummaryFieldFocused)
+                    .disabled(notes.isOffline)
                     // Compared against what the note already holds rather than fired on any
                     // change: this field is filled in from the note when the tab appears, and
                     // that assignment is a change like any other. Left unguarded, merely opening
@@ -473,8 +477,17 @@ private struct NoteInfoTab: View {
                         guard edited != (notes.detail(for: noteId)?.summary ?? "") else { return }
                         scheduleSave()
                     }
+                    if notes.isOffline {
+                        Text(NoteOnlineOnly.summary.message)
+                            .font(PaiTypography.caption.font)
+                            .foregroundStyle(PaiPalette.Semantic.textMuted)
+                    }
                 }
-                if note.containerId != nil, let shareStore {
+                if note.containerId != nil, notes.isOffline {
+                    Section("Sharing") {
+                        Text(NoteOnlineOnly.sharing.message).foregroundStyle(PaiPalette.Semantic.textMuted)
+                    }
+                } else if note.containerId != nil, let shareStore {
                     sharingSections(shareStore)
                 }
                 Section {

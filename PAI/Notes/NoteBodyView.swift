@@ -517,6 +517,8 @@ struct NoteAttachmentEmbedView: View {
         case loading
         case loaded(Data)
         case notFound
+        /// Not on this phone, and no connection to fetch it.
+        case unavailableOffline
         case error
     }
 
@@ -565,6 +567,10 @@ struct NoteAttachmentEmbedView: View {
                 )
                 .font(PaiTypography.caption.font)
                 .foregroundStyle(PaiPalette.Notes.muted)
+            case .unavailableOffline:
+                Label(NoteOnlineOnly.attachmentUnavailable(filename), systemImage: "icloud.slash")
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Notes.muted)
             case .error:
                 Label("Could not load \(filename)", systemImage: "exclamationmark.triangle")
                     .font(PaiTypography.caption.font)
@@ -583,7 +589,7 @@ struct NoteAttachmentEmbedView: View {
                 case .notFound: state = .notFound
                 }
             } catch {
-                state = .error
+                state = NoteSyncFailure.isTransport(error) ? .unavailableOffline : .error
             }
         }
         .filePreview($previewTarget)
