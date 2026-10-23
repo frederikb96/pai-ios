@@ -260,7 +260,7 @@ public final class NotesStore {
         do {
             containers = try await api.getNoteContainers()
         } catch {
-            loadError = (error as? PaiError)?.userMessage ?? "Could not load note containers"
+            loadError = failureMessage(error, needing: .containers, otherwise: "Could not load note containers")
         }
     }
 
@@ -286,7 +286,7 @@ public final class NotesStore {
             loadError = nil
             return created.summaryRow
         } catch {
-            loadError = (error as? PaiError)?.userMessage ?? "Could not create the note"
+            loadError = failureMessage(error, needing: .createNote, otherwise: "Could not create the note")
             return nil
         }
     }
@@ -339,7 +339,7 @@ public final class NotesStore {
             }
             return true
         } catch {
-            loadError = (error as? PaiError)?.userMessage ?? "Could not delete the note"
+            loadError = failureMessage(error, needing: .deleteNote, otherwise: "Could not delete the note")
             return false
         }
     }
@@ -435,7 +435,7 @@ public final class NotesStore {
             linkGraphs[id] = try await api.getNoteLinks(id: id)
             linkGraphErrors[id] = nil
         } catch {
-            linkGraphErrors[id] = (error as? PaiError)?.userMessage ?? "Could not load links"
+            linkGraphErrors[id] = failureMessage(error, needing: .links, otherwise: "Could not load links")
         }
     }
 
@@ -446,7 +446,8 @@ public final class NotesStore {
             revisions[id] = try await api.listNoteRevisions(id: id)
             revisionErrors[id] = nil
         } catch {
-            revisionErrors[id] = (error as? PaiError)?.userMessage ?? "Could not load previous versions"
+            revisionErrors[id] = failureMessage(
+                error, needing: .history, otherwise: "Could not load previous versions")
         }
     }
 
@@ -474,7 +475,7 @@ public final class NotesStore {
             await loadRevisions(id: noteId)
             return true
         } catch {
-            loadError = (error as? PaiError)?.userMessage ?? "Could not restore this version"
+            loadError = failureMessage(error, needing: .history, otherwise: "Could not restore this version")
             return false
         }
     }
@@ -978,7 +979,7 @@ public final class NotesStore {
             if let index = notes.firstIndex(where: { $0.id == id }) { notes[index] = detail.summaryRow }
             return true
         } catch {
-            loadError = (error as? PaiError)?.userMessage ?? "Could not save the summary"
+            loadError = failureMessage(error, needing: .summary, otherwise: "Could not save the summary")
             return false
         }
     }

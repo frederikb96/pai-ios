@@ -197,10 +197,14 @@ private final class FakeNotesServer: NotesApiClient, @unchecked Sendable {
         seed(id: "created", name: name, body: body ?? "")
         return detail("created")
     }
-    func deleteNote(id: String) async throws -> Bool { true }
+    func deleteNote(id: String) async throws -> Bool {
+        try failIfOffline()
+        return true
+    }
     func undeleteNote(id: String) async throws -> NoteDetail { detail(id) }
     func getNoteLinks(id: String) async throws -> NoteLinkGraph {
-        NoteLinkGraph(outgoing: [], backlinks: [], extractionSkipped: false)
+        try failIfOffline()
+        return NoteLinkGraph(outgoing: [], backlinks: [], extractionSkipped: false)
     }
     func listNoteRevisions(id: String) async throws -> [NoteRevisionSummary] { [] }
     func getNoteRevision(noteId: String, revisionId: String) async throws -> NoteRevisionDetail {
@@ -799,6 +803,29 @@ final class NotesStoreOfflineTests: XCTestCase {
         await store.clearCache()
         XCTAssertEqual(outbox.loadEdits().map(\.body), ["offline text"])
         XCTAssertEqual(store.body(for: "n1"), "offline text")
+    }
+
+    // MARK: Online-only operations
+
+    /// Creating, deleting and the tools panel's server lists say they need a connection instead
+    /// of passing on a transport error nobody can act on.
+    func testOnlineOnlyOperationsSayTheyNeedAConnection() async {
+        server.seed(id: "n1", body: "x")
+        let store = makeStore()
+        await openThenGoOffline(store)
+
+        let created = await store.createNote(name: "New")
+        XCTAssertNil(created)
+        XCTAssertEqual(store.loadError, NoteOnlineOnly.createNote.message)
+
+        let deleted = await store.requestDelete(id: "n1")
+        XCTAssertFalse(deleted)
+        XCTAssertEqual(store.loadError, NoteOnlineOnly.deleteNote.message)
+        XCTAssertFalse(store.notes.contains { $0.pendingDelete })
+
+        await store.loadLinkGraph(id: "n1")
+        XCTAssertEqual(store.linkGraphErrors["n1"], NoteOnlineOnly.links.message)
+        XCTAssertTrue(store.isOffline)
     }
 
     // MARK: Search

@@ -17,7 +17,8 @@ extension NotesStore {
 
     var nowMs: Int { Int(now().timeIntervalSince1970 * 1000) }
 
-    var hasPendingWork: Bool { !awaitingSync.isEmpty || !pendingFieldPatches.isEmpty }
+    /// Whether an edit, rename or favourite is waiting to reach the server.
+    public var hasPendingWork: Bool { !awaitingSync.isEmpty || !pendingFieldPatches.isEmpty }
 
     // MARK: Startup
 
@@ -74,6 +75,16 @@ extension NotesStore {
             parkedRetry?.cancel()
             parkedRetry = nil
         }
+    }
+
+    /// What a failed online-only request tells the reader: without a connection, that the
+    /// operation needs one (``NoteOnlineOnly``); otherwise what the server said.
+    func failureMessage(_ error: Error, needing operation: NoteOnlineOnly, otherwise fallback: String) -> String {
+        if NoteSyncFailure.isTransport(error) {
+            transportDown = true
+            return operation.message
+        }
+        return (error as? PaiError)?.userMessage ?? fallback
     }
 
     func requestSucceeded() {
@@ -458,6 +469,11 @@ extension NotesStore {
 
     private func runSync() async {
         syncCounters = NoteSyncReport()
+        // Runs on every return to the foreground; with nothing waiting it costs nothing.
+        guard hasPendingWork else {
+            lastSyncReport = syncCounters
+            return
+        }
         parkedRetry?.cancel()
         parkedRetry = nil
         for patch in pendingFieldPatches.values.sorted(by: { $0.editedAtMs < $1.editedAtMs }) {
@@ -591,7 +607,7 @@ extension NotesStore {
             lastSyncReport: lastSyncReport)
     }
 
-    static func label(_ state: NoteSaveState) -> String {
+    public static func label(_ state: NoteSaveState) -> String {
         switch state {
         case .clean: "clean"
         case .dirty: "dirty"
