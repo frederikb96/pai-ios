@@ -133,7 +133,7 @@ private final class FakeNotesApi: NotesApiClient, @unchecked Sendable {
 
     func patchNote(
         id: String, body: String?, frontmatter: String?, name: String?, summary: String?,
-        favourite: Bool?, containerId: String?, expectedHash: String?
+        favourite: Bool?, containerId: String?, expectedHash: String?, source: String?
     ) async throws -> NoteSaveResult {
         patchNoteCalls.append((id: id, name: name))
         patchNoteBodies.append(body)

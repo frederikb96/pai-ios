@@ -65,7 +65,10 @@ public final class NoteMeaningSearchStore {
             } catch {
                 guard !Task.isCancelled, let self, self.generation == mine else { return }
                 if error is CancellationError { return }
-                self.phase = SemanticSearchPhase.outcome(of: error)
+                // Without a connection the filter matches stay, under a line saying why.
+                self.phase =
+                    NoteSyncFailure.isTransport(error)
+                    ? .failed(NoteOnlineOnly.semanticSearch.message) : SemanticSearchPhase.outcome(of: error)
             }
         }
     }

@@ -27,6 +27,7 @@ public final class SettingsStore {
         static let theme = "theme"
         static let showsNoteLineNumbers = "showsNoteLineNumbers"
         static let noteToolbarLayout = "noteToolbarLayout"
+        static let notesCacheBudgetBytes = "notesCacheBudgetBytes"
     }
 
     static let maxSentMessages = 10
@@ -49,6 +50,9 @@ public final class SettingsStore {
     /// avoid. Always sanitized before being stored here, so every read of this property is safe
     /// to hand straight to the bar with no further checking.
     public private(set) var noteToolbarLayout: [NoteToolbarActionId]
+    /// How much space the notes cache may take on this phone. A property of the device, never
+    /// synced; `NotesStore.setCacheBudget(_:)` applies it.
+    public private(set) var notesCacheBudgetBytes: Int
 
     public let elevenLabsKey: WriteOnlySecretField
     /// The two third-party credentials Computer presents itself. Set here rather than deployed
@@ -93,6 +97,8 @@ public final class SettingsStore {
         showsNoteLineNumbers = storage.value(forKey: Keys.showsNoteLineNumbers) ?? false
         let storedToolbarIds: [String] = storage.value(forKey: Keys.noteToolbarLayout) ?? []
         noteToolbarLayout = NoteToolbarLayout.sanitize(rawIds: storedToolbarIds)
+        let storedBudget: Int? = storage.value(forKey: Keys.notesCacheBudgetBytes)
+        notesCacheBudgetBytes = storedBudget.flatMap { $0 > 0 ? $0 : nil } ?? NotesCacheBudget.defaultBytes
     }
 
     // MARK: - Client-side settings, immediate apply
@@ -119,6 +125,12 @@ public final class SettingsStore {
     public func setShowsNoteLineNumbers(_ enabled: Bool) {
         showsNoteLineNumbers = enabled
         storage.setValue(enabled, forKey: Keys.showsNoteLineNumbers)
+    }
+
+    public func setNotesCacheBudget(_ bytes: Int) {
+        guard bytes > 0 else { return }
+        notesCacheBudgetBytes = bytes
+        storage.setValue(bytes, forKey: Keys.notesCacheBudgetBytes)
     }
 
     /// Re-sanitized before being kept, so a caller handing back a layout with a duplicate or an

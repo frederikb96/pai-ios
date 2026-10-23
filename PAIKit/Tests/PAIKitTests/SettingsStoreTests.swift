@@ -29,6 +29,20 @@ final class SettingsStoreTests: XCTestCase {
         SettingsStore(apiClient: try makeClient(), storage: storage)
     }
 
+    /// The cache budget is chosen once and must hold across launches: read back from storage by
+    /// the next store, not reset to the default.
+    func testTheNotesCacheBudgetSurvivesARelaunch() async throws {
+        try await MainActor.run {
+            let storage = SettingsInMemoryKeyValueStore()
+            let store = try Self.makeStore(storage: storage)
+            let chosen = NotesCacheBudget.choices.first { $0 != store.notesCacheBudgetBytes }!
+
+            store.setNotesCacheBudget(chosen)
+
+            XCTAssertEqual(try Self.makeStore(storage: storage).notesCacheBudgetBytes, chosen)
+        }
+    }
+
     func testDefaultsOnAFreshInstall() async throws {
         try await MainActor.run {
             let store = try Self.makeStore()

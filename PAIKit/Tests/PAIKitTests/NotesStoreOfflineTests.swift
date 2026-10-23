@@ -1,0 +1,815 @@
+import XCTest
+
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
+
+@testable import PAIKit
+
+/// A notes server with the parts of the real one the offline rules depend on: conditional saves
+/// against a content hash, and version history that coalesces per writing side.
+///
+/// The history rule follows `_snapshot_note_revision` in pai-cloud's `repository.py`: a content
+/// write that changes the hash first snapshots the current version, unless the newest snapshot is
+/// younger than the coalescing window and came from the same side. That rule is why an offline
+/// edit has to name its own side; a fake that kept every version could not tell the difference.
+private final class FakeNotesServer: NotesApiClient, @unchecked Sendable {
+    struct Revision: Equatable {
+        let body: String
+        let source: String
+        let createdAtMs: Int
+    }
+
+    struct Patch: Equatable {
+        let id: String
+        let body: String?
+        let name: String?
+        let favourite: Bool?
+        let expectedHash: String?
+        let source: String?
+    }
+
+    static let coalesceMs = 300_000
+
+    var nowMs = 1_000_000_000
+    private(set) var bodies: [String: String] = [:]
+    private(set) var hashes: [String: String] = [:]
+    private(set) var names: [String: String] = [:]
+    private(set) var favourites: [String: Bool] = [:]
+    private(set) var revisions: [String: [Revision]] = [:]
+    private var writes = 0
+
+    private(set) var patches: [Patch] = []
+    private(set) var getNoteCalls: [String] = []
+    private(set) var attachmentGets: [String] = []
+
+    /// Every request throws the way `URLSession` does with no network.
+    var offline = false
+    /// Thrown by the index route alone.
+    var indexFailure: Error?
+    /// Thrown by the next PATCHes, in order, before anything else happens.
+    var patchFailures: [Error] = []
+    /// Runs before each PATCH is judged: another writer getting there first.
+    var beforePatch: ((FakeNotesServer, String) -> Void)?
+    /// Names the server refuses, as it refuses a name already taken in the container.
+    var takenNames: Set<String> = []
+    var attachments: [String: Data] = [:]
+    var inventory: [NoteAttachmentRecord] = []
+
+    /// Holds the next PATCH open until released, so a test can act while it is in flight.
+    var holdPatch = false
+    /// With `holdPatch`: the write is applied first and only the answer is held — a save the
+    /// server has taken whose response has not arrived yet.
+    var holdAfterApplying = false
+    private let lock = NSLock()
+    private var held: CheckedContinuation<Void, Never>?
+    private var heldStarted: CheckedContinuation<Void, Never>?
+    private var hasHeld = false
+
+    func seed(id: String, name: String = "Note", body: String, favourite: Bool = false) {
+        bodies[id] = body
+        names[id] = name
+        favourites[id] = favourite
+        writes += 1
+        hashes[id] = "h\(writes)"
+    }
+
+    /// Another client (the web) saving the note.
+    func write(id: String, body: String, source: String = "ui") {
+        snapshot(id: id, source: source)
+        bodies[id] = body
+        writes += 1
+        hashes[id] = "h\(writes)"
+    }
+
+    private func snapshot(id: String, source: String) {
+        if let newest = revisions[id]?.last, nowMs - newest.createdAtMs < Self.coalesceMs, newest.source == source {
+            return
+        }
+        revisions[id, default: []].append(Revision(body: bodies[id] ?? "", source: source, createdAtMs: nowMs))
+    }
+
+    func detail(_ id: String) -> NoteDetail {
+        NoteDetail(
+            id: id, name: names[id] ?? "Note", summary: nil, containerId: "c1", favourite: favourites[id] ?? false,
+            tags: [], updatedAtMs: nowMs, pendingDelete: false, frontmatter: nil, body: bodies[id] ?? "",
+            contentHash: hashes[id] ?? "none", createdAt: nil, createdAtMs: nil, lastWriteSource: "ui")
+    }
+
+    private func failIfOffline() throws {
+        if offline { throw URLError(.notConnectedToInternet) }
+    }
+
+    private func hold() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            held = continuation
+            hasHeld = true
+            let started = heldStarted
+            heldStarted = nil
+            lock.unlock()
+            started?.resume()
+        }
+    }
+
+    func waitUntilPatchHeld() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if hasHeld {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                heldStarted = continuation
+                lock.unlock()
+            }
+        }
+    }
+
+    func releasePatch() {
+        lock.lock()
+        let release = held
+        held = nil
+        holdPatch = false
+        lock.unlock()
+        release?.resume()
+    }
+
+    func getNotesConfig() async throws -> NotesConfig { NotesConfig(undoWindowSeconds: 5) }
+
+    func getNotes(containerId: String?, favourite: Bool?, limit: Int, offset: Int) async throws -> [NoteSummary] {
+        try failIfOffline()
+        if let indexFailure { throw indexFailure }
+        return bodies.keys.sorted().map { detail($0).summaryRow }
+    }
+
+    func getNote(id: String) async throws -> NoteDetail {
+        getNoteCalls.append(id)
+        try failIfOffline()
+        guard bodies[id] != nil else { throw PaiError.detail("Note not found", statusCode: 404) }
+        return detail(id)
+    }
+
+    func patchNote(
+        id: String, body: String?, frontmatter: String?, name: String?, summary: String?,
+        favourite: Bool?, containerId: String?, expectedHash: String?, source: String?
+    ) async throws -> NoteSaveResult {
+        patches.append(
+            Patch(id: id, body: body, name: name, favourite: favourite, expectedHash: expectedHash, source: source))
+        if holdPatch, holdAfterApplying, let body, expectedHash == hashes[id] {
+            write(id: id, body: body, source: source ?? "ui")
+            await hold()
+            return .saved(detail(id))
+        }
+        if holdPatch {
+            await withCheckedContinuation { continuation in
+                lock.lock()
+                held = continuation
+                hasHeld = true
+                let started = heldStarted
+                heldStarted = nil
+                lock.unlock()
+                started?.resume()
+            }
+        }
+        try failIfOffline()
+        if !patchFailures.isEmpty { throw patchFailures.removeFirst() }
+        guard bodies[id] != nil else { throw PaiError.detail("Note not found", statusCode: 404) }
+        beforePatch?(self, id)
+        if let name {
+            if takenNames.contains(name) {
+                throw PaiError.detail("A note named '\(name)' already exists", statusCode: 400)
+            }
+            names[id] = name
+        }
+        if let favourite { favourites[id] = favourite }
+        if let body {
+            if let expectedHash, expectedHash != hashes[id] {
+                return .conflict(
+                    NoteConflict(currentHash: hashes[id]!, updatedAtMs: nowMs, frontmatter: nil, body: bodies[id]))
+            }
+            if body != bodies[id] { write(id: id, body: body, source: source ?? "ui") }
+        }
+        return .saved(detail(id))
+    }
+
+    func createNote(name: String, summary: String?, body: String?, containerId: String?) async throws -> NoteDetail {
+        try failIfOffline()
+        seed(id: "created", name: name, body: body ?? "")
+        return detail("created")
+    }
+    func deleteNote(id: String) async throws -> Bool { true }
+    func undeleteNote(id: String) async throws -> NoteDetail { detail(id) }
+    func getNoteLinks(id: String) async throws -> NoteLinkGraph {
+        NoteLinkGraph(outgoing: [], backlinks: [], extractionSkipped: false)
+    }
+    func listNoteRevisions(id: String) async throws -> [NoteRevisionSummary] { [] }
+    func getNoteRevision(noteId: String, revisionId: String) async throws -> NoteRevisionDetail {
+        throw PaiError.detail("not scripted", statusCode: 404)
+    }
+    func restoreNoteRevision(noteId: String, revisionId: String) async throws -> NoteDetail {
+        write(id: noteId, body: "restored", source: "restore")
+        return detail(noteId)
+    }
+    func searchNotes(q: String, containerId: String?, limit: Int?, window: TimeBounds?) async throws -> NoteSearchPage {
+        NoteSearchPage(hits: [], truncated: false)
+    }
+    func getNoteContainers() async throws -> [NoteContainer] { [] }
+    func createNoteContainer(path: String, name: String, agentSlug: String?, isDefault: Bool) async throws
+        -> NoteContainer
+    { throw PaiError.detail("not scripted", statusCode: 404) }
+    func patchNoteContainer(id: String, name: String?, enabled: Bool?, isDefault: Bool?) async throws
+        -> NoteContainer
+    { throw PaiError.detail("not scripted", statusCode: 404) }
+    func deleteNoteContainer(id: String) async throws -> Bool { true }
+    func resumeNoteContainer(id: String, action: NoteContainerResumeAction) async throws -> NoteContainer {
+        throw PaiError.detail("not scripted", statusCode: 404)
+    }
+    func validateNoteContainerPath(path: String, agentSlug: String?) async throws -> NoteContainerPathCheck {
+        NoteContainerPathCheck(ok: true, resolvedPath: path, reason: nil, existingNotes: 0)
+    }
+    func getNoteLinkHealth(containerId: String) async throws -> NoteLinkHealth {
+        NoteLinkHealth(broken: [], outside: [], unlinkedAttachments: [], unlinkedNotes: [], ambiguousNames: [])
+    }
+    func getNoteAttachment(containerId: String, path: String) async throws -> NoteAttachmentResult {
+        attachmentGets.append(path)
+        try failIfOffline()
+        return attachments[path].map { .ok($0) } ?? .notFound
+    }
+    func uploadNoteAttachment(containerId: String, filename: String, mimeType: String, data: Data) async throws
+        -> NoteAttachmentUploaded
+    { throw PaiError.detail("not scripted", statusCode: 404) }
+    func listNoteAttachments(containerId: String) async throws -> [NoteAttachmentRecord] {
+        try failIfOffline()
+        return inventory
+    }
+    func deleteNoteAttachment(containerId: String, path: String) async throws -> Bool { true }
+    func renameNoteAttachment(containerId: String, fromPath: String, toPath: String) async throws
+        -> NoteAttachmentRecord
+    { throw PaiError.detail("not scripted", statusCode: 404) }
+}
+
+@MainActor
+final class NotesStoreOfflineTests: XCTestCase {
+
+    private var server: FakeNotesServer!
+    private var cache: InMemoryNotesCacheStorage!
+    private var outbox: InMemoryNoteOutboxStorage!
+    private var notices: [NoteSyncNotice] = []
+
+    override func setUp() async throws {
+        server = FakeNotesServer()
+        cache = InMemoryNotesCacheStorage()
+        outbox = InMemoryNoteOutboxStorage()
+        notices = []
+    }
+
+    /// A store as the app builds one: over storages that outlive it, so a second store over the
+    /// same ones is the app's next launch.
+    private func makeStore() -> NotesStore {
+        let store = NotesStore(api: server, cache: cache, outbox: outbox, parkedRetryBaseDelay: .seconds(3600))
+        store.onSyncNotice = { [weak self] in self?.notices.append($0) }
+        return store
+    }
+
+    /// Opened online once (so this phone holds a copy), then the network goes.
+    private func openThenGoOffline(_ store: NotesStore, id: String = "n1") async {
+        await store.refresh()
+        await store.loadNote(id: id)
+        server.offline = true
+        store.setPathSatisfied(false)
+    }
+
+    private func goOnline(_ store: NotesStore) {
+        server.offline = false
+        store.setPathSatisfied(true)
+    }
+
+    // MARK: Reading without a connection
+
+    /// The list opens from this phone's copy, and a failed refresh keeps it on screen.
+    func testTheCachedIndexIsShownAtLaunchAndSurvivesAFailedRefresh() async {
+        server.seed(id: "n1", name: "Groceries", body: "milk")
+        server.seed(id: "n2", name: "Trip", body: "tent")
+        await makeStore().refresh()
+
+        server.offline = true
+        let relaunched = makeStore()
+        XCTAssertEqual(relaunched.notes.map(\.name), ["Groceries", "Trip"], "the index is there before any request")
+
+        await relaunched.refresh()
+
+        XCTAssertEqual(relaunched.notes.map(\.name), ["Groceries", "Trip"])
+        XCTAssertTrue(relaunched.isOffline)
+    }
+
+    /// A note opened before opens again without a connection, as a note rather than an error; a
+    /// note never opened says it is not on this phone.
+    func testANoteOpenedBeforeOpensOfflineAndAnUnseenOneSaysSo() async {
+        server.seed(id: "n1", body: "kept on the phone")
+        server.seed(id: "n2", body: "never opened")
+        let first = makeStore()
+        await first.refresh()
+        await first.loadNote(id: "n1")
+
+        server.offline = true
+        let relaunched = makeStore()
+        await relaunched.loadNote(id: "n1")
+        await relaunched.loadNote(id: "n2")
+
+        XCTAssertEqual(relaunched.body(for: "n1"), "kept on the phone")
+        XCTAssertEqual(relaunched.saveState(for: "n1"), .clean)
+        XCTAssertFalse(relaunched.unavailableOffline.contains("n1"))
+        XCTAssertNil(relaunched.body(for: "n2"))
+        XCTAssertTrue(relaunched.unavailableOffline.contains("n2"))
+    }
+
+    // MARK: Editing without a connection
+
+    /// With the path down nothing is sent; the edit is on disk, against the version it was typed
+    /// over.
+    func testAnOfflineEditWaitsOnDiskAgainstItsBase() async {
+        server.seed(id: "n1", body: "base")
+        let store = makeStore()
+        await openThenGoOffline(store)
+        let baseHash = store.detail(for: "n1")?.contentHash
+
+        store.edit(id: "n1", body: "base and offline")
+        await store.flush(id: "n1")
+
+        XCTAssertEqual(store.saveState(for: "n1"), .waitingForNetwork)
+        XCTAssertTrue(server.patches.isEmpty, "no request while the path is down")
+        let stored = outbox.loadEdits()
+        XCTAssertEqual(stored.map(\.body), ["base and offline"])
+        XCTAssertEqual(stored.first?.base.contentHash, baseHash)
+    }
+
+    /// Typing is on disk from the keystroke, not from the save: a kill inside the autosave
+    /// debounce loses nothing.
+    func testAnEditIsOnDiskBeforeTheDebounceFires() async {
+        server.seed(id: "n1", body: "base")
+        let store = makeStore()
+        await store.refresh()
+        await store.loadNote(id: "n1")
+
+        store.edit(id: "n1", body: "typed, then the app was killed")
+
+        let nextLaunch = makeStore()
+        XCTAssertEqual(nextLaunch.body(for: "n1"), "typed, then the app was killed")
+        XCTAssertTrue(server.patches.isEmpty)
+    }
+
+    /// An edit already on its way when the app dies is still on disk for the next launch. The
+    /// request is held open while a second store reads the same disk.
+    func testAnEditIsOnDiskBeforeItsRequestLeaves() async {
+        server.seed(id: "n1", body: "base")
+        let store = makeStore()
+        await store.refresh()
+        await store.loadNote(id: "n1")
+        server.holdPatch = true
+
+        store.edit(id: "n1", body: "typed just before the kill")
+        let save = Task { await store.flush(id: "n1") }
+        await server.waitUntilPatchHeld()
+
+        let nextLaunch = makeStore()
+        XCTAssertEqual(nextLaunch.body(for: "n1"), "typed just before the kill")
+        XCTAssertEqual(nextLaunch.saveState(for: "n1"), .waitingForNetwork)
+
+        server.releasePatch()
+        await save.value
+        XCTAssertTrue(outbox.loadEdits().isEmpty, "a saved edit leaves the outbox")
+    }
+
+    /// The whole round trip: edited offline, the app restarted, back online, sent once with the
+    /// base it was typed over and marked as an offline edit.
+    func testAnOfflineEditSurvivesARestartAndIsSentWhenTheNetworkReturns() async {
+        server.seed(id: "n1", body: "base")
+        let store = makeStore()
+        await openThenGoOffline(store)
+        let baseHash = store.detail(for: "n1")?.contentHash
+        store.edit(id: "n1", body: "offline text")
+        await store.flush(id: "n1")
+
+        let relaunched = makeStore()
+        goOnline(relaunched)
+        await relaunched.resumeSync()
+
+        XCTAssertEqual(server.patches.count, 1)
+        XCTAssertEqual(server.patches.first?.expectedHash, baseHash)
+        XCTAssertEqual(server.patches.first?.source, NoteWriteSource.offline)
+        XCTAssertEqual(server.bodies["n1"], "offline text")
+        XCTAssertEqual(relaunched.saveState(for: "n1"), .clean)
+        XCTAssertTrue(outbox.loadEdits().isEmpty)
+        XCTAssertEqual(relaunched.lastSyncReport?.replayed, 1)
+        XCTAssertEqual(notices, [.synced(count: 1)])
+    }
+
+    /// A hash that moved outside the body is adopted and written again, exactly as online, still
+    /// marked as the offline edit.
+    func testAReplayWhoseHashMovedOutsideTheBodyAdoptsItAndSaves() async {
+        server.seed(id: "n1", body: "base")
+        let store = makeStore()
+        await openThenGoOffline(store)
+        store.edit(id: "n1", body: "base plus")
+        await store.flush(id: "n1")
+        // The same body under a new hash: a frontmatter-only change on the server.
+        server.write(id: "n1", body: "base", source: "disk")
+
+        goOnline(store)
+        await store.resumeSync()
+
+        XCTAssertEqual(server.patches.count, 2)
+        XCTAssertEqual(server.patches.map(\.source), [NoteWriteSource.offline, NoteWriteSource.offline])
+        XCTAssertEqual(server.bodies["n1"], "base plus")
+        XCTAssertEqual(store.saveState(for: "n1"), .clean)
+        XCTAssertTrue(notices.allSatisfy { if case .overwroteNewerVersion = $0 { false } else { true } })
+    }
+
+    /// The policy. The note was edited on the web twice while the phone was offline, the second
+    /// time within the server's coalescing window. The phone's edit wins without a question, and
+    /// the web's latest text is in the note's history — which holds only because the replay
+    /// names its own side: sent as an ordinary save it would coalesce with the web's checkpoint
+    /// and the web's text would exist nowhere.
+    func testAnOfflineEditWinsAConflictAndTheDisplacedVersionIsKept() async {
+        server.seed(id: "n1", body: "base")
+        let store = makeStore()
+        await openThenGoOffline(store)
+        store.edit(id: "n1", body: "written on the plane")
+        await store.flush(id: "n1")
+
+        server.write(id: "n1", body: "web, first")
+        server.nowMs += 60_000
+        server.write(id: "n1", body: "web, second")
+        server.nowMs += 60_000
+        let webHash = server.hashes["n1"]
+
+        goOnline(store)
+        await store.resumeSync()
+
+        XCTAssertEqual(server.patches.count, 2, "one conditional save, refused, then one write over")
+        XCTAssertEqual(
+            server.patches.last?.expectedHash, webHash, "the second write is conditional on what it replaces")
+        XCTAssertEqual(server.patches.last?.source, NoteWriteSource.offline)
+        XCTAssertEqual(server.bodies["n1"], "written on the plane")
+        XCTAssertTrue(
+            server.revisions["n1", default: []].contains { $0.body == "web, second" },
+            "the version the offline edit replaced must be in the history")
+        XCTAssertEqual(store.saveState(for: "n1"), .clean)
+        XCTAssertTrue(outbox.loadEdits().isEmpty)
+        XCTAssertEqual(notices, [.overwroteNewerVersion(noteId: "n1", name: "Note")])
+        XCTAssertEqual(store.lastSyncReport?.conflictsResolved, 1)
+    }
+
+    /// A note that keeps moving under the replay stops after a few tries and waits, with the
+    /// edit still on screen and on disk.
+    func testAConflictThatKeepsComingBackLeavesTheEditWaiting() async {
+        server.seed(id: "n1", body: "base")
+        let store = makeStore()
+        await openThenGoOffline(store)
+        store.edit(id: "n1", body: "mine")
+        await store.flush(id: "n1")
+        var round = 0
+        server.beforePatch = { server, id in
+            round += 1
+            server.write(id: id, body: "someone else, round \(round)")
+        }
+
+        goOnline(store)
+        await store.resumeSync()
+
+        XCTAssertEqual(store.saveState(for: "n1"), .waitingForNetwork)
+        XCTAssertEqual(store.body(for: "n1"), "mine")
+        XCTAssertEqual(outbox.loadEdits().map(\.body), ["mine"])
+        XCTAssertLessThanOrEqual(server.patches.count, 1 + NotesStore.offlineConflictAttempts, "bounded")
+    }
+
+    /// The connection dropping again during the replay leaves the edit where it was.
+    func testATransportFailureDuringTheReplayLeavesTheEditWaiting() async {
+        server.seed(id: "n1", body: "base")
+        let store = makeStore()
+        await openThenGoOffline(store)
+        store.edit(id: "n1", body: "mine")
+        await store.flush(id: "n1")
+
+        goOnline(store)
+        server.patchFailures = [URLError(.networkConnectionLost)]
+        await store.resumeSync()
+
+        XCTAssertEqual(store.saveState(for: "n1"), .waitingForNetwork)
+        XCTAssertTrue(store.isOffline)
+        XCTAssertEqual(outbox.loadEdits().map(\.body), ["mine"])
+    }
+
+    /// A server error is a reason to wait, not to fail.
+    func testAServerErrorParksTheEditInsteadOfFailingIt() async {
+        server.seed(id: "n1", body: "base")
+        let store = makeStore()
+        await store.refresh()
+        await store.loadNote(id: "n1")
+        server.patchFailures = [PaiError.detail("busy", statusCode: 503)]
+
+        store.edit(id: "n1", body: "mine")
+        await store.flush(id: "n1")
+
+        XCTAssertEqual(store.saveState(for: "n1"), .waitingForNetwork)
+        XCTAssertEqual(outbox.loadEdits().map(\.body), ["mine"])
+        XCTAssertFalse(store.isOffline, "a 503 is an answer: the network is up")
+    }
+
+    /// A note deleted elsewhere cannot take the edit; the text stays on this phone.
+    func testANoteDeletedElsewhereFailsTheReplayAndKeepsTheText() async {
+        server.seed(id: "n1", body: "base")
+        let store = makeStore()
+        await openThenGoOffline(store)
+        store.edit(id: "n1", body: "mine")
+        await store.flush(id: "n1")
+        server.patchFailures = [PaiError.detail("Note not found", statusCode: 404)]
+
+        goOnline(store)
+        await store.resumeSync()
+
+        guard case .failed = store.saveState(for: "n1") else {
+            return XCTFail("expected a failure the reader can see, got \(store.saveState(for: "n1"))")
+        }
+        XCTAssertEqual(store.body(for: "n1"), "mine")
+        XCTAssertEqual(outbox.loadEdits().map(\.body), ["mine"])
+    }
+
+    // MARK: Renames offline
+
+    func testAnOfflineRenameShowsAtOnceAndIsSentLater() async {
+        server.seed(id: "n1", name: "Old", body: "x")
+        let store = makeStore()
+        await openThenGoOffline(store)
+
+        let accepted = await store.rename(id: "n1", name: "New")
+
+        XCTAssertTrue(accepted)
+        XCTAssertEqual(store.notes.first?.name, "New")
+        XCTAssertEqual(store.name(for: "n1"), "New")
+        XCTAssertTrue(server.patches.isEmpty)
+
+        // An index fetch landing before the rename is sent still says "Old"; it must not put
+        // that back over the queued name.
+        goOnline(store)
+        await store.refresh()
+        XCTAssertEqual(store.notes.first?.name, "New")
+        XCTAssertTrue(server.patches.isEmpty)
+
+        await store.resumeSync()
+        XCTAssertEqual(server.names["n1"], "New")
+        XCTAssertTrue(store.pendingFieldPatches.isEmpty)
+        XCTAssertTrue(outbox.loadFieldPatches().isEmpty)
+        XCTAssertEqual(store.notes.first?.name, "New")
+    }
+
+    func testAnOfflineRenameTheServerRefusesIsRevertedWithANotice() async {
+        server.seed(id: "n1", name: "Old", body: "x")
+        server.takenNames = ["Taken"]
+        let store = makeStore()
+        await openThenGoOffline(store)
+        await store.rename(id: "n1", name: "Taken")
+
+        goOnline(store)
+        // The index fetch that ends a sync would put the server's name back by itself; with it
+        // failing, the revert has to come from the refusal.
+        server.indexFailure = PaiError.detail("busy", statusCode: 503)
+        await store.resumeSync()
+
+        XCTAssertEqual(store.notes.first?.name, "Old")
+        XCTAssertEqual(store.name(for: "n1"), "Old")
+        XCTAssertTrue(store.pendingFieldPatches.isEmpty)
+        guard case .renameRefused(let id, let attempted, _) = notices.first else {
+            return XCTFail("expected a notice for the refused rename, got \(notices)")
+        }
+        XCTAssertEqual(id, "n1")
+        XCTAssertEqual(attempted, "Taken")
+    }
+
+    // MARK: Online behaviour that must not move
+
+    /// The regression guard for online saving: a genuine conflict met by an ordinary save still
+    /// raises the banner after exactly one request, and no ordinary request names a source.
+    func testAnOnlineConflictStillRaisesTheBannerAndSendsNoSource() async {
+        server.seed(id: "n1", body: "base")
+        let store = makeStore()
+        await store.refresh()
+        await store.loadNote(id: "n1")
+        store.edit(id: "n1", body: "first save")
+        await store.flush(id: "n1")
+        server.write(id: "n1", body: "someone else")
+
+        store.edit(id: "n1", body: "first save, then mine")
+        await store.flush(id: "n1")
+
+        guard case .conflict = store.saveState(for: "n1") else {
+            return XCTFail("an online conflict must reach the reader, got \(store.saveState(for: "n1"))")
+        }
+        XCTAssertEqual(server.patches.count, 2)
+        XCTAssertEqual(server.patches.map(\.source), [nil, nil])
+        XCTAssertEqual(server.bodies["n1"], "someone else", "nothing was written over")
+        XCTAssertTrue(notices.isEmpty)
+        XCTAssertNotNil(
+            outbox.loadEdits().first?.raisedConflict, "an unanswered conflict is asked again after a relaunch")
+    }
+
+    /// A reload landing on an unsaved edit whose server body moved raises the banner and leaves
+    /// the baseline where the edit started. Adopting the new baseline would let the next autosave
+    /// pass the hash check and overwrite the other writer's text without a word.
+    func testAReloadOverAnUnsavedEditWithAMovedBodyRaisesTheBanner() async {
+        server.seed(id: "n1", body: "base")
+        let store = makeStore()
+        await store.refresh()
+        await store.loadNote(id: "n1")
+        let baseHash = store.detail(for: "n1")?.contentHash
+        store.edit(id: "n1", body: "base, mine")
+        server.write(id: "n1", body: "base, theirs")
+
+        await store.loadNote(id: "n1")
+
+        guard case .conflict(let conflict) = store.saveState(for: "n1") else {
+            return XCTFail("expected the banner, got \(store.saveState(for: "n1"))")
+        }
+        XCTAssertEqual(conflict.body, "base, theirs")
+        XCTAssertEqual(store.detail(for: "n1")?.contentHash, baseHash, "the baseline stays where the edit started")
+        XCTAssertEqual(store.body(for: "n1"), "base, mine")
+        await store.flush(id: "n1")
+        XCTAssertTrue(server.patches.isEmpty, "a raised conflict is a question, not a save")
+    }
+
+    /// The other two answers of the same rule: a body unchanged under the edit is adopted as the
+    /// new baseline, and a body already holding the edit ends it.
+    func testAReloadOverAnUnsavedEditAdoptsAnUnmovedBodyAndRecognisesItsOwn() async {
+        server.seed(id: "n1", body: "base")
+        let store = makeStore()
+        await store.refresh()
+        await store.loadNote(id: "n1")
+        store.edit(id: "n1", body: "base, mine")
+        server.write(id: "n1", body: "base", source: "disk")
+        let movedHash = server.hashes["n1"]
+
+        await store.loadNote(id: "n1")
+        XCTAssertEqual(store.saveState(for: "n1"), .dirty)
+        XCTAssertEqual(store.detail(for: "n1")?.contentHash, movedHash)
+
+        server.write(id: "n1", body: "base, mine")
+        await store.loadNote(id: "n1")
+        XCTAssertEqual(store.saveState(for: "n1"), .clean)
+        XCTAssertNil(store.drafts["n1"])
+        XCTAssertTrue(outbox.loadEdits().isEmpty)
+    }
+
+    /// A reload answered while a save is out can describe the server holding that save already.
+    /// Read against the draft, which has moved on with further typing, it would look like someone
+    /// else's text and raise the banner against this client's own write; it is dropped instead.
+    func testAReloadDuringASaveCannotRaiseTheBannerAgainstThatSave() async {
+        server.seed(id: "n1", body: "base")
+        let store = makeStore()
+        await store.refresh()
+        await store.loadNote(id: "n1")
+        server.holdPatch = true
+        server.holdAfterApplying = true
+
+        store.edit(id: "n1", body: "base 1")
+        let save = Task { await store.flush(id: "n1") }
+        await server.waitUntilPatchHeld()
+        store.edit(id: "n1", body: "base 1 2")
+        await store.loadNote(id: "n1")
+
+        if case .conflict = store.saveState(for: "n1") {
+            XCTFail("a conflict was raised against this client's own save")
+        }
+        server.releasePatch()
+        await save.value
+        await store.flush(id: "n1")
+        XCTAssertEqual(server.bodies["n1"], "base 1 2")
+        XCTAssertEqual(store.saveState(for: "n1"), .clean)
+    }
+
+    /// Opening a note with an edit waiting sends the edit; it does not move the baseline under it.
+    func testOpeningANoteWithAnEditWaitingSendsTheEditInsteadOfReloading() async {
+        server.seed(id: "n1", body: "base")
+        let store = makeStore()
+        await openThenGoOffline(store)
+        store.edit(id: "n1", body: "mine")
+        await store.flush(id: "n1")
+        server.write(id: "n1", body: "theirs")
+        let getsBefore = server.getNoteCalls.count
+
+        goOnline(store)
+        await store.loadNote(id: "n1")
+
+        XCTAssertEqual(server.getNoteCalls.count, getsBefore, "no reload over a waiting edit")
+        XCTAssertEqual(server.patches.first?.source, NoteWriteSource.offline)
+        XCTAssertEqual(server.bodies["n1"], "mine")
+        XCTAssertTrue(server.revisions["n1", default: []].contains { $0.body == "theirs" })
+    }
+
+    // MARK: The outbox against every way a draft ends
+
+    /// Answering a conflict with the server's version, or restoring an old version, discards the
+    /// draft on purpose. It must leave the disk too, or the next launch would replay it over the
+    /// version the reader chose.
+    func testDiscardingADraftOnPurposeRemovesItFromDisk() async {
+        server.seed(id: "n1", body: "base")
+        let store = makeStore()
+        await store.refresh()
+        await store.loadNote(id: "n1")
+        store.edit(id: "n1", body: "base, mine")
+        server.write(id: "n1", body: "base, theirs")
+        await store.flush(id: "n1")
+        XCTAssertEqual(outbox.loadEdits().count, 1)
+
+        await store.resolveConflict(id: "n1", keeping: .theirs)
+        XCTAssertTrue(outbox.loadEdits().isEmpty, "choosing the server's version ends the edit")
+
+        store.edit(id: "n1", body: "typed again")
+        XCTAssertEqual(outbox.loadEdits().count, 1)
+        await store.restoreRevision(noteId: "n1", revisionId: "r1")
+        XCTAssertTrue(outbox.loadEdits().isEmpty, "restoring a version ends the edit")
+    }
+
+    // MARK: Attachments and the budget
+
+    private func record(_ path: String, size: Int, mtime: Int) -> NoteAttachmentRecord {
+        NoteAttachmentRecord(relPath: path, basename: path, ext: "png", sizeBytes: size, mtimeMs: mtime, linkCount: 1)
+    }
+
+    /// A file fetched once is served from disk on a later launch while the inventory says it is
+    /// unchanged, fetched again when it changed, and served from disk with no connection.
+    func testAFetchedFileIsServedFromDiskUntilTheInventorySaysItChanged() async throws {
+        server.attachments["a.png"] = Data([1, 2, 3])
+        server.inventory = [record("a.png", size: 3, mtime: 10)]
+        let first = makeStore()
+        _ = try await first.listAttachments(containerId: "c1")
+        _ = try await first.fetchAttachment(containerId: "c1", path: "a.png")
+        await first.persistManifestAndEvict()
+        XCTAssertEqual(server.attachmentGets.count, 1)
+
+        let unchanged = makeStore()
+        _ = try await unchanged.listAttachments(containerId: "c1")
+        let served = try await unchanged.fetchAttachment(containerId: "c1", path: "a.png")
+        guard case .ok(let data) = served else { return XCTFail("expected the file") }
+        XCTAssertEqual(data, Data([1, 2, 3]))
+        XCTAssertEqual(server.attachmentGets.count, 1, "unchanged on the server: no request")
+
+        server.attachments["a.png"] = Data([4, 5, 6, 7])
+        server.inventory = [record("a.png", size: 4, mtime: 20)]
+        let changed = makeStore()
+        _ = try await changed.listAttachments(containerId: "c1")
+        let refreshed = try await changed.fetchAttachment(containerId: "c1", path: "a.png")
+        guard case .ok(let newer) = refreshed else { return XCTFail("expected the file") }
+        XCTAssertEqual(newer, Data([4, 5, 6, 7]))
+        XCTAssertEqual(server.attachmentGets.count, 2)
+
+        server.offline = true
+        let offline = makeStore()
+        offline.setPathSatisfied(false)
+        let records = try await offline.listAttachments(containerId: "c1")
+        XCTAssertEqual(records.first?.sizeBytes, 4, "the inventory is on disk too")
+        let fromDisk = try await offline.fetchAttachment(containerId: "c1", path: "a.png")
+        guard case .ok(let kept) = fromDisk else { return XCTFail("expected the file from disk") }
+        XCTAssertEqual(kept, Data([4, 5, 6, 7]))
+    }
+
+    /// Files are evicted down to the budget, oldest first; an edit waiting to sync is not
+    /// something the budget or a clear can reach.
+    func testEvictionStaysUnderTheBudgetAndNeverTouchesAWaitingEdit() async throws {
+        server.seed(id: "n1", body: "base")
+        let store = makeStore()
+        await openThenGoOffline(store)
+        store.edit(id: "n1", body: "offline text")
+        await store.flush(id: "n1")
+        goOnline(store)
+        server.offline = false
+        store.setCacheBudget(cache.metadataBytes() + 2_500)
+
+        for name in ["a", "b", "c"] {
+            server.attachments[name] = Data(repeating: 1, count: 1_000)
+            server.nowMs += 1
+            _ = try await store.fetchAttachment(containerId: "c1", path: name)
+        }
+        await store.persistManifestAndEvict()
+
+        let status = await store.cacheStatus()
+        XCTAssertLessThanOrEqual(status.cacheBytes, status.budgetBytes)
+        XCTAssertEqual(status.cachedAttachmentCount, 2)
+        XCTAssertEqual(outbox.loadEdits().map(\.body), ["offline text"])
+
+        await store.clearCache()
+        XCTAssertEqual(outbox.loadEdits().map(\.body), ["offline text"])
+        XCTAssertEqual(store.body(for: "n1"), "offline text")
+    }
+
+    // MARK: Search
+
+    func testSemanticSearchWithoutAConnectionSaysItNeedsOne() async {
+        let store = NoteMeaningSearchStore(debounceNanos: 0) { _, _ in throw URLError(.notConnectedToInternet) }
+        store.update(query: "tents", window: nil)
+        let deadline = ContinuousClock().now + .seconds(5)
+        while store.phase == .searching, ContinuousClock().now < deadline {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        XCTAssertEqual(store.phase, .failed(NoteOnlineOnly.semanticSearch.message))
+    }
+}
