@@ -24,6 +24,15 @@ public enum SchedulerTaskDisplay {
         return .ok
     }
 
+    /// Where a task's rhythm is shown: its cadence, `on demand` for a task fired only by hand, or
+    /// for a one-time task `once ·` and the instant it fires, in Berlin time. Swift port of
+    /// `TaskTable.tsx`'s `When`.
+    public static func whenLabel(_ task: ScheduledTask) -> String {
+        guard let runAt = task.runAt else { return task.cadence ?? "on demand" }
+        guard let date = IsoTimestamp.date(from: runAt) else { return "once · \(runAt)" }
+        return "once · " + SchedulerRunDisplay.formatBerlin(ms: Int(date.timeIntervalSince1970 * 1000))
+    }
+
     /// A cadence fires at most once per interval it implies; a task heard from less recently than
     /// a few multiples of that is the one thing that tells a watcher that found nothing from one
     /// that silently died. Five-field cron has no closed-form period, so this is deliberately not

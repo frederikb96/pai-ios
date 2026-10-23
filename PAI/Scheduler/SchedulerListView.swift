@@ -107,7 +107,7 @@ private struct SchedulerTaskRow: View {
             HStack(spacing: 6) {
                 Text(task.environment)
                 Text("·")
-                Text(task.cadence ?? "on demand")
+                Text(SchedulerTaskDisplay.whenLabel(task))
                 if task.hasGate {
                     Image(systemName: "arrow.triangle.branch")
                 }

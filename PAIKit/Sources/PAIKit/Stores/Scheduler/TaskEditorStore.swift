@@ -17,6 +17,18 @@ public protocol TaskEditorApiClient: Sendable {
 
 extension PaiApiClient: TaskEditorApiClient {}
 
+/// How a task becomes due: a recurring cadence, one instant, or only by hand. The wire carries
+/// this as which of `cadence`/`run_at` is set; the form holds it separately so switching back and
+/// forth does not lose what was typed into either.
+public enum TaskScheduleMode: Sendable, Equatable, CaseIterable {
+    case cadence, once, manual
+
+    static func of(cadence: String?, runAt: String?) -> TaskScheduleMode {
+        if runAt != nil { return .once }
+        return cadence != nil ? .cadence : .manual
+    }
+}
+
 /// One task's own form — create when `taskId` is `nil`, edit otherwise. Swift port of
 /// `TaskEditor.tsx`: one store for both, since every field a create call needs is also an edit
 /// call's field (`TaskWriteFields`).
@@ -34,6 +46,10 @@ public final class TaskEditorStore {
     public private(set) var isSaving = false
     public private(set) var isBusy = false
     public private(set) var errorMessage: String?
+    public private(set) var scheduleMode: TaskScheduleMode
+    /// The instant a `.once` task fires at, as the date picker edits it. Shown in the task's own
+    /// timezone (``pickerTimeZone``), so the wall time picked is the one meant there.
+    public var runAtDate: Date
 
     /// The models, their thinking levels and the supervisor's default model — what the pickers
     /// offer. Empty until `loadCatalog()` lands, in which case no thinking row is shown.
@@ -48,6 +64,41 @@ public final class TaskEditorStore {
         self.fields = .fresh(timezone: timezone)
         self.hasGate = false
         self.isLoading = taskId != nil
+        self.scheduleMode = .manual
+        self.runAtDate = Self.nextHour(after: Date())
+    }
+
+    /// The task's own timezone, which the run-time picker shows its wall time in; the device's
+    /// while the field holds a name this platform does not know.
+    public var pickerTimeZone: TimeZone { TimeZone(identifier: fields.timezone) ?? .current }
+
+    /// A one-time run keeps its conversation for the user to resume, which the one-shot policy
+    /// would delete — the server refuses the pair, so choosing `.once` moves off it.
+    public func setScheduleMode(_ mode: TaskScheduleMode) {
+        scheduleMode = mode
+        if mode == .once && fields.sessionPolicy == .oneShot { fields.sessionPolicy = .fresh }
+    }
+
+    private func adopt(_ loaded: ScheduledTaskDetail) {
+        task = loaded
+        fields = .from(loaded)
+        scheduleMode = .of(cadence: loaded.cadence, runAt: loaded.runAt)
+        if let runAt = loaded.runAt, let date = IsoTimestamp.date(from: runAt) { runAtDate = date }
+    }
+
+    private static func nextHour(after date: Date) -> Date {
+        let hour = 3600.0
+        return Date(timeIntervalSince1970: ((date.timeIntervalSince1970 / hour).rounded(.down) + 1) * hour)
+    }
+
+    /// The instant as the API takes it, whole minutes in UTC — the picker edits hours and minutes
+    /// and would otherwise carry the seconds of whatever date it started from.
+    static func wireInstant(_ date: Date) -> String {
+        let minute = (date.timeIntervalSince1970 / 60).rounded(.down) * 60
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.string(from: Date(timeIntervalSince1970: minute))
     }
 
     public var isCreating: Bool { taskId == nil }
@@ -68,8 +119,7 @@ public final class TaskEditorStore {
         defer { isLoading = false }
         do {
             let loaded = try await api.getSchedulerTask(taskId: taskId)
-            task = loaded
-            fields = .from(loaded)
+            adopt(loaded)
             hasGate = loaded.gateSource != nil
         } catch {
             errorMessage = (error as? PaiError)?.userMessage ?? "Could not load this task"
@@ -120,6 +170,16 @@ public final class TaskEditorStore {
         defer { isSaving = false }
         var toSave = fields
         toSave.gateSource = hasGate ? (fields.gateSource ?? "") : nil
+        switch scheduleMode {
+        case .cadence:
+            toSave.runAt = nil
+        case .once:
+            toSave.cadence = nil
+            toSave.runAt = Self.wireInstant(runAtDate)
+        case .manual:
+            toSave.cadence = nil
+            toSave.runAt = nil
+        }
         do {
             let saved: ScheduledTaskDetail
             if let taskId {
@@ -127,8 +187,7 @@ public final class TaskEditorStore {
             } else {
                 saved = try await api.createSchedulerTask(fields: toSave)
             }
-            task = saved
-            fields = .from(saved)
+            adopt(saved)
             return true
         } catch {
             errorMessage = (error as? PaiError)?.userMessage ?? "Could not save this task"
@@ -199,9 +258,7 @@ public final class TaskEditorStore {
         errorMessage = nil
         defer { isBusy = false }
         do {
-            let updated = try await action(taskId)
-            task = updated
-            fields = .from(updated)
+            adopt(try await action(taskId))
             return true
         } catch {
             errorMessage = (error as? PaiError)?.userMessage ?? "That action failed"
