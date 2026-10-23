@@ -26,6 +26,8 @@ struct NoteEditorScreen: View {
     /// would otherwise hand the editor its first-responder status straight back.
     @State private var isShowingTools = false
     @State private var isShowingActions = false
+    /// Asks before a failed save's text is dropped for good.
+    @State private var confirmingDiscard = false
     /// Where the tools panel last asked the editor to go. Tokenised so tapping the same heading
     /// twice is two requests rather than one that appears unchanged.
     @State private var jump: NoteJumpRequest?
@@ -128,11 +130,18 @@ struct NoteEditorScreen: View {
             Task { await commitTitle() }
         }
         // The index resolves this note's wikilinks, and a note can be opened without ever passing
-        // through the list — a shortcut, a tapped notification, a link from another note. Without
-        // it every `[[link]]` renders struck through as though its target had been deleted.
-        .task {
-            guard notes.notes.isEmpty else { return }
-            await notes.refresh()
+        // through the list — a shortcut, a tapped notification, a link from another note. The
+        // list on screen may be this phone's copy from days ago, so it is refreshed unless this
+        // run fetched it a moment ago; otherwise a note created elsewhere since renders as a dead
+        // link.
+        .task { await notes.refreshIfStale() }
+        .confirmationDialog(
+            "Discard the text that could not be saved?", isPresented: $confirmingDiscard, titleVisibility: .visible
+        ) {
+            Button("Discard", role: .destructive) { notes.discardEdit(id: noteID) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("It is removed from this phone. Copy it first to keep it somewhere else.")
         }
         // A pending edit must not wait on the debounce when the app is leaving the foreground:
         // iOS can suspend before it fires, and the edit would be gone with no sign it existed.
@@ -215,9 +224,15 @@ struct NoteEditorScreen: View {
             NotePresenceBadge(viewers: presence?.viewers ?? 0)
         }
         ToolbarItem(placement: .topBarTrailing) {
-            NoteSaveStateBadge(state: notes.saveState(for: noteID)) {
-                Task { await notes.resumeSync() }
-            }
+            NoteSaveStateBadge(
+                state: notes.saveState(for: noteID), hasUnsavedText: notes.drafts[noteID] != nil,
+                onSync: { Task { await notes.resumeSync() } },
+                onRetry: { Task { await notes.retrySave(id: noteID) } },
+                onCopy: {
+                    UIPasteboard.general.string = notes.body(for: noteID)
+                    toasts.show("Copied the text")
+                },
+                onDiscard: { confirmingDiscard = true })
         }
         ToolbarItem(placement: .topBarTrailing) {
             Button {
@@ -372,8 +387,13 @@ private struct NotePresenceBadge: View {
 /// trains the eye to ignore it, and the two states that matter are the two nobody must miss.
 private struct NoteSaveStateBadge: View {
     let state: NoteSaveState
+    /// Whether a failed save left text on this phone that the menu can copy or discard.
+    let hasUnsavedText: Bool
     /// Sends what is waiting, for the reader who does not want to wait for the next retry.
     let onSync: () -> Void
+    let onRetry: () -> Void
+    let onCopy: () -> Void
+    let onDiscard: () -> Void
 
     var body: some View {
         switch state {
@@ -391,9 +411,24 @@ private struct NoteSaveStateBadge: View {
                 .foregroundStyle(PaiPalette.Semantic.warningText)
                 .accessibilityLabel("This note changed elsewhere")
         case .failed(let message):
-            Image(systemName: "exclamationmark.icloud.fill")
-                .foregroundStyle(PaiPalette.Semantic.errorText)
-                .accessibilityLabel("Not saved: \(message)")
+            // A failed save is not sent again by itself, so this is the way out: try once more,
+            // or keep the text somewhere else and let it go.
+            Menu {
+                Section(message) {
+                    Button(action: onRetry) { Label("Try again", systemImage: "arrow.clockwise") }
+                    if hasUnsavedText {
+                        Button(action: onCopy) { Label("Copy my text", systemImage: "doc.on.doc") }
+                        Button(role: .destructive, action: onDiscard) {
+                            Label("Discard my text", systemImage: "trash")
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "exclamationmark.icloud.fill")
+                    .foregroundStyle(PaiPalette.Semantic.errorText)
+            }
+            .accessibilityLabel("Not saved: \(message)")
+            .accessibilityIdentifier("note-save-failed")
         case .waitingForNetwork:
             Button(action: onSync) {
                 Image(systemName: "icloud.slash")
