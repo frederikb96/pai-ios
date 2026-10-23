@@ -113,6 +113,10 @@ extension PaiApiClient {
     /// could overwrite it would be able to lose a `summary:` or a `uuid:` written elsewhere
     /// while somebody was typing. It is also what makes adopting a moved hash safe — see
     /// ``NoteBodyDivergence``.
+    ///
+    /// `source` names the side of the write for the version history (``NoteWriteSource``). Left
+    /// `nil` the key is not sent and the server records its default, so every ordinary save is
+    /// the same request it always was; only an edit made offline sends one.
     public func patchNote(
         id: String,
         body: String? = nil,
@@ -121,7 +125,8 @@ extension PaiApiClient {
         summary: String? = nil,
         favourite: Bool? = nil,
         containerId: String? = nil,
-        expectedHash: String?
+        expectedHash: String?,
+        source: String? = nil
     ) async throws -> NoteSaveResult {
         var payload: [String: JSONValue] = [:]
         if let body { payload["body"] = .string(body) }
@@ -131,6 +136,7 @@ extension PaiApiClient {
         if let favourite { payload["favourite"] = .bool(favourite) }
         if let containerId { payload["container_id"] = .string(containerId) }
         if let expectedHash { payload["expected_hash"] = .string(expectedHash) }
+        if let source { payload["source"] = .string(source) }
 
         let (status, data) = try await sendPassingThrough(
             path: "/api/notes/\(id)", method: "PATCH", body: try Self.encodeJSON(payload),
