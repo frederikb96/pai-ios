@@ -13,6 +13,7 @@ reusing, and because a public repository gets unmetered CI.
 |---|---|
 | A chat transcript that never jumps while loading older messages — `UICollectionView`, precomputed heights, prepend compensation in the layout rather than after a batch update | `PAIKit/Sources/PAIKit/Layout/`, `PAI/Transcript/` |
 | A markdown editor over one plain `UITextView`, with syntax highlighting over the source rather than a live preview | `PAIKit/Sources/PAIKit/Editor/`, `PAI/Notes/Editor/` |
+| Notes that work in flight mode: a cached index and notes, files kept under a size budget, and an outbox that holds every unsaved edit until the server has it, with conflicts settled without asking and nothing lost | `PAIKit/Sources/PAIKit/Stores/Notes/` |
 | A markdown parser that decomposes into synchronously measurable blocks, on top of swift-markdown | `PAIKit/Sources/PAIKit/Markdown/` |
 | A debug bridge — an HTTP server inside the app, `#if DEBUG`, so CI can ask the app what it thinks instead of reading pixels off a screenshot | `PAIKit/Sources/PAIKit/Debug/` |
 | Streaming over `URLSessionDataDelegate` rather than `URLSession.bytes(for:)`, so the transport compiles and tests on Linux | `PAIKit/Sources/PAIKit/Networking/` |
@@ -36,6 +37,24 @@ views are thin, and anything a unit test could catch lives in the package.
 | `Config/` | xcconfig; `MARKETING_VERSION` comes from the git tag via CI |
 | `Tooling/` | checks that catch macOS-only compile errors without a Mac |
 | `fastlane/` | build, sign, upload — the same lanes locally and in CI |
+
+## Notes offline
+
+The notes open without a connection. The index, every note opened on the phone, the favourites,
+each container's attachment list and every file viewed are kept on disk, so the list, the filter,
+the "Find note" quick action and those notes and files work in flight mode. A note never opened
+says it is not on the phone.
+
+Editing the body, renaming and favouriting work offline. Every unsaved edit is written to disk
+from the keystroke until the server has it, so neither flight mode nor the app being killed loses
+one, and it syncs when the network is back. If the note changed on the server meanwhile, the
+phone's version is written over it and the version it replaced stays in the note's history; a
+toast says so. Creating and deleting notes, adding or changing files, full-text and semantic
+search, history, links, the summary and sharing need a connection and say so.
+
+Settings → Notes offline sets how much space this takes (5 GB by default), shows what is used,
+and clears it. Only files are dropped to stay under the size, oldest first. Clearing never touches
+edits that have not synced.
 
 ## Building and checks
 
