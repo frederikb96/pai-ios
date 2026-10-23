@@ -178,6 +178,56 @@ struct PAIApp: App {
                 }
             }
 
+            // The notes cache and what waits to sync: what the offline screenshots assert on, and
+            // the one way to read the cache's size and pending edits after a build reaches a
+            // phone. Every route calls the store methods the screens call.
+            router.register("GET", "/notes/cache") { _ in
+                let status = awaitOnMain { await AppEnvironment.shared.connection?.notes.cacheStatus() }
+                guard let status = status ?? nil else { return .message("no notes store", status: 503) }
+                return .encoding(status)
+            }
+
+            // Flight mode for a fixture run: every fixture request fails as with no network, and
+            // the store is told the path is down (`on=true`) or back (`on=false`).
+            router.register("POST", "/notes/offline") { request in
+                let offline = request.query["on"] != "false"
+                PaiFixtureLaunch.setOffline(offline)
+                let applied = awaitOnMain { () -> Bool in
+                    guard let notes = AppEnvironment.shared.connection?.notes else { return false }
+                    notes.setPathSatisfied(!offline)
+                    return true
+                }
+                guard applied == true else { return .message("no notes store", status: 503) }
+                return .message(offline ? "offline" : "online")
+            }
+
+            // Typing, as the editor does it: the body replaces the note's text through `edit`,
+            // then `flush`, the call leaving the editor makes.
+            router.register("POST", "/notes/edit") { request in
+                guard let id = request.query["id"] else { return .message("id query parameter required", status: 400) }
+                let text = String(decoding: request.body, as: UTF8.self)
+                let state = awaitOnMain { () -> String? in
+                    guard let notes = AppEnvironment.shared.connection?.notes else { return nil }
+                    if notes.detail(for: id) == nil { await notes.loadNote(id: id) }
+                    notes.edit(id: id, body: text)
+                    await notes.flush(id: id)
+                    return NotesStore.label(notes.saveState(for: id))
+                }
+                guard let state = state ?? nil else { return .message("no notes store", status: 503) }
+                return .encoding(["state": state])
+            }
+
+            // The sync the network coming back runs, awaited, with what it settled.
+            router.register("POST", "/notes/sync") { _ in
+                let report = awaitOnMain { () -> NoteSyncReport? in
+                    guard let notes = AppEnvironment.shared.connection?.notes else { return nil }
+                    await notes.resumeSync()
+                    return notes.lastSyncReport ?? NoteSyncReport()
+                }
+                guard let report = report ?? nil else { return .message("no notes store", status: 503) }
+                return .encoding(report)
+            }
+
             router.register("GET", "/logs") { request in
                 let level = request.query["level"].flatMap(DebugLogBuffer.Level.init(rawValue:)) ?? .debug
                 let limit = request.query["limit"].flatMap(Int.init) ?? 100
@@ -203,6 +253,19 @@ struct PAIApp: App {
         }
 
         private nonisolated(unsafe) static var routeNames: [String] = []
+
+        /// Runs `work` on the main actor and waits for it from the bridge's own queue, which is
+        /// never the main thread, so awaiting store methods there cannot deadlock. `nil` when it
+        /// takes longer than a sync could reasonably need.
+        private static func awaitOnMain<T: Sendable>(_ work: @escaping @MainActor @Sendable () async -> T) -> T? {
+            let box = DebugResultBox<T>()
+            Task { @MainActor in
+                box.value = await work()
+                box.done.signal()
+            }
+            guard box.done.wait(timeout: .now() + 60) == .success else { return nil }
+            return box.value
+        }
 
         fileprivate static func kind(of block: MarkdownBlock) -> String {
             switch block {
@@ -331,6 +394,13 @@ struct PAIApp: App {
         private static func millisecondsSince(_ start: DispatchTime) -> Double {
             Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000
         }
+    }
+
+    /// Carries one result from the main actor back to the bridge's queue; the semaphore in
+    /// `awaitOnMain` orders the write before the read.
+    private final class DebugResultBox<T>: @unchecked Sendable {
+        var value: T?
+        let done = DispatchSemaphore(value: 0)
     }
 
     /// A minimal heterogeneous value, so a debug response can mix a count with a list of strings

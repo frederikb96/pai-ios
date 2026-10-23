@@ -35,8 +35,12 @@ struct CreateNoteIntent: AppIntent {
         guard let client = await AppEnvironment.standaloneClient() else {
             throw CreateNoteIntentError.notSignedIn
         }
-        guard let created = try? await client.createNote(name: NoteNaming.todayName()) else {
-            throw CreateNoteIntentError.createFailed
+        let created: NoteDetail
+        do {
+            created = try await client.createNote(name: NoteNaming.todayName())
+        } catch {
+            throw NoteSyncFailure.isTransport(error)
+                ? CreateNoteIntentError.offline : CreateNoteIntentError.createFailed
         }
         // Same one-shot signal the note list's own "+" button sends — see
         // `NoteCreationFocus`'s doc comment. A note created by a shortcut deserves the same
@@ -50,11 +54,13 @@ struct CreateNoteIntent: AppIntent {
 enum CreateNoteIntentError: Swift.Error, CustomLocalizedStringResourceConvertible {
     case notSignedIn
     case createFailed
+    case offline
 
     var localizedStringResource: LocalizedStringResource {
         switch self {
         case .notSignedIn: return "Sign in to PAI before creating a note this way."
         case .createFailed: return "Could not create the note."
+        case .offline: return LocalizedStringResource(stringLiteral: NoteOnlineOnly.createNote.message)
         }
     }
 }

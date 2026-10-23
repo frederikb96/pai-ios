@@ -203,6 +203,7 @@ struct RootView: View {
                         // than after whatever backoff it was waiting out while suspended.
                         connection.outbox.retryNow()
                         connection.voice.resumeOwedTakes()
+                        Task { await connection.notes.resumeSync() }
                         // Sync at once instead of up to a poll interval from now, and let the
                         // open transcript replace a connection the OS suspended while away.
                         connection.sessions.requestSync()

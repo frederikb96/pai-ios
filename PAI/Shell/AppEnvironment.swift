@@ -217,6 +217,7 @@ final class AppEnvironment {
                 for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
             ))?.appendingPathComponent("Outbox", isDirectory: true) ?? FileManager.default.temporaryDirectory
         let outbox = OutboxStore(api: client, storage: FileOutboxStorage(rootURL: outboxRoot))
+        let notesStore = Self.makeNotesStore(client: client, budgetBytes: settingsStore.notesCacheBudgetBytes)
         let sessions = SessionListStore(api: client)
         // What happens the moment the server has the row lives in `installHandover` rather than
         // in a closure written out here, so the join between a landed send and the screen waiting
@@ -230,9 +231,15 @@ final class AppEnvironment {
         // loop.
         pathObserver.onRegained = {
             Task { @MainActor [weak outbox] in outbox?.retryNow() }
+            Task { @MainActor [weak notesStore] in
+                notesStore?.setPathSatisfied(Self.pathSatisfied(true))
+                await notesStore?.resumeSync()
+            }
         }
         pathObserver.onEvent = { event in
-            guard case .pathSatisfied(true) = event else { return }
+            guard case .pathSatisfied(let satisfied) = event else { return }
+            Task { @MainActor [weak notesStore] in notesStore?.setPathSatisfied(Self.pathSatisfied(satisfied)) }
+            guard satisfied else { return }
             Task { @MainActor [weak sessions] in
                 // A path change can kill a stream silently: sync the list now and have every
                 // stream owner replace its connection.
@@ -243,6 +250,14 @@ final class AppEnvironment {
         pathObserver.start()
         outboxPathObserver = pathObserver
         let toasts = ToastCenter()
+        notesStore.onSyncNotice = { [weak self, weak toasts] notice in
+            let show = notice.noteId.map { id in
+                ToastMessage.Action(label: "Show") { [weak self] in self?.router.push(.note(id: id)) }
+            }
+            var kind = ToastMessage.Kind.info
+            if case .renameRefused = notice { kind = .error }
+            toasts?.show(notice.message, kind: kind, action: show)
+        }
         let transcript = TranscriptStore()
         let voice = VoiceRecorderController(
             apiClient: client, requestFactory: factory, authToken: { [tokens] in tokens.read() },
@@ -275,7 +290,7 @@ final class AppEnvironment {
             },
             pushChannels: PushChannelsStore(api: client),
             skills: SkillStore(api: client),
-            notes: NotesStore(api: client),
+            notes: notesStore,
             notesBrowse: notesBrowse,
             noteMeaning: NoteMeaningSearchStore { query, window in
                 try await notesBrowse.searchSemantic(q: query, window: window)
@@ -304,6 +319,9 @@ final class AppEnvironment {
         // not in the store's initializer because this runs only for the environment that is
         // installed in the view tree.
         connection.outbox.resume()
+        // Edits left on disk by the last run go out too; not awaited, since they need nothing
+        // below and nothing below needs them.
+        Task { [notes = connection.notes] in await notes.resumeSync() }
         await connection.settings.refreshSecretPresence()
         await connection.machines.refresh()
         await connection.me.refresh()
@@ -319,6 +337,39 @@ final class AppEnvironment {
         // reason.
         connection.sessions.startPolling()
         connection.claudeAuth.startPolling()
+    }
+
+    /// The notes store over its two directories in Application Support. `NotesCache` holds only
+    /// what the server has and is kept out of the device backup; `NoteOutbox` holds edits the
+    /// server has not seen and is backed up, like the send outbox.
+    private static func makeNotesStore(client: PaiApiClient, budgetBytes: Int) -> NotesStore {
+        let support =
+            (try? FileManager.default.url(
+                for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true))
+            ?? FileManager.default.temporaryDirectory
+        var cacheRoot = support.appendingPathComponent("NotesCache", isDirectory: true)
+        let cache = FileNotesCacheStorage(rootURL: cacheRoot)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? cacheRoot.setResourceValues(values)
+        let outbox = FileNoteOutboxStorage(rootURL: support.appendingPathComponent("NoteOutbox", isDirectory: true))
+        #if DEBUG
+            if PaiFixtureLaunch.isEnabled() {
+                PaiFixtureNotesSeed.seed(cache: cache, outbox: outbox, pdf: FixturePdf.make())
+            }
+        #endif
+        let store = NotesStore(api: client, cache: cache, outbox: outbox)
+        store.setCacheBudget(budgetBytes)
+        return store
+    }
+
+    /// What the path monitor says, except that a fixture run started offline (or switched
+    /// offline by the debug bridge) reads as no network, the way flight mode does on a phone.
+    nonisolated static func pathSatisfied(_ satisfied: Bool) -> Bool {
+        #if DEBUG
+            if PaiFixtureLaunch.isEnabled(), PaiFixtureLaunch.isOffline() { return false }
+        #endif
+        return satisfied
     }
 
     /// An API client built from stored credentials alone, for code that runs without an

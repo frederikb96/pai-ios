@@ -211,6 +211,10 @@ struct NoteEditorSurface: View {
             toasts.show("This note has no container, so there is nowhere to put a file", kind: .error)
             return
         }
+        guard !notes.isOffline else {
+            toasts.show(NoteOnlineOnly.addFile.message, kind: .error)
+            return
+        }
         attachmentOffset = offset
         isChoosingAttachment = true
     }
@@ -223,6 +227,10 @@ struct NoteEditorSurface: View {
     private func pasteImages(_ images: [PastedImage], at offset: Int) {
         guard notes.detail(for: noteID)?.containerId != nil else {
             toasts.show("This note has no container, so there is nowhere to put a file", kind: .error)
+            return
+        }
+        guard !notes.isOffline else {
+            toasts.show(NoteOnlineOnly.addFile.message, kind: .error)
             return
         }
         attachmentOffset = offset
@@ -251,7 +259,9 @@ struct NoteEditorSurface: View {
                     containerId: containerId, filename: file.filename, mimeType: file.mimeType, data: file.data)
                 embeds.append("![[\(uploaded.relPath)]]")
             } catch {
-                toasts.show("Could not upload \(file.filename)", kind: .error)
+                toasts.show(
+                    NoteSyncFailure.isTransport(error)
+                        ? NoteOnlineOnly.addFile.message : "Could not upload \(file.filename)", kind: .error)
             }
         }
         guard !embeds.isEmpty else { return }

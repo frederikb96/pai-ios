@@ -39,6 +39,8 @@ struct SettingsScreen: View {
 
             HistorySection(settings: settings)
 
+            NotesCacheSection(settings: settings)
+
             LastCrashSection()
 
             if !hidesSignOut {

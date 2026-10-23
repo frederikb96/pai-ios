@@ -14,6 +14,7 @@ struct NoteListScreen: View {
     @Environment(NoteMeaningSearchStore.self) private var meaning
     @Environment(ToastCenter.self) private var toasts
     @Environment(SettingsStore.self) private var settings
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var filterText = ""
     @State private var favouritesOnly = false
@@ -66,7 +67,12 @@ struct NoteListScreen: View {
             // safe-area inset is not part of that content, so it stays put while the keyboard
             // comes up, which is the one moment the switch is actually wanted.
             .safeAreaInset(edge: .top, spacing: 0) {
-                filterChips
+                VStack(spacing: 0) {
+                    if notes.isOffline {
+                        NotesOfflineBanner(text: "Offline · showing notes kept on this phone")
+                    }
+                    filterChips
+                }
             }
             .paiNotesBackground()
             .navigationTitle("Notes")
@@ -139,10 +145,17 @@ struct NoteListScreen: View {
                 // Consumed before the index load below, which can take a moment on a large
                 // vault: the keyboard should be up while the list is still filling, not after.
                 if NotesFilterFocus.shared.consume() { isFilterFocused = true }
-                guard notes.notes.isEmpty else { return }
-                await notes.refresh()
+                // The list is already on screen from this phone's copy; this brings it up to date.
+                await notes.refreshIfStale()
             }
-            .refreshable { await notes.refresh() }
+            .onChange(of: scenePhase) { _, phase in
+                guard phase == .active else { return }
+                Task { await notes.refreshIfStale() }
+            }
+            .refreshable {
+                await notes.refresh()
+                if notes.hasPendingWork { await notes.resumeSync() }
+            }
             // Semantic search is debounced and ordered by its store, which also keeps the plain
             // matches on screen until the tiered result lands.
             .onChange(of: searchTrigger) { _, trigger in
@@ -207,6 +220,10 @@ struct NoteListScreen: View {
     }
 
     private func createNote() async {
+        guard !notes.isOffline else {
+            toasts.show(NoteOnlineOnly.createNote.message, kind: .error)
+            return
+        }
         guard let created = await notes.createNote(name: NoteNaming.todayName()) else {
             toasts.show(notes.loadError ?? "Could not create the note", kind: .error)
             return
@@ -374,13 +391,19 @@ struct NoteListScreen: View {
             searchResults = page.hits
             searchTruncated = page.truncated
         } catch {
-            searchError = (error as? PaiError)?.userMessage ?? "Search failed"
+            searchError =
+                NoteSyncFailure.isTransport(error)
+                ? NoteOnlineOnly.fullTextSearch.message : ((error as? PaiError)?.userMessage ?? "Search failed")
         }
     }
 
     @ViewBuilder
     private var fullTextResults: some View {
-        if let searchError {
+        if notes.isOffline {
+            ContentUnavailableView(
+                "Full-text search", systemImage: "icloud.slash",
+                description: Text(NoteOnlineOnly.fullTextSearch.message))
+        } else if let searchError {
             ContentUnavailableView(
                 "Search failed", systemImage: "exclamationmark.triangle", description: Text(searchError))
         } else if filterText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
