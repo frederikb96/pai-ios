@@ -165,10 +165,15 @@ jobs:
       # minute it could have. Failures accumulate in `$fail` and the job fails once, at the end.
       - name: Screenshot every screen fixture mode can reach
         if: inputs.run_app != false && (inputs.configuration || 'Debug') == 'Debug'
+        # The simulator id comes in through the environment: a `${{ }}` anywhere in `run` makes
+        # the whole script one expression, and GitHub rejects a workflow whose expression passes
+        # 21,000 characters before running anything.
+        env:
+          SIM_UDID: ${{ steps.sim.outputs.udid }}
         run: |
           set -o pipefail
           mkdir -p artifacts
-          udid="${{ steps.sim.outputs.udid }}"
+          udid="$SIM_UDID"
           bundle=com.frederikberg.pai
           fail=0
 
