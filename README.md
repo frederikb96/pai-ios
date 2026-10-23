@@ -46,15 +46,29 @@ the "Find note" quick action and those notes and files work in flight mode. A no
 says it is not on the phone.
 
 Editing the body, renaming and favouriting work offline. Every unsaved edit is written to disk
-from the keystroke until the server has it, so neither flight mode nor the app being killed loses
-one, and it syncs when the network is back. If the note changed on the server meanwhile, the
-phone's version is written over it and the version it replaced stays in the note's history; a
-toast says so. Creating and deleting notes, adding or changing files, full-text and semantic
-search, history, links, the summary and sharing need a connection and say so.
+within a moment of typing and again before each save leaves, and stays there until the server has
+it, so neither flight mode nor the app being killed loses one. Edits that waited go out when the
+network is back, bodies before renames. If the note changed on the server meanwhile, the phone's
+version is written over it and the version it replaced stays in the note's history; a toast says
+so. An edit typed while online that the app could not save before it was killed is sent as an
+ordinary save instead, so a change made elsewhere in between raises the conflict banner. Creating
+and deleting notes, adding or changing files, full-text and semantic search, history, links, the
+summary and sharing need a connection and say so.
+
+Every save from the phone is recorded in the note's history as the phone's (`phone`, or `offline`
+for an edit that waited), never as the web's, so a phone save and a burst of web saves each keep the
+version they replace. A rename made on the web while the phone was offline still loses to a waiting
+phone edit of a note linking to it: the link rewrite is in the history, the phone's text is what
+stays.
+
+An edit the server refuses (most often because the note was deleted elsewhere) is not sent again by
+itself. The save badge in the editor and Settings → Notes offline offer to copy or discard its
+text; the same list holds any saved edit a different version of the app wrote in a form this one
+cannot read, which is set aside rather than overwritten.
 
 Settings → Notes offline sets how much space this takes (5 GB by default), shows what is used,
 and clears it. Only files are dropped to stay under the size, oldest first. Clearing never touches
-edits that have not synced.
+edits that have not synced, and keeps those notes on the list.
 
 ## Building and checks
 
