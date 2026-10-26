@@ -152,6 +152,13 @@ struct NotificationCenterScreen: View {
                             Label("Mark read", systemImage: "checkmark.circle")
                         }
                         .tint(PaiPalette.primary500)
+                    } else {
+                        Button {
+                            Task { await store.markUnread(notification.id) }
+                        } label: {
+                            Label("Mark unread", systemImage: "circle")
+                        }
+                        .tint(PaiPalette.primary500)
                     }
                 }
                 .onAppear {

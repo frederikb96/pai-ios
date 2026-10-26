@@ -40,6 +40,7 @@ public protocol NotificationCenterApiClient: Sendable {
     func getNotification(id: String) async throws -> PaiNotification
     func getNotificationsSummary() async throws -> NotificationSummary
     @discardableResult func markNotificationsRead(ids: [String]) async throws -> Int
+    @discardableResult func markNotificationsUnread(ids: [String]) async throws -> Int
     @discardableResult func markAllNotificationsRead() async throws -> Int
     @discardableResult func markSessionNotificationsRead(sessionId: String) async throws -> Int
     @discardableResult func clearAlerts(ids: [String]) async throws -> Int
@@ -53,9 +54,6 @@ extension PaiApiClient: NotificationCenterApiClient {}
 /// layering — the view stays thin enough to need no unit test of its own. Paging is a plain
 /// backward cursor by id, the same shape `SessionListStore` and `TranscriptWindow` both already
 /// use for the same reason: rows can arrive between pages, so an offset would skip or repeat one.
-///
-/// Deliberately no "mark unread": the backend exposes only `POST /api/notifications/read`, on
-/// purpose — this is a log ("I saw this"), not a mailbox with per-message state to toggle back.
 @MainActor
 @Observable
 public final class NotificationCenterStore {
@@ -190,6 +188,23 @@ public final class NotificationCenterStore {
         } catch {
             rows[index] = previous
             unread += 1
+        }
+    }
+
+    /// Marks one read row unread again, so it is waiting when the reader comes back to it — the
+    /// swipe action on a read row. Optimistic and reverted on failure, like `markRead`. The
+    /// badge follows through `unread`, which `RootView` mirrors into the springboard count; a
+    /// backgrounded phone is corrected by the server's silent push instead.
+    public func markUnread(_ id: String) async {
+        guard let index = rows.firstIndex(where: { $0.id == id }), !rows[index].isUnread else { return }
+        let previous = rows[index]
+        rows[index] = previous.with(readAt: nil, alert: previous.alert)
+        unread += 1
+        do {
+            try await api.markNotificationsUnread(ids: [id])
+        } catch {
+            rows[index] = previous
+            unread = max(0, unread - 1)
         }
     }
 
