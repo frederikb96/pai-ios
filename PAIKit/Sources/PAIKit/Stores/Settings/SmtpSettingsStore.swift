@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 /// A plain, text-field-friendly mirror of `SmtpSettings`'s writable fields — port of
-/// `SettingsPanel.tsx`'s Alert Mail draft. `SmtpSettings.host`/`username`/`fromAddress` are
+/// `SettingsPanel.tsx`'s Mail draft. `SmtpSettings.host`/`username`/`fromAddress` are
 /// `String?` on the wire (empty means "not set"); the draft keeps them as plain `String` so a
 /// view can bind a text field directly, and the empty-string/`nil` translation happens once, at
 /// the edges (`init(loaded:)`, `asUpdate()`), rather than at every call site.
@@ -14,6 +14,7 @@ public struct SmtpSettingsDraft: Sendable, Equatable {
     public var fromAddress: String
     public var recipient: String
     public var enabled: Bool
+    public var alertsEnabled: Bool
 
     public init(loaded: SmtpSettings) {
         host = loaded.host ?? ""
@@ -23,6 +24,7 @@ public struct SmtpSettingsDraft: Sendable, Equatable {
         fromAddress = loaded.fromAddress ?? ""
         recipient = loaded.recipient
         enabled = loaded.enabled
+        alertsEnabled = loaded.alertsEnabled
     }
 
     /// The Save button PUTs every field, not a selective patch — see `SmtpSettingsUpdate`'s doc
@@ -36,12 +38,13 @@ public struct SmtpSettingsDraft: Sendable, Equatable {
             username: username.isEmpty ? nil : username,
             fromAddress: fromAddress.isEmpty ? nil : fromAddress,
             recipient: recipient,
-            enabled: enabled
+            enabled: enabled,
+            alertsEnabled: alertsEnabled
         )
     }
 }
 
-/// The Alert Mail (SMTP) section — server-persisted, draft-and-save, plus the shared
+/// The Mail (SMTP) section — server-persisted, draft-and-save, plus the shared
 /// write-only password field. Port of `SettingsPanel.tsx`'s SMTP block and
 /// `stores/settings.ts`'s absence of one: the web has no dedicated SMTP store, holding the
 /// draft as component state instead, but nothing here can be component state, so this exists as
@@ -83,10 +86,12 @@ public final class SmtpSettingsStore {
         return draft != SmtpSettingsDraft(loaded: loaded)
     }
 
-    /// One line for the settings row: whether alerts are mailed, and to whom.
+    /// One line for the settings row: whether mail is sent, whether that includes alerts, and to
+    /// whom.
     public var summary: String? {
         guard let loaded else { return nil }
         guard loaded.enabled else { return "Off" }
+        guard loaded.alertsEnabled else { return "Agent mail only" }
         return loaded.recipient.isEmpty ? "On" : loaded.recipient
     }
 

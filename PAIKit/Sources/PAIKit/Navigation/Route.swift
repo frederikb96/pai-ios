@@ -254,7 +254,7 @@ extension Route {
 
     /// A note in the fixture index that nothing seeds into the notes cache: what a note never
     /// opened on this phone looks like when it is opened without a connection.
-    public static let fixtureUncachedNoteID = "9f31c2aa-0000-4c1a-8f30-2b7e5c918d11"
+    public static let fixtureUncachedNoteID = PaiFixtures.wikilinkNoteID
 
     public static func named(
         _ name: String, sessionID: String, noteID: String = Route.fixtureNoteID, messageID: Int? = nil

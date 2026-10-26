@@ -35,7 +35,7 @@ public enum NotificationFilter: String, CaseIterable, Sendable, Equatable {
 /// conforms structurally; the conformance is declared here, next to the protocol it satisfies.
 public protocol NotificationCenterApiClient: Sendable {
     func getNotifications(
-        limit: Int?, beforeId: String?, kind: PaiNotificationKind?
+        limit: Int?, beforeId: String?, kind: PaiNotificationKind?, source: NotificationSource
     ) async throws -> NotificationsResponse
     func getNotification(id: String) async throws -> PaiNotification
     func getNotificationsSummary() async throws -> NotificationSummary
@@ -70,6 +70,7 @@ public final class NotificationCenterStore {
     public private(set) var isLoadingMoreRows = false
     public private(set) var loadError: String?
     public private(set) var filter: NotificationFilter = .all
+    public private(set) var source: NotificationSource = .any
 
     /// A row's id, if a push or an in-app tap asked the screen to focus it the moment it opens —
     /// consumed by the screen (marking it read and, for an alert, expanding it), then cleared.
@@ -89,7 +90,8 @@ public final class NotificationCenterStore {
     public func loadInitialNotifications() async {
         loadError = nil
         do {
-            let response = try await api.getNotifications(limit: Self.pageLimit, beforeId: nil, kind: filter.kind)
+            let response = try await api.getNotifications(
+                limit: Self.pageLimit, beforeId: nil, kind: filter.kind, source: source)
             rows = response.notifications
             unread = response.unread
             hasMoreRows = response.hasMore
@@ -104,12 +106,19 @@ public final class NotificationCenterStore {
         await loadInitialNotifications()
     }
 
+    public func setSource(_ source: NotificationSource) async {
+        guard source != self.source else { return }
+        self.source = source
+        await loadInitialNotifications()
+    }
+
     public func loadMoreRows() async {
         guard hasMoreRows, !isLoadingMoreRows, let lastID = rows.last?.id else { return }
         isLoadingMoreRows = true
         defer { isLoadingMoreRows = false }
         do {
-            let response = try await api.getNotifications(limit: Self.pageLimit, beforeId: lastID, kind: filter.kind)
+            let response = try await api.getNotifications(
+                limit: Self.pageLimit, beforeId: lastID, kind: filter.kind, source: source)
             rows.append(contentsOf: response.notifications)
             unread = response.unread
             hasMoreRows = response.hasMore
@@ -263,22 +272,16 @@ public final class NotificationCenterStore {
         else { return false }
         guard (try? await api.clearAlerts(ids: [alertId])) != nil else { return false }
         let row = rows[index]
-        rows[index] = PaiNotification(
-            id: row.id, kind: row.kind, title: row.title, body: row.body, createdAt: row.createdAt,
-            readAt: row.readAt, sessionId: row.sessionId, sessionTitle: row.sessionTitle, anchor: row.anchor,
+        rows[index] = row.with(
+            readAt: row.readAt,
             alert: PaiNotificationAlert(
                 id: alert.id, key: alert.key, severity: alert.severity, source: alert.source,
-                transition: alert.transition, active: false)
-        )
+                transition: alert.transition, active: false))
         return true
     }
 
     private func setReadAtNow(at index: Int) {
         let row = rows[index]
-        rows[index] = PaiNotification(
-            id: row.id, kind: row.kind, title: row.title, body: row.body, createdAt: row.createdAt,
-            readAt: ISO8601DateFormatter().string(from: Date()), sessionId: row.sessionId,
-            sessionTitle: row.sessionTitle, anchor: row.anchor, alert: row.alert
-        )
+        rows[index] = row.with(readAt: ISO8601DateFormatter().string(from: Date()), alert: row.alert)
     }
 }

@@ -1173,7 +1173,7 @@ public struct SpokenVoiceSettingsUpdate: Encodable, Sendable, Equatable {
 
 // MARK: - SMTP settings
 //
-// Everything about how PAI sends its own alert mail except the password, which is a separate
+// Everything about how PAI sends its own mail except the password, which is a separate
 // write-only secret (`smtp_password`, see `SecretStatusMap` above) and never appears here.
 
 /// See `SessionStatus`'s doc comment for why `.unrecognized` exists rather than throwing.
@@ -1210,19 +1210,23 @@ public struct SmtpSettings: Codable, Sendable, Equatable {
     public let username: String?
     public let fromAddress: String?
     public let recipient: String
+    /// Master switch: nothing is mailed while off. Mail an agent asks for needs only this.
     public let enabled: Bool
+    /// Alert mails, on top of ``enabled``.
+    public let alertsEnabled: Bool
     public let updatedAt: String
 
     enum CodingKeys: String, CodingKey {
         case host, port, security, username
         case fromAddress = "from_address"
         case recipient, enabled
+        case alertsEnabled = "alerts_enabled"
         case updatedAt = "updated_at"
     }
 
     public init(
         host: String?, port: Int, security: SmtpSecurity, username: String?, fromAddress: String?,
-        recipient: String, enabled: Bool, updatedAt: String
+        recipient: String, enabled: Bool, alertsEnabled: Bool, updatedAt: String
     ) {
         self.host = host
         self.port = port
@@ -1231,6 +1235,7 @@ public struct SmtpSettings: Codable, Sendable, Equatable {
         self.fromAddress = fromAddress
         self.recipient = recipient
         self.enabled = enabled
+        self.alertsEnabled = alertsEnabled
         self.updatedAt = updatedAt
     }
 }
@@ -1253,16 +1258,19 @@ public struct SmtpSettingsUpdate: Encodable, Sendable, Equatable {
     public var fromAddress: String?
     public var recipient: String?
     public var enabled: Bool?
+    public var alertsEnabled: Bool?
 
     enum CodingKeys: String, CodingKey {
         case host, port, security, username
         case fromAddress = "from_address"
         case recipient, enabled
+        case alertsEnabled = "alerts_enabled"
     }
 
     public init(
         host: String? = nil, port: Int? = nil, security: SmtpSecurity? = nil, username: String? = nil,
-        fromAddress: String? = nil, recipient: String? = nil, enabled: Bool? = nil
+        fromAddress: String? = nil, recipient: String? = nil, enabled: Bool? = nil,
+        alertsEnabled: Bool? = nil
     ) {
         self.host = host
         self.port = port
@@ -1271,6 +1279,7 @@ public struct SmtpSettingsUpdate: Encodable, Sendable, Equatable {
         self.fromAddress = fromAddress
         self.recipient = recipient
         self.enabled = enabled
+        self.alertsEnabled = alertsEnabled
     }
 }
 

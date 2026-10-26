@@ -2,7 +2,7 @@ import PAIKit
 import SwiftUI
 
 /// What the web's settings panel offers, minus what is out of scope: the VM shell, the memory
-/// pipeline and the keyboard shortcuts. A topic with many controls (alert routing, alert mail)
+/// pipeline and the keyboard shortcuts. A topic with many controls (alert routing, mail)
 /// opens on a screen of its own from a row, as on the web.
 struct SettingsScreen: View {
     @Environment(AppEnvironment.self) private var environment
@@ -50,6 +50,7 @@ struct SettingsScreen: View {
                 }
             }
         }
+        .fixtureScrollsToAnchor()
         .paiListBackground()
         .navigationTitle("Settings")
         .accessibilityIdentifier("settings-screen")

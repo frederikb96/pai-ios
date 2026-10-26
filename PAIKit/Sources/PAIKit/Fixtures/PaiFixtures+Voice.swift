@@ -73,13 +73,13 @@ extension PaiFixtures {
 
     // MARK: - App secrets (presence only — never a value)
 
-    /// `GET /api/settings/smtp` — a configured Alert Mail section, so the settings screen
+    /// `GET /api/settings/smtp` — a configured Mail section, so the settings screen
     /// photographs the form rather than an error line.
     public static let smtpSettings: String = #"""
         {
           "host": "smtp.posteo.de", "port": 587, "security": "starttls",
           "username": "alerts@example.invalid", "from_address": "alerts@example.invalid",
-          "recipient": "user@example.invalid", "enabled": true,
+          "recipient": "user@example.invalid", "enabled": true, "alerts_enabled": true,
           "updated_at": "2026-07-02T09:00:00Z"
         }
         """#

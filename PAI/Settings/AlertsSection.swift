@@ -37,9 +37,9 @@ struct AlertsSection: View {
             NavigationLink {
                 AlertMailScreen(smtp: smtp)
             } label: {
-                LabeledContent("Alert mail", value: smtp.summary ?? "")
+                LabeledContent("Mail", value: smtp.summary ?? "")
             }
-            .accessibilityIdentifier("open-alert-mail")
+            .accessibilityIdentifier("open-mail")
         } header: {
             HStack {
                 Text("Alerts")

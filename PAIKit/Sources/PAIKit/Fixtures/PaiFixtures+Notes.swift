@@ -87,11 +87,69 @@ extension PaiFixtures {
     /// The text a seeded offline edit appends to ``noteDetail``'s body.
     public static let notePendingEditSuffix = "\n\nWritten on the plane, not yet synced.\n"
 
+    /// The text a seeded refused edit appends to ``noteDetail``'s body.
+    public static let noteRefusedEditSuffix = "\n\nTyped after the note was deleted elsewhere.\n"
+
+    /// The second index entry as `GET /api/notes/{id}` answers it: a note the notes cache never
+    /// seeds, so opening it without a connection shows what an unfetched note looks like, and
+    /// opening it with one proves the screen asked for the id it was given.
+    public static let wikilinkNoteID = "9f31c2aa-0000-4c1a-8f30-2b7e5c918d11"
+
+    public static let groceriesNoteID = "3b77de40-1111-4c1a-8f30-2b7e5c918d22"
+
+    private static func smallNote(id: String, name: String, summary: String?, tags: [String], body: String) -> String {
+        let summaryJson = summary.map { "\"\($0)\"" } ?? "null"
+        let tagsJson = tags.map { "\"\($0)\"" }.joined(separator: ",")
+        return """
+            {
+              "id":"\(id)","name":"\(name)","summary":\(summaryJson),"container_id":"c1","favourite":false,
+              "tags":[\(tagsJson)],"updated_at_ms":1756512000000,"pending_delete":false,
+              "frontmatter":"","body":"\(body)",
+              "content_hash":"sha256:\(name.lowercased())","created_at":"2026-08-01T09:15:00.123456+00:00",
+              "created_at_ms":1754039700000,"last_write_source":"ui"
+            }
+            """
+    }
+
+    public static let noteDetailWikilink = smallNote(
+        id: wikilinkNoteID, name: "Wikilink", summary: "The note the sample links to.", tags: ["pai"],
+        body: "# Wikilink\\n\\nThe note the Engram sample links to.\\n")
+
+    public static let noteDetailGroceries = smallNote(
+        id: groceriesNoteID, name: "Groceries", summary: nil, tags: ["home"],
+        body: "# Groceries\\n\\n- [ ] oat milk\\n- [x] tofu\\n")
+
+    /// What `GET /api/notes/{id}` answers for a note of the corpus, `nil` for any other id: each
+    /// note is its own body, so a screen that asks for the wrong id gets visibly the wrong note
+    /// instead of the one it expected.
+    public static func noteDetail(forId id: String) -> String? {
+        switch id {
+        case noteID: noteDetail
+        case wikilinkNoteID: noteDetailWikilink
+        case groceriesNoteID: noteDetailGroceries
+        default: nil
+        }
+    }
+
+    /// The per-note routes under `/api/notes/{id}/…` (`links`, `revisions`). The corpus has these
+    /// for the rich note only; the others answer the empty shape.
+    public static func noteSubresource(forId id: String, suffix: String) -> String? {
+        guard noteDetail(forId: id) != nil else { return nil }
+        switch (id == noteID, suffix) {
+        case (true, "links"): return noteLinkGraph
+        case (true, "revisions"): return noteRevisions
+        case (false, "links"): return #"{"outgoing":[],"backlinks":[],"extraction_skipped":false}"#
+        case (false, "revisions"): return #"{"revisions":[]}"#
+        default: return nil
+        }
+    }
+
     /// What `PATCH /api/notes/{id}` answers: the fixture note with the fields the request sent,
     /// under a new hash, so a save in fixture mode reads back as the text that was sent.
-    public static func notePatched(requestBody: Data?) -> Data {
-        guard var note = (try? JSONSerialization.jsonObject(with: data(noteDetail))) as? [String: Any] else {
-            return data(noteDetail)
+    public static func notePatched(id: String, requestBody: Data?) -> Data? {
+        guard let detail = noteDetail(forId: id) else { return nil }
+        guard var note = (try? JSONSerialization.jsonObject(with: data(detail))) as? [String: Any] else {
+            return data(detail)
         }
         let sent = requestBody.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] } ?? [:]
         for key in ["body", "name", "favourite"] where sent[key] != nil { note[key] = sent[key] }
@@ -99,7 +157,7 @@ extension PaiFixtures {
         note["content_hash"] = "sha256:patched-\(body.utf8.count)"
         note["last_write_source"] = sent["source"] as? String ?? "ui"
         note["updated_at_ms"] = 1_756_602_060_000
-        return (try? JSONSerialization.data(withJSONObject: note)) ?? data(noteDetail)
+        return (try? JSONSerialization.data(withJSONObject: note)) ?? data(detail)
     }
 
     public static let noteAttachments = #"""

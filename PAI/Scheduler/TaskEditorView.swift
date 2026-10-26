@@ -191,6 +191,20 @@ struct TaskEditorView: View {
                 }
 
                 Section {
+                    Picker("Push to devices", selection: notifyPushBinding(store)) {
+                        ForEach(notifyPushOptions(current: store.fields.notifyPush), id: \.self) { option in
+                            Text(Self.notifyPushLabel(option)).tag(option)
+                        }
+                    }
+                    .pickerStyle(.navigationLink)
+                    .id(FixtureScrollAnchor.taskNotifyPush.rawValue)
+                } header: {
+                    Text("Push notifications to devices")
+                } footer: {
+                    Text("The others are still recorded, already read, in the notification history.")
+                }
+
+                Section {
                     LabeledContent("Max runtime (minutes)") {
                         TextField("no ceiling", text: intFieldBinding(store, \.maxRuntimeMinutes))
                             .keyboardType(.numberPad)
@@ -243,6 +257,16 @@ struct TaskEditorView: View {
                             .keyboardType(.numbersAndPunctuation)
                             .multilineTextAlignment(.trailing)
                     }
+                    LabeledContent("Run anyway after deferring for … minutes") {
+                        TextField("as long as the gates say", text: intFieldBinding(store, \.maxDeferMinutes))
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    Text(
+                        "Counted from the first deferral. Past it the fire ignores the usage gates above; the gate script still applies."
+                    )
+                    .font(PaiTypography.caption.font)
+                    .foregroundStyle(PaiPalette.Semantic.textFaint)
                     Toggle("Alert when a plan-usage gate skips a fire", isOn: notifyOnGateSkipBinding(store))
                 } header: {
                     Text("This task's own limits")
@@ -286,6 +310,7 @@ struct TaskEditorView: View {
                     }
                 }
             }
+            .fixtureScrollsToAnchor()
             // A brand-new task, once saved, is a different screen (a real id) rather than this
             // same store silently adopting one — matching the web's own `key`-based remount.
             // `pop()` then `push()` rather than a single "replace the top route" call, which
@@ -504,6 +529,26 @@ struct TaskEditorView: View {
             get: { store.fields.weeklyUsageGatePercent },
             set: { store.fields.weeklyUsageGatePercent = $0 })
     }
+    private func notifyPushBinding(_ store: TaskEditorStore) -> Binding<TaskNotifyPush> {
+        Binding(get: { store.fields.notifyPush }, set: { store.fields.notifyPush = $0 })
+    }
+
+    /// The two values the server knows, plus one it sent that this build does not, so the picker
+    /// never shows a selection that matches none of its own options.
+    private func notifyPushOptions(current: TaskNotifyPush) -> [TaskNotifyPush] {
+        var options: [TaskNotifyPush] = [.all, .blocking]
+        if case .unrecognized = current { options.append(current) }
+        return options
+    }
+
+    private static func notifyPushLabel(_ option: TaskNotifyPush) -> String {
+        switch option {
+        case .all: "Every notification"
+        case .blocking: "Only blocking ones (❌ stopped, ❓ decision wanted)"
+        case .unrecognized(let raw): raw
+        }
+    }
+
     private func notifyOnGateSkipBinding(_ store: TaskEditorStore) -> Binding<Bool> {
         Binding(get: { store.fields.notifyOnGateSkip }, set: { store.fields.notifyOnGateSkip = $0 })
     }

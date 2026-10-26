@@ -25,6 +25,7 @@ struct NotesCacheSection: View {
                 }
             }
             .accessibilityIdentifier("notes-cache-budget")
+            .id(FixtureScrollAnchor.notesCache.rawValue)
             if let status {
                 LabeledContent("Using", value: usage(status))
                     .accessibilityIdentifier("notes-cache-usage")
@@ -76,6 +77,7 @@ struct NotesCacheSection: View {
                     }
                 }
                 .accessibilityIdentifier("notes-kept-text")
+                .id(kept.id == notes.keptTexts.first?.id ? FixtureScrollAnchor.notSaved.rawValue : kept.id)
             }
         } header: {
             Text("Not saved")

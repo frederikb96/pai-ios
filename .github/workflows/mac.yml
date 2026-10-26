@@ -357,6 +357,30 @@ jobs:
           screenshot notes-filtering -PaiFixtureRoute notes -PaiFixtureNotesFilterFocused
           xcrun simctl terminate "$udid" "$bundle" || true
 
+          # The notification centre under its source filter. The fixture feed holds a quiet
+          # scheduled row (stored read), a blocking one that pushed, and the ordinary rows; the
+          # filtered screens must show only the rows each view keeps, task chip included.
+          screenshot notifications-scheduled -PaiFixtureRoute notifications -PaiFixtureNotificationSource only
+          xcrun simctl terminate "$udid" "$bundle" || true
+          screenshot notifications-not-scheduled -PaiFixtureRoute notifications -PaiFixtureNotificationSource exclude
+          xcrun simctl terminate "$udid" "$bundle" || true
+
+          # The task form's push setting, below the fold of the plain `schedulerTask` screenshot.
+          screenshot scheduler-task-push -PaiFixtureRoute schedulerTask -PaiFixtureScrollTo taskNotifyPush
+          xcrun simctl terminate "$udid" "$bundle" || true
+
+          # The notes cache section, below the fold of the plain `settings` screenshot, holding
+          # the seeded cache.
+          screenshot settings-notes-cache -PaiFixtureRoute settings -PaiFixtureNotesCacheSeeded \
+            -PaiFixtureScrollTo notesCache
+          xcrun simctl terminate "$udid" "$bundle" || true
+
+          # A note opened online under an id the corpus holds besides the rich note: the router
+          # answers each note under its own id, so this photographs the Wikilink note, never the
+          # Engram one.
+          screenshot note-uncached-online -PaiFixtureRoute noteUncached
+          xcrun simctl terminate "$udid" "$bundle" || true
+
           names=$(python3 -c "import json; print('\n'.join(json.load(open('artifacts/screens.json'))['screens']))")
           while IFS= read -r name; do
             [ -n "$name" ] || continue
@@ -567,6 +591,20 @@ jobs:
           sys.exit(0 if s['deepLinkLandedMessageId'] == 9899 and s.get('isFollowingLiveEdge') is False else 1)
           " || { echo "::error::clamped-landing: a landing clamped onto the bottom re-armed following — see clamped-landing-settled.json"; fail=1; }
           fi
+          xcrun simctl terminate "$udid" "$bundle" || true
+
+          # An edit the server refused (the note was deleted elsewhere), seeded in the outbox. It
+          # stays on the simulator for every launch after it, and a note holds one edit, so these
+          # screens come after every other note screenshot. The editor shows the failed-save
+          # badge (its Try again / Copy / Discard menu opens only on a tap, so it stays
+          # unphotographed); Settings lists the text under "Not saved".
+          screenshot note-refused-edit -PaiFixtureRoute note -PaiFixtureNotesCacheSeeded -PaiFixtureNoteRefusedEdit
+          curl -sS --max-time 5 "http://127.0.0.1:8765/notes/cache" -o artifacts/notes-cache-note-refused-edit.json || true
+          notes_assert note-refused-edit artifacts/notes-cache-note-refused-edit.json \
+            "len([p for p in s['pending'] if p['kind'] == 'body' and p['state'] == 'failed']) == 1"
+          xcrun simctl terminate "$udid" "$bundle" || true
+          screenshot settings-not-saved -PaiFixtureRoute settings -PaiFixtureNotesCacheSeeded \
+            -PaiFixtureNoteRefusedEdit -PaiFixtureScrollTo notSaved
           xcrun simctl terminate "$udid" "$bundle" || true
 
           # The same question one level out: does a whole ROW's laid-out height agree with what

@@ -35,6 +35,11 @@ struct NotificationCenterScreen: View {
             }
             .task {
                 guard !hasLoadedInitialNotifications else { return }
+                #if DEBUG
+                    if let source = PaiFixtureLaunch.requestedNotificationSource() {
+                        await store.setSource(source)
+                    }
+                #endif
                 await store.loadInitialNotifications()
                 hasLoadedInitialNotifications = true
                 await expandPendingFocusIfAny()
@@ -57,6 +62,13 @@ struct NotificationCenterScreen: View {
                 .listRowSeparator(.hidden)
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Color.clear)
+            // Guests have no scheduled tasks, so there is nothing to filter by.
+            if environment.connection?.me.isGuest != true {
+                sourceRow
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+            }
             content
         }
         .listStyle(.plain)
@@ -77,6 +89,24 @@ struct NotificationCenterScreen: View {
         .padding(.top, 6)
         .padding(.bottom, 10)
         .accessibilityIdentifier("notification-filter")
+    }
+
+    /// Any source / Scheduled / Not scheduled, beside the kind filter: which notifications a
+    /// scheduled task's run raised.
+    private var sourceRow: some View {
+        Picker("Source", selection: sourceBinding) {
+            ForEach(NotificationSource.allCases, id: \.self) { source in
+                Text(source.title).tag(source)
+            }
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 10)
+        .accessibilityIdentifier("notification-source")
+    }
+
+    private var sourceBinding: Binding<NotificationSource> {
+        Binding(get: { store.source }, set: { newValue in Task { await store.setSource(newValue) } })
     }
 
     private var filterBinding: Binding<NotificationFilter> {

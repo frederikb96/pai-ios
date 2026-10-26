@@ -58,6 +58,9 @@ public enum NoteSyncFailure: Equatable, Sendable {
     /// nothing about the network or the server.
     case cancelled
 
+    /// What the reader is told when the server answers 404 to an edit.
+    public static let noteGoneRefusal = "This note was deleted elsewhere. Your text is kept on this phone."
+
     /// Anything that is not a `PaiError` and not a cancellation is the transport's own error
     /// (`URLError` above all), the same reading `OutboxStore` gives it: the request never got an
     /// answer.

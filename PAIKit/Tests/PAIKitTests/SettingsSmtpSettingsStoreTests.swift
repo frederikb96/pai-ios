@@ -36,7 +36,7 @@ final class SettingsSmtpSettingsStoreTests: XCTestCase {
                 """
                 {"host":null,"port":\(port),"security":"ssl","username":null,
                  "from_address":null,"recipient":"\(recipient)","enabled":false,
-                 "updated_at":"2026-01-01T00:00:00Z"}
+                 "alerts_enabled":false,"updated_at":"2026-01-01T00:00:00Z"}
                 """.utf8)
         )
     }
@@ -130,7 +130,7 @@ final class SettingsSmtpSettingsStoreTests: XCTestCase {
         // Every writable field must be present — SmtpSettingsUpdate's synthesized Encodable
         // cannot express "leave alone" vs "clear to null" for an omitted key, so this store
         // follows the web's whole-draft Save rather than a patch that could silently drop one.
-        for field in ["host", "port", "security", "recipient", "enabled"] {
+        for field in ["host", "port", "security", "recipient", "enabled", "alerts_enabled"] {
             XCTAssertTrue(object.keys.contains(field), "\(field) missing from the PUT body")
         }
     }

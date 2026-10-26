@@ -16,7 +16,8 @@ private actor FakeNotificationCenterApi: NotificationCenterApiClient {
     /// heterogeneous batch (some read, some not, one failed) resolves each id independently.
     var getNotificationResultsById: [String: Result<PaiNotification, PaiError>] = [:]
 
-    private(set) var listCalls: [(limit: Int?, beforeId: String?, kind: PaiNotificationKind?)] = []
+    private(set) var listCalls:
+        [(limit: Int?, beforeId: String?, kind: PaiNotificationKind?, source: NotificationSource)] = []
     private(set) var markReadCalls: [[String]] = []
     private(set) var markAllReadCallCount = 0
     private(set) var markSessionReadCalls: [String] = []
@@ -32,9 +33,9 @@ private actor FakeNotificationCenterApi: NotificationCenterApiClient {
     func setClearAlertsResult(_ result: Result<Int, PaiError>) { clearAlertsResult = result }
 
     func getNotifications(
-        limit: Int?, beforeId: String?, kind: PaiNotificationKind?
+        limit: Int?, beforeId: String?, kind: PaiNotificationKind?, source: NotificationSource
     ) async throws -> NotificationsResponse {
-        listCalls.append((limit, beforeId, kind))
+        listCalls.append((limit, beforeId, kind, source))
         switch listResult {
         case let .success(response): return response
         case let .failure(error): throw error
@@ -98,11 +99,13 @@ final class NotificationCenterStoreTests: XCTestCase {
 
     private func makeNotification(
         id: String, kind: PaiNotificationKind = .agent, readAt: String? = nil, sessionId: String? = "s1",
-        anchor: PaiNotificationAnchor? = nil, alert: PaiNotificationAlert? = nil
+        anchor: PaiNotificationAnchor? = nil, alert: PaiNotificationAlert? = nil, taskId: String? = nil,
+        taskName: String? = nil
     ) -> PaiNotification {
         PaiNotification(
             id: id, kind: kind, title: "Title \(id)", body: "Body \(id)", createdAt: "2026-01-01T00:00:00Z",
-            readAt: readAt, sessionId: sessionId, sessionTitle: "Session", anchor: anchor, alert: alert
+            readAt: readAt, sessionId: sessionId, sessionTitle: "Session", anchor: anchor, alert: alert,
+            taskId: taskId, taskName: taskName
         )
     }
 
@@ -134,6 +137,63 @@ final class NotificationCenterStoreTests: XCTestCase {
         XCTAssertNil(calls[0].kind)
         XCTAssertEqual(calls[1].kind, .alert)
         XCTAssertEqual(store.filter, .alert)
+    }
+
+    /// The source filter combines with the kind filter rather than replacing it, and a changed
+    /// source requeries from the first page.
+    func testChangingSourceReloadsAndKeepsTheKindFilter() async {
+        let api = FakeNotificationCenterApi()
+        let store = NotificationCenterStore(api: api)
+        await store.setFilter(.agent)
+
+        await store.setSource(.scheduled)
+        await store.setSource(.notScheduled)
+
+        let calls = await api.listCalls
+        XCTAssertEqual(calls.map(\.source), [.any, .scheduled, .notScheduled])
+        XCTAssertEqual(calls.map(\.kind), [.agent, .agent, .agent])
+        XCTAssertEqual(calls.map(\.beforeId), [nil, nil, nil])
+        XCTAssertEqual(store.source, .notScheduled)
+    }
+
+    func testPagingKeepsTheSourceFilter() async {
+        let api = FakeNotificationCenterApi()
+        await api.setListResult(
+            .success(NotificationsResponse(unread: 0, hasMore: true, notifications: [makeNotification(id: "1")])))
+        let store = NotificationCenterStore(api: api)
+        await store.setSource(.scheduled)
+
+        await store.loadMoreRows()
+
+        let calls = await api.listCalls
+        XCTAssertEqual(calls.last?.beforeId, "1")
+        XCTAssertEqual(calls.last?.source, .scheduled)
+    }
+
+    /// A row is rebuilt from itself when it is marked read or its alert clears; the task it came
+    /// from must survive both, or the chip would vanish the moment a row is tapped.
+    func testRebuildingARowKeepsItsTask() async {
+        let api = FakeNotificationCenterApi()
+        let alert = PaiNotificationAlert(
+            id: "a1", key: "k", severity: "error", source: "s", transition: "raised", active: true)
+        await api.setListResult(
+            .success(
+                NotificationsResponse(
+                    unread: 2, hasMore: false,
+                    notifications: [
+                        makeNotification(id: "1", taskId: "t1", taskName: "Nightly backup"),
+                        makeNotification(id: "2", kind: .alert, alert: alert, taskId: "t2", taskName: "Other"),
+                    ])))
+        let store = NotificationCenterStore(api: api)
+        await store.loadInitialNotifications()
+
+        await store.markRead("1")
+        _ = await store.clearAlert("2")
+
+        XCTAssertEqual(store.rows.map(\.taskName), ["Nightly backup", "Other"])
+        XCTAssertEqual(store.rows.map(\.taskId), ["t1", "t2"])
+        XCTAssertFalse(store.rows[0].isUnread)
+        XCTAssertEqual(store.rows[1].alert?.active, false)
     }
 
     /// Setting the same filter again must not requery — the whole point of the guard is to leave
