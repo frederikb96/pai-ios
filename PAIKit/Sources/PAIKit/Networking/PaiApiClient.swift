@@ -1649,9 +1649,18 @@ public struct PaiApiClient: Sendable {
         return response.marked
     }
 
-    /// Marks every unread notification read. There is deliberately no way to mark one back
-    /// unread — the backend exposes no such mutation, matching a plain "I saw this" log rather
-    /// than a mailbox with per-message state to toggle.
+    /// Marks specific read notifications unread again. Returns how many rows actually changed —
+    /// fewer than `ids.count` when some were already unread, which is not an error.
+    @discardableResult
+    public func markNotificationsUnread(ids: [String]) async throws -> Int {
+        struct Body: Encodable { let ids: [String] }
+        let response: MarkNotificationsReadResponse = try await send(
+            path: "/api/notifications/unread", method: "POST", body: try Self.jsonBody(Body(ids: ids))
+        )
+        return response.marked
+    }
+
+    /// Marks every unread notification read.
     @discardableResult
     public func markAllNotificationsRead() async throws -> Int {
         struct Body: Encodable { let all: Bool }

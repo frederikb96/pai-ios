@@ -7,6 +7,7 @@ private actor FakeNotificationCenterApi: NotificationCenterApiClient {
         NotificationsResponse(unread: 0, hasMore: false, notifications: []))
     var summaryResult: Result<NotificationSummary, PaiError> = .success(NotificationSummary(unread: 0, latestId: nil))
     var markReadResult: Result<Int, PaiError> = .success(1)
+    var markUnreadResult: Result<Int, PaiError> = .success(1)
     var markAllReadResult: Result<Int, PaiError> = .success(0)
     var markSessionReadResult: Result<Int, PaiError> = .success(0)
     var getNotificationResult: Result<PaiNotification, PaiError> = .failure(.transport("not configured"))
@@ -19,6 +20,7 @@ private actor FakeNotificationCenterApi: NotificationCenterApiClient {
     private(set) var listCalls:
         [(limit: Int?, beforeId: String?, kind: PaiNotificationKind?, source: NotificationSource)] = []
     private(set) var markReadCalls: [[String]] = []
+    private(set) var markUnreadCalls: [[String]] = []
     private(set) var markAllReadCallCount = 0
     private(set) var markSessionReadCalls: [String] = []
     private(set) var getNotificationCalls: [String] = []
@@ -26,6 +28,7 @@ private actor FakeNotificationCenterApi: NotificationCenterApiClient {
 
     func setListResult(_ result: Result<NotificationsResponse, PaiError>) { listResult = result }
     func setMarkReadResult(_ result: Result<Int, PaiError>) { markReadResult = result }
+    func setMarkUnreadResult(_ result: Result<Int, PaiError>) { markUnreadResult = result }
     func setGetNotificationResult(_ result: Result<PaiNotification, PaiError>) { getNotificationResult = result }
     func setGetNotificationResult(_ result: Result<PaiNotification, PaiError>, forId id: String) {
         getNotificationResultsById[id] = result
@@ -53,6 +56,15 @@ private actor FakeNotificationCenterApi: NotificationCenterApiClient {
     func markNotificationsRead(ids: [String]) async throws -> Int {
         markReadCalls.append(ids)
         switch markReadResult {
+        case let .success(count): return count
+        case let .failure(error): throw error
+        }
+    }
+
+    @discardableResult
+    func markNotificationsUnread(ids: [String]) async throws -> Int {
+        markUnreadCalls.append(ids)
+        switch markUnreadResult {
         case let .success(count): return count
         case let .failure(error): throw error
         }
@@ -286,6 +298,57 @@ final class NotificationCenterStoreTests: XCTestCase {
 
         let calls = await api.markReadCalls
         XCTAssertTrue(calls.isEmpty)
+    }
+
+    func testMarkUnreadIsOptimisticAndIncrementsUnread() async {
+        let api = FakeNotificationCenterApi()
+        await api.setListResult(
+            .success(
+                NotificationsResponse(
+                    unread: 0, hasMore: false,
+                    notifications: [makeNotification(id: "1", readAt: "2026-01-01T00:00:00Z")])))
+        let store = NotificationCenterStore(api: api)
+        await store.loadInitialNotifications()
+
+        await store.markUnread("1")
+
+        XCTAssertTrue(store.rows[0].isUnread)
+        XCTAssertEqual(store.unread, 1)
+        let calls = await api.markUnreadCalls
+        XCTAssertEqual(calls, [["1"]])
+    }
+
+    /// An unread state the server never recorded must not stick locally, for the same reason a
+    /// read one must not.
+    func testMarkUnreadRevertsOnFailure() async {
+        let api = FakeNotificationCenterApi()
+        await api.setListResult(
+            .success(
+                NotificationsResponse(
+                    unread: 0, hasMore: false,
+                    notifications: [makeNotification(id: "1", readAt: "2026-01-01T00:00:00Z")])))
+        await api.setMarkUnreadResult(.failure(.transport("offline")))
+        let store = NotificationCenterStore(api: api)
+        await store.loadInitialNotifications()
+
+        await store.markUnread("1")
+
+        XCTAssertFalse(store.rows[0].isUnread)
+        XCTAssertEqual(store.unread, 0)
+    }
+
+    func testMarkUnreadOnAnUnreadRowDoesNothing() async {
+        let api = FakeNotificationCenterApi()
+        await api.setListResult(
+            .success(NotificationsResponse(unread: 1, hasMore: false, notifications: [makeNotification(id: "1")])))
+        let store = NotificationCenterStore(api: api)
+        await store.loadInitialNotifications()
+
+        await store.markUnread("1")
+
+        let calls = await api.markUnreadCalls
+        XCTAssertTrue(calls.isEmpty)
+        XCTAssertEqual(store.unread, 1)
     }
 
     func testMarkAllReadClearsEveryRowAndTheCount() async {
