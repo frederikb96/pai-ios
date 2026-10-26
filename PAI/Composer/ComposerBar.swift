@@ -17,7 +17,8 @@ private struct SecretGrantTarget: Identifiable {
 /// else from the environment.
 ///
 /// Serves one session's chat. Replaced entirely by ``NonDrivableComposerBar`` when the session is
-/// not drivable — a subagent, a session on an offline machine's own grey state, or one PAI simply
+/// not drivable and has no take of its own running or owed — a subagent, a session on an offline
+/// machine's own grey state, or one PAI simply
 /// is not running right now — matching the web's `MessageInput.tsx`, which swaps the whole bar
 /// rather than merely disabling a text field.
 struct ComposerBar: View {
@@ -75,7 +76,9 @@ struct ComposerBar: View {
 
     var body: some View {
         Group {
-            if let session = currentSession, SessionMoved.isMoved(session) || !SessionListDomain.isDrivable(session) {
+            if let session = currentSession,
+                SessionListDomain.replacesComposer(session, ownsTake: ownsTake)
+            {
                 NonDrivableComposerBar(session: session, machines: machines)
             } else if let draftStore, let voiceController = environment.connection?.voice {
                 drivableComposer(draftStore: draftStore, voiceController: voiceController)
@@ -143,6 +146,17 @@ struct ComposerBar: View {
     @ViewBuilder
     private func drivableComposer(draftStore: DraftStore, voiceController: VoiceRecorderController) -> some View {
         VStack(spacing: 6) {
+            if ownsTake, let session = currentSession, SessionListDomain.replacesComposer(session, ownsTake: false) {
+                Text(
+                    SessionMoved.isMoved(session)
+                        ? "This conversation moved to another machine — the recording here can still be stopped."
+                        : "This session isn't being driven right now — the recording here can still be stopped."
+                )
+                .font(PaiTypography.caption.font)
+                .foregroundStyle(PaiPalette.Semantic.warningText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             if isMachineOffline {
                 Text("\(offlineMachineName ?? "This machine") is offline — this is delivered when it comes back.")
                     .font(PaiTypography.caption.font)
@@ -410,6 +424,14 @@ struct ComposerBar: View {
     /// bar for a recording that is not its own.
     private func isRecordingHere(_ controller: VoiceRecorderController) -> Bool {
         controller.activeDraftKey == sessionID && controller.state != .idle
+    }
+
+    /// A take of this session that is recording, finishing or owed — what keeps the composer's
+    /// controls on screen after the session stops being drivable.
+    private var ownsTake: Bool {
+        guard let controller = environment.connection?.voice else { return false }
+        return isRecordingHere(controller) || controller.isTranscribingBatch(draftKey: sessionID)
+            || controller.hasStuckBatchTake(draftKey: sessionID)
     }
 
     // MARK: - Voice

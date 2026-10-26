@@ -82,6 +82,15 @@ public enum SessionListDomain {
         return state != .closed
     }
 
+    /// Whether a session's composer is replaced by the reason PAI is not driving it. A take of the
+    /// session's own that is still recording, finishing or owed keeps the composer: its stop,
+    /// send and level controls live there, and the microphone and the take outlive the session's
+    /// state (an agent dropping closes or moves the session, never the recording).
+    public static func replacesComposer(_ session: Session, ownsTake: Bool) -> Bool {
+        if ownsTake { return false }
+        return SessionMoved.isMoved(session) || !isDrivable(session)
+    }
+
     /// Grey is a normal, frequent state — a session the user runs themselves in a terminal, or one PAI
     /// closed when it went idle — not a fault.
     public static func isGrey(_ session: Session) -> Bool { !isDrivable(session) }
