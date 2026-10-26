@@ -321,7 +321,7 @@ extension NotesStore {
         case .retryLater:
             park(id: id, forServer: true)
         case .noteGone:
-            refuse(id: id, "This note was deleted elsewhere. Your text is kept on this phone.")
+            refuse(id: id, NoteSyncFailure.noteGoneRefusal)
         case .rejected(let message):
             refuse(id: id, message)
         case .cancelled:

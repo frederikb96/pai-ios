@@ -61,9 +61,18 @@ struct NotificationRowView: View {
     private var footer: some View {
         switch notification.kind {
         case .agent:
-            if let sessionTitle = notification.sessionTitle {
+            if notification.taskName != nil || notification.sessionTitle != nil {
                 HStack(spacing: 4) {
-                    Text(sessionTitle).lineLimit(1)
+                    // The task whose run raised it, as on the web, ahead of the session title.
+                    if let taskName = notification.taskName {
+                        Text(taskName)
+                            .lineLimit(1)
+                            .padding(.horizontal, 4)
+                            .background(PaiPalette.Semantic.raisedSurface, in: RoundedRectangle(cornerRadius: 4))
+                            .accessibilityIdentifier("notification-task-chip")
+                        if notification.sessionTitle != nil { Text("·") }
+                    }
+                    if let sessionTitle = notification.sessionTitle { Text(sessionTitle).lineLimit(1) }
                     // The affordance is quiet on purpose — a tap anywhere on the row already
                     // does this; this is just what tells the reader it will.
                     if notification.anchor != nil {

@@ -76,6 +76,10 @@ public struct PaiNotification: Codable, Sendable, Equatable, Identifiable {
     public let sessionTitle: String?
     public let anchor: PaiNotificationAnchor?
     public let alert: PaiNotificationAlert?
+    /// The scheduled task whose run raised this. `nil` once that task is deleted (the name stays),
+    /// and for alerts and ordinary sessions.
+    public let taskId: String?
+    public let taskName: String?
 
     enum CodingKeys: String, CodingKey {
         case id, kind, title, body, anchor, alert
@@ -83,11 +87,14 @@ public struct PaiNotification: Codable, Sendable, Equatable, Identifiable {
         case readAt = "read_at"
         case sessionId = "session_id"
         case sessionTitle = "session_title"
+        case taskId = "task_id"
+        case taskName = "task_name"
     }
 
     public init(
         id: String, kind: PaiNotificationKind, title: String, body: String, createdAt: String, readAt: String?,
-        sessionId: String?, sessionTitle: String?, anchor: PaiNotificationAnchor?, alert: PaiNotificationAlert?
+        sessionId: String?, sessionTitle: String?, anchor: PaiNotificationAnchor?, alert: PaiNotificationAlert?,
+        taskId: String?, taskName: String?
     ) {
         self.id = id
         self.kind = kind
@@ -99,9 +106,54 @@ public struct PaiNotification: Codable, Sendable, Equatable, Identifiable {
         self.sessionTitle = sessionTitle
         self.anchor = anchor
         self.alert = alert
+        self.taskId = taskId
+        self.taskName = taskName
+    }
+
+    /// The same row with a different read state or alert — the one place a row is rebuilt from
+    /// itself, so a field added to the row cannot be dropped by a copy site.
+    func with(readAt: String?, alert: PaiNotificationAlert?) -> PaiNotification {
+        PaiNotification(
+            id: id, kind: kind, title: title, body: body, createdAt: createdAt, readAt: readAt,
+            sessionId: sessionId, sessionTitle: sessionTitle, anchor: anchor, alert: alert, taskId: taskId,
+            taskName: taskName)
     }
 
     public var isUnread: Bool { readAt == nil }
+}
+
+/// Which notifications the feed keeps by origin: every one, only those a scheduled task's run
+/// raised, or only the rest. `queryValue` is the `scheduled` query parameter, absent for `.any`.
+public enum NotificationSource: String, CaseIterable, Sendable, Equatable {
+    case any
+    case scheduled
+    case notScheduled
+
+    public var title: String {
+        switch self {
+        case .any: "Any source"
+        case .scheduled: "Scheduled"
+        case .notScheduled: "Not scheduled"
+        }
+    }
+
+    /// `nil` for `.any` — the backend's filter is "absent means all", not a third value to send.
+    public var queryValue: String? {
+        switch self {
+        case .any: nil
+        case .scheduled: "only"
+        case .notScheduled: "exclude"
+        }
+    }
+
+    /// The case a `scheduled` query value names; anything else is no filter.
+    public init(queryValue: String?) {
+        switch queryValue {
+        case "only": self = .scheduled
+        case "exclude": self = .notScheduled
+        default: self = .any
+        }
+    }
 }
 
 /// `GET /api/notifications`.

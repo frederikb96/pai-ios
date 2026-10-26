@@ -115,13 +115,28 @@
                     return Match(status: 200) { messagesResponse(query: query) }
                 }
             }
+            // The feed is filtered by the query the way the server filters it, so a screenshot of the
+            // Scheduled or Not scheduled view shows the rows that view keeps.
+            if method == "GET", path == "/api/notifications" {
+                let kind = query.first { $0.name == "kind" }?.value
+                let scheduled = query.first { $0.name == "scheduled" }?.value
+                return Match(status: 200) { PaiFixtures.notificationsPage(kind: kind, scheduled: scheduled) }
+            }
+            // The notes of the corpus answer under their own ids and nothing else does, so a screen
+            // that asks for the wrong note gets that note's body (or a 404) rather than the one it
+            // expected. `containers` and `config` are not note ids; the table below answers them.
+            if method == "GET", let note = noteRequest(path: path), let json = note.answer() {
+                return Match(status: 200) { PaiFixtures.data(json) }
+            }
             // A note save: answered with what was sent, or, once under `-PaiFixtureNoteConflict`,
             // with the 409 a note edited elsewhere produces.
-            if method == "PATCH", path.hasPrefix("/api/notes/"), path.split(separator: "/").count == 3 {
+            if method == "PATCH", let note = noteRequest(path: path), note.suffix == nil,
+                note.answer() != nil
+            {
                 if PaiFixtureLaunch.takeNoteConflict(arguments: arguments) {
                     return Match(status: 409) { PaiFixtures.data(PaiFixtures.noteConflict) }
                 }
-                return Match(status: 200) { PaiFixtures.notePatched(requestBody: body) }
+                return Match(status: 200) { PaiFixtures.notePatched(id: note.id, requestBody: body) ?? Data() }
             }
             guard let fixture = routes.first(where: { $0.method == method && $0.matches(path) }) else {
                 let detail = "no fixture route for \(method) \(path)"
@@ -168,15 +183,22 @@
                 ? PaiFixtures.sessionsWithSecretPrompt : PaiFixtures.sessions
         }
 
-        /// Matches a request under `/api/notes/{id}/…`, regardless of which id was asked for —
-        /// the corpus has one note, and a screenshot run never needs to tell notes apart.
-        private static func noteScoped(
-            _ method: String, suffix: String, _ json: @escaping @Sendable () -> String
-        ) -> FixtureRoute {
-            FixtureRoute(
-                method: method,
-                matches: { $0.hasPrefix("/api/notes/") && $0.hasSuffix(suffix) }
-            ) { PaiFixtures.data(json()) }
+        /// A request for one note, or for one of its sub-resources (`/api/notes/{id}/links`).
+        private struct NoteRequest {
+            let id: String
+            let suffix: String?
+
+            /// The corpus's answer, `nil` for an id or sub-resource it does not hold.
+            func answer() -> String? {
+                guard let suffix else { return PaiFixtures.noteDetail(forId: id) }
+                return PaiFixtures.noteSubresource(forId: id, suffix: suffix)
+            }
+        }
+
+        private static func noteRequest(path: String) -> NoteRequest? {
+            let parts = path.split(separator: "/").map(String.init)
+            guard parts.count == 3 || parts.count == 4, parts[0] == "api", parts[1] == "notes" else { return nil }
+            return NoteRequest(id: parts[2], suffix: parts.count == 4 ? parts[3] : nil)
         }
 
         /// Covers every `GET` a screen fetches to render itself. Extend this table
@@ -211,15 +233,18 @@
             exact("GET", "/api/auth/claude") { claudeAuthFixtureBody() },
             exact("GET", "/api/browse") { PaiFixtures.browseResult },
             exact("GET", "/api/favorites") { PaiFixtures.folderFavorites },
-            // Order matters here too, same reason as the notes routes below: `/summary` would
-            // otherwise be read by the generic id lookup as a notification whose id is "summary".
+            // Order matters: `/summary` would otherwise be read by the generic id lookup as a
+            // notification whose id is "summary".
             exact("GET", "/api/notifications/summary") { PaiFixtures.notificationsSummary },
-            exact("GET", "/api/notifications") { PaiFixtures.notifications },
             exact("POST", "/api/notifications/read") { PaiFixtures.notificationsMarked },
             FixtureRoute(
                 method: "GET",
                 matches: { $0.hasPrefix("/api/notifications/") && $0.split(separator: "/").count == 3 }
             ) { PaiFixtures.data(PaiFixtures.notificationDetail) },
+            exact("GET", "/api/status-message") { PaiFixtures.statusMessage },
+            exact("GET", "/api/scheduler/tasks") { PaiFixtures.schedulerTasks },
+            exact("GET", "/api/scheduler/insights") { PaiFixtures.schedulerInsights },
+            exact("GET", "/api/canteen/entries") { PaiFixtures.canteenEntries },
             exact("GET", "/api/alerts") { PaiFixtures.alerts },
             exact("POST", "/api/alerts/clear") { PaiFixtures.alertsCleared },
             // The create. Without it `-PaiFixtureAutoCreateSession` drives a send that the
@@ -238,19 +263,12 @@
                 method: "GET",
                 matches: { $0.hasPrefix("/api/session/") && $0.hasSuffix("/attachment") }
             ) { PaiFixtures.attachmentImage },
-            // The notes half. Order matters here and only here: `/api/notes/containers` and
-            // `/api/notes/config` would otherwise be read as a note whose id is "containers" or
-            // "config".
+            // The notes half. A note and its sub-resources are answered by `route(...)` ahead of
+            // this table, by id.
             exact("GET", "/api/notes") { PaiFixtures.notesIndex },
             exact("GET", "/api/notes/containers") { PaiFixtures.noteContainers },
             exact("GET", "/api/notes/config") { PaiFixtures.notesConfig },
-            noteScoped("GET", suffix: "/attachments") { PaiFixtures.noteAttachments },
-            noteScoped("GET", suffix: "/links") { PaiFixtures.noteLinkGraph },
-            noteScoped("GET", suffix: "/revisions") { PaiFixtures.noteRevisions },
-            FixtureRoute(
-                method: "GET",
-                matches: { $0.hasPrefix("/api/notes/") && $0.split(separator: "/").count == 3 }
-            ) { PaiFixtures.data(PaiFixtures.noteDetail) },
+            exact("GET", "/api/notes/containers/c1/attachments") { PaiFixtures.noteAttachments },
             // The two streams. Without these the terminal photographs blank — its content arrives
             // over the stream and nowhere else — and the transcript's live half never runs at all,
             // so the one screen whose whole design is about streaming would be the one screen

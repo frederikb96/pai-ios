@@ -45,6 +45,22 @@
                         noteId: detail.id, body: detail.body + PaiFixtures.notePendingEditSuffix, base: detail,
                         editedAtMs: detail.updatedAtMs + 60_000, awaitingSync: true))
             }
+            seedRefusedEdit(detail, outbox: outbox, arguments: arguments)
+        }
+
+        /// Written apart from the pending edit above: a refused edit is a different state of the same
+        /// note, and one launch asks for one of them. A note holds one edit, so whichever was
+        /// seeded first stays.
+        private static func seedRefusedEdit(
+            _ detail: NoteDetail, outbox: NoteOutboxStorage, arguments: [String]
+        ) {
+            guard PaiFixtureLaunch.seedsNoteRefusedEdit(arguments: arguments),
+                !outbox.loadEdits().contains(where: { $0.noteId == detail.id })
+            else { return }
+            outbox.saveEdit(
+                NotePendingEdit(
+                    noteId: detail.id, body: detail.body + PaiFixtures.noteRefusedEditSuffix, base: detail,
+                    editedAtMs: detail.updatedAtMs + 60_000, refusal: NoteSyncFailure.noteGoneRefusal))
         }
 
         private static func seedAttachments(

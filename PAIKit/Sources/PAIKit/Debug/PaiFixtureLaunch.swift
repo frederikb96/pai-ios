@@ -26,6 +26,9 @@
         static let notesCacheSeededFlag = "-PaiFixtureNotesCacheSeeded"
         static let notePendingEditFlag = "-PaiFixtureNotePendingEdit"
         static let noteConflictFlag = "-PaiFixtureNoteConflict"
+        static let noteRefusedEditFlag = "-PaiFixtureNoteRefusedEdit"
+        static let scrollAnchorFlag = "-PaiFixtureScrollTo"
+        static let notificationSourceFlag = "-PaiFixtureNotificationSource"
 
         /// What the debug bridge can change while the app runs: the offline switch, and whether
         /// the one-shot conflict has been served.
@@ -145,6 +148,27 @@
         /// yet synced.
         public static func seedsNotePendingEdit(arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
             arguments.contains(notePendingEditFlag)
+        }
+
+        /// `-PaiFixtureNoteRefusedEdit`: the fixture note starts with an edit the server refused, as
+        /// one made to a note deleted elsewhere is — the state behind the editor's failed-save badge
+        /// and Settings' "Not saved" list.
+        public static func seedsNoteRefusedEdit(arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
+            arguments.contains(noteRefusedEditFlag)
+        }
+
+        /// `-PaiFixtureScrollTo <name>`: the spot on a long screen to bring into view (the app
+        /// target names the spots), because a screenshot shows only what is on screen.
+        public static func requestedScrollAnchor(arguments: [String] = ProcessInfo.processInfo.arguments) -> String? {
+            value(for: scrollAnchorFlag, in: arguments)
+        }
+
+        /// `-PaiFixtureNotificationSource only|exclude`: the notification centre opens filtered to
+        /// scheduled-task notifications or to the rest. Absent, or any other value, is no filter.
+        public static func requestedNotificationSource(
+            arguments: [String] = ProcessInfo.processInfo.arguments
+        ) -> NotificationSource? {
+            value(for: notificationSourceFlag, in: arguments).map { NotificationSource(queryValue: $0) }
         }
 
         /// `-PaiFixtureNoteConflict`: the first save of a note answers 409 with a different body,

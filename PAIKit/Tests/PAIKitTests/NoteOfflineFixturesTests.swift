@@ -92,6 +92,38 @@ final class NoteOfflineFixturesTests: XCTestCase {
         XCTAssertEqual(inventory.count, 2)
         XCTAssertEqual(cache.loadAttachmentManifest().count, 2)
     }
+
+    /// The refused edit reaches the store the way a 404 leaves it: failed with the server's
+    /// reason, its text listed under "Not saved", and nothing queued to send by itself.
+    @MainActor
+    func testTheRefusedEditSeedShowsAsAFailedSaveAndAKeptText() async throws {
+        let cache = InMemoryNotesCacheStorage()
+        let outbox = InMemoryNoteOutboxStorage()
+        let arguments = ["/app", "-PaiFixtureMode", "-PaiFixtureNotesCacheSeeded", "-PaiFixtureNoteRefusedEdit"]
+        let pdf = Data("%PDF-1.4 fixture".utf8)
+        PaiFixtureNotesSeed.seed(cache: cache, outbox: outbox, pdf: pdf, arguments: arguments)
+        PaiFixtureNotesSeed.seed(cache: cache, outbox: outbox, pdf: pdf, arguments: arguments)
+
+        let store = NotesStore(api: UnreachableNotesApi(), cache: cache, outbox: outbox)
+        store.setPathSatisfied(false)
+        await store.loadNote(id: PaiFixtures.noteID)
+
+        XCTAssertEqual(outbox.loadEdits().count, 1)
+        XCTAssertEqual(store.saveState(for: PaiFixtures.noteID), .failed(NoteSyncFailure.noteGoneRefusal))
+        XCTAssertFalse(store.hasPendingWork)
+        let kept = try XCTUnwrap(store.keptTexts.first)
+        XCTAssertEqual(store.keptTexts.count, 1)
+        XCTAssertEqual(kept.reason, NoteSyncFailure.noteGoneRefusal)
+        XCTAssertTrue(kept.text.hasSuffix(PaiFixtures.noteRefusedEditSuffix))
+    }
+
+    func testNothingIsSeededWithoutTheRefusedEditFlag() {
+        let outbox = InMemoryNoteOutboxStorage()
+        PaiFixtureNotesSeed.seed(
+            cache: InMemoryNotesCacheStorage(), outbox: outbox, pdf: Data(),
+            arguments: ["/app", "-PaiFixtureMode", "-PaiFixtureNotesCacheSeeded"])
+        XCTAssertTrue(outbox.loadEdits().isEmpty)
+    }
 }
 
 /// Every request fails as it does with no network.

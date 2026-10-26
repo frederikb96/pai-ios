@@ -1610,12 +1610,14 @@ public struct PaiApiClient: Sendable {
     /// cursor by id, like the rest of this file's paged endpoints, never an offset (rows can
     /// arrive while paging).
     public func getNotifications(
-        limit: Int? = nil, beforeId: String? = nil, kind: PaiNotificationKind? = nil
+        limit: Int? = nil, beforeId: String? = nil, kind: PaiNotificationKind? = nil,
+        source: NotificationSource = .any
     ) async throws -> NotificationsResponse {
         var query: [URLQueryItem] = []
         if let limit { query.append(URLQueryItem(name: "limit", value: String(limit))) }
         if let beforeId { query.append(URLQueryItem(name: "before_id", value: beforeId)) }
         if let kind { query.append(URLQueryItem(name: "kind", value: kind.rawValue)) }
+        if let scheduled = source.queryValue { query.append(URLQueryItem(name: "scheduled", value: scheduled)) }
         return try await send(path: "/api/notifications", query: query)
     }
 

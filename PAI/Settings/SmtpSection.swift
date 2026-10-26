@@ -1,7 +1,7 @@
 import PAIKit
 import SwiftUI
 
-/// The page behind Settings' "Alert mail" row.
+/// The page behind Settings' "Mail" row.
 struct AlertMailScreen: View {
     let smtp: SmtpSettingsStore
 
@@ -10,12 +10,13 @@ struct AlertMailScreen: View {
             SmtpSection(smtp: smtp)
         }
         .paiListBackground()
-        .navigationTitle("Alert mail")
+        .navigationTitle("Mail")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
 
-/// Alert mail — the backend's mail account and whether alerts are mailed as well as pushed.
+/// Mail — the backend's mail account, the master switch, and whether alerts are mailed as well as
+/// pushed.
 /// Server-persisted, draft-and-save: nothing here is sent until Save, except the password, which
 /// is its own write-only secret with its own immediate Save/Clear (`SecretField`).
 struct SmtpSection: View {
@@ -34,7 +35,7 @@ struct SmtpSection: View {
             }
         } footer: {
             Text(
-                "Lets PAI email you when something breaks. Alerts and relayed messages are always kept in the notifications screen and pushed to your devices; mail is an addition."
+                "Lets PAI email you: mail an agent asks for, and optionally an alert when something breaks. Alerts and relayed messages are always kept in the notifications screen and pushed to your devices; mail is an addition."
             )
         }
         .task {
@@ -44,8 +45,13 @@ struct SmtpSection: View {
 
     @ViewBuilder
     private func loadedContent(_ draft: SmtpSettingsDraft) -> some View {
-        Toggle("Send alerts by email", isOn: bindingToDraft(\.enabled, fallback: draft))
+        Toggle("Send mail", isOn: bindingToDraft(\.enabled, fallback: draft))
             .accessibilityIdentifier("smtp-enabled")
+        Toggle("Send alerts by email", isOn: bindingToDraft(\.alertsEnabled, fallback: draft))
+            .accessibilityIdentifier("smtp-alerts-enabled")
+        Text("Alert mail needs both switches; nothing is mailed while \"Send mail\" is off.")
+            .font(PaiTypography.caption.font)
+            .foregroundStyle(PaiPalette.Semantic.textFaint)
 
         // `LabeledContent` rather than a bare `TextField`: a text field's title is only its
         // placeholder, so it vanishes the moment the field holds anything — leaving a configured

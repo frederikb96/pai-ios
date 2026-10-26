@@ -65,6 +65,33 @@ extension TaskGateRuntime: Codable {
     }
 }
 
+/// Which of a task's runs' notifications are pushed to devices. `.blocking` pushes only titles
+/// carrying ❌ or ❓; the rest are still recorded, already read.
+public enum TaskNotifyPush: Sendable, Hashable {
+    case all, blocking
+    case unrecognized(String)
+}
+
+extension TaskNotifyPush: Codable {
+    private static let knownValues: [String: TaskNotifyPush] = [
+        "all": .all, "blocking": .blocking,
+    ]
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = Self.knownValues[raw] ?? .unrecognized(raw)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .all: try container.encode("all")
+        case .blocking: try container.encode("blocking")
+        case let .unrecognized(raw): try container.encode(raw)
+        }
+    }
+}
+
 /// What the SCHEDULER did with a fire — distinct from what the agent then declared.
 /// Collapsing the two loses the answer: *it ran and found nothing* is not *it checked and
 /// declined* is not *it never fired at all*.
@@ -245,6 +272,16 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
     public let weeklyPaceGatePoints: Int?
     /// Whether a gate-percentage skip raises an alert. Off by default.
     public let notifyOnGateSkip: Bool?
+    /// Which of this task's notifications are pushed to devices; `nil` from a backend that
+    /// predates the setting, which means ``TaskNotifyPush/all``.
+    public let notifyPush: TaskNotifyPush?
+    /// Caps how long the plan-usage gates may keep deferring a fire, counted from its first
+    /// deferral; past it the fire proceeds despite them (the gate script still applies). `nil`
+    /// defers for as long as the gates say.
+    public let maxDeferMinutes: Int?
+    /// When the current run of deferrals began; `nil` while not deferred. Read-only — never part
+    /// of ``TaskWriteFields``.
+    public let deferredSinceMs: Int?
     /// When the task's one remembered re-run may fire: set by a run-now that arrived during an open
     /// run, fired after that run ends, cleared by any fire; disabling the task drops it. Read-only —
     /// never part of ``TaskWriteFields``.
@@ -290,7 +327,9 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         maxTokenBudget: Int? = nil, compactionThresholdTokens: Int? = nil,
         sessionUsageGatePercent: Int? = nil, weeklyUsageGatePercent: Int? = nil,
         sessionPaceGatePoints: Int? = nil, weeklyPaceGatePoints: Int? = nil,
-        notifyOnGateSkip: Bool? = nil, supervisionEnabled: Bool, supervisionModel: String?,
+        notifyOnGateSkip: Bool? = nil, notifyPush: TaskNotifyPush? = nil,
+        maxDeferMinutes: Int? = nil, deferredSinceMs: Int? = nil, supervisionEnabled: Bool,
+        supervisionModel: String?,
         supervisionThinking: String? = nil, supervisionAppendPrompt: String? = nil,
         supervisionCompactionThresholdTokens: Int? = nil,
         supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
@@ -325,6 +364,9 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         self.sessionPaceGatePoints = sessionPaceGatePoints
         self.weeklyPaceGatePoints = weeklyPaceGatePoints
         self.notifyOnGateSkip = notifyOnGateSkip
+        self.notifyPush = notifyPush
+        self.maxDeferMinutes = maxDeferMinutes
+        self.deferredSinceMs = deferredSinceMs
         self.supervisionEnabled = supervisionEnabled
         self.supervisionModel = supervisionModel
         self.supervisionThinking = supervisionThinking
@@ -361,6 +403,9 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         case sessionPaceGatePoints = "session_pace_gate_points"
         case weeklyPaceGatePoints = "weekly_pace_gate_points"
         case notifyOnGateSkip = "notify_on_gate_skip"
+        case notifyPush = "notify_push"
+        case maxDeferMinutes = "max_defer_minutes"
+        case deferredSinceMs = "deferred_since_ms"
         case supervisionEnabled = "supervision_enabled"
         case supervisionModel = "supervision_model"
         case supervisionThinking = "supervision_thinking"
@@ -424,6 +469,16 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
     public let weeklyPaceGatePoints: Int?
     /// Whether a gate-percentage skip raises an alert. Off by default.
     public let notifyOnGateSkip: Bool?
+    /// Which of this task's notifications are pushed to devices; `nil` from a backend that
+    /// predates the setting, which means ``TaskNotifyPush/all``.
+    public let notifyPush: TaskNotifyPush?
+    /// Caps how long the plan-usage gates may keep deferring a fire, counted from its first
+    /// deferral; past it the fire proceeds despite them (the gate script still applies). `nil`
+    /// defers for as long as the gates say.
+    public let maxDeferMinutes: Int?
+    /// When the current run of deferrals began; `nil` while not deferred. Read-only — never part
+    /// of ``TaskWriteFields``.
+    public let deferredSinceMs: Int?
     /// When the task's one remembered re-run may fire: set by a run-now that arrived during an open
     /// run, fired after that run ends, cleared by any fire; disabling the task drops it. Read-only —
     /// never part of ``TaskWriteFields``.
@@ -464,7 +519,9 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         maxTokenBudget: Int? = nil, compactionThresholdTokens: Int? = nil,
         sessionUsageGatePercent: Int? = nil, weeklyUsageGatePercent: Int? = nil,
         sessionPaceGatePoints: Int? = nil, weeklyPaceGatePoints: Int? = nil,
-        notifyOnGateSkip: Bool? = nil, supervisionEnabled: Bool, supervisionModel: String?,
+        notifyOnGateSkip: Bool? = nil, notifyPush: TaskNotifyPush? = nil,
+        maxDeferMinutes: Int? = nil, deferredSinceMs: Int? = nil, supervisionEnabled: Bool,
+        supervisionModel: String?,
         supervisionThinking: String? = nil, supervisionAppendPrompt: String? = nil,
         supervisionCompactionThresholdTokens: Int? = nil,
         supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
@@ -499,6 +556,9 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         self.sessionPaceGatePoints = sessionPaceGatePoints
         self.weeklyPaceGatePoints = weeklyPaceGatePoints
         self.notifyOnGateSkip = notifyOnGateSkip
+        self.notifyPush = notifyPush
+        self.maxDeferMinutes = maxDeferMinutes
+        self.deferredSinceMs = deferredSinceMs
         self.supervisionEnabled = supervisionEnabled
         self.supervisionModel = supervisionModel
         self.supervisionThinking = supervisionThinking
@@ -536,6 +596,9 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         case sessionPaceGatePoints = "session_pace_gate_points"
         case weeklyPaceGatePoints = "weekly_pace_gate_points"
         case notifyOnGateSkip = "notify_on_gate_skip"
+        case notifyPush = "notify_push"
+        case maxDeferMinutes = "max_defer_minutes"
+        case deferredSinceMs = "deferred_since_ms"
         case supervisionEnabled = "supervision_enabled"
         case supervisionModel = "supervision_model"
         case supervisionThinking = "supervision_thinking"
@@ -943,6 +1006,8 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
     public var sessionPaceGatePoints: Int?
     public var weeklyPaceGatePoints: Int?
     public var notifyOnGateSkip: Bool
+    public var notifyPush: TaskNotifyPush
+    public var maxDeferMinutes: Int?
     public var supervisionEnabled: Bool
     public var supervisionModel: String?
     public var supervisionThinking: String?
@@ -960,7 +1025,8 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         maxTokenBudget: Int? = nil, compactionThresholdTokens: Int? = nil,
         sessionUsageGatePercent: Int = 60, weeklyUsageGatePercent: Int = 80,
         sessionPaceGatePoints: Int? = nil, weeklyPaceGatePoints: Int? = nil,
-        notifyOnGateSkip: Bool = false, supervisionEnabled: Bool, supervisionModel: String?,
+        notifyOnGateSkip: Bool = false, notifyPush: TaskNotifyPush = .all,
+        maxDeferMinutes: Int? = nil, supervisionEnabled: Bool, supervisionModel: String?,
         supervisionThinking: String? = nil, supervisionAppendPrompt: String? = nil,
         supervisionCompactionThresholdTokens: Int? = nil,
         supervisionChunkIntervalSeconds: Int? = nil, supervisionChunkTokenThreshold: Int? = nil,
@@ -988,6 +1054,8 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         self.sessionPaceGatePoints = sessionPaceGatePoints
         self.weeklyPaceGatePoints = weeklyPaceGatePoints
         self.notifyOnGateSkip = notifyOnGateSkip
+        self.notifyPush = notifyPush
+        self.maxDeferMinutes = maxDeferMinutes
         self.supervisionEnabled = supervisionEnabled
         self.supervisionModel = supervisionModel
         self.supervisionThinking = supervisionThinking
@@ -1026,7 +1094,8 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
             weeklyUsageGatePercent: task.weeklyUsageGatePercent ?? 80,
             sessionPaceGatePoints: task.sessionPaceGatePoints,
             weeklyPaceGatePoints: task.weeklyPaceGatePoints,
-            notifyOnGateSkip: task.notifyOnGateSkip ?? false,
+            notifyOnGateSkip: task.notifyOnGateSkip ?? false, notifyPush: task.notifyPush ?? .all,
+            maxDeferMinutes: task.maxDeferMinutes,
             supervisionEnabled: task.supervisionEnabled, supervisionModel: task.supervisionModel,
             supervisionThinking: task.supervisionThinking,
             supervisionAppendPrompt: task.supervisionAppendPrompt,
@@ -1053,6 +1122,8 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         case sessionPaceGatePoints = "session_pace_gate_points"
         case weeklyPaceGatePoints = "weekly_pace_gate_points"
         case notifyOnGateSkip = "notify_on_gate_skip"
+        case notifyPush = "notify_push"
+        case maxDeferMinutes = "max_defer_minutes"
         case supervisionEnabled = "supervision_enabled"
         case supervisionModel = "supervision_model"
         case supervisionThinking = "supervision_thinking"
@@ -1094,6 +1165,8 @@ public struct TaskWriteFields: Encodable, Sendable, Equatable {
         try c.encode(sessionPaceGatePoints, forKey: .sessionPaceGatePoints)
         try c.encode(weeklyPaceGatePoints, forKey: .weeklyPaceGatePoints)
         try c.encode(notifyOnGateSkip, forKey: .notifyOnGateSkip)
+        try c.encode(notifyPush, forKey: .notifyPush)
+        try c.encode(maxDeferMinutes, forKey: .maxDeferMinutes)
         try c.encode(supervisionEnabled, forKey: .supervisionEnabled)
         try c.encode(supervisionModel, forKey: .supervisionModel)
         try c.encode(supervisionThinking, forKey: .supervisionThinking)
