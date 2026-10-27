@@ -93,8 +93,12 @@ struct WorkingFolderButton: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(WorkingFolder.name(of: workingDir))
                     .font(PaiTypography.bodyEmphasized.font)
+                // A popover sizes itself from its content's ideal height, which for
+                // a Text is one line: without this the path ends in an ellipsis
+                // instead of wrapping.
                 Text(workingDir)
                     .font(PaiTypography.caption.font)
+                    .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
                     .foregroundStyle(PaiPalette.Semantic.textMuted)
             }
