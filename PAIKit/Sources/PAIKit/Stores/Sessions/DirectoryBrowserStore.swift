@@ -34,8 +34,8 @@ public final class DirectoryBrowserStore {
     public private(set) var favorites: [FolderFavorite] = []
     public private(set) var isLoading = false
     public private(set) var error: String?
-    /// Narrows only the list already loaded for the current directory — never a recursive or
-    /// nested search. Reset on every navigation, matching the web: a filter surviving a
+    /// Narrows what is already on screen — the current directory's entries, the favourites and
+    /// the environments — never a recursive or nested search. Reset on every navigation, matching the web: a filter surviving a
     /// navigation into a different directory would silently hide everything there.
     public var filterText: String = ""
 
@@ -60,6 +60,19 @@ public final class DirectoryBrowserStore {
         favorites.sorted {
             SessionListFormat.basename($0.path).lowercased() < SessionListFormat.basename($1.path).lowercased()
         }
+    }
+
+    /// The favourites the filter leaves, matched on the label a row shows (the last path
+    /// segment), never the full path a reader did not type. Same rule as the directory list.
+    public var filteredFavorites: [FolderFavorite] {
+        sortedFavorites.filter {
+            SessionFilterMatch.fuzzyMatchesSubsequence(filterText, SessionListFormat.basename($0.path))
+        }
+    }
+
+    /// The environments the filter leaves, matched on the name a row shows.
+    public func filteredEnvironments(_ environments: [SessionType]) -> [SessionType] {
+        environments.filter { SessionFilterMatch.fuzzyMatchesSubsequence(filterText, $0.name) }
     }
 
     public var currentPathIsFavorite: Bool { favorites.contains { $0.path == currentPath } }

@@ -78,6 +78,35 @@ final class SessionStoreDirectoryBrowserTests: XCTestCase {
         XCTAssertEqual(store.filteredDirectories, ["alpha-cloud", "zebra-cloud"])
     }
 
+    /// The filter narrows everything on screen, not only the directory entries: a favourite or an
+    /// environment that stayed put under a typed query is what made the field read as broken.
+    func testFilterNarrowsFavoritesAndEnvironmentsByTheirShownLabel() async {
+        let api = FakeDirectoryBrowseApi()
+        await api.setBrowseResult(.success(BrowseResult(path: "/home/frederik", directories: ["pai-cloud"], roots: [])))
+        await api.setFavorites([
+            FolderFavorite(path: "/srv/cloudy/zebra", createdAt: nil),
+            FolderFavorite(path: "/home/frederik/pai-cloud", createdAt: nil),
+            FolderFavorite(path: "/home/frederik/notes", createdAt: nil),
+        ])
+        let store = DirectoryBrowserStore(agent: "vm", api: api)
+        await store.start()
+        let environments = [
+            SessionType(id: "cloud", name: "Cloud", icon: "C", workingDir: nil),
+            SessionType(id: "home", name: "Home", icon: "H", workingDir: nil),
+        ]
+
+        store.filterText = "cloud"
+
+        // "cloudy" is a directory name in the path of the first favourite, not its label.
+        XCTAssertEqual(store.filteredFavorites.map(\.path), ["/home/frederik/pai-cloud"])
+        XCTAssertEqual(store.filteredEnvironments(environments).map(\.id), ["cloud"])
+        XCTAssertEqual(store.filteredDirectories, ["pai-cloud"])
+
+        store.filterText = ""
+        XCTAssertEqual(store.filteredFavorites.count, 3)
+        XCTAssertEqual(store.filteredEnvironments(environments).count, 2)
+    }
+
     func testNavigatingResetsTheFilter() async {
         let api = FakeDirectoryBrowseApi()
         await api.setBrowseResult(.success(BrowseResult(path: "/home/frederik", directories: ["pai-cloud"], roots: [])))

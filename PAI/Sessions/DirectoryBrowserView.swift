@@ -55,112 +55,159 @@ struct DirectoryBrowserView: View {
     @ViewBuilder
     private var content: some View {
         if let store {
-            List {
-                Section {
-                    HStack(spacing: 6) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundStyle(PaiPalette.Semantic.textFaint)
-                        TextField("Filter", text: filterBinding(store))
-                            .textFieldStyle(.plain)
-                            .accessibilityIdentifier("directory-browser-filter")
-                    }
-                }
-
-                if !store.sortedFavorites.isEmpty {
-                    Section("Favorites") {
-                        ForEach(store.sortedFavorites) { favorite in
-                            Button {
-                                Task { await store.navigateToFavorite(favorite.path) }
-                            } label: {
-                                Label {
-                                    // Truncated from the start, matching the web's `direction:
-                                    // rtl` trick — the last path segment is what identifies a
-                                    // folder, so that is what must survive truncation.
-                                    Text(SessionListFormat.basename(favorite.path))
-                                        .lineLimit(1)
-                                        .truncationMode(.head)
-                                } icon: {
-                                    Image(systemName: "star.fill")
-                                        .foregroundStyle(PaiPalette.amber500)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if !environments.isEmpty {
-                    Section("Environments") {
-                        ForEach(environments) { type in
-                            Button {
-                                onSelectEnvironment(type.id)
-                                dismiss()
-                            } label: {
-                                Label {
-                                    Text(type.name)
-                                } icon: {
-                                    Text(type.icon)
-                                }
-                            }
-                            .accessibilityIdentifier("directory-browser-environment-\(type.id)")
-                        }
-                    }
-                }
-
-                Section {
-                    if store.canGoUp {
-                        Button {
-                            Task { await store.navigateUp() }
-                        } label: {
-                            Label("..", systemImage: "arrow.up.doc")
-                        }
-                        .accessibilityIdentifier("directory-browser-up")
-                    }
-
-                    ForEach(store.filteredDirectories, id: \.self) { directory in
-                        directoryRow(store, directory)
-                    }
-
-                    if store.filteredDirectories.isEmpty && !store.isLoading {
-                        Text(
-                            store.filterText.isEmpty
-                                ? "No subdirectories" : "No directories match \"\(store.filterText)\""
-                        )
-                        .foregroundStyle(PaiPalette.Semantic.textMuted)
-                    }
-                } header: {
-                    HStack(spacing: 4) {
-                        Text(store.currentPath)
-                            .lineLimit(1)
-                            .truncationMode(.head)
-                        Spacer()
-                        Button {
-                            Task { await store.toggleFavorite(store.currentPath) }
-                        } label: {
-                            Image(systemName: store.currentPathIsFavorite ? "star.fill" : "star")
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(
-                            store.currentPathIsFavorite ? "Remove from favorites" : "Add to favorites"
-                        )
-                        .accessibilityIdentifier("directory-browser-favorite-current")
-                    }
-                }
-
-                if let error = store.error {
-                    Section {
-                        Label(error, systemImage: "exclamationmark.circle.fill")
-                            .foregroundStyle(PaiPalette.Semantic.errorText)
-                    }
-                }
-            }
-            .overlay {
-                if store.isLoading {
-                    ProgressView()
-                }
+            VStack(spacing: 0) {
+                filterField
+                Divider()
+                browserList(store)
             }
         } else {
             ProgressView()
         }
+    }
+
+    private func browserList(_ store: DirectoryBrowserStore) -> some View {
+        List {
+            if !store.filteredFavorites.isEmpty {
+                Section("Favorites") {
+                    ForEach(store.filteredFavorites) { favorite in
+                        favoriteRow(store, favorite)
+                    }
+                }
+            }
+
+            let visibleEnvironments = store.filteredEnvironments(environments)
+            if !visibleEnvironments.isEmpty {
+                Section("Environments") {
+                    ForEach(visibleEnvironments) { type in
+                        Button {
+                            onSelectEnvironment(type.id)
+                            dismiss()
+                        } label: {
+                            Label {
+                                Text(type.name)
+                            } icon: {
+                                Text(type.icon)
+                            }
+                        }
+                        .accessibilityIdentifier("directory-browser-environment-\(type.id)")
+                    }
+                }
+            }
+
+            Section {
+                if store.canGoUp {
+                    Button {
+                        Task { await store.navigateUp() }
+                    } label: {
+                        Label("..", systemImage: "arrow.up.doc")
+                    }
+                    .accessibilityIdentifier("directory-browser-up")
+                }
+
+                ForEach(store.filteredDirectories, id: \.self) { directory in
+                    directoryRow(store, directory)
+                }
+
+                if store.filteredDirectories.isEmpty && !store.isLoading {
+                    Text(
+                        store.filterText.isEmpty
+                            ? "No subdirectories" : "No directories match \"\(store.filterText)\""
+                    )
+                    .foregroundStyle(PaiPalette.Semantic.textMuted)
+                }
+            } header: {
+                HStack(spacing: 4) {
+                    Text(store.currentPath)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                    Spacer()
+                    Button {
+                        Task { await store.toggleFavorite(store.currentPath) }
+                    } label: {
+                        Image(systemName: store.currentPathIsFavorite ? "star.fill" : "star")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(
+                        store.currentPathIsFavorite ? "Remove from favorites" : "Add to favorites"
+                    )
+                    .accessibilityIdentifier("directory-browser-favorite-current")
+                }
+            }
+
+            if let error = store.error {
+                Section {
+                    Label(error, systemImage: "exclamationmark.circle.fill")
+                        .foregroundStyle(PaiPalette.Semantic.errorText)
+                }
+            }
+        }
+        .overlay {
+            if store.isLoading {
+                ProgressView()
+            }
+        }
+    }
+
+    /// Tapping the name picks the favourite and closes the sheet, like the web; the chevron
+    /// opens it as the folder being browsed instead.
+    private func favoriteRow(_ store: DirectoryBrowserStore, _ favorite: FolderFavorite) -> some View {
+        HStack {
+            Button {
+                onSelect(favorite.path)
+                dismiss()
+            } label: {
+                Label {
+                    // Truncated from the start, matching the web's `direction: rtl` trick — the
+                    // last path segment is what identifies a folder, so that is what must
+                    // survive truncation.
+                    Text(SessionListFormat.basename(favorite.path))
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                } icon: {
+                    Image(systemName: "star.fill")
+                        .foregroundStyle(PaiPalette.amber500)
+                }
+            }
+            .buttonStyle(.plain)
+            Spacer()
+            Button {
+                Task { await store.navigateToFavorite(favorite.path) }
+            } label: {
+                Image(systemName: "chevron.right")
+                    .foregroundStyle(PaiPalette.Semantic.textFaint)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open \(SessionListFormat.basename(favorite.path))")
+        }
+        .contentShape(Rectangle())
+        .accessibilityIdentifier("directory-browser-favorite-\(favorite.path)")
+    }
+
+    private var filterField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(PaiPalette.Semantic.textFaint)
+            if let store {
+                TextField("Filter this list", text: filterBinding(store))
+                    .textFieldStyle(.plain)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.done)
+                    .accessibilityIdentifier("directory-browser-filter")
+                if !store.filterText.isEmpty {
+                    Button {
+                        store.filterText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(PaiPalette.Semantic.textFaint)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear filter")
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
     private func directoryRow(_ store: DirectoryBrowserStore, _ directory: String) -> some View {
