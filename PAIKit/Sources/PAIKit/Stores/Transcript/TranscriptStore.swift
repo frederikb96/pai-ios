@@ -84,6 +84,10 @@ public final class TranscriptStore {
         public let secretPrompt: SecretPrompt?
         /// See `Session.liveModel`.
         public let liveModel: String?
+        /// See `Session.model`.
+        public let model: String?
+        /// See `Session.pendingModel`; always the event's own answer.
+        public let pendingModel: String?
         /// See `Session.transferredToSessionId`; always the event's own answer.
         public let transfer: SessionMoved.Mark
     }

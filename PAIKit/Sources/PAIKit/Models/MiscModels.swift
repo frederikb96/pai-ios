@@ -889,6 +889,42 @@ public struct CloseResponse: Codable, Sendable, Equatable {
     }
 }
 
+/// `POST /api/session/{id}/model`: the alias now stored, and whether the running process switched
+/// at once or the session was closed and switches when it next launches.
+public struct SetSessionModelResponse: Codable, Sendable, Equatable {
+    public enum Applied: Codable, Sendable, Equatable {
+        case now
+        case nextLaunch
+        case unrecognized(String)
+
+        public init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            switch raw {
+            case "now": self = .now
+            case "next_launch": self = .nextLaunch
+            default: self = .unrecognized(raw)
+            }
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            switch self {
+            case .now: try container.encode("now")
+            case .nextLaunch: try container.encode("next_launch")
+            case let .unrecognized(raw): try container.encode(raw)
+            }
+        }
+    }
+
+    public let model: String
+    public let applied: Applied
+
+    public init(model: String, applied: Applied) {
+        self.model = model
+        self.applied = applied
+    }
+}
+
 public struct DeleteResponse: Codable, Sendable, Equatable {
     public enum Status: String, Codable, Sendable, Equatable {
         case deleted

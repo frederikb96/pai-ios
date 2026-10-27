@@ -22,6 +22,8 @@ struct SessionDetailView: View {
     @State private var isPresentingArcMenu = false
     @State private var arcSpecTarget: ArcSpecResolution?
     @State private var usage: Usage?
+    @State private var modelSwitch: SessionModelSwitchStore?
+    @State private var isPresentingModelPicker = false
     /// Set only by the fixture screenshot workflow's own `.task` below — see its doc comment.
     /// Never touched by anything a real session does.
     @State private var fixtureImageTarget: FilePreviewTarget?
@@ -138,6 +140,15 @@ struct SessionDetailView: View {
         .sheet(isPresented: $isPresentingActionsSheet) {
             SessionActionsSheet(sessionId: sessionID)
         }
+        .sheet(isPresented: $isPresentingModelPicker) {
+            if let modelSwitch, let session = currentSession {
+                SessionModelPickerSheet(
+                    store: modelSwitch,
+                    current: SessionModelSwitch.currentAlias(session, live: transcript.liveStatus[sessionID])
+                )
+                .presentationDetents([.medium])
+            }
+        }
         .filePreview($fixtureImageTarget)
         // The same three the session list's own trailing swipe offers (`SessionListView`) — see
         // that swipe's own doc comment for why "Subagents" is skipped for a subagent itself.
@@ -226,7 +237,8 @@ struct SessionDetailView: View {
                 turnState: newValue.turnState, displayState: newValue.displayState,
                 activityCounts: newValue.activityCounts,
                 secretGrantable: newValue.secretGrantable, secretPrompt: newValue.secretPrompt,
-                liveModel: newValue.liveModel, transfer: newValue.transfer
+                liveModel: newValue.liveModel, model: newValue.model, pendingModel: newValue.pendingModel,
+                transfer: newValue.transfer
             )
         }
         .task {
@@ -334,11 +346,10 @@ struct SessionDetailView: View {
 
             Spacer(minLength: 8)
 
-            if showModel, let modelLabel = currentModelLabel(session) {
-                Text(modelLabel)
-                    .foregroundStyle(PaiPalette.Semantic.textFaint)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .accessibilityIdentifier("session-model-badge")
+            if showModel,
+                let modelLabel = SessionModelSwitch.badgeLabel(session, live: transcript.liveStatus[sessionID])
+            {
+                modelBadge(modelLabel, session: session)
             }
 
             Text(SessionListFormat.formatTokens(currentTokenCount(session)))
@@ -364,20 +375,34 @@ struct SessionDetailView: View {
                 .buttonStyle(.plain)
                 .fixedSize(horizontal: true, vertical: false)
             }
+
+            if let workingDir = session.workingDir, !workingDir.isEmpty {
+                WorkingFolderButton(workingDir: workingDir)
+                    .foregroundStyle(PaiPalette.Semantic.textFaint)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
         }
         .lineLimit(1)
     }
 
-    /// Same precedence as the token figure below: the transcript's own live SSE value wins once
-    /// this session has reported one, with the session's own persisted `liveModel` as the
-    /// fallback for a screen just opened. Before the FIRST assistant turn has ever landed —
-    /// neither has a value — this falls back further, to the launch-time model alias, so the
-    /// badge never sits empty for a session that has not spoken yet.
-    private func currentModelLabel(_ session: Session) -> String? {
-        let wireId = transcript.liveStatus[sessionID]?.liveModel ?? session.liveModel
-        if let label = ModelDisplay.label(forWireId: wireId) { return label }
-        guard let launchModel = session.model else { return nil }
-        return CreateSessionStore.modelDisplayLabels[launchModel] ?? launchModel
+    /// The model name, a button that opens the picker when the session has a process to switch.
+    @ViewBuilder
+    private func modelBadge(_ label: String, session: Session) -> some View {
+        let text = Text(label)
+            .foregroundStyle(PaiPalette.Semantic.textFaint)
+            .fixedSize(horizontal: true, vertical: false)
+        if SessionModelSwitch.canSwitch(session), let connection = environment.connection {
+            Button {
+                modelSwitch = SessionModelSwitchStore(sessionId: sessionID, api: connection.apiClient)
+                isPresentingModelPicker = true
+            } label: {
+                text
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("session-model-badge")
+        } else {
+            text.accessibilityIdentifier("session-model-badge")
+        }
     }
 
     /// The plus menu's "Undo send", from a pending bubble's own context menu: everything unsent

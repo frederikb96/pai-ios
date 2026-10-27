@@ -947,7 +947,7 @@ final class SessionStoreListStoreTests: XCTestCase {
         store.applyLiveStatus(
             sessionId: "s1", state: .ready, blocker: nil, turnState: .working, displayState: .working,
             activityCounts: ActivityCounts(agents: 2, tasks: 1), secretGrantable: true,
-            secretPrompt: nil, liveModel: nil
+            secretPrompt: nil, liveModel: nil, model: nil, pendingModel: nil
         )
 
         XCTAssertEqual(store.syncedSessions.first?.state, .ready)
@@ -970,7 +970,7 @@ final class SessionStoreListStoreTests: XCTestCase {
         store.applyLiveStatus(
             sessionId: "s1", state: .closed, blocker: nil, turnState: nil, displayState: .working,
             activityCounts: nil, secretGrantable: nil,
-            secretPrompt: nil, liveModel: nil
+            secretPrompt: nil, liveModel: nil, model: nil, pendingModel: nil
         )
 
         XCTAssertEqual(store.syncedSessions.first?.displayState, .working)
@@ -989,7 +989,7 @@ final class SessionStoreListStoreTests: XCTestCase {
         store.applyLiveStatus(
             sessionId: "s1", state: nil, blocker: nil, turnState: nil, displayState: nil,
             activityCounts: nil, secretGrantable: true,
-            secretPrompt: nil, liveModel: nil
+            secretPrompt: nil, liveModel: nil, model: nil, pendingModel: nil
         )
 
         XCTAssertEqual(store.syncedSessions.first?.secretGrantable, true)
@@ -1011,7 +1011,7 @@ final class SessionStoreListStoreTests: XCTestCase {
         store.applyLiveStatus(
             sessionId: "s1", state: .ready, blocker: nil, turnState: .working, displayState: nil,
             activityCounts: nil, secretGrantable: nil,
-            secretPrompt: nil, liveModel: nil
+            secretPrompt: nil, liveModel: nil, model: nil, pendingModel: nil
         )
 
         XCTAssertEqual(store.syncedSessions.first?.taskId, "task-1")
@@ -1086,7 +1086,7 @@ final class SessionStoreListStoreTests: XCTestCase {
         store.applyLiveStatus(
             sessionId: "s1", state: nil, blocker: nil, turnState: nil, displayState: nil,
             activityCounts: nil, secretGrantable: nil,
-            secretPrompt: nil, liveModel: "claude-opus-4-8"
+            secretPrompt: nil, liveModel: "claude-opus-4-8", model: nil, pendingModel: nil
         )
 
         XCTAssertEqual(store.syncedSessions.first?.liveModel, "claude-opus-4-8")
@@ -1099,7 +1099,7 @@ final class SessionStoreListStoreTests: XCTestCase {
         store.applyLiveStatus(
             sessionId: "not-loaded", state: .ready, blocker: nil, turnState: .working, displayState: nil,
             activityCounts: nil, secretGrantable: nil,
-            secretPrompt: nil, liveModel: nil
+            secretPrompt: nil, liveModel: nil, model: nil, pendingModel: nil
         )
 
         XCTAssertTrue(store.syncedSessions.isEmpty)

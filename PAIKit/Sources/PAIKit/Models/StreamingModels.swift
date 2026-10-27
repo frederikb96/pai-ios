@@ -81,6 +81,10 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
     public let secretPrompt: SecretPrompt?
     /// See `Session.liveModel`.
     public let liveModel: String?
+    /// See `Session.model`.
+    public let model: String?
+    /// See `Session.pendingModel`.
+    public let pendingModel: String?
     /// See `Session.transferredToSessionId`.
     public let transferredToSessionId: String?
     /// See `Session.transferredAt`.
@@ -107,6 +111,8 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
         case secretGrantable = "secret_grantable"
         case secretPrompt = "secret_prompt"
         case liveModel = "live_model"
+        case model
+        case pendingModel = "pending_model"
         case transferredToSessionId = "transferred_to_session_id"
         case transferredAt = "transferred_at"
         case queuedTexts = "queued_texts"
@@ -124,6 +130,8 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
         secretGrantable: Bool? = nil,
         secretPrompt: SecretPrompt? = nil,
         liveModel: String? = nil,
+        model: String? = nil,
+        pendingModel: String? = nil,
         transferredToSessionId: String? = nil,
         transferredAt: String? = nil,
         queued: Int?,
@@ -140,6 +148,8 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
         self.secretGrantable = secretGrantable
         self.secretPrompt = secretPrompt
         self.liveModel = liveModel
+        self.model = model
+        self.pendingModel = pendingModel
         self.transferredToSessionId = transferredToSessionId
         self.transferredAt = transferredAt
         self.queued = queued

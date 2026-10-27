@@ -51,7 +51,7 @@ final class SessionTransferWireTests: XCTestCase {
         let marked = Session.fixture(transferredToSessionId: "s2", transferredAt: "2026-10-05T12:00:00+00:00")
         let live = marked.withLiveStatus(
             state: .ready, blocker: nil, turnState: nil, displayState: nil, activityCounts: nil,
-            secretGrantable: nil, secretPrompt: nil, liveModel: nil)
+            secretGrantable: nil, secretPrompt: nil, liveModel: nil, model: nil, pendingModel: nil)
         XCTAssertEqual(live.transferredToSessionId, "s2")
         XCTAssertEqual(live.transferredAt, "2026-10-05T12:00:00+00:00")
         let pinned = marked.withPinnedAt("2026-10-05T13:00:00+00:00")

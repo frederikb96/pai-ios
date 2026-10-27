@@ -282,10 +282,11 @@ public struct Blocker: Codable, Sendable, Equatable {
 public struct Session: Codable, Sendable, Equatable, Identifiable {
     public let id: String
     public let sessionType: String
-    /// The `claude --model` alias (`haiku`/`sonnet`/`opus`/`fable`) this conversation was
-    /// launched with, re-passed on every resume — `nil` means the flag was omitted, letting
-    /// Claude Code pick the plan's own default. Fixed at creation; choosing a model for one
-    /// session never changes what the next one defaults to.
+    /// The `claude --model` alias (`haiku`/`sonnet`/`opus`/`fable`) this conversation launches
+    /// with, on creation and every resume — `nil` means the flag is omitted, letting Claude Code
+    /// pick the plan's own default. Follows the conversation: the backend sets it to the family
+    /// of `liveModel` whenever that changes, and a model switch sets it directly. Choosing a
+    /// model for one session never changes what the next one defaults to.
     public let model: String?
     /// The `claude --effort` level this conversation was launched with, re-passed on every
     /// resume — same fixed-at-creation treatment as `model` above. `nil`/absent lets Claude Code
@@ -420,6 +421,10 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// landed; `model` above is the fallback for that window, since it never changes mid-session
     /// where this does (an in-session `/model` switch, or Anthropic changing a default).
     public let liveModel: String?
+    /// The alias a model switch stored in `model` that no reply has come from yet — what the next
+    /// request (or launch) runs on, shown in place of `liveModel` until a reply from that family
+    /// lands. `nil` when nothing is pending. Computed by the backend; clients derive nothing.
+    public let pendingModel: String?
     /// The scheduled task that launched this conversation, if any — what the scheduled
     /// session filter matches on. `nil` for an ordinary session.
     public let taskId: String?
@@ -489,6 +494,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         case projectName = "project_name"
         case phaseName = "phase_name"
         case liveModel = "live_model"
+        case pendingModel = "pending_model"
         case taskId = "task_id"
         case activityCounts = "activity_counts"
         case secretGrantable = "secret_grantable"
@@ -542,6 +548,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         projectName: String?,
         phaseName: String? = nil,
         liveModel: String? = nil,
+        pendingModel: String? = nil,
         taskId: String? = nil,
         activityCounts: ActivityCounts? = nil,
         secretGrantable: Bool? = nil,
@@ -593,6 +600,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.projectName = projectName
         self.phaseName = phaseName
         self.liveModel = liveModel
+        self.pendingModel = pendingModel
         self.taskId = taskId
         self.activityCounts = activityCounts
         self.secretGrantable = secretGrantable
@@ -608,19 +616,24 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// something other than the SSE stream itself (a mutation response reporting only part of it)
     /// passes the session's own current value for whichever field the response says nothing about.
     ///
+    /// `model` is merged rather than replaced: a backend that predates the field omits it from the
+    /// event, and the polled value must survive that. `pendingModel` is replaced outright, since
+    /// `nil` is the event's answer for "no switch waiting on a reply".
+    ///
     /// 🚨 Every parameter here MUST be passed through explicitly, never left to a `= nil`
     /// default: this calls the memberwise initializer with `self`'s own other fields, so a
     /// property relying on its default would be silently reset to `nil` on every live update.
     public func withLiveStatus(
         state: SessionState?, blocker: Blocker?, turnState: TurnState?, displayState: DisplayState?,
         activityCounts: ActivityCounts?, secretGrantable: Bool?, secretPrompt: SecretPrompt?,
-        liveModel: String?, transfer: SessionMoved.Mark? = nil
+        liveModel: String?, model: String?, pendingModel: String?, transfer: SessionMoved.Mark? = nil
     ) -> Session {
         // A supplied mark replaces both fields, nil members included; without one they carry over.
         let movedTo = transfer == nil ? transferredToSessionId : transfer?.toSessionId
         let movedAt = transfer == nil ? transferredAt : transfer?.at
         return Session(
-            id: id, sessionType: sessionType, model: model, thinking: thinking, status: status, state: state,
+            id: id, sessionType: sessionType, model: model ?? self.model, thinking: thinking, status: status,
+            state: state,
             blocker: blocker,
             turnState: turnState, displayState: displayState,
             title: title, titleLocked: titleLocked, pinnedAt: pinnedAt, initialMessage: initialMessage,
@@ -634,7 +647,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
             sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
             projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName,
-            liveModel: liveModel, taskId: taskId,
+            liveModel: liveModel, pendingModel: pendingModel, taskId: taskId,
             activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
             transferredToSessionId: movedTo, transferredAt: movedAt, namespace: namespace
         )
@@ -661,7 +674,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
             sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
             projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName,
-            liveModel: liveModel, taskId: taskId,
+            liveModel: liveModel, pendingModel: pendingModel, taskId: taskId,
             activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
             transferredToSessionId: transferredToSessionId, transferredAt: transferredAt,
             namespace: namespace
@@ -688,7 +701,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
             sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
             projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName,
-            liveModel: liveModel, taskId: taskId,
+            liveModel: liveModel, pendingModel: pendingModel, taskId: taskId,
             activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
             transferredToSessionId: transferredToSessionId, transferredAt: transferredAt,
             namespace: namespace
