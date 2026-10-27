@@ -91,13 +91,14 @@ final class SessionMovedLiveStatusTests: XCTestCase {
         let base = SessionFixture.make(id: "s1")
         let applied = base.withLiveStatus(
             state: nil, blocker: nil, turnState: nil, displayState: nil, activityCounts: nil,
-            secretGrantable: nil, secretPrompt: nil, liveModel: nil, transfer: status.transfer)
+            secretGrantable: nil, secretPrompt: nil, liveModel: nil, model: nil, pendingModel: nil,
+            transfer: status.transfer)
         XCTAssertTrue(SessionMoved.isMoved(applied))
         XCTAssertEqual(applied.transferredAt, "2026-10-05T12:30:00+00:00")
 
         let reversed = applied.withLiveStatus(
             state: nil, blocker: nil, turnState: nil, displayState: nil, activityCounts: nil,
-            secretGrantable: nil, secretPrompt: nil, liveModel: nil,
+            secretGrantable: nil, secretPrompt: nil, liveModel: nil, model: nil, pendingModel: nil,
             transfer: SessionMoved.Mark(toSessionId: nil, at: nil))
         XCTAssertFalse(SessionMoved.isMoved(reversed))
         XCTAssertNil(reversed.transferredAt)
@@ -105,7 +106,7 @@ final class SessionMovedLiveStatusTests: XCTestCase {
         // No mark supplied (a close, a pin) leaves the fields alone.
         let untouched = applied.withLiveStatus(
             state: nil, blocker: nil, turnState: nil, displayState: nil, activityCounts: nil,
-            secretGrantable: nil, secretPrompt: nil, liveModel: nil)
+            secretGrantable: nil, secretPrompt: nil, liveModel: nil, model: nil, pendingModel: nil)
         XCTAssertTrue(SessionMoved.isMoved(untouched))
     }
 }

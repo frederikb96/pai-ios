@@ -355,7 +355,7 @@ final class PaiModelsTests: XCTestCase {
         var session = SessionFixture.make(secretGrantable: false)
         session = session.withLiveStatus(
             state: .ready, blocker: nil, turnState: .working, displayState: .working, activityCounts: nil,
-            secretGrantable: true, secretPrompt: nil, liveModel: nil)
+            secretGrantable: true, secretPrompt: nil, liveModel: nil, model: nil, pendingModel: nil)
         XCTAssertEqual(session.secretGrantable, true)
     }
 
@@ -366,12 +366,12 @@ final class PaiModelsTests: XCTestCase {
         var session = SessionFixture.make(liveModel: "claude-sonnet-5")
         session = session.withLiveStatus(
             state: .ready, blocker: nil, turnState: .working, displayState: .working, activityCounts: nil,
-            secretGrantable: nil, secretPrompt: nil, liveModel: "claude-opus-4-8")
+            secretGrantable: nil, secretPrompt: nil, liveModel: "claude-opus-4-8", model: nil, pendingModel: nil)
         XCTAssertEqual(session.liveModel, "claude-opus-4-8")
 
         session = session.withLiveStatus(
             state: .ready, blocker: nil, turnState: .working, displayState: .working, activityCounts: nil,
-            secretGrantable: nil, secretPrompt: nil, liveModel: nil)
+            secretGrantable: nil, secretPrompt: nil, liveModel: nil, model: nil, pendingModel: nil)
         XCTAssertNil(session.liveModel)
     }
 
@@ -394,7 +394,7 @@ final class PaiModelsTests: XCTestCase {
         XCTAssertEqual(session.namespace, "anja")
         session = session.withLiveStatus(
             state: .ready, blocker: nil, turnState: .working, displayState: .working, activityCounts: nil,
-            secretGrantable: nil, secretPrompt: nil, liveModel: nil)
+            secretGrantable: nil, secretPrompt: nil, liveModel: nil, model: nil, pendingModel: nil)
         XCTAssertEqual(session.namespace, "anja")
         session = session.withPinnedAt("2026-01-01T00:00:00Z")
         XCTAssertEqual(session.namespace, "anja")

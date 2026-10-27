@@ -422,11 +422,14 @@ enum SessionFixture {
         taskId: String? = nil,
         activityCounts: ActivityCounts? = nil,
         secretGrantable: Bool? = nil,
-        liveModel: String? = nil
+        liveModel: String? = nil,
+        model: String? = nil,
+        pendingModel: String? = nil
     ) -> Session {
         Session(
             id: id,
             sessionType: sessionType,
+            model: model,
             status: status,
             state: state,
             blocker: nil,
@@ -457,6 +460,7 @@ enum SessionFixture {
             phaseId: nil,
             projectName: projectName,
             liveModel: liveModel,
+            pendingModel: pendingModel,
             taskId: taskId,
             activityCounts: activityCounts,
             secretGrantable: secretGrantable

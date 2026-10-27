@@ -362,20 +362,21 @@ public final class SessionListStore {
     public func applyLiveStatus(
         sessionId: String, state: SessionState?, blocker: Blocker?, turnState: TurnState?,
         displayState: DisplayState?, activityCounts: ActivityCounts?, secretGrantable: Bool?,
-        secretPrompt: SecretPrompt?, liveModel: String?, transfer: SessionMoved.Mark? = nil
+        secretPrompt: SecretPrompt?, liveModel: String?, model: String?, pendingModel: String?,
+        transfer: SessionMoved.Mark? = nil
     ) {
         if let index = syncedSessions.firstIndex(where: { $0.id == sessionId }) {
             syncedSessions[index] = syncedSessions[index].withLiveStatus(
                 state: state, blocker: blocker, turnState: turnState, displayState: displayState,
                 activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
-                liveModel: liveModel, transfer: transfer
+                liveModel: liveModel, model: model, pendingModel: pendingModel, transfer: transfer
             )
         }
         if let index = serverFilteredResults.firstIndex(where: { $0.session.id == sessionId }) {
             let updated = serverFilteredResults[index].session.withLiveStatus(
                 state: state, blocker: blocker, turnState: turnState, displayState: displayState,
                 activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
-                liveModel: liveModel, transfer: transfer
+                liveModel: liveModel, model: model, pendingModel: pendingModel, transfer: transfer
             )
             serverFilteredResults[index] = SessionSearchResult(
                 session: updated, score: serverFilteredResults[index].score, tier: serverFilteredResults[index].tier
@@ -672,7 +673,8 @@ public final class SessionListStore {
                                 state: .closed, blocker: nil, turnState: session.turnState,
                                 displayState: .closed, activityCounts: session.activityCounts,
                                 secretGrantable: session.secretGrantable, secretPrompt: session.secretPrompt,
-                                liveModel: session.liveModel
+                                liveModel: session.liveModel, model: session.model,
+                                pendingModel: session.pendingModel
                             )
                         )
                     }
