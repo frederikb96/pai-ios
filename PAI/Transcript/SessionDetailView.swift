@@ -346,10 +346,15 @@ struct SessionDetailView: View {
 
             Spacer(minLength: 8)
 
-            if showModel,
-                let modelLabel = SessionModelSwitch.badgeLabel(session, live: transcript.liveStatus[sessionID])
-            {
-                modelBadge(modelLabel, session: session)
+            if let modelLabel = SessionModelSwitch.badgeLabel(session, live: transcript.liveStatus[sessionID]) {
+                if showModel {
+                    modelBadge(modelLabel, session: session)
+                } else if SessionModelSwitch.canSwitch(session) {
+                    // The narrowest layout drops the name but keeps the way into the picker.
+                    modelPickerButton { Image(systemName: "cpu").foregroundStyle(PaiPalette.Semantic.textFaint) }
+                        .accessibilityLabel("Model: \(modelLabel)")
+                        .accessibilityIdentifier("session-model-icon")
+                }
             }
 
             Text(SessionListFormat.formatTokens(currentTokenCount(session)))
@@ -391,17 +396,26 @@ struct SessionDetailView: View {
         let text = Text(label)
             .foregroundStyle(PaiPalette.Semantic.textFaint)
             .fixedSize(horizontal: true, vertical: false)
-        if SessionModelSwitch.canSwitch(session), let connection = environment.connection {
+        if SessionModelSwitch.canSwitch(session) {
+            modelPickerButton { text }
+                .accessibilityIdentifier("session-model-badge")
+        } else {
+            text.accessibilityIdentifier("session-model-badge")
+        }
+    }
+
+    /// A plain button that opens the model picker for this session.
+    @ViewBuilder
+    private func modelPickerButton<Label: View>(@ViewBuilder label: () -> Label) -> some View {
+        if let connection = environment.connection {
             Button {
                 modelSwitch = SessionModelSwitchStore(sessionId: sessionID, api: connection.apiClient)
                 isPresentingModelPicker = true
             } label: {
-                text
+                label()
             }
             .buttonStyle(.plain)
-            .accessibilityIdentifier("session-model-badge")
-        } else {
-            text.accessibilityIdentifier("session-model-badge")
+            .fixedSize(horizontal: true, vertical: false)
         }
     }
 
