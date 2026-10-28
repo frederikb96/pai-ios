@@ -76,6 +76,21 @@ public final class SessionActionsStore {
         return await run { try await self.api.renameSession(sessionId: self.sessionId, title: trimmed) }
     }
 
+    /// The rename sheet's Save: the title and the "follow the phase name from the VM" choice land
+    /// together, and nothing is sent before it. Following takes the phase's current name at once
+    /// rather than at the phase's next rename. Mirrors the web's `saveRename`.
+    public func saveRename(title: String, followPhase: Bool) async -> Bool {
+        if followPhase {
+            if let phase = session?.phaseName, phase != session?.title {
+                guard await rename(title: phase) else { return false }
+            }
+            return await setTitleLocked(false)
+        }
+        guard await rename(title: title) else { return false }
+        // A changed title locks on the server; an unchanged one saved here is still a choice to lock.
+        return session?.titleLocked == true ? true : await setTitleLocked(true)
+    }
+
     /// The rename sheet's own checkbox is phrased "follow the phase name from the VM" — checked
     /// means unlocked (`!locked`), matching the web (`SessionActionsMenu.tsx`'s `saveRename`
     /// subview) exactly, so a caller reading this store's `session?.titleLocked` for that

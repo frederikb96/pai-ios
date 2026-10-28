@@ -44,6 +44,40 @@ final class SessionStoreActionsTests: XCTestCase {
         XCTAssertTrue(calls.isEmpty, "a blank rename must never reach the server")
     }
 
+    func testSavingAFollowedPhaseTakesItsNameAndUnlocks() async {
+        let (listStore, _) = await makeListStore(
+            session: SessionFixture.make(id: "s1", title: "Mine", titleLocked: true, phaseName: "Phase"))
+        await listStore.loadInitialSessions()
+        let actionsApi = FakeSessionActionsApi()
+        await actionsApi.setSessionResult(
+            .success(SessionFixture.make(id: "s1", title: "Phase", titleLocked: true, phaseName: "Phase")))
+        let store = SessionActionsStore(sessionId: "s1", sessionList: listStore, api: actionsApi)
+
+        let ok = await store.saveRename(title: "ignored", followPhase: true)
+
+        XCTAssertTrue(ok)
+        let renames = await actionsApi.renameCalls.map(\.title)
+        let locks = await actionsApi.setTitleLockedCalls.map(\.locked)
+        XCTAssertEqual(renames, ["Phase"])
+        XCTAssertEqual(locks, [false], "following must end unlocked, after the rename that locked it")
+    }
+
+    func testSavingAnUnchangedNameStillLocksIt() async {
+        let (listStore, _) = await makeListStore(
+            session: SessionFixture.make(id: "s1", title: "Same", titleLocked: false))
+        await listStore.loadInitialSessions()
+        let actionsApi = FakeSessionActionsApi()
+        // The server leaves an unchanged title unlocked.
+        await actionsApi.setSessionResult(.success(SessionFixture.make(id: "s1", title: "Same", titleLocked: false)))
+        let store = SessionActionsStore(sessionId: "s1", sessionList: listStore, api: actionsApi)
+
+        let ok = await store.saveRename(title: "Same", followPhase: false)
+
+        XCTAssertTrue(ok)
+        let locks = await actionsApi.setTitleLockedCalls.map(\.locked)
+        XCTAssertEqual(locks, [true])
+    }
+
     func testAFailedMutationSetsAnErrorAndLeavesTheListRowUntouched() async {
         let (listStore, _) = await makeListStore(session: SessionFixture.make(id: "s1", title: "original"))
         await listStore.loadInitialSessions()
