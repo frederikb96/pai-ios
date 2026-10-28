@@ -107,8 +107,6 @@ final class PaiFixtureRoutesTests: XCTestCase {
         let tasks = try JSONDecoder().decode(SchedulerTaskListResponse.self, from: body("/api/scheduler/tasks"))
         XCTAssertTrue(tasks.tasks.contains { $0.notifyPush == .blocking })
         XCTAssertTrue(tasks.tasks.contains { $0.notifyPush == .all })
-        let insights = try JSONDecoder().decode(SchedulerInsights.self, from: body("/api/scheduler/insights"))
-        XCTAssertEqual(insights.totals.runs, insights.tasks.reduce(0) { $0 + $1.runs })
         let status = try JSONDecoder().decode(StatusMessage.self, from: body("/api/status-message"))
         XCTAssertTrue(status.active)
         let canteen = try JSONDecoder().decode(CanteenEntriesResponse.self, from: body("/api/canteen/entries"))

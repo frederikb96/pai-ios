@@ -1,6 +1,6 @@
 import Foundation
 
-/// The scheduler's corpus: the task list, the usage insights and the status message every
+/// The scheduler's corpus: the task list and the status message every
 /// scheduled run is told about. Three tasks cover what the list row draws differently — a
 /// cadence task that pushes every notification, one that pushes only blocking ones and stopped
 /// at its last run, and a task fired only by hand.
@@ -128,28 +128,6 @@ extension PaiFixtures {
             }
           ],
           "next_offset": null
-        }
-        """#
-
-    /// `GET /api/scheduler/insights?days=N`.
-    public static let schedulerInsights = #"""
-        {
-          "days": 7,
-          "since_ms": 1755993600000,
-          "totals": {
-            "runs": 31, "tokens_absolute": 4820000, "tokens_relative": 1310000,
-            "run_seconds": 5460.5, "notified": 9
-          },
-          "tasks": [
-            {
-              "task_id": "5c0d8e21-7a64-4f0b-9d0e-1b2c3d4e5f61", "name": "Grocery sync", "runs": 28,
-              "tokens_absolute": 4100000, "tokens_relative": 1100000, "run_seconds": 4200.0
-            },
-            {
-              "task_id": "5c0d8e21-7a64-4f0b-9d0e-1b2c3d4e5f60", "name": "Nightly backup", "runs": 3,
-              "tokens_absolute": 720000, "tokens_relative": 210000, "run_seconds": 1260.5
-            }
-          ]
         }
         """#
 

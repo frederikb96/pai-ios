@@ -3,11 +3,11 @@ import XCTest
 @testable import PAIKit
 
 @MainActor
-final class SchedulerRunInsightsTests: XCTestCase {
+final class SchedulerRunHistoryTests: XCTestCase {
 
     // MARK: wire shape — keys copied from what the backend serialises
 
-    func testRunDecodesTheInsightFieldsFromTheWire() async throws {
+    func testRunDecodesTheTokenFieldsFromTheWire() async throws {
         let json = """
             {"id":"r1","task_id":"t1","trigger":"schedule","disposition":"fired","reason":null,
              "session_id":"s1","gate_stdout":null,"gate_exit_code":null,"gate_skipped":false,
@@ -22,19 +22,6 @@ final class SchedulerRunInsightsTests: XCTestCase {
         XCTAssertEqual([run.tokensAbsolute, run.tokensRelative], [340_000, 220_000])
         XCTAssertTrue(run.notified)
         XCTAssertEqual(run.startedAt, "1970-01-01T00:00:01+00:00")
-    }
-
-    func testInsightsDecodeFromTheWire() async throws {
-        let json = """
-            {"days":7,"since_ms":5,"totals":{"runs":12,"tokens_absolute":3400000,
-             "tokens_relative":1200000,"run_seconds":3720.5,"notified":2},
-             "tasks":[{"task_id":"t9","name":"Inbox","runs":8,"tokens_absolute":2000000,
-             "tokens_relative":900000,"run_seconds":2400.0}]}
-            """
-        let insights = try JSONDecoder().decode(SchedulerInsights.self, from: Data(json.utf8))
-        XCTAssertEqual(insights.totals.tokensRelative, 1_200_000)
-        XCTAssertEqual(insights.tasks.first?.taskId, "t9")
-        XCTAssertEqual(insights.tasks.first?.runSeconds, 2400.0)
     }
 
     // MARK: paging

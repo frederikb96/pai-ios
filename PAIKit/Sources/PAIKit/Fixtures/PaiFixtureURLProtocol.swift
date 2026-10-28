@@ -243,7 +243,6 @@
             ) { PaiFixtures.data(PaiFixtures.notificationDetail) },
             exact("GET", "/api/status-message") { PaiFixtures.statusMessage },
             exact("GET", "/api/scheduler/tasks") { PaiFixtures.schedulerTasks },
-            exact("GET", "/api/scheduler/insights") { PaiFixtures.schedulerInsights },
             exact("GET", "/api/canteen/entries") { PaiFixtures.canteenEntries },
             exact("GET", "/api/alerts") { PaiFixtures.alerts },
             exact("POST", "/api/alerts/clear") { PaiFixtures.alertsCleared },
