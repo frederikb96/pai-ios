@@ -314,22 +314,23 @@ private struct RenameActionView: View {
     let onDone: () -> Void
 
     @State private var text: String
-    @State private var followsPhaseName: Bool
-    // Whether the toggle above was actually touched during this visit — without this, saving a
-    // plain rename (text changed, toggle never touched) would unconditionally resend the
-    // toggle's PRE-rename value and override `rename(title:)`'s own server-side default (a
-    // changed title locks unless told otherwise) right back to whatever it was before.
-    @State private var followsPhaseNameTouched = false
+    // Every visit starts unticked, since opening rename means naming it; nothing is sent until
+    // Save, which applies the name and this choice together (`SessionActionsStore.saveRename`).
+    @State private var followsPhaseName = false
     @State private var isSaving = false
+    @FocusState private var fieldFocused: Bool
 
     init(actions: SessionActionsStore, toasts: ToastCenter, onDone: @escaping () -> Void) {
         self.actions = actions
         self.toasts = toasts
         self.onDone = onDone
         _text = State(initialValue: actions.session?.title ?? "")
-        // Checked means unlocked (`!titleLocked`) — see `SessionActionsStore.setTitleLocked`'s
-        // doc comment for why the checkbox is phrased this way.
-        _followsPhaseName = State(initialValue: !(actions.session?.titleLocked ?? false))
+    }
+
+    private var currentlyFollowing: Bool { !(actions.session?.titleLocked ?? false) }
+
+    private var canSave: Bool {
+        !isSaving && (followsPhaseName || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     var body: some View {
@@ -337,32 +338,37 @@ private struct RenameActionView: View {
             Section {
                 TextField("Session name", text: $text)
                     .accessibilityIdentifier("session-rename-field")
+                    .focused($fieldFocused)
+                    .disabled(followsPhaseName)
+                    .submitLabel(.done)
+                    .onSubmit { if canSave { Task { await save() } } }
             }
             Section {
                 Toggle("Follow the phase name from the VM", isOn: $followsPhaseName)
-                    .onChange(of: followsPhaseName) { followsPhaseNameTouched = true }
             } footer: {
-                Text("Until a name is chosen here, the session carries whatever the VM is calling the work.")
+                Text(footerText)
             }
         }
+        .onAppear { fieldFocused = true }
         .navigationTitle("Rename session")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save") { Task { await save() } }
-                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving)
+                    .disabled(!canSave)
             }
         }
+    }
+
+    private var footerText: String {
+        let now = currentlyFollowing ? "Follows the phase now." : "Named by hand now."
+        return "\(now) Save applies the name and this choice."
     }
 
     private func save() async {
         isSaving = true
         defer { isSaving = false }
-        let renamed = await actions.rename(title: text)
-        // Untouched, the rename call above already settled the lock on its own (the server's
-        // default) — resending the toggle's stale initial value here would undo that.
-        let lockChanged = followsPhaseNameTouched ? await actions.setTitleLocked(!followsPhaseName) : true
-        if renamed && lockChanged {
+        if await actions.saveRename(title: text, followPhase: followsPhaseName) {
             onDone()
         } else {
             toasts.show(actions.errorMessage ?? "Rename failed", kind: .error)
