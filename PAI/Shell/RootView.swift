@@ -324,8 +324,6 @@ struct RootView: View {
             SchedulerListView()
         case .schedulerTask(let id):
             TaskEditorView(taskId: id)
-        case .schedulerInsights:
-            SchedulerInsightsView()
         case .quickActions:
             QuickActionsScreen()
         case .computerCall:
