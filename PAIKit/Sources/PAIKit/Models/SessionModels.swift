@@ -139,6 +139,9 @@ extension DisplayState: Codable {
 /// value `types.ts` declares — not a decode fallback.
 public enum BlockerKind: Sendable, Hashable {
     case trustPrompt, trustPromptConfirmed, loginRequired, permissionPrompt, choicePrompt
+    /// The session's pane is alive but PAI never found its Remote Control connection, so nothing
+    /// sent reaches it. Carries the pane text as `question` and no options.
+    case notRegistered
     case unknown
     case unrecognized(String)
 }
@@ -150,6 +153,7 @@ extension BlockerKind: Codable {
         "login_required": .loginRequired,
         "permission_prompt": .permissionPrompt,
         "choice_prompt": .choicePrompt,
+        "not_registered": .notRegistered,
         "unknown": .unknown,
     ]
 
@@ -166,6 +170,7 @@ extension BlockerKind: Codable {
         case .loginRequired: try container.encode("login_required")
         case .permissionPrompt: try container.encode("permission_prompt")
         case .choicePrompt: try container.encode("choice_prompt")
+        case .notRegistered: try container.encode("not_registered")
         case .unknown: try container.encode("unknown")
         case let .unrecognized(raw): try container.encode(raw)
         }

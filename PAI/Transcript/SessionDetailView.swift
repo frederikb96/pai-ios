@@ -58,6 +58,9 @@ struct SessionDetailView: View {
                 VStack(spacing: 0) {
                     headerStrip
                     movedBanner
+                    SessionBlockerBanner(
+                        sessionID: sessionID, sessionList: sessions, api: connection.apiClient,
+                        onOpenTerminal: { environment.router.push(.terminal(sessionID: sessionID)) })
                     deliveryFailureBanner
                     TranscriptCollectionView(
                         sessionID: sessionID, store: transcript, apiClient: connection.apiClient, settings: settings,

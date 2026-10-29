@@ -73,7 +73,7 @@ struct ClaudeAuthBanner: View {
         case expiring(notice: String)
         case signedOut(rejected: Bool)
 
-        fileprivate var tone: Tone {
+        fileprivate var tone: BannerTone {
             switch self {
             case .expiring: return .amber
             case .signedOut: return .red
@@ -147,7 +147,7 @@ struct ClaudeAuthBanner: View {
     }
 
     @ViewBuilder
-    private func header(_ severity: Severity, tone: Tone) -> some View {
+    private func header(_ severity: Severity, tone: BannerTone) -> some View {
         switch severity {
         case .signedOut(let rejected):
             VStack(alignment: .leading, spacing: 2) {
@@ -174,7 +174,7 @@ struct ClaudeAuthBanner: View {
     /// the expiring severity's view code, so the link and code field it produces were unreachable
     /// from there: tapping it started a real sign-in on the VM with no way to ever show its link.
     @ViewBuilder
-    private func actionBlock(tone: Tone) -> some View {
+    private func actionBlock(tone: BannerTone) -> some View {
         switch ClaudeAuthPredicates.actionState(auth: store.auth, busy: store.busy, linkExpired: linkExpired) {
         case .starting:
             HStack(spacing: 6) {
@@ -209,7 +209,7 @@ struct ClaudeAuthBanner: View {
     }
 
     @ViewBuilder
-    private func loginControls(_ login: ClaudeLogin, verifying: Bool, busy: Bool, tone: Tone) -> some View {
+    private func loginControls(_ login: ClaudeLogin, verifying: Bool, busy: Bool, tone: BannerTone) -> some View {
         Text("Open the sign-in page, approve it, then paste the code it shows you.")
             .font(PaiTypography.body.font)
             .foregroundStyle(tone.titleColor)
@@ -280,7 +280,7 @@ struct ClaudeAuthBanner: View {
 
 /// Colours for one severity — everything the action block needs to match whichever banner it is
 /// rendering inside.
-fileprivate struct Tone {
+struct BannerTone {
     let iconColor: Color
     let titleColor: Color
     let textColor: Color
@@ -288,7 +288,7 @@ fileprivate struct Tone {
     let background: Color
     let border: Color
 
-    static let amber = Tone(
+    static let amber = BannerTone(
         iconColor: PaiPalette.Semantic.warningText,
         titleColor: PaiPalette.Semantic.warningBannerText,
         textColor: PaiPalette.Semantic.warningText,
@@ -297,13 +297,24 @@ fileprivate struct Tone {
         border: PaiPalette.Semantic.warningBorder
     )
 
-    static let red = Tone(
+    static let red = BannerTone(
         iconColor: PaiPalette.Semantic.errorText,
         titleColor: PaiPalette.Semantic.errorBannerText,
         textColor: PaiPalette.Semantic.errorText,
         accentColor: PaiPalette.red500,
         background: PaiPalette.Semantic.errorBackground,
         border: PaiPalette.Semantic.errorBorder
+    )
+
+    /// A calm status, nothing to fix — the web's blue info banner, drawn from the accent roles
+    /// rather than a fixed blue because the palette's blue scale has no dark-mode pairing.
+    static let accent = BannerTone(
+        iconColor: PaiPalette.Semantic.accentText,
+        titleColor: PaiPalette.Semantic.accentText,
+        textColor: PaiPalette.Semantic.accentText,
+        accentColor: PaiPalette.primary500,
+        background: PaiPalette.Semantic.accentBackground,
+        border: PaiPalette.Semantic.borderStrong
     )
 }
 
