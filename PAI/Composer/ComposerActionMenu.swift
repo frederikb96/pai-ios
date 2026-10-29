@@ -3,7 +3,8 @@ import SwiftUI
 
 /// The plus button's menu — a native `Menu`, matching the "must feel native" constraint directly
 /// rather than porting the web's absolutely-positioned popover. Item order mirrors the web's plus
-/// menu (`MessageInput.tsx`). `Cancel` needs only a session to exist; `Grant Secret Access` needs
+/// menu (`MessageInput.tsx`): the secret grant first, so a long menu never has to be scrolled to
+/// reach it. `Cancel` needs only a session to exist; `Grant Secret Access` needs
 /// the server to say this particular one is grantable — the two are gated separately rather than
 /// both riding `hasSession`.
 struct ComposerActionMenu: View {
@@ -52,8 +53,7 @@ struct ComposerActionMenu: View {
     var onSecretGrant: () -> Void
     var onRestorePreviousText: () -> Void
     /// Cancel, Undo send, Send now and Move to background — each a session action, drawn in the
-    /// order ``ComposerSessionAction/entries(hasSession:offersProcessActions:canGrantSecretAccess:)``
-    /// gives them.
+    /// order ``ComposerSessionAction/entries(hasSession:offersProcessActions:)`` gives them.
     var onCancel: () -> Void
     var onUndoSend: () -> Void = {}
     var onSendNow: () -> Void = {}
@@ -70,6 +70,25 @@ struct ComposerActionMenu: View {
 
     var body: some View {
         Menu {
+            let leading = ComposerSessionAction.leading(canGrantSecretAccess: canGrantSecretAccess)
+            ForEach(leading, id: \.self) { action in
+                sessionActionButton(action)
+            }
+            if let pregrantArmed {
+                Button {
+                    onTogglePregrant()
+                } label: {
+                    if pregrantArmed {
+                        Label("Cancel Secret Grant", systemImage: "xmark.circle")
+                    } else {
+                        Label("Grant Secrets on Start", systemImage: "key")
+                    }
+                }
+                .accessibilityIdentifier("composer-menu-pregrant")
+            }
+            if !leading.isEmpty || pregrantArmed != nil {
+                Divider()
+            }
             if offersStartCallAfterSend {
                 Button {
                     onStartCallAfterSend()
@@ -124,29 +143,10 @@ struct ComposerActionMenu: View {
                 Label("Temporary Note", systemImage: "note.text")
             }
             ForEach(
-                ComposerSessionAction.entries(
-                    hasSession: hasSession, offersProcessActions: offersProcessActions,
-                    canGrantSecretAccess: canGrantSecretAccess),
+                ComposerSessionAction.entries(hasSession: hasSession, offersProcessActions: offersProcessActions),
                 id: \.self
             ) { action in
-                Button(role: Self.role(for: action)) {
-                    perform(action)
-                } label: {
-                    Label(action.title, systemImage: action.systemImage)
-                }
-                .accessibilityIdentifier("composer-menu-\(action.rawValue)")
-            }
-            if let pregrantArmed {
-                Button {
-                    onTogglePregrant()
-                } label: {
-                    if pregrantArmed {
-                        Label("Cancel Secret Grant", systemImage: "xmark.circle")
-                    } else {
-                        Label("Grant Secrets on Start", systemImage: "key")
-                    }
-                }
-                .accessibilityIdentifier("composer-menu-pregrant")
+                sessionActionButton(action)
             }
             if canRestorePreviousText {
                 Button {
@@ -166,10 +166,19 @@ struct ComposerActionMenu: View {
                 .foregroundStyle(PaiPalette.Semantic.textSecondary)
         }
         // A Menu opened from a bar at the bottom of the screen may list its items bottom-up;
-        // the fixed order is the one declared above, so Cancel stays first whatever the edge.
+        // the fixed order is the one declared above, so the grant stays first whatever the edge.
         .menuOrder(.fixed)
         .accessibilityIdentifier("composer-action-menu")
         .accessibilityLabel("More options")
+    }
+
+    private func sessionActionButton(_ action: ComposerSessionAction) -> some View {
+        Button(role: Self.role(for: action)) {
+            perform(action)
+        } label: {
+            Label(action.title, systemImage: action.systemImage)
+        }
+        .accessibilityIdentifier("composer-menu-\(action.rawValue)")
     }
 
     private static func role(for action: ComposerSessionAction) -> ButtonRole? {

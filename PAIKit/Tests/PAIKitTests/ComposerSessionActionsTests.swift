@@ -6,32 +6,24 @@ import XCTest
 /// says. The view only draws what these return.
 final class ComposerSessionActionsTests: XCTestCase {
 
-    func testTheMenuListsCancelUndoSendSendNowMoveToBackgroundThenGrantSecretAccess() {
-        let entries = ComposerSessionAction.entries(
-            hasSession: true, offersProcessActions: true, canGrantSecretAccess: true)
+    func testTheSessionActionsFurtherDownAreCancelUndoSendSendNowThenMoveToBackground() {
+        let entries = ComposerSessionAction.entries(hasSession: true, offersProcessActions: true)
 
-        XCTAssertEqual(
-            entries.map(\.title),
-            ["Cancel", "Undo send", "Send now", "Move to background", "Grant Secret Access"])
+        XCTAssertEqual(entries.map(\.title), ["Cancel", "Undo send", "Send now", "Move to background"])
     }
 
     func testAnUltraFastSessionKeepsCancelAndUndoButHasNoProcessToSendNowOrBackground() {
-        let entries = ComposerSessionAction.entries(
-            hasSession: true, offersProcessActions: false, canGrantSecretAccess: false)
-
-        XCTAssertEqual(entries, [.cancel, .undoSend])
+        XCTAssertEqual(
+            ComposerSessionAction.entries(hasSession: true, offersProcessActions: false), [.cancel, .undoSend])
     }
 
     func testBeforeASessionExistsNoSessionActionIsOffered() {
-        XCTAssertEqual(
-            ComposerSessionAction.entries(hasSession: false, offersProcessActions: true, canGrantSecretAccess: false),
-            [])
+        XCTAssertEqual(ComposerSessionAction.entries(hasSession: false, offersProcessActions: true), [])
     }
 
-    func testGrantSecretAccessFollowsTheServersVerdictAlone() {
-        XCTAssertEqual(
-            ComposerSessionAction.entries(hasSession: true, offersProcessActions: true, canGrantSecretAccess: false),
-            [.cancel, .undoSend, .sendNow, .moveToBackground])
+    func testGrantSecretAccessOpensTheMenuOnlyOnTheServersVerdict() {
+        XCTAssertEqual(ComposerSessionAction.leading(canGrantSecretAccess: true), [.grantSecretAccess])
+        XCTAssertEqual(ComposerSessionAction.leading(canGrantSecretAccess: false), [])
     }
 
     func testEveryRefusalReasonHasItsOwnSentence() {
