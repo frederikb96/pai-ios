@@ -1,12 +1,12 @@
 import Foundation
 
-/// The session actions of the composer's plus menu, in the order they sit there: Cancel, Undo
-/// send, Send now, Move to background, then Grant Secret Access. The web's plus menu lists the
-/// same five the same way (`MessageInput.tsx`).
+/// The session actions of the composer's plus menu. Grant Secret Access opens the menu, so it is
+/// reached without scrolling a long one; Cancel, Undo send, Send now and Move to background sit
+/// further down, in that order. The web's plus menu places them the same way (`MessageInput.tsx`).
 ///
 /// The order and the gating live here, as values, so a unit test proves them on Linux; the menu
-/// itself (`ComposerActionMenu`) only draws what ``entries(hasSession:offersProcessActions:canGrantSecretAccess:)``
-/// returns.
+/// itself (`ComposerActionMenu`) only draws what ``leading(canGrantSecretAccess:)`` and
+/// ``entries(hasSession:offersProcessActions:)`` return.
 public enum ComposerSessionAction: String, CaseIterable, Sendable, Equatable {
     case cancel
     case undoSend
@@ -14,23 +14,22 @@ public enum ComposerSessionAction: String, CaseIterable, Sendable, Equatable {
     case moveToBackground
     case grantSecretAccess
 
+    /// The actions at the top of the menu.
+    /// - Parameter canGrantSecretAccess: the server's own verdict (`Session.secretGrantable`),
+    ///   not derived from whether a session exists.
+    public static func leading(canGrantSecretAccess: Bool) -> [ComposerSessionAction] {
+        canGrantSecretAccess ? [.grantSecretAccess] : []
+    }
+
+    /// The actions further down the menu.
     /// - Parameters:
     ///   - hasSession: Every action here acts on a session, so none exists before one does.
     ///   - offersProcessActions: `false` for a pod-resident (ultra-fast) session, which has no
     ///     process to hold a queue or run a command — send now and move to background do not
     ///     apply, and the pod answers `not_applicable` if asked.
-    ///   - canGrantSecretAccess: the server's own verdict (`Session.secretGrantable`), not
-    ///     derived from `hasSession`.
-    public static func entries(
-        hasSession: Bool, offersProcessActions: Bool, canGrantSecretAccess: Bool
-    ) -> [ComposerSessionAction] {
-        var result: [ComposerSessionAction] = []
-        if hasSession {
-            result += [.cancel, .undoSend]
-            if offersProcessActions { result += [.sendNow, .moveToBackground] }
-        }
-        if canGrantSecretAccess { result.append(.grantSecretAccess) }
-        return result
+    public static func entries(hasSession: Bool, offersProcessActions: Bool) -> [ComposerSessionAction] {
+        guard hasSession else { return [] }
+        return offersProcessActions ? [.cancel, .undoSend, .sendNow, .moveToBackground] : [.cancel, .undoSend]
     }
 
     public var title: String {
