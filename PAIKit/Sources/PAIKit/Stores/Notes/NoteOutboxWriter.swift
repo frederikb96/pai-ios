@@ -8,10 +8,11 @@ import Foundation
 /// keystroke only hands the latest record over (``saveSoon(_:)``) and one write per note follows
 /// after a short quiet period, encoded and written on a queue of its own.
 ///
-/// 🚨 Every other write is synchronous (``save(_:)``, ``remove(noteId:)``) and is what the store
-/// calls before a request leaves and whenever a draft ends. Both run under one lock, and an
-/// immediate write drops the note's deferred one, so a deferred write can never land after a newer
-/// record or resurrect a removed one: it either finished before, and is replaced, or never runs.
+/// 🚨 Every other write has finished by the time its call returns (``save(_:)``,
+/// ``saveInBackground(_:)``, ``remove(noteId:)``) and is what the store calls before a request
+/// leaves and whenever a draft ends. All of them run in order on the queue, and an immediate write
+/// drops the note's deferred one, so a deferred write can never land after a newer record or
+/// resurrect a removed one: it either finished before, and is replaced, or never runs.
 final class NoteOutboxWriter: @unchecked Sendable {
     private let storage: NoteOutboxStorage
     private let delay: DispatchTimeInterval
@@ -33,31 +34,50 @@ final class NoteOutboxWriter: @unchecked Sendable {
             deferred[edit.noteId] = edit
             guard !scheduled else { return }
             scheduled = true
-            queue.asyncAfter(deadline: .now() + delay) { [self] in writeDeferred() }
+            queue.asyncAfter(deadline: .now() + delay) { [self] in writeDeferredOnQueue() }
         }
     }
 
     func save(_ edit: NotePendingEdit) {
-        lock.withLock {
-            deferred[edit.noteId] = nil
-            storage.saveEdit(edit)
+        dropDeferred(noteId: edit.noteId)
+        queue.sync { storage.saveEdit(edit) }
+    }
+
+    /// ``save(_:)`` for a caller on the main actor: encoding a large note and writing it is real
+    /// work, and the record is on disk when this returns all the same.
+    func saveInBackground(_ edit: NotePendingEdit) async {
+        dropDeferred(noteId: edit.noteId)
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            queue.async { [self] in
+                storage.saveEdit(edit)
+                done.resume()
+            }
         }
     }
 
     func remove(noteId: String) {
-        lock.withLock {
-            deferred[noteId] = nil
-            storage.removeEdit(noteId: noteId)
-        }
+        dropDeferred(noteId: noteId)
+        queue.sync { storage.removeEdit(noteId: noteId) }
     }
 
     /// Writes every deferred record now. For a caller that is about to lose the process.
     func writeDeferred() {
-        lock.withLock {
+        queue.sync { writeDeferredOnQueue() }
+    }
+
+    private func dropDeferred(noteId: String) {
+        lock.withLock { deferred[noteId] = nil }
+    }
+
+    /// The disk is only touched from the queue, in order, so the lock a keystroke's ``saveSoon(_:)``
+    /// takes is never held across a write and a record taken here cannot land after a newer one.
+    private func writeDeferredOnQueue() {
+        let pending = lock.withLock {
             let pending = deferred
             deferred = [:]
             scheduled = false
-            for edit in pending.values { storage.saveEdit(edit) }
+            return pending
         }
+        for edit in pending.values { storage.saveEdit(edit) }
     }
 }

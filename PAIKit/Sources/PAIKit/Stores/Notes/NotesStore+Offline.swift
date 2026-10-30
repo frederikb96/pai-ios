@@ -181,8 +181,15 @@ extension NotesStore {
 
     // MARK: Bodies
 
+    /// Written off the main actor, one after another: a large note's body is real work to encode,
+    /// and this runs on every save. Memory holds the same detail, and nothing here is the only copy.
     func cacheBody(_ detail: NoteDetail) {
-        cache.saveBody(detail)
+        let cache = self.cache
+        let previous = bodyCacheWrite
+        bodyCacheWrite = Task.detached(priority: .utility) {
+            await previous?.value
+            cache.saveBody(detail)
+        }
         bodyStamps?[detail.id] = detail.updatedAtMs
     }
 
@@ -259,6 +266,13 @@ extension NotesStore {
         }
         guard let record = pendingRecord(id: id) else { return }
         outboxWriter.save(record)
+    }
+
+    /// ``syncOutbox(id:)`` for a save, which runs while the reader may be typing: the same record,
+    /// on disk when this returns, written away from the main actor.
+    func syncOutboxInBackground(id: String) async {
+        guard let record = pendingRecord(id: id) else { return }
+        await outboxWriter.saveInBackground(record)
     }
 
     /// ``syncOutbox(id:)`` for a keystroke: the record is written once typing pauses for

@@ -450,6 +450,8 @@ struct MarkdownSourceTextView: UIViewRepresentable {
                 storage, in: slice, index: index, text: storage.mutableString,
                 showsHangingIndent: parent.showsLineNumbers)
             storage.endEditing()
+            // Filled in at once, so no line in the note stands at an estimated height.
+            textView.layoutManager.ensureLayout(forCharacterRange: slice)
             #if DEBUG
                 benchRepaintsMs.append(NoteEditorBench.milliseconds(since: started))
             #endif
