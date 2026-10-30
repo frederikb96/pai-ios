@@ -20,3 +20,7 @@ TARGETED_DEVICE_FAMILY = 1
 // Merged with the keys `GENERATE_INFOPLIST_FILE` produces, so this file holds only what that
 // mechanism cannot express — see the comment inside it.
 INFOPLIST_FILE = Config/Info.plist
+
+// Holds what the app hands to its share extension. Covered by the team wildcard every provisioning
+// profile carries, so it needs no capability on either bundle id.
+PAI_SHARED_KEYCHAIN_GROUP = $(DEVELOPMENT_TEAM).com.frederikberg.pai.shared

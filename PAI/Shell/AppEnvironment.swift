@@ -23,7 +23,10 @@ final class AppEnvironment {
     private(set) var lastAuthFailure: String?
 
     var backendURL: String {
-        didSet { defaults.set(backendURL, forKey: Self.backendURLKey) }
+        didSet {
+            defaults.set(backendURL, forKey: Self.backendURLKey)
+            shareCredentials()
+        }
     }
 
     private let defaults: UserDefaults
@@ -151,6 +154,7 @@ final class AppEnvironment {
         await connection?.voice.stop()
         await connection?.computerCall.end()
         tokens.write(nil)
+        shareCredentials()
         connection = nil
         lastAuthFailure = detail
         router.rejectToken()
@@ -163,13 +167,23 @@ final class AppEnvironment {
         await connection?.voice.stop()
         await connection?.computerCall.end()
         tokens.write(nil)
+        shareCredentials()
         connection = nil
         lastAuthFailure = nil
         router = Router(gate: .needsConfiguration)
     }
 
+    /// Keeps the share extension's copy of the sign-in equal to the app's. Runs on every connect,
+    /// launch included, so an install signed in before the extension existed gets it too.
+    private func shareCredentials() {
+        guard let store = SharedCredentialStore() else { return }
+        let credentials = tokens.read().map { SharedCredentials(backendURL: backendURL, token: $0) }
+        store.write(credentials)
+    }
+
     @discardableResult
     private func connect() -> Bool {
+        shareCredentials()
         guard
             let factory = try? PaiRequestFactory(
                 baseURL: backendURL,

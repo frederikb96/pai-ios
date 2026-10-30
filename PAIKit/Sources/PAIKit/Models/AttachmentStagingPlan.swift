@@ -17,6 +17,10 @@ public struct AttachmentStagingPlan: Equatable, Sendable {
     }
 }
 
+/// The server's own per-part cap (`MAX_UPLOAD_BYTES`, `config.py`). An oversize file is refused
+/// on the device with a named reason rather than failing with a 413 after the upload.
+public let maxAttachmentBytes = 50 * 1024 * 1024
+
 public enum AttachmentStaging {
     /// The web's `compressImage` bound (`utils/image.ts`), which this mirrors.
     public static let maxDimension: Double = 1920

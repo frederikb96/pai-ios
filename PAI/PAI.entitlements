@@ -8,5 +8,12 @@
 	<array>
 		<string>webcredentials:pai.frederikberg.com</string>
 	</array>
+	<!-- The app's own group stays first: that is where a write with no group lands, so the
+	     backend token stays where it has always been. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(DEVELOPMENT_TEAM).$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+		<string>$(PAI_SHARED_KEYCHAIN_GROUP)</string>
+	</array>
 </dict>
 </plist>

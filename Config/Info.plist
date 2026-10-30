@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- The Keychain group holding what the app shares with its extensions, read at runtime. -->
+	<key>PAISharedKeychainGroup</key>
+	<string>$(PAI_SHARED_KEYCHAIN_GROUP)</string>
+
 	<!-- Keeps the microphone running after the app leaves the screen, so a take started here
 	     survives the Home button, another app, and the lock screen. iOS suspends an ordinary app
 	     within seconds of backgrounding regardless of what it has open, so without this a
