@@ -47,7 +47,8 @@ jobs:
         with:
           xcode-version: '26.6'
 
-      - uses: actions/cache@v6
+      - uses: actions/cache/restore@v6
+        id: xcode-cache
         with:
           path: |
             build/dd/SourcePackages
@@ -73,6 +74,14 @@ jobs:
             -configuration "${{ inputs.configuration || 'Debug' }}" -derivedDataPath build/dd \
             COMPILATION_CACHE_ENABLE_CACHING=YES \
             CODE_SIGNING_ALLOWED=NO build 2>&1 | tee /tmp/build.log | tail -20
+
+      # Saved here rather than at the end of the job, so a red sweep keeps what the build produced.
+      - uses: actions/cache/save@v6
+        with:
+          path: |
+            build/dd/SourcePackages
+            build/dd/CompilationCache.noindex
+          key: ${{ steps.xcode-cache.outputs.cache-primary-key }}
 
       - name: Surface compiler errors
         if: failure()
