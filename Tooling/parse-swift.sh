@@ -17,7 +17,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ $# -gt 0 ]; then
     dirs=("$@")
 else
-    dirs=("$root/PAI" "$root/PAIKit/Sources")
+    dirs=("$root/PAI" "$root/PAIShare" "$root/PAIKit/Sources")
 fi
 
 mapfile -t files < <(find "${dirs[@]}" -name '*.swift' -type f | sort)

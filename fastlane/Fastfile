@@ -9,11 +9,13 @@ default_platform(:ios)
 
 SCHEME       = "PAI"
 PROFILE_NAME = "PAI App Store"
+SHARE_PROFILE_NAME = "PAI Share App Store"
 OUTPUT_DIR   = "build"
 
 # The bundle id lives in the Appfile; fastlane reads it from there. Repeating it as a constant
 # would be a second source of truth for the same value.
 APP_IDENTIFIER = CredentialsManager::AppfileConfig.try_fetch_value(:app_identifier)
+SHARE_APP_IDENTIFIER = "#{APP_IDENTIFIER}.share"
 
 # Marketing version is injected by CI from the git tag. A local build with none set is "dev",
 # which is deliberately not a valid version so it can never be mistaken for a release.
@@ -91,6 +93,11 @@ platform :ios do
       path: decode_secret("IOS_PROVISIONING_PROFILE_BASE64", "profile.mobileprovision")
     )
 
+    # The share extension is its own bundle id, so it has its own profile.
+    install_provisioning_profile(
+      path: decode_secret("IOS_SHARE_PROVISIONING_PROFILE_BASE64", "share-profile.mobileprovision")
+    )
+
     build_app(
       scheme: SCHEME,
       output_directory: OUTPUT_DIR,
@@ -102,7 +109,10 @@ platform :ios do
       export_options: {
         signingStyle: "manual",
         teamID: ENV.fetch("IOS_TEAM_ID"),
-        provisioningProfiles: { APP_IDENTIFIER => PROFILE_NAME }
+        provisioningProfiles: {
+          APP_IDENTIFIER => PROFILE_NAME,
+          SHARE_APP_IDENTIFIER => SHARE_PROFILE_NAME
+        }
       },
       # The git tag is the single source of truth for the marketing version; the build number is
       # the CI run number. Overriding on the command line keeps the checked-in project file

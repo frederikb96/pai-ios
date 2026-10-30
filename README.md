@@ -38,6 +38,12 @@ views are thin, and anything a unit test could catch lives in the package.
 | `Tooling/` | checks that catch macOS-only compile errors without a Mac |
 | `fastlane/` | build, sign, upload — the same lanes locally and in CI |
 
+## The share extension
+
+`PAIShare/` is a second target: PAI in the system share sheet. A shared photo, PDF, text file, selected text or link goes through the same `POST /api/drafts/{key}/attachments` a composer's upload uses, onto an existing session's draft or the new-session draft, and waits there until a message is sent from it. The view holds only what needs an Apple framework; `ShareStore` in `PAIKit` holds the rest. The app copies its sign-in into a Keychain item in a shared access group, which the team wildcard in every provisioning profile already covers, so neither bundle id needs a capability or an App Group.
+
+Signing needs one thing the app alone does not: the App Store profile `PAI Share App Store` for `com.frederikberg.pai.share`, in the repository secret `IOS_SHARE_PROVISIONING_PROFILE_BASE64`.
+
 ## Notes offline
 
 The notes open without a connection. The index, every note opened on the phone, the favourites,
@@ -77,7 +83,7 @@ The package needs only a Swift 6.2 toolchain, on any platform:
 ```
 swift build --package-path PAIKit --build-tests && \
   swift test --package-path PAIKit --skip-build
-swift format lint --recursive --strict PAIKit PAI
+swift format lint --recursive --strict PAIKit PAI PAIShare
 ```
 
 Two scans cover the app target without an iOS SDK: `./Tooling/parse-swift.sh` checks syntax (it stops

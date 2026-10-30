@@ -44,6 +44,7 @@ jobs:
           filters: |
             app:
               - 'PAI/**'
+              - 'PAIShare/**'
               - 'PAIKit/**'
               - 'PAI.xcodeproj/**'
               - 'Config/**'
@@ -157,7 +158,7 @@ jobs:
         run: ./Tooling/swift6-lint.py
 
       - name: Format
-        run: swift format lint --recursive --strict PAIKit PAI
+        run: swift format lint --recursive --strict PAIKit PAI PAIShare
 
       # Compiler errors sit far above the last lines of a long build, so a truncated log leaves a
       # failure reporting nothing but an exit code.
@@ -172,7 +173,7 @@ jobs:
       - name: Publish the formatting correction as a patch
         if: failure()
         run: |
-          swift format --in-place --recursive PAIKit
+          swift format --in-place --recursive PAIKit PAIShare
           git diff > format.patch
 
       - uses: actions/upload-artifact@v7

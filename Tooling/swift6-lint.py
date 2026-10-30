@@ -778,7 +778,7 @@ def _sendable_protocols(files: list[Path]) -> frozenset[str]:
 
 
 def main() -> int:
-    targets = [Path(arg) for arg in sys.argv[1:]] or [ROOT / "PAI", ROOT / "PAIKit/Sources"]
+    targets = [Path(arg) for arg in sys.argv[1:]] or [ROOT / "PAI", ROOT / "PAIShare", ROOT / "PAIKit/Sources"]
     files = sorted(f for target in targets for f in target.rglob("*.swift"))
     if not files:
         print(f"no Swift files under {', '.join(str(t) for t in targets)}", file=sys.stderr)

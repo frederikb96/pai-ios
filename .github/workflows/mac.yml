@@ -97,7 +97,23 @@ jobs:
             [ -n "$fw_min" ] && { [ "$fw_min" = "$app_min" ] || [ "$lowest" = "$app_min" ]; } \
               || { echo "::error::$plist declares MinimumOSVersion '${fw_min}' below the app's $app_min — App Store Connect will reject the upload"; exit 1; }
           done
-          echo 'background modes, URL scheme, generated keys and framework minimum OS all present'
+          # An extension with no display name is refused at install time with an error that names
+          # neither the key nor the file, and one missing its extension point never reaches the
+          # share sheet at all.
+          share="$app/PlugIns/PAIShare.appex/Info.plist"
+          [ -f "$share" ] || { echo '::error::the app does not embed PAIShare.appex'; exit 1; }
+          plutil -p "$share" > /tmp/built-share-info.txt
+          grep -q '"CFBundleDisplayName" => "PAI"' /tmp/built-share-info.txt \
+            || { echo '::error::the share extension has no display name'; cat /tmp/built-share-info.txt; exit 1; }
+          grep -q 'com.apple.share-services' /tmp/built-share-info.txt \
+            || { echo '::error::the share extension declares no extension point'; cat /tmp/built-share-info.txt; exit 1; }
+          grep -q 'NSExtensionActivationSupportsFileWithMaxCount' /tmp/built-share-info.txt \
+            || { echo '::error::the share extension has no activation rule'; cat /tmp/built-share-info.txt; exit 1; }
+          share_build=$(plutil -extract CFBundleVersion raw "$share")
+          app_build=$(plutil -extract CFBundleVersion raw "$app/Info.plist")
+          [ "$share_build" = "$app_build" ] \
+            || { echo "::error::the extension's build $share_build differs from the app's $app_build"; exit 1; }
+          echo 'background modes, URL scheme, generated keys, framework minimum OS and share extension all present'
 
       # Runs after the app build on purpose. This step compiles the whole package on a macOS host,
       # which is the only place the UIKit-guarded files compile at all — so it fails for reasons
