@@ -672,7 +672,9 @@ struct CreateSessionView: View {
         let waitsOnTake = voiceController.sendWaitsOnTake(draftKey: DraftKey.newSession)
         let clientMessageId = UUID().uuidString
         let attachmentsSnapshot = stagedAttachments
-        let uploadedAttachmentIds = drafts.draft(for: DraftKey.newSession).attachments.map(\.id)
+        let supersededUploadIds = staging.inlineUploadIds(for: DraftKey.newSession)
+        let uploadedAttachmentIds = DraftAttachmentDisplay.claimableIds(
+            drafts.draft(for: DraftKey.newSession).attachments, inlineUploadIds: Set(supersededUploadIds))
         // Already-uploaded bytes are claimed explicitly by id — only what never made it to the
         // server travels inline. See `ComposerBar.send(draftStore:voiceController:)` for the
         // identical reasoning.
@@ -699,7 +701,8 @@ struct CreateSessionView: View {
                 settings.saveSentMessage(messageText)
             }
             createSession.enqueueSend(
-                message: messageText, files: files, draftAttachmentIds: uploadedAttachmentIds, outbox: outbox,
+                message: messageText, files: files, draftAttachmentIds: uploadedAttachmentIds,
+                supersededUploadIds: supersededUploadIds, outbox: outbox,
                 drafts: drafts, clientMessageId: clientMessageId, heldTake: held?.heldTake)
             staging.set([], for: DraftKey.newSession)
         }
@@ -797,7 +800,9 @@ struct CreateSessionView: View {
         Task {
             let file = PaiFileUpload(
                 filename: attachment.filename, mimeType: attachment.mimeType, data: attachment.data)
-            if let uploaded = await drafts.addAttachment(key: DraftKey.newSession, file: file) {
+            if let uploaded = await drafts.addAttachment(
+                key: DraftKey.newSession, file: file, id: attachment.uploadId)
+            {
                 staging.updateUploadState(
                     .uploaded(attachmentId: uploaded.id), forId: attachment.id, in: DraftKey.newSession)
             } else {

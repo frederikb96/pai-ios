@@ -103,6 +103,10 @@ public struct OutboxEntry: Codable, Sendable, Equatable, Identifiable {
     /// explicitly, never "whatever the draft happens to hold" at the moment the request lands.
     public var draftAttachmentIds: [String]
     public var inlineFiles: [OutboxInlineFile]
+    /// The draft uploads those inline files came from. Each may still land, or may have landed
+    /// unanswered, so the send names them for the server to drop. Optional so an entry persisted
+    /// without it still decodes.
+    public var supersededUploadIds: [String]?
     /// How this message was produced — `"call"` for one dictated during a Computer call,
     /// `nil` for an ordinary typed or dictated send.
     public var clientMode: String?
@@ -116,9 +120,13 @@ public struct OutboxEntry: Codable, Sendable, Equatable, Identifiable {
     public var createdAt: Date
     public var result: OutboxResult?
 
+    /// Every draft row this entry accounts for, whichever way its file travels.
+    public var namedAttachmentIds: [String] { draftAttachmentIds + (supersededUploadIds ?? []) }
+
     public init(
         clientMessageId: String = UUID().uuidString, target: OutboxTarget, text: String,
-        draftAttachmentIds: [String] = [], inlineFiles: [OutboxInlineFile] = [], clientMode: String? = nil,
+        draftAttachmentIds: [String] = [], inlineFiles: [OutboxInlineFile] = [],
+        supersededUploadIds: [String]? = nil, clientMode: String? = nil,
         heldTake: HeldTake? = nil, state: OutboxEntryState = .queued, attempts: Int = 0, lastError: String? = nil,
         createdAt: Date = Date(),
         result: OutboxResult? = nil
@@ -128,6 +136,7 @@ public struct OutboxEntry: Codable, Sendable, Equatable, Identifiable {
         self.text = text
         self.draftAttachmentIds = draftAttachmentIds
         self.inlineFiles = inlineFiles
+        self.supersededUploadIds = supersededUploadIds
         self.clientMode = clientMode
         self.heldTake = heldTake
         self.state = state

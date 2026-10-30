@@ -529,7 +529,9 @@ struct ComposerBar: View {
             let messageText =
                 held?.message ?? draftStore.draft(for: sessionID).text.trimmingCharacters(in: .whitespacesAndNewlines)
             let attachmentsSnapshot = stagedAttachments
-            let uploadedAttachmentIds = draftStore.draft(for: sessionID).attachments.map(\.id)
+            let supersededUploadIds = staging.inlineUploadIds(for: sessionID)
+            let uploadedAttachmentIds = DraftAttachmentDisplay.claimableIds(
+                draftStore.draft(for: sessionID).attachments, inlineUploadIds: Set(supersededUploadIds))
             guard held != nil || !messageText.isEmpty || !attachmentsSnapshot.isEmpty || !uploadedAttachmentIds.isEmpty
             else {
                 isSending = false
@@ -553,7 +555,8 @@ struct ComposerBar: View {
                 uniqueKeysWithValues: zip(inlineFiles.map(\.localId), inlineAttachments.map(\.data)))
             let entry = OutboxEntry(
                 clientMessageId: clientMessageId, target: .session(sessionId: sessionID), text: messageText,
-                draftAttachmentIds: uploadedAttachmentIds, inlineFiles: inlineFiles, heldTake: held?.heldTake)
+                draftAttachmentIds: uploadedAttachmentIds, inlineFiles: inlineFiles,
+                supersededUploadIds: supersededUploadIds, heldTake: held?.heldTake)
 
             // Cleared before the request even leaves — the whole point of the outbox is that the
             // bubble it drives (`OutboxBubbleStack`) exists, and survives a kill, before any

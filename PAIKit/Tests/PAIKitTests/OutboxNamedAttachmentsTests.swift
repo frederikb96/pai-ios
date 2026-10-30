@@ -21,8 +21,8 @@ private final class ServedDraftsApi: DraftsFetching, @unchecked Sendable {
     func deleteDraft(key: String) async throws -> PaiDraftDeleteResult {
         PaiDraftDeleteResult(key: key, version: 1, previousText: nil)
     }
-    func addDraftAttachment(key: String, file: PaiFileUpload) async throws -> DraftAttachment {
-        throw PaiError.transport("not used")
+    func addDraftAttachment(key: String, file: PaiFileUpload, id: String) async throws -> DraftAttachment {
+        attachment(id)
     }
     func removeDraftAttachment(key: String, attachmentId: String) async throws {}
 }
@@ -33,6 +33,8 @@ private final class GatedSender: OutboxSending, @unchecked Sendable {
     private var continuations: [CheckedContinuation<Void, Never>] = []
     private var open = false
     var answer: Result<PostMessageResponse, PaiError> = .success(PostMessageResponse(sessionId: "s1", messageId: 1))
+    private var _superseded: [[String]] = []
+    var superseded: [[String]] { lock.withLock { _superseded } }
 
     func openGate() {
         let waiting = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
@@ -45,9 +47,11 @@ private final class GatedSender: OutboxSending, @unchecked Sendable {
 
     func postMessage(
         sessionId: String?, message: String, clientMessageId: String, files: [PaiFileUpload],
-        draftAttachmentIds: [String], sessionType: String?, workingDir: String?, agent: String?, model: String?,
+        draftAttachmentIds: [String], supersededUploadIds: [String], sessionType: String?, workingDir: String?,
+        agent: String?, model: String?,
         thinking: String?, clientMode: String?, heldTake: HeldTake?
     ) async throws -> PostMessageResponse {
+        lock.withLock { _superseded.append(supersededUploadIds) }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let resumeNow = lock.withLock { () -> Bool in
                 if open { return true }
@@ -106,6 +110,69 @@ final class OutboxNamedAttachmentsTests: XCTestCase {
         let entry = OutboxEntry(target: .session(sessionId: "s1"), text: "look", draftAttachmentIds: ids)
         h.outbox.enqueue(entry)
         return entry
+    }
+
+    private func sendCarryingInline(_ uploadId: String, _ h: Harness) -> OutboxEntry {
+        let entry = OutboxEntry(
+            target: .session(sessionId: "s1"), text: "look", supersededUploadIds: [uploadId])
+        h.outbox.enqueue(entry)
+        return entry
+    }
+
+    func testAnUploadAnsweredAfterTheSendTookItsFileDrawsNoChip() async {
+        let h = makeHarness()
+        _ = sendCarryingInline("u1", h)
+
+        let file = PaiFileUpload(filename: "paste-1.png", mimeType: "image/png", data: Data([1]))
+        let answered = await h.drafts.addAttachment(key: "s1", file: file, id: "u1")
+
+        XCTAssertNotNil(answered)
+        XCTAssertEqual(h.drafts.draft(for: "s1").attachments, [])
+        h.sender.openGate()
+    }
+
+    func testARowLandingWhileTheSendIsOnItsWayDrawsNoChip() async {
+        let h = makeHarness()
+        _ = sendCarryingInline("u1", h)
+        h.served.rows = [row("s1", attachments: [attachment("u1")])]
+
+        await h.drafts.syncFromServer()
+
+        XCTAssertEqual(h.drafts.draft(for: "s1").attachments, [])
+        h.sender.openGate()
+    }
+
+    func testTheSendNamesTheUploadItCarriesInline() async {
+        let h = makeHarness()
+        h.sender.openGate()
+        _ = sendCarryingInline("u1", h)
+
+        await waitUntil { !h.sender.superseded.isEmpty }
+
+        XCTAssertEqual(h.sender.superseded, [["u1"]])
+    }
+
+    func testAnInlineUploadComesBackWhenTheMessageIsDiscardedUnsent() async {
+        let h = makeHarness()
+        let entry = sendCarryingInline("u1", h)
+        h.served.rows = [row("s1", attachments: [attachment("u1")])]
+
+        h.outbox.discard(id: entry.id)
+        await h.drafts.syncFromServer()
+
+        XCTAssertEqual(h.drafts.draft(for: "s1").attachments.map(\.id), ["u1"])
+    }
+
+    func testAnEntryPersistedWithoutSupersededUploadsStillDecodes() throws {
+        let saved = OutboxEntry(target: .session(sessionId: "s1"), text: "look", draftAttachmentIds: ["a1"])
+        var json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(saved)) as? [String: Any])
+        json.removeValue(forKey: "supersededUploadIds")
+
+        let decoded = try JSONDecoder().decode(
+            OutboxEntry.self, from: JSONSerialization.data(withJSONObject: json))
+
+        XCTAssertEqual(decoded.namedAttachmentIds, ["a1"])
     }
 
     func testAPollWhileTheSendIsStillQueuedDoesNotBringTheChipBack() async {

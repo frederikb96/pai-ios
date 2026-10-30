@@ -73,4 +73,19 @@ final class DraftAttachmentDisplayTests: XCTestCase {
             [old], serverIds: [], requestedAt: Date(timeIntervalSince1970: 200))
         XCTAssertEqual(gone, [old.id])
     }
+
+    func testASendClaimsNeitherAnUploadItCarriesInlineNorARowStillUploading() {
+        func row(_ id: String, _ state: String) -> DraftAttachment {
+            DraftAttachment(
+                id: id, filename: id, path: "/tmp/\(id)", size: 1, contentType: nil, state: state, createdAt: "t1")
+        }
+        let rows = [
+            row("mine", "stored"), row("inline", "stored"), row("elsewhere", "uploading"),
+            row("broken", "failed"), row("left", "unclaimed"),
+        ]
+
+        let claimed = DraftAttachmentDisplay.claimableIds(rows, inlineUploadIds: ["inline"])
+
+        XCTAssertEqual(claimed, ["mine", "left"])
+    }
 }

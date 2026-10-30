@@ -30,7 +30,7 @@ private struct SilentDraftsApi: DraftsFetching {
     func deleteDraft(key: String) async throws -> PaiDraftDeleteResult {
         PaiDraftDeleteResult(key: key, version: 1, previousText: nil)
     }
-    func addDraftAttachment(key: String, file: PaiFileUpload) async throws -> DraftAttachment {
+    func addDraftAttachment(key: String, file: PaiFileUpload, id: String) async throws -> DraftAttachment {
         throw PaiError.transport("not used")
     }
     func removeDraftAttachment(key: String, attachmentId: String) async throws {}
@@ -68,7 +68,8 @@ private final class ScriptedApi: OutboxSending, OutboxWithdrawing, @unchecked Se
 
     func postMessage(
         sessionId: String?, message: String, clientMessageId: String, files: [PaiFileUpload],
-        draftAttachmentIds: [String], sessionType: String?, workingDir: String?, agent: String?, model: String?,
+        draftAttachmentIds: [String], supersededUploadIds: [String], sessionType: String?, workingDir: String?,
+        agent: String?, model: String?,
         thinking: String?, clientMode: String?, heldTake: HeldTake?
     ) async throws -> PostMessageResponse {
         let (gate, fails) = lock.withLock { () -> (Rendezvous?, Bool) in

@@ -561,12 +561,16 @@ public struct PaiApiClient: Sendable {
     /// `draftAttachmentIds` claims exactly those ids and nothing else — the old behaviour of
     /// letting the server claim "whatever is on the draft" is what let a photo staged for the
     /// *next* message get swept into a queued earlier one.
+    ///
+    /// `supersededUploadIds` names uploads whose bytes travel in `files` instead. The server drops
+    /// them from the draft whether or not they have arrived.
     public func postMessage(
         sessionId: String? = nil,
         message: String,
         clientMessageId: String = UUID().uuidString,
         files: [PaiFileUpload] = [],
         draftAttachmentIds: [String] = [],
+        supersededUploadIds: [String] = [],
         sessionType: String? = nil,
         workingDir: String? = nil,
         agent: String? = nil,
@@ -584,6 +588,9 @@ public struct PaiApiClient: Sendable {
         }
         for attachmentId in draftAttachmentIds {
             Self.appendFormField(&body, boundary: boundary, name: "draft_attachment_ids", value: attachmentId)
+        }
+        for uploadId in supersededUploadIds {
+            Self.appendFormField(&body, boundary: boundary, name: "superseded_draft_attachment_ids", value: uploadId)
         }
         if let sessionId { Self.appendFormField(&body, boundary: boundary, name: "session_id", value: sessionId) }
         if let sessionType {
@@ -867,9 +874,13 @@ public struct PaiApiClient: Sendable {
     /// as soon as it is added, not only once the message is sent. `POST /api/messages` claims
     /// whatever a draft's own attachments are for that same key at send time on its own; this
     /// route is the only one a client ever needs to call to get a file there.
-    public func addDraftAttachment(key: String, file: PaiFileUpload) async throws -> DraftAttachment {
+    ///
+    /// `id` is minted by the caller, so a send can name the upload before it has been answered and
+    /// a repeat of it is the same row.
+    public func addDraftAttachment(key: String, file: PaiFileUpload, id: String) async throws -> DraftAttachment {
         let boundary = "PAIKit-\(UUID().uuidString)"
         var body = Data()
+        Self.appendFormField(&body, boundary: boundary, name: "id", value: id)
         Self.appendFormFile(&body, boundary: boundary, name: "file", file: file)
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
         return try await send(

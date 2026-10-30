@@ -286,7 +286,8 @@ actor FakeOutboxSending: OutboxSending {
 
     func postMessage(
         sessionId: String?, message: String, clientMessageId: String, files: [PaiFileUpload],
-        draftAttachmentIds: [String], sessionType: String?, workingDir: String?, agent: String?, model: String?,
+        draftAttachmentIds: [String], supersededUploadIds: [String], sessionType: String?, workingDir: String?,
+        agent: String?, model: String?,
         thinking: String?, clientMode: String?, heldTake: HeldTake?
     ) async throws -> PostMessageResponse {
         postMessageCalls.append(

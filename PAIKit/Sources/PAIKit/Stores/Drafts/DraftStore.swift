@@ -206,9 +206,12 @@ public final class DraftStore {
     /// Uploads a staged file onto this draft immediately — not debounced like `setDraftText`,
     /// since there is nothing to coalesce: each attachment is its own request, made once, the
     /// moment it is picked. `nil` on failure; the caller (`StagedAttachmentStore`) is what keeps
-    /// the bytes around to fall back to sending inline at message-send time.
-    public func addAttachment(key: String, file: PaiFileUpload) async -> DraftAttachment? {
-        guard let attachment = try? await api.addDraftAttachment(key: key, file: file) else { return nil }
+    /// the bytes around to fall back to sending inline at message-send time. `id` becomes the row's
+    /// id. A send that went while this was in the air has withheld that id, and the file is already
+    /// on its way with the message, so a late answer must not put the chip back.
+    public func addAttachment(key: String, file: PaiFileUpload, id: String) async -> DraftAttachment? {
+        guard let attachment = try? await api.addDraftAttachment(key: key, file: file, id: id) else { return nil }
+        if withheldAttachmentIds[key]?.contains(attachment.id) == true { return attachment }
         var entry = draft(for: key)
         entry.attachments.append(attachment)
         drafts[key] = entry

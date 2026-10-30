@@ -6,7 +6,8 @@ import Observation
 public protocol OutboxSending: Sendable {
     func postMessage(
         sessionId: String?, message: String, clientMessageId: String, files: [PaiFileUpload],
-        draftAttachmentIds: [String], sessionType: String?, workingDir: String?, agent: String?, model: String?,
+        draftAttachmentIds: [String], supersededUploadIds: [String], sessionType: String?, workingDir: String?,
+        agent: String?, model: String?,
         thinking: String?, clientMode: String?, heldTake: HeldTake?
     ) async throws -> PostMessageResponse
 }
@@ -156,10 +157,10 @@ public final class OutboxStore {
     /// session sitting in the list with the reader still on the screen that made it.
     public func installHandover(drafts: DraftStore, sessions: SessionListStore, handoff: NewSessionHandoff) {
         onQueued = { [weak drafts] entry in
-            drafts?.withholdAttachments(key: entry.draftKey, ids: entry.draftAttachmentIds)
+            drafts?.withholdAttachments(key: entry.draftKey, ids: entry.namedAttachmentIds)
         }
         onAbandoned = { [weak drafts] entry in
-            drafts?.releaseAttachments(key: entry.draftKey, ids: entry.draftAttachmentIds)
+            drafts?.releaseAttachments(key: entry.draftKey, ids: entry.namedAttachmentIds)
         }
         // Entries restored from disk were queued before this store had anyone to tell.
         for entry in entries { onQueued?(entry) }
@@ -349,7 +350,8 @@ public final class OutboxStore {
         do {
             let response = try await api.postMessage(
                 sessionId: entry.target.sessionId, message: entry.text, clientMessageId: entry.clientMessageId,
-                files: files, draftAttachmentIds: entry.draftAttachmentIds, sessionType: entry.target.sessionType,
+                files: files, draftAttachmentIds: entry.draftAttachmentIds,
+                supersededUploadIds: entry.supersededUploadIds ?? [], sessionType: entry.target.sessionType,
                 workingDir: entry.target.workingDir, agent: entry.target.agent, model: entry.target.model,
                 thinking: entry.target.thinking, clientMode: entry.clientMode, heldTake: entry.heldTake
             )
