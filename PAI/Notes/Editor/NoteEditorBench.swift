@@ -12,10 +12,6 @@
     enum NoteEditorBench {
         static weak var coordinator: MarkdownSourceTextView.Coordinator?
 
-        nonisolated static var usesNonContiguousLayout: Bool {
-            ProcessInfo.processInfo.arguments.contains("-PaiEditorNonContiguous")
-        }
-
         nonisolated static func milliseconds(since start: DispatchTime) -> Double {
             Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000
         }
@@ -42,6 +38,8 @@
             let loadMs: Double?
             let keystrokeMs: Timing
             let longestFrameGapMs: Double
+            /// The longest stall in the seconds after typing stops, when the autosave runs.
+            let autosaveFrameGapMs: Double
             let repaintMs: Timing
             let publishMs: Timing
             /// Opening a fence restyles everything below it, a slice per tick.
@@ -82,8 +80,10 @@
                 // A fast typist, with a pause now and then for the repaint to run.
                 try? await Task.sleep(for: .milliseconds(key % 16 == 15 ? 250 : 70))
             }
-            try? await Task.sleep(for: .milliseconds(600))
             let longestFrameGap = frames.finish()
+            let afterTyping = FrameGapRecorder()
+            try? await Task.sleep(for: .seconds(3))
+            let autosaveFrameGap = afterTyping.finish()
             let repaints = coordinator.benchRepaintsMs
             let publishes = coordinator.benchPublishesMs
 
@@ -111,6 +111,7 @@
             return Report(
                 utf16Length: storage.length, lineCount: coordinator.index.lineCount, width: view.bounds.width,
                 loadMs: coordinator.benchLoadMs, keystrokeMs: Timing(keystrokes), longestFrameGapMs: longestFrameGap,
+                autosaveFrameGapMs: autosaveFrameGap,
                 repaintMs: Timing(repaints), publishMs: Timing(publishes),
                 fenceRepaintTotalMs: fenceRepaints.reduce(0, +), fenceRepaintLongestSliceMs: fenceRepaints.max() ?? 0,
                 lastHeadingViewportFraction: fraction, contentHeightAtOpen: contentHeightAtOpen,

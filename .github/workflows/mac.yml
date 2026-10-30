@@ -300,20 +300,19 @@ jobs:
           done
 
           # What a keystroke costs in the open editor on a note the size of the largest real
-          # ones, and whether its heights hold still. Once as shipped, once with the line numbers
-          # on, and once with non-contiguous layout for comparison.
+          # ones, and whether its heights hold still, with the line numbers off and on.
           bench() {
-            local name=$1 query=$2; shift 2
-            screenshot "note-bench-$name" -PaiFixtureRoute noteLarge "$@"
+            local name=$1 query=$2
+            xcrun simctl terminate "$udid" "$bundle" || true
+            screenshot "note-bench-$name" -PaiFixtureRoute noteLarge
             curl -sS --max-time 90 -X POST "http://127.0.0.1:8765/notes/editor-bench?keys=60&$query" \
               -o "artifacts/note-editor-bench-$name.json" || true
             cat "artifacts/note-editor-bench-$name.json" || true
             echo
             xcrun simctl terminate "$udid" "$bundle" || true
           }
-          bench contiguous lineNumbers=0
+          bench plain lineNumbers=0
           bench line-numbers lineNumbers=1
-          bench non-contiguous lineNumbers=0 -PaiEditorNonContiguous
 
           # The sign-in card, in its rejected state, over a screen with its own list content —
           # reproduces the shape of the bug report (the card drawn see-through over the

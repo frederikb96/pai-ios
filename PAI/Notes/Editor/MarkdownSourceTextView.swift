@@ -66,7 +66,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
     let showsLineNumbers: Bool
     let handle: NoteEditorHandle
 
-    /// The text as it now stands, at most ``Coordinator/publishInterval`` after it changed.
+    /// The text as it now stands, at a pause in typing: see ``Coordinator/publishPause``.
     let onChange: (String) -> Void
     let onFocus: () -> Void
     /// The keyboard bar's paperclip, carrying the caret's UTF-16 offset — where whatever is picked
@@ -112,9 +112,9 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         view.smartInsertDeleteType = .no
         view.alwaysBounceVertical = true
         view.textStorage.delegate = context.coordinator
-        #if DEBUG
-            view.layoutManager.allowsNonContiguousLayout = NoteEditorBench.usesNonContiguousLayout
-        #endif
+        // Every line is laid out at open all the same (`settleLayout`). What this buys is the
+        // edit: a style change leaves a hole to refill, rather than the rest of the note to redo.
+        view.layoutManager.allowsNonContiguousLayout = true
         context.coordinator.attach(view)
         context.coordinator.load(text, into: view)
         return view
@@ -191,10 +191,13 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         /// The range still to repaint, always whole lines of the current text once it is read.
         private var dirty: NSRange?
 
-        /// The longest the store can be behind the text view while someone types. A fixed timer
-        /// rather than a debounce, so steady typing still reaches the outbox.
-        static let publishInterval: TimeInterval = 0.4
+        /// The store hears the text at a pause in typing, and within ``publishLimit`` of the
+        /// first unpublished key however steady the typing is, since the outbox is what survives
+        /// the app being killed.
+        static let publishPause: TimeInterval = 0.3
+        static let publishLimit: TimeInterval = 2
         private var publishWorkItem: DispatchWorkItem?
+        private var firstUnpublishedEdit: DispatchTime?
 
         #if DEBUG
             /// Where the bench reads what a load and a repaint cost.
@@ -293,9 +296,6 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         /// Waits for a width: layout at the zero width a view has before SwiftUI sizes it would be
         /// thrown away entire.
         private func settleLayout(of view: NoteSourceTextView, token: Int) async -> Bool {
-            #if DEBUG
-                if NoteEditorBench.usesNonContiguousLayout { return true }
-            #endif
             while view.bounds.width == 0 {
                 try? await Task.sleep(for: .milliseconds(16))
                 guard token == loadToken else { return false }
@@ -465,10 +465,14 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         var hasRepaintPending: Bool { dirty != nil }
 
         private func schedulePublish() {
-            guard publishWorkItem == nil else { return }
+            publishWorkItem?.cancel()
+            let now = DispatchTime.now()
+            let first = firstUnpublishedEdit ?? now
+            firstUnpublishedEdit = first
             let work = DispatchWorkItem { [weak self] in self?.publishNow() }
             publishWorkItem = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.publishInterval, execute: work)
+            let due = min(now + Self.publishPause, first + Self.publishLimit)
+            DispatchQueue.main.asyncAfter(deadline: due, execute: work)
         }
 
         /// Copying the text out is the one step here that scales with the note, which is why it
@@ -477,6 +481,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
             guard let work = publishWorkItem, let textView else { return }
             work.cancel()
             publishWorkItem = nil
+            firstUnpublishedEdit = nil
             #if DEBUG
                 let started = DispatchTime.now()
             #endif
