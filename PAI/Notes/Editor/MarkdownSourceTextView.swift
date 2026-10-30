@@ -45,7 +45,9 @@ struct MarkdownSourceTextView: UIViewRepresentable {
     /// it the work is too small to see and the note is simply there in the first frame.
     static let backgroundLoadLength = 32_000
 
-    let text: String
+    /// The body as the store holds it. A closure so that a view update never holds the note as a
+    /// value: SwiftUI compares a view's properties on every update, a whole note included.
+    let text: () -> String
     /// Changes when the body was replaced by something other than typing. The only thing that
     /// makes this view read `text` again after it opened: see ``NotesStore/externalBodyRevision``.
     let revision: Int
@@ -116,7 +118,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         // edit: a style change leaves a hole to refill, rather than the rest of the note to redo.
         view.layoutManager.allowsNonContiguousLayout = true
         context.coordinator.attach(view)
-        context.coordinator.load(text, into: view)
+        context.coordinator.load(text(), into: view)
         return view
     }
 
@@ -133,7 +135,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         } else if gutterChanged {
             // The hang is painted into the text and the gutter narrows its width, so every line
             // reflows anyway.
-            coordinator.load(view.text ?? "", into: view)
+            coordinator.load(view.nativeText, into: view)
         }
         coordinator.applyRequests(in: view)
     }
@@ -347,8 +349,9 @@ struct MarkdownSourceTextView: UIViewRepresentable {
                 DispatchQueue.main.async { [weak self] in self?.publishNow() }
                 return
             }
-            guard view.text != parent.text else { return }
-            load(parent.text, into: view)
+            let body = parent.text()
+            guard view.nativeText != body else { return }
+            load(body, into: view)
             DispatchQueue.main.async { [weak self] in self?.parent.onReplaced() }
         }
 
@@ -494,7 +497,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
             #if DEBUG
                 let started = DispatchTime.now()
             #endif
-            parent.onChange(textView.text ?? "")
+            parent.onChange(textView.nativeText)
             #if DEBUG
                 benchPublishesMs.append(NoteEditorBench.milliseconds(since: started))
             #endif
@@ -560,7 +563,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
             let token = highlightToken
             view.highlightLayer.matches = []
             guard let query, !query.isEmpty else { return }
-            let text = view.text ?? ""
+            let text = view.nativeText
             Task { [weak self] in
                 let matches = await Task.detached(priority: .userInitiated) {
                     SearchText.findMatches(in: text, query: query)
@@ -758,6 +761,15 @@ final class NoteSourceTextView: PasteAwareTextView {
     /// Called after a layout pass that changed the view's size, with the size before it.
     var onBoundsChange: ((NoteSourceTextView, CGSize) -> Void)?
     private var lastSize = CGSize.zero
+
+    /// The text as a native Swift string. `text` hands back a Cocoa-backed one, and comparing or
+    /// walking that goes through the Objective-C runtime a code unit at a time, which on a large
+    /// note is hundreds of milliseconds wherever it lands.
+    var nativeText: String {
+        var native = text ?? ""
+        native.makeContiguousUTF8()
+        return native
+    }
     private var lastPinnedOffset = CGFloat.nan
 
     func setGutterShown(_ shown: Bool, configure: (NoteLineNumberGutter) -> Void) {
