@@ -309,6 +309,7 @@ jobs:
               -o "artifacts/note-editor-bench-$name.json" || true
             cat "artifacts/note-editor-bench-$name.json" || true
             echo
+            xcrun simctl io "$udid" screenshot "artifacts/screen-note-bench-$name-after.png" || true
             xcrun simctl terminate "$udid" "$bundle" || true
           }
           bench plain lineNumbers=0
