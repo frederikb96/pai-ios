@@ -761,6 +761,7 @@ final class NoteSourceTextView: PasteAwareTextView {
     /// Called after a layout pass that changed the view's size, with the size before it.
     var onBoundsChange: ((NoteSourceTextView, CGSize) -> Void)?
     private var lastSize = CGSize.zero
+    private var lastPinnedOffset = CGFloat.nan
 
     /// The text as a native Swift string, copied out in one block. `text` hands back a Cocoa-backed
     /// string, and comparing or walking one goes through the Objective-C runtime a code unit at a
