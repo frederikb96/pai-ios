@@ -1,5 +1,6 @@
 #if canImport(UIKit)
     import Foundation
+    import ImageIO
     import UIKit
 
     /// Applies ``AttachmentStaging``'s plan: fit an oversized image's long edge to the bound, and
@@ -29,14 +30,9 @@
                 return unchanged
             }
 
-            let targetSize = CGSize(
-                width: image.size.width * plan.scale, height: image.size.height * plan.scale)
-            let renderer = UIGraphicsImageRenderer(size: targetSize)
-            let resized = renderer.image { _ in
-                image.draw(in: CGRect(origin: .zero, size: targetSize))
-            }
-
-            guard let jpegData = resized.jpegData(compressionQuality: AttachmentStaging.jpegQuality) else {
+            guard let resized = downsampled(data, longestEdge: longestEdge * plan.scale),
+                let jpegData = resized.jpegData(compressionQuality: AttachmentStaging.jpegQuality)
+            else {
                 return unchanged
             }
             if plan.abandonIfNotSmaller, jpegData.count >= data.count { return unchanged }
@@ -44,6 +40,26 @@
             return Result(
                 filename: replacingExtension(of: filename, with: "jpg"), mimeType: "image/jpeg", data: jpegData,
                 image: resized)
+        }
+
+        /// A bitmap of exactly `longestEdge` pixels, decoded by ImageIO at that size.
+        ///
+        /// Decoding the whole photo first costs its full pixel count in memory, and drawing into a
+        /// `UIGraphicsImageRenderer` multiplies the target by the screen scale unless told not to.
+        /// Either alone is past what an app extension may hold, and the system kills one that goes
+        /// over without a word.
+        private static func downsampled(_ data: Data, longestEdge: Double) -> UIImage? {
+            let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+            guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) else { return nil }
+            let options =
+                [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceShouldCacheImmediately: true,
+                    kCGImageSourceThumbnailMaxPixelSize: Int(longestEdge.rounded()),
+                ] as CFDictionary
+            guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else { return nil }
+            return UIImage(cgImage: image)
         }
 
         private static func replacingExtension(of filename: String, with newExtension: String) -> String {
