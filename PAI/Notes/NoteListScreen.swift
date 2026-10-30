@@ -60,12 +60,10 @@ struct NoteListScreen: View {
 
     var body: some View {
         list
-            // 🚨 Chrome attached to the container, never a row inside `list`. `.searchable`
-            // cross-fades the content it wraps when search becomes active, so a chip row laid
-            // out above the list is faded out mid-transition — it is drawn one frame and gone
-            // the next, in reserved space, which reads as the row randomly disappearing. A
-            // safe-area inset is not part of that content, so it stays put while the keyboard
-            // comes up, which is the one moment the switch is actually wanted.
+            // 🚨 No scroll view in this inset. The navigation bar treats a horizontal one here as
+            // its content: UIKit stretches it up behind the bar and gives it the bar's scroll edge
+            // effect, whose mask can hide the chips while they stay laid out and tappable. The
+            // row fits the width instead (`filterChips`).
             .safeAreaInset(edge: .top, spacing: 0) {
                 VStack(spacing: 0) {
                     if notes.isOffline {
@@ -76,6 +74,9 @@ struct NoteListScreen: View {
             }
             .paiNotesBackground()
             .navigationTitle("Notes")
+            // A large title follows the scroll view under it, and stays blank after the content
+            // swaps between a list and an empty state. An inline one depends on neither.
+            .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $filterText, prompt: searchPrompt)
             .searchFocused($isFilterFocused)
             // `modeChanged` clears the previous mode's results, so switching never leaves them
@@ -264,60 +265,46 @@ struct NoteListScreen: View {
 
     /// The row above the list: the mode, and what narrows the corpus before anything is typed.
     ///
-    /// Scrolled rather than wrapped: a `Label` given less width than its text needs breaks the
-    /// word instead of shrinking — "Favourites" reads as "Favourite / s".
+    /// Sized to fit a phone's width, with favourites and tags as icons: the words go on the two
+    /// mode chips, the ones a glance has to tell apart. An active time window takes a line of its
+    /// own, since its label has no fixed width.
     private var filterChips: some View {
-        HStack(spacing: 0) {
-            chipScroller
-            TimeWindowButton(window: $timeWindow)
-                .padding(.trailing, 8)
-        }
-    }
-
-    private var chipScroller: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 modeChip(target: .fullText, label: "Full text", systemImage: "text.magnifyingglass")
                 modeChip(target: .semantic, label: "Semantic", systemImage: "sparkles")
-
                 if mode == .filter {
-                    Button {
+                    NoteFilterChip(
+                        systemImage: favouritesOnly ? "star.fill" : "star", tint: PaiPalette.amber500,
+                        isOn: favouritesOnly
+                    ) {
                         favouritesOnly.toggle()
-                    } label: {
-                        Label("Favourites", systemImage: favouritesOnly ? "star.fill" : "star")
-                            .font(PaiTypography.caption.font)
                     }
-                    .buttonStyle(.bordered)
-                    .tint(favouritesOnly ? PaiPalette.amber500 : PaiPalette.Semantic.textMuted)
+                    .accessibilityLabel("Favourites")
                     .accessibilityIdentifier("notes-favourites-chip")
                 }
-
                 tagFilterButton
-                TimeWindowChip(window: $timeWindow)
+                Spacer(minLength: 0)
+                TimeWindowButton(window: $timeWindow)
             }
-            .lineLimit(1)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            TimeWindowChip(window: $timeWindow)
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(PaiPalette.Notes.background)
     }
 
-    /// Writes the same `mode` the scope bar binds — one piece of state, two surfaces. Tapping the
-    /// chip that is already on returns to plain filtering, which is what makes it a toggle rather
-    /// than a third state nobody can leave.
+    /// Tapping the chip that is already on returns to plain filtering, which is what makes it a
+    /// toggle rather than a third state nobody can leave.
     private func modeChip(target: Mode, label: String, systemImage: String) -> some View {
-        Button {
+        NoteFilterChip(label: label, systemImage: systemImage, tint: PaiPalette.primary500, isOn: mode == target) {
             mode = mode == target ? .filter : target
-        } label: {
-            Label(label, systemImage: systemImage)
-                .font(PaiTypography.caption.font)
         }
-        .buttonStyle(.bordered)
-        .tint(mode == target ? PaiPalette.primary500 : PaiPalette.Semantic.textMuted)
         .accessibilityIdentifier("notes-mode-\(target.rawValue)")
     }
 
-    /// The query itself survives a scope change — trying the same words in another mode is the
-    /// whole reason to reach for the scope bar mid-search. Only the previous mode's results go,
+    /// The query itself survives a mode change — trying the same words in another mode is the
+    /// whole reason to switch mid-search. Only the previous mode's results go,
     /// so nothing from one mode is ever read under another mode's prompt.
     private func modeChanged() {
         searchResults = []
@@ -327,15 +314,14 @@ struct NoteListScreen: View {
 
     private var tagFilterButton: some View {
         let options = collectTags(notes.notes.filter { !$0.pendingDelete })
-        return Button {
+        return NoteFilterChip(
+            label: selectedTags.isEmpty ? nil : "\(selectedTags.count)", systemImage: "tag",
+            tint: PaiPalette.primary500, isOn: !selectedTags.isEmpty
+        ) {
             showTagFilter = true
-        } label: {
-            Label(selectedTags.isEmpty ? "Tags" : "Tags (\(selectedTags.count))", systemImage: "tag")
-                .font(PaiTypography.caption.font)
         }
-        .buttonStyle(.bordered)
-        .tint(selectedTags.isEmpty ? PaiPalette.Semantic.textMuted : PaiPalette.primary500)
         .disabled(options.isEmpty)
+        .accessibilityLabel(selectedTags.isEmpty ? "Tags" : "Tags, \(selectedTags.count) selected")
         .sheet(isPresented: $showTagFilter) {
             NoteTagFilterSheet(options: options, selected: $selectedTags)
         }
@@ -546,6 +532,37 @@ struct NoteListScreen: View {
             windowed = tagged.filter { bounds.contains(epochMilliseconds: $0.note.updatedAtMs) }
         }
         return searchAndSortNotes(windowed, query: filterText, order: browse.sortOrder)
+    }
+}
+
+/// One control of the row above the list: an icon, words where they fit, tinted while it is on.
+private struct NoteFilterChip: View {
+    var label: String?
+    let systemImage: String
+    let tint: Color
+    let isOn: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                if let label {
+                    Text(label)
+                }
+            }
+            .font(PaiTypography.caption.font)
+            .lineLimit(1)
+            .padding(.horizontal, 12)
+            .frame(minWidth: 44, minHeight: 32)
+            .foregroundStyle(isOn ? tint : PaiPalette.Semantic.textMuted)
+            .background(
+                isOn ? tint.opacity(0.2) : PaiPalette.Semantic.raisedSurface, in: Capsule()
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isOn ? [.isSelected] : [])
     }
 }
 
