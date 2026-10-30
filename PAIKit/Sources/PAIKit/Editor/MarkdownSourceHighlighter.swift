@@ -65,9 +65,19 @@ public enum MarkdownSourceHighlighter {
 
     public static func spans(for source: String) -> [MarkdownSourceSpan] {
         guard !source.isEmpty else { return [] }
-        var scanner = Scanner(source: source)
-        scanner.run()
-        return scanner.spans
+        let text = source as NSString
+        let index = MarkdownDocumentIndex(text: text)
+        return index.spans(overlapping: NSRange(location: 0, length: text.length), in: text)
+    }
+
+    /// One line of body text, outside any fence or frontmatter, with spans offset to where the
+    /// line sits in the note. What a line's block is lies with ``MarkdownDocumentIndex``.
+    static func spans(forLine line: String, at location: Int) -> [MarkdownSourceSpan] {
+        var scanner = Scanner(source: line)
+        scanner.highlightLine(0..<scanner.characters.count)
+        return scanner.spans.map {
+            MarkdownSourceSpan(location: $0.location + location, length: $0.length, style: $0.style)
+        }
     }
 
     private struct Scanner {
@@ -99,71 +109,8 @@ public enum MarkdownSourceHighlighter {
                     location: location, length: utf16Offsets[range.upperBound] - location, style: style))
         }
 
-        mutating func run() {
-            let lines = lineRanges()
-            var index = 0
-
-            // Frontmatter first and only at the very top: a `---` anywhere else is a thematic
-            // break, and treating a mid-document one as frontmatter would grey out the rest of
-            // the note.
-            if let end = frontmatterEnd(lines: lines) {
-                emit(lines[0].lowerBound..<lines[end].upperBound, .frontmatter)
-                index = end + 1
-            }
-
-            var openFence: String?
-            while index < lines.count {
-                let line = lines[index]
-                index += 1
-
-                if let fence = openFence {
-                    let closes = MarkdownLineSyntax.closesFence(text(of: line), opener: fence)
-                    emit(line, closes ? .marker : .codeBlockContent)
-                    if closes { openFence = nil }
-                    continue
-                }
-                if let fence = MarkdownLineSyntax.openingFence(in: text(of: line)) {
-                    emit(line, .marker)
-                    openFence = fence
-                    continue
-                }
-
-                highlightLine(line)
-            }
-        }
-
-        // MARK: Lines
-
-        /// `isNewline` rather than `== "\n"` — see ``MarkdownLineSyntax/splitKeepingTerminators(_:)``,
-        /// the other independent scanner that made the same mistake. Swift clusters a `\r\n` pair
-        /// into one `Character`, equal to neither bare terminator, so comparing against the
-        /// literal leaves a CRLF-terminated note as one unbroken line here too.
-        func lineRanges() -> [Range<Int>] {
-            var ranges: [Range<Int>] = []
-            var start = 0
-            for index in characters.indices where characters[index].isNewline {
-                ranges.append(start..<(index + 1))
-                start = index + 1
-            }
-            if start < characters.count { ranges.append(start..<characters.count) }
-            return ranges
-        }
-
         func text(of range: Range<Int>) -> String {
             String(characters[range])
-        }
-
-        /// The index of the closing `---` line, when the document opens with frontmatter.
-        func frontmatterEnd(lines: [Range<Int>]) -> Int? {
-            guard let first = lines.first, text(of: first).trimmingCharacters(in: .whitespacesAndNewlines) == "---"
-            else { return nil }
-            for index in 1..<lines.count
-            where text(of: lines[index]).trimmingCharacters(in: .whitespacesAndNewlines) == "---" {
-                return index
-            }
-            // An unterminated block is not frontmatter — it is a thematic break followed by text,
-            // and dimming the whole note on a stray `---` at the top would be spectacular.
-            return nil
         }
 
         // MARK: One line

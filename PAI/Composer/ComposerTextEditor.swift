@@ -250,7 +250,7 @@ struct PastedImage {
 /// (`MessageInput.tsx`'s `handlePaste`). Turning `allowsEditingTextAttributes` on would make the
 /// stock paste succeed, but by embedding the picture *in the text* as an attachment character,
 /// which is not a file the send path can upload.
-final class PasteAwareTextView: UITextView {
+class PasteAwareTextView: UITextView {
     var onPasteImages: (([PastedImage]) -> String?)?
 
     /// Ordered by preference, not by likelihood: the first type an item actually carries wins, so

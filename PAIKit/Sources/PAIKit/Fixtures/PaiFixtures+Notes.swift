@@ -97,6 +97,48 @@ extension PaiFixtures {
 
     public static let groceriesNoteID = "3b77de40-1111-4c1a-8f30-2b7e5c918d22"
 
+    /// A note the size of the largest real ones, and their shape: long table rows, prose, wrapped
+    /// list items, a few fences, an emoji per section so UTF-16 and character offsets differ.
+    public static let largeNoteID = "c41f7a90-2222-4c1a-8f30-2b7e5c918d33"
+
+    public static let largeNoteBody: String = {
+        var lines = ["---", "date: 2026-01-26", "---", "#fixture", ""]
+        let row = (0..<9).map { "column \($0) holding a longer value" }.joined(separator: " | ")
+        let prose = Array(
+            repeating: "Ordinary **prose** with `code` and a [link](https://example.com) in it.", count: 4
+        )
+        .joined(separator: " ")
+        for section in 1...220 {
+            lines.append("## Section \(section) 🗂️")
+            lines.append("")
+            lines.append(prose)
+            lines.append("")
+            lines.append("| \(row) |")
+            lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+            lines += Array(repeating: "| \(row) |", count: 4)
+            lines.append("")
+            for item in 1...5 {
+                lines.append("- item \(item) with enough words to wrap across more than one line of a phone screen")
+            }
+            lines.append("")
+            if section.isMultiple(of: 10) {
+                lines += ["```swift", "let section = \(section)", "```", ""]
+            }
+        }
+        return lines.joined(separator: "\n")
+    }()
+
+    private static func largeNoteDetail() -> String {
+        let note: [String: Any] = [
+            "id": largeNoteID, "name": "Large note", "summary": NSNull(), "container_id": "c1", "favourite": false,
+            "tags": ["fixture"], "updated_at_ms": 1_756_512_000_000, "pending_delete": false, "frontmatter": "",
+            "body": largeNoteBody, "content_hash": "sha256:large", "created_at": "2026-08-01T09:15:00.123456+00:00",
+            "created_at_ms": 1_754_039_700_000, "last_write_source": "ui",
+        ]
+        let encoded = (try? JSONSerialization.data(withJSONObject: note)) ?? Data()
+        return String(decoding: encoded, as: UTF8.self)
+    }
+
     private static func smallNote(id: String, name: String, summary: String?, tags: [String], body: String) -> String {
         let summaryJson = summary.map { "\"\($0)\"" } ?? "null"
         let tagsJson = tags.map { "\"\($0)\"" }.joined(separator: ",")
@@ -127,6 +169,7 @@ extension PaiFixtures {
         case noteID: noteDetail
         case wikilinkNoteID: noteDetailWikilink
         case groceriesNoteID: noteDetailGroceries
+        case largeNoteID: largeNoteDetail()
         default: nil
         }
     }

@@ -50,76 +50,49 @@ enum NoteEditorTheme {
 
     // MARK: Painting
 
-    /// Build the attributed string a text view shows for the whole note.
-    ///
-    /// `showsHangingIndent` gates the one pass that is not always-on — the gutter and the
-    /// wrap indent are one visual feature behind one settings toggle, so a reader who has not turned the gutter on gets no extra
-    /// measurement work either.
-    static func attributedText(
-        for source: String, highlight: String? = nil, showsHangingIndent: Bool = false
-    ) -> NSAttributedString {
-        let attributed = NSMutableAttributedString(string: source)
-        paint(attributed, highlight: highlight, showsHangingIndent: showsHangingIndent)
-        return attributed
-    }
-
-    /// Restyle a live text storage in place, leaving its characters — and so the caret, the
+    /// Style whole lines of a note in place, leaving its characters — and so the caret, the
     /// selection and the undo stack — untouched.
     ///
-    /// This is what runs after every keystroke (debounced — see
-    /// `MarkdownSourceTextView.Coordinator.scheduleRepaint`). Replacing the string instead would
-    /// record a wholesale edit that Undo then reverts as one, which for an editor is worse than
-    /// no highlighting at all.
-    static func repaint(_ storage: NSTextStorage, highlight: String? = nil, showsHangingIndent: Bool = false) {
-        storage.beginEditing()
-        paint(storage, highlight: highlight, showsHangingIndent: showsHangingIndent)
-        storage.endEditing()
-    }
-
-    private static func paint(_ attributed: NSMutableAttributedString, highlight: String?, showsHangingIndent: Bool) {
-        let source = attributed.string
-        let full = NSRange(location: 0, length: attributed.length)
+    /// `range` must cover whole lines: everything in it is reset to the body style first, and
+    /// only the lines it overlaps are painted back. `text` is `attributed`'s own characters,
+    /// handed in so a live text storage is read through its `mutableString` rather than copied.
+    ///
+    /// `showsHangingIndent` gates the one pass that is not always-on — the gutter and the wrap
+    /// indent are one visual feature behind one settings toggle.
+    static func paint(
+        _ attributed: NSMutableAttributedString, in range: NSRange, index: MarkdownDocumentIndex, text: NSString,
+        showsHangingIndent: Bool
+    ) {
         // Set, not add: the previous pass's attributes have to go, or a character that stops being
-        // bold stays bold forever. The whole note wraps like ordinary prose now — a fenced code
-        // block or a table lays out inside the same text view as everything else, rather than in
-        // its own non-wrapping region; only `.codeBlockContent` below still marks code out visually.
-        attributed.setAttributes([.font: bodyFont, .foregroundColor: text], range: full)
+        // bold stays bold forever.
+        attributed.setAttributes(baseAttributes(), range: range)
 
         // A wrapped list item's continuation lines align under the item's own text rather than
         // restarting at the margin — Obsidian's own behaviour, and native TextKit's own way to
         // get it: `headIndent` is resolved during layout using the real, proportional font
         // metrics, so there is no separate pixel-measurement pass to keep in step with the font.
         if showsHangingIndent {
-            for indent in MarkdownHangingIndent.indents(for: source) {
-                let range = NSRange(location: indent.location, length: indent.length)
-                guard range.upperBound <= attributed.length else { continue }
-                let markerRange = NSRange(location: indent.location, length: indent.markerWidth)
-                guard markerRange.upperBound <= attributed.length else { continue }
+            for indent in index.hangingIndents(overlapping: range, in: text) {
                 // The real marker text, not a placeholder — a run of digits and a run of spaces
                 // are not the same width in a proportional font, and neither is a tab.
-                let marker = (source as NSString).substring(with: markerRange)
+                let marker = text.substring(
+                    with: NSRange(location: indent.location, length: indent.markerWidth))
                 let style = NSMutableParagraphStyle()
                 style.headIndent = (marker as NSString).size(withAttributes: [.font: bodyFont]).width
-                attributed.addAttribute(.paragraphStyle, value: style, range: range)
+                attributed.addAttribute(
+                    .paragraphStyle, value: style, range: NSRange(location: indent.location, length: indent.length))
             }
         }
 
         // Block styles come first and inline styles second, in the order the scanner emitted
         // them, so bold inside a heading lands on top of the heading rather than replacing it.
-        for span in MarkdownSourceHighlighter.spans(for: source) {
-            let range = NSRange(location: span.location, length: span.length)
-            guard range.upperBound <= attributed.length else { continue }
-            apply(span.style, to: attributed, range: range)
-        }
-
-        // Last, so a hit inside inline code is still visibly a hit — that span paints a background
-        // of its own, and whichever is applied second is the one that shows.
-        guard let highlight, !highlight.isEmpty else { return }
-        for range in SearchText.findMatches(in: source, query: highlight)
-        where range.upperBound <= attributed.length {
-            attributed.addAttribute(.backgroundColor, value: searchHighlight, range: range)
+        for span in index.spans(overlapping: range, in: text) {
+            apply(span.style, to: attributed, range: NSRange(location: span.location, length: span.length))
         }
     }
+
+    /// What unstyled text carries, and what a keystroke in an empty note types with.
+    static func baseAttributes() -> [NSAttributedString.Key: Any] { [.font: bodyFont, .foregroundColor: text] }
 
     private static func apply(_ style: MarkdownSourceStyle, to attributed: NSMutableAttributedString, range: NSRange) {
         switch style {

@@ -31,16 +31,16 @@ public struct MarkdownHangingIndent: Equatable, Sendable {
     /// not a list item is simply absent from the result, rather than reported with a zero width.
     public static func indents(for source: String) -> [MarkdownHangingIndent] {
         guard !source.isEmpty else { return [] }
-        var results: [MarkdownHangingIndent] = []
-        var utf16Offset = 0
-        for line in MarkdownLineSyntax.splitKeepingTerminators(source) {
-            defer { utf16Offset += line.utf16.count }
-            let content = line.prefix { !$0.isNewline }
-            guard let prefixLength = MarkdownListContinuation.markerPrefixLength(ofLine: content), prefixLength > 0
-            else { continue }
-            results.append(
-                MarkdownHangingIndent(location: utf16Offset, length: line.utf16.count, markerWidth: prefixLength))
-        }
-        return results
+        let text = source as NSString
+        let index = MarkdownDocumentIndex(text: text)
+        return index.hangingIndents(overlapping: NSRange(location: 0, length: text.length), in: text)
+    }
+
+    /// The indent one line wants, terminator included in `line`, or nil when it is not a list item.
+    static func indent(forLine line: String, at location: Int) -> MarkdownHangingIndent? {
+        let content = line.prefix { !$0.isNewline }
+        guard let prefixLength = MarkdownListContinuation.markerPrefixLength(ofLine: content), prefixLength > 0
+        else { return nil }
+        return MarkdownHangingIndent(location: location, length: line.utf16.count, markerWidth: prefixLength)
     }
 }
