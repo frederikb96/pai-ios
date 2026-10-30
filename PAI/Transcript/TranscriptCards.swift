@@ -235,6 +235,16 @@ struct TranscriptCardKindView: View {
                 ToolBodyText(blocks: card.plan.blocks, highlightsByBlockIndex: highlightsByBlockIndex)
             }
 
+        case .bashEditDiffFile(let label, let gutterWidth):
+            activity(icon: "pencil", label: label) {
+                ToolBodyText(
+                    blocks: card.plan.blocks, colorHint: .numberedDiff(gutterWidth: gutterWidth),
+                    highlightsByBlockIndex: highlightsByBlockIndex)
+            }
+
+        case .bashEditDiffNote:
+            activity(icon: "info.circle", label: nil) { EmptyView() }
+
         case .notifyReply:
             activity(icon: "bell", label: "Notification sent") {
                 MarkdownContentView(blocks: card.plan.blocks, highlights: highlightsByBlockIndex)
@@ -404,12 +414,14 @@ struct ActivityRowView<Content: View>: View {
                 // Pinned to exactly one line, in both directions: a label that wrapped would make
                 // the row taller than it was measured to be, and one that collapsed would make it
                 // shorter. The row reserves this line whether or not there is a word in it.
-                Text(label ?? " ")
-                    .font(PaiTypography.captionEmphasized.font)
-                    .foregroundStyle(labelColor)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(height: metrics.activityLineHeight, alignment: .leading)
+                if card.plan.drawsLabelLine {
+                    Text(label ?? " ")
+                        .font(PaiTypography.captionEmphasized.font)
+                        .foregroundStyle(labelColor)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(height: metrics.activityLineHeight, alignment: .leading)
+                }
                 if let header = card.plan.header {
                     // Wraps, never scrolls, never clipped: the point of lifting a path out of the
                     // body is that it stays readable whatever the body is doing. Soft-broken the
@@ -802,9 +814,10 @@ struct ToolBodyText: View {
                 attributed[range].foregroundColor = colorHint.color(forLine: line)
             }
 
-            if colorHint == .diff {
+            if let gutter = colorHint.diffPrefixOffset {
                 applyWordLevelDiffHighlight(
-                    rawLines: rawLines, lineRanges: lineRanges, code: code, colorHint: colorHint, into: &attributed)
+                    rawLines: rawLines, lineRanges: lineRanges, gutter: gutter, code: code, colorHint: colorHint,
+                    into: &attributed)
             }
         }
 
@@ -820,15 +833,16 @@ struct ToolBodyText: View {
     /// height, which is computed from the string's own line count rather than from how any of
     /// it is painted.
     private func applyWordLevelDiffHighlight(
-        rawLines: [String], lineRanges: [NSRange], code: String, colorHint: ToolBodyColorHint,
+        rawLines: [String], lineRanges: [NSRange], gutter: Int, code: String, colorHint: ToolBodyColorHint,
         into attributed: inout AttributedString
     ) {
         // `EditDiff.changedLinePairs` only needs to know which lines are removed/added — the
         // literal `- `/`+ ` prefix `displayText(of:)` wrote is what carries that here, decoded
         // back rather than threaded through as a second argument.
         let diffLines: [EditDiff.Line] = rawLines.map { line in
-            if line.hasPrefix("- ") { return .removed(String(line.dropFirst(2))) }
-            if line.hasPrefix("+ ") { return .added(String(line.dropFirst(2))) }
+            let body = line.dropFirst(gutter)
+            if body.hasPrefix("- ") { return .removed(String(body.dropFirst(2))) }
+            if body.hasPrefix("+ ") { return .added(String(body.dropFirst(2))) }
             return .context(line)
         }
         for pair in EditDiff.changedLinePairs(in: diffLines) {
@@ -838,20 +852,21 @@ struct ToolBodyText: View {
             let wordDiff = EditDiff.wordDiff(removed: removedText, added: addedText)
             highlightChangedTokens(
                 wordDiff.removed, prefixedLine: rawLines[pair.removedIndex], lineRange: lineRanges[pair.removedIndex],
-                code: code, colorHint: colorHint, into: &attributed)
+                gutter: gutter, code: code, colorHint: colorHint, into: &attributed)
             highlightChangedTokens(
                 wordDiff.added, prefixedLine: rawLines[pair.addedIndex], lineRange: lineRanges[pair.addedIndex],
-                code: code, colorHint: colorHint, into: &attributed)
+                gutter: gutter, code: code, colorHint: colorHint, into: &attributed)
         }
     }
 
     private func highlightChangedTokens(
-        _ tokens: [EditDiff.WordToken], prefixedLine: String, lineRange: NSRange, code: String,
+        _ tokens: [EditDiff.WordToken], prefixedLine: String, lineRange: NSRange, gutter: Int, code: String,
         colorHint: ToolBodyColorHint, into attributed: inout AttributedString
     ) {
         // Every line `EditDiff.lines` can pair carries exactly a two-character `- `/`+ ` prefix
-        // (`displayText(of:)`'s own construction) ahead of the text `wordDiff` tokenized.
-        var offset = lineRange.location + 2
+        // (`displayText(of:)`'s own construction) ahead of the text `wordDiff` tokenized; a
+        // numbered line has its ASCII gutter in front of that.
+        var offset = lineRange.location + gutter + 2
         for token in tokens {
             let length = token.text.utf16.count
             defer { offset += length }
@@ -867,16 +882,26 @@ struct ToolBodyText: View {
 enum ToolBodyColorHint: Equatable {
     case bashCommand
     case diff
+    /// `BashEditDiffDisplay`'s body: the same prefixes behind a line-number gutter.
+    case numberedDiff(gutterWidth: Int)
+
+    /// Where a diff line's `- `/`+ ` prefix starts, or `nil` for a body that is not a diff.
+    var diffPrefixOffset: Int? {
+        switch self {
+        case .bashCommand: return nil
+        case .diff: return 0
+        case .numberedDiff(let gutterWidth): return gutterWidth + 1
+        }
+    }
 
     func color(forLine line: String) -> Color {
-        switch self {
-        case .bashCommand:
+        guard let offset = diffPrefixOffset else {
             return line.hasPrefix("$ ") ? PaiPalette.green500 : PaiPalette.Semantic.textPrimary
-        case .diff:
-            if line.hasPrefix("- ") { return PaiPalette.red500 }
-            if line.hasPrefix("+ ") { return PaiPalette.green500 }
-            return PaiPalette.Semantic.textPrimary
         }
+        let body = line.dropFirst(offset)
+        if body.hasPrefix("- ") { return PaiPalette.red500 }
+        if body.hasPrefix("+ ") { return PaiPalette.green500 }
+        return PaiPalette.Semantic.textPrimary
     }
 }
 

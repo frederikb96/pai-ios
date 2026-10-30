@@ -78,6 +78,12 @@ public struct TranscriptCardPlan: Equatable, Sendable {
         /// A tool's result, arriving as its own message and rendered as its own row — never
         /// paired with the call that produced it.
         case toolResult(ToolResult)
+        /// One file a Bash call changed, drawn under its result. The path is the card's header and
+        /// the body is ``BashEditDiffDisplay/body(of:)``, whose gutter the view paints around.
+        case bashEditDiffFile(label: String, gutterWidth: Int)
+        /// The quiet line closing a Bash call's files, carried in the card's header so it stays
+        /// out of what search counts. It has no label line and no body.
+        case bashEditDiffNote
         /// A `notify` tool call's own reply — the bubble a notification jump (push, notification
         /// centre, kind stepping) now lands on, rendered as the notification it describes rather
         /// than the generic tool result's raw YAML. Always shown, unlike `.toolResult`: there is
@@ -146,6 +152,13 @@ public struct TranscriptCardPlan: Equatable, Sendable {
         self.blocks = blocks
         self.header = header
     }
+
+    /// Whether an activity row reserves its label line, which it does whether or not there is a
+    /// word to put in it. Measured and drawn from this one answer.
+    public var drawsLabelLine: Bool {
+        if case .bashEditDiffNote = kind { return false }
+        return true
+    }
 }
 
 public enum TranscriptRowPlan {
@@ -176,6 +189,7 @@ public enum TranscriptRowPlan {
                 return [notifyReplyCard(title: reply.title, body: reply.body)]
             }
             return [toolResultCard(result, index: 0, isRevealed: isRevealed)]
+                + bashEditDiffCards(result, firstIndex: 1, isRevealed: isRevealed)
 
         case .hidden, .none:
             return []
@@ -464,6 +478,31 @@ public enum TranscriptRowPlan {
             kind: .toolResult(result), text: text,
             budget: failed ? MessageDisplay.Preview.resultError : MessageDisplay.Preview.result,
             revealed: isRevealed(index), tone: failed ? .error : .normal)
+    }
+
+    /// One card per changed file, then the note when there is one. Each file opens on its own, as
+    /// an edit's diff does, and the file's body gets the budget an edit's diff gets.
+    private static func bashEditDiffCards(
+        _ result: ToolResult, firstIndex: Int, isRevealed: (Int) -> Bool
+    ) -> [TranscriptCardPlan] {
+        guard let diff = result.bashEditDiff, BashEditDiffDisplay.isShown(diff) else { return [] }
+        var cards: [TranscriptCardPlan] = []
+        for (offset, file) in diff.files.enumerated() {
+            let body = BashEditDiffDisplay.body(of: file)
+            cards.append(
+                slicedActivityCard(
+                    kind: .bashEditDiffFile(
+                        label: BashEditDiffDisplay.label(for: file), gutterWidth: body.gutterWidth),
+                    text: body.text, budget: MessageDisplay.Preview.diff, revealed: isRevealed(firstIndex + offset),
+                    header: MessageDisplay.abbreviatingHome(file.filePath)))
+        }
+        if let note = BashEditDiffDisplay.note(for: diff) {
+            cards.append(
+                TranscriptCardPlan(
+                    kind: .bashEditDiffNote, register: .activity, preview: .full(totalLines: 0), isRevealed: true,
+                    blocks: [], header: note))
+        }
+        return cards
     }
 
     private static func notifyReplyCard(title: String, body: String) -> TranscriptCardPlan {

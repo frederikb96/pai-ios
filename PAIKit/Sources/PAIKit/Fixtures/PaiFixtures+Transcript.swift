@@ -57,7 +57,20 @@ extension PaiFixtures {
             "timestamp": "2026-08-29T06:12:21Z", "content": null, "thinking": null, "tool_calls": null,
             "tool_result": { "tool_use_id": "toolu_bash_01", "tool_name": "Bash",
               "content": "backend/src/pai_cloud/api.py:649:            \"backfill\": conn.backfill_snapshot() if conn is not None else None,\n",
-              "is_error": false },
+              "is_error": false,
+              "bash_edit_diff": {
+                "files": [
+                  { "filePath": "/home/fixture/repo/web/src/api/types.ts",
+                    "hunks": [
+                      { "oldStart": 140, "oldLines": 3, "newStart": 140, "newLines": 3,
+                        "lines": [" export interface Message {", "-  id: string;", "+  id: number;", "   session_id: string;"] },
+                      { "oldStart": 210, "oldLines": 1, "newStart": 210, "newLines": 2,
+                        "lines": [" }", "+export type MessageId = number;"] }
+                    ] },
+                  { "filePath": "/home/fixture/repo/web/src/api/notes.txt", "created": true,
+                    "hunks": [ { "oldStart": 0, "oldLines": 0, "newStart": 1, "newLines": 1, "lines": ["+first line"] } ] }
+                ],
+                "moreFiles": 2, "changedFiles": ["web/src/api/types.ts"], "shared": true } },
             "hook_summary": null, "tokens": null, "created_at": "2026-08-29T06:12:21Z" },
 
           { "id": 9006, "session_id": "305df4d3-1554-4fc3-be04-39a354a9e619", "type": "assistant", "subtype": null,
