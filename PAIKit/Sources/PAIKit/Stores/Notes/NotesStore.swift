@@ -195,6 +195,8 @@ public final class NotesStore {
     @ObservationIgnored public var onSyncNotice: ((NoteSyncNotice) -> Void)?
 
     @ObservationIgnored let cache: NotesCacheStorage
+    /// The last body handed to ``cacheBody(_:)``, which the next one waits for.
+    @ObservationIgnored var bodyCacheWrite: Task<Void, Never>?
     @ObservationIgnored let outbox: NoteOutboxStorage
     /// Every write of a pending edit goes through this, so a keystroke's deferred write can never
     /// land after the synchronous one a request or a settled save makes.
@@ -876,7 +878,9 @@ public final class NotesStore {
         // The edit is on disk before the request leaves; with no network it goes no further.
         // A save is never held back by ``transportDown`` alone: the request is how the store
         // learns the connection is back.
-        syncOutbox(id: id)
+        await syncOutboxInBackground(id: id)
+        // Discarded while the write ran.
+        guard drafts[id] != nil else { return }
         if pathSatisfied == false {
             park(id: id, forServer: false)
             return
