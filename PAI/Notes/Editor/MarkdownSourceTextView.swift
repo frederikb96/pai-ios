@@ -138,6 +138,13 @@ struct MarkdownSourceTextView: UIViewRepresentable {
         coordinator.applyRequests(in: view)
     }
 
+    /// Fills what it is offered and asks the view nothing. Left to itself, SwiftUI asks the text
+    /// view what size it wants on each update, and a text view answers by measuring the whole
+    /// note.
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: NoteSourceTextView, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? uiView.bounds.width, height: proposal.height ?? uiView.bounds.height)
+    }
+
     static func dismantleUIView(_ view: NoteSourceTextView, coordinator: Coordinator) {
         coordinator.publishNow()
     }
