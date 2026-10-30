@@ -37,6 +37,64 @@ final class ShareStoreTests: XCTestCase {
         }
     }
 
+    private static let noMark = ShareAttemptMark(isSet: { false }, set: { _ in })
+
+    private final class Mark: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: Bool
+        private(set) var writes: [Bool] = []
+
+        init(_ value: Bool) { self.value = value }
+
+        var attemptMark: ShareAttemptMark {
+            ShareAttemptMark(
+                isSet: { self.lock.withLock { self.value } },
+                set: { new in
+                    self.lock.withLock {
+                        self.value = new
+                        self.writes.append(new)
+                    }
+                })
+        }
+    }
+
+    /// The mark has to be up while a file is on its way, which is when the system ends a process,
+    /// so it is read from inside the upload.
+    func testASendThatDiesLeavesItsMarkForTheNextShare() async {
+        let mark = Mark(false)
+        let probe = ShareItem(id: "x", name: "x") {
+            XCTAssertEqual(mark.attemptMark.isSet(), true)
+            return PaiFileUpload(filename: "x", mimeType: "text/plain", data: Data())
+        }
+        let store = ShareStore(items: [probe], refusal: nil, backend: FakeBackend(), attemptMark: mark.attemptMark)
+        XCTAssertFalse(store.previousAttemptDied)
+
+        await store.send(to: .newSession)
+
+        XCTAssertEqual(store.phase, .sent(.newSession))
+        XCTAssertFalse(mark.attemptMark.isSet())
+    }
+
+    func testAMarkLeftBehindIsReportedOnce() {
+        let mark = Mark(true)
+        let first = ShareStore(items: [], refusal: nil, backend: FakeBackend(), attemptMark: mark.attemptMark)
+        let second = ShareStore(items: [], refusal: nil, backend: FakeBackend(), attemptMark: mark.attemptMark)
+
+        XCTAssertTrue(first.previousAttemptDied)
+        XCTAssertFalse(second.previousAttemptDied)
+    }
+
+    func testAFailedSendClearsItsMark() async {
+        let backend = FakeBackend()
+        await backend.queue([.failure(.transport("offline"))])
+        let mark = Mark(false)
+        let store = ShareStore(items: [item("a")], refusal: nil, backend: backend, attemptMark: mark.attemptMark)
+
+        await store.send(to: .newSession)
+
+        XCTAssertFalse(mark.attemptMark.isSet())
+    }
+
     private func item(_ name: String) -> ShareItem {
         ShareItem(id: "id-\(name)", name: name) {
             PaiFileUpload(filename: name, mimeType: "text/plain", data: Data(name.utf8))
@@ -54,7 +112,8 @@ final class ShareStoreTests: XCTestCase {
 
     func testEachFileLandsOnTheChosenDraftInOrderUnderItsOwnId() async {
         let backend = FakeBackend()
-        let store = ShareStore(items: [item("a.pdf"), item("b.txt")], refusal: nil, backend: backend)
+        let store = ShareStore(
+            items: [item("a.pdf"), item("b.txt")], refusal: nil, backend: backend, attemptMark: Self.noMark)
 
         await store.send(to: .session(id: "s1", title: "One"))
 
@@ -70,7 +129,7 @@ final class ShareStoreTests: XCTestCase {
 
     func testANewSessionUsesTheDraftTheNewSessionScreenReads() async {
         let backend = FakeBackend()
-        let store = ShareStore(items: [item("a.pdf")], refusal: nil, backend: backend)
+        let store = ShareStore(items: [item("a.pdf")], refusal: nil, backend: backend, attemptMark: Self.noMark)
 
         await store.send(to: .newSession)
 
@@ -83,7 +142,8 @@ final class ShareStoreTests: XCTestCase {
     func testARetryResumesAtTheFileThatFailedWithTheSameId() async {
         let backend = FakeBackend()
         await backend.queue([.success("stored"), .failure(.transport("offline"))])
-        let store = ShareStore(items: [item("a"), item("b"), item("c")], refusal: nil, backend: backend)
+        let store = ShareStore(
+            items: [item("a"), item("b"), item("c")], refusal: nil, backend: backend, attemptMark: Self.noMark)
 
         await store.send(to: .newSession)
         guard case .failed(.newSession, let message) = store.phase else {
@@ -103,7 +163,7 @@ final class ShareStoreTests: XCTestCase {
     func testARowTheServerCouldNotPlaceIsNotDelivered() async {
         let backend = FakeBackend()
         await backend.queue([.success("failed")])
-        let store = ShareStore(items: [item("a")], refusal: nil, backend: backend)
+        let store = ShareStore(items: [item("a")], refusal: nil, backend: backend, attemptMark: Self.noMark)
 
         await store.send(to: .newSession)
 
@@ -115,7 +175,7 @@ final class ShareStoreTests: XCTestCase {
     func testARefusedSignInSaysToSignInAgain() async {
         let backend = FakeBackend()
         await backend.queue([.failure(.detail("Invalid token", statusCode: 401))])
-        let store = ShareStore(items: [item("a")], refusal: nil, backend: backend)
+        let store = ShareStore(items: [item("a")], refusal: nil, backend: backend, attemptMark: Self.noMark)
 
         await store.send(to: .newSession)
 
@@ -129,7 +189,7 @@ final class ShareStoreTests: XCTestCase {
         }
         let backend = FakeBackend()
         let bad = ShareItem(id: "x", name: "x") { throw Unreadable() }
-        let store = ShareStore(items: [bad, item("after")], refusal: nil, backend: backend)
+        let store = ShareStore(items: [bad, item("after")], refusal: nil, backend: backend, attemptMark: Self.noMark)
 
         await store.send(to: .newSession)
 
@@ -141,7 +201,7 @@ final class ShareStoreTests: XCTestCase {
     /// A second tap while the first send is running, and one after it finished, are both nothing.
     func testSendingCannotRunTwice() async {
         let backend = FakeBackend()
-        let store = ShareStore(items: [item("a")], refusal: nil, backend: backend)
+        let store = ShareStore(items: [item("a")], refusal: nil, backend: backend, attemptMark: Self.noMark)
 
         async let first: Void = store.send(to: .newSession)
         async let second: Void = store.send(to: .newSession)
@@ -163,7 +223,7 @@ final class ShareStoreTests: XCTestCase {
             try session(["parent_session_id": "22222222-2222-2222-2222-222222222222"]),
         ]
         await backend.setSessions(.success([plain] + excluded))
-        let store = ShareStore(items: [], refusal: nil, backend: backend)
+        let store = ShareStore(items: [], refusal: nil, backend: backend, attemptMark: Self.noMark)
 
         await store.loadSessions(query: "")
 
@@ -172,7 +232,7 @@ final class ShareStoreTests: XCTestCase {
 
     func testASearchSendsItsTrimmedTextAndAnEmptyOneSendsNone() async {
         let backend = FakeBackend()
-        let store = ShareStore(items: [], refusal: nil, backend: backend)
+        let store = ShareStore(items: [], refusal: nil, backend: backend, attemptMark: Self.noMark)
 
         await store.loadSessions(query: "  notes ")
         await store.loadSessions(query: "   ")
@@ -185,7 +245,7 @@ final class ShareStoreTests: XCTestCase {
         let backend = FakeBackend()
         let plain = try session([:])
         await backend.setSessions(.success([plain]))
-        let store = ShareStore(items: [], refusal: nil, backend: backend)
+        let store = ShareStore(items: [], refusal: nil, backend: backend, attemptMark: Self.noMark)
         await store.loadSessions(query: "")
 
         await backend.setSessions(.failure(.transport("offline")))

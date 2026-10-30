@@ -15,7 +15,9 @@ struct ShareScreen: View {
                 if let client {
                     if let loaded {
                         ShareFlowView(
-                            store: ShareStore(items: loaded.items, refusal: loaded.refusal, backend: client),
+                            store: ShareStore(
+                                items: loaded.items, refusal: loaded.refusal, backend: client,
+                                attemptMark: .extensionDefaults),
                             close: close)
                     } else {
                         ProgressView("Reading what you shared")
@@ -47,6 +49,14 @@ struct ShareScreen: View {
         else { return nil }
         return PaiApiClient(requestFactory: factory)
     }
+}
+
+extension ShareAttemptMark {
+    private static let key = "shareAttemptInProgress"
+
+    static let extensionDefaults = ShareAttemptMark(
+        isSet: { UserDefaults.standard.bool(forKey: key) },
+        set: { UserDefaults.standard.set($0, forKey: key) })
 }
 
 private struct ShareFlowView: View {
@@ -83,6 +93,15 @@ private struct ShareFlowView: View {
 
     private var chooser: some View {
         List {
+            if store.previousAttemptDied {
+                Section {
+                    Label(
+                        "The last share stopped before it finished, so its files may be missing.",
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .font(.footnote)
+                }
+            }
             Section {
                 ForEach(store.items) { item in
                     Label(item.name, systemImage: "doc").lineLimit(1).truncationMode(.middle)

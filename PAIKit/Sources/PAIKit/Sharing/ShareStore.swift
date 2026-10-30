@@ -45,6 +45,20 @@ extension PaiApiClient: ShareBackend {
     }
 }
 
+/// Remembers that a send started and has not ended, across processes.
+///
+/// iOS can end an extension without a word, and then no screen of its own can say so. The next
+/// share reads the mark left behind, so a share that died is reported rather than forgotten.
+public struct ShareAttemptMark: Sendable {
+    public let isSet: @Sendable () -> Bool
+    public let set: @Sendable (Bool) -> Void
+
+    public init(isSet: @escaping @Sendable () -> Bool, set: @escaping @Sendable (Bool) -> Void) {
+        self.isSet = isSet
+        self.set = set
+    }
+}
+
 /// Everything the share screen shows and does, from the sessions it offers to the last upload.
 @Observable
 @MainActor
@@ -65,14 +79,20 @@ public final class ShareStore {
     public let items: [ShareItem]
     /// Why some of what was shared is not in `items`, or `nil` when all of it is.
     public let refusal: String?
+    /// The previous share was ended by the system partway through its send.
+    public let previousAttemptDied: Bool
 
+    private let attemptMark: ShareAttemptMark
     private let backend: any ShareBackend
     private var deliveredIds: Set<String> = []
 
-    public init(items: [ShareItem], refusal: String?, backend: any ShareBackend) {
+    public init(items: [ShareItem], refusal: String?, backend: any ShareBackend, attemptMark: ShareAttemptMark) {
         self.items = items
         self.refusal = refusal
         self.backend = backend
+        self.attemptMark = attemptMark
+        previousAttemptDied = attemptMark.isSet()
+        attemptMark.set(false)
     }
 
     /// A session a draft attachment can reach: the same reach the composer has, so one that takes
@@ -105,6 +125,8 @@ public final class ShareStore {
         case .choosing, .failed: break
         case .sending, .sent: return
         }
+        attemptMark.set(true)
+        defer { attemptMark.set(false) }
         for (index, item) in items.enumerated() {
             phase = .sending(done: index, total: items.count)
             guard !deliveredIds.contains(item.id) else { continue }

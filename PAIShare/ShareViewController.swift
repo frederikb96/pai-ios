@@ -24,6 +24,7 @@ final class ShareViewController: UIViewController {
     }
 
     private func close() {
+        ShareAttemptMark.extensionDefaults.set(false)
         SharedItemLoader.removeTemporaryFiles()
         extensionContext?.completeRequest(returningItems: nil)
     }
