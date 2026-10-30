@@ -18,7 +18,8 @@ struct NoteJumpRequest: Equatable {
 /// ``MarkdownSourceTextView``'s own documentation for why, and what that removed.
 struct NoteEditorSurface: View {
     let noteID: String
-    let text: String
+    /// See ``MarkdownSourceTextView/text``.
+    let text: () -> String
     /// Changes when the body was replaced by something other than typing — see
     /// ``NotesStore/externalBodyRevision``. The editor rebuilds from this rather than from `text`,
     /// because `text` also comes back changed from a save that normalised anything at all.
@@ -61,7 +62,7 @@ struct NoteEditorSurface: View {
     @State private var isUploading = false
 
     init(
-        noteID: String, text: String, revision: Int, handle: NoteEditorHandle, jump: NoteJumpRequest?,
+        noteID: String, text: @escaping () -> String, revision: Int, handle: NoteEditorHandle, jump: NoteJumpRequest?,
         highlight: String?, isCoveredBySheet: Bool, onChange: @escaping (String) -> Void
     ) {
         self.noteID = noteID
@@ -123,8 +124,9 @@ struct NoteEditorSurface: View {
 
     private func goTo(_ request: NoteJumpRequest?) {
         guard let request else { return }
-        let clamped = min(max(request.characterOffset, 0), text.count)
-        move(to: String(text.prefix(clamped)).utf16.count, settlingAtTopThird: true)
+        let body = text()
+        let clamped = min(max(request.characterOffset, 0), body.count)
+        move(to: String(body.prefix(clamped)).utf16.count, settlingAtTopThird: true)
     }
 
     private func move(to utf16Offset: Int, settlingAtTopThird: Bool = false) {

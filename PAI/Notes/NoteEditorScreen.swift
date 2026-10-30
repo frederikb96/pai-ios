@@ -181,8 +181,8 @@ struct NoteEditorScreen: View {
 
     @ViewBuilder
     private var content: some View {
-        if let body = notes.body(for: noteID) {
-            if isPreviewing {
+        if notes.body(for: noteID) != nil {
+            if isPreviewing, let body = notes.body(for: noteID) {
                 NoteBodyView(
                     body: body, nameToId: buildNameToId(notes.notes),
                     containerId: notes.detail(for: noteID)?.containerId,
@@ -190,7 +190,8 @@ struct NoteEditorScreen: View {
                     onToggleTask: { notes.toggleTask(id: noteID, renderedBody: body, mark: $0) })
             } else {
                 NoteEditorSurface(
-                    noteID: noteID, text: body, revision: notes.externalRevision(for: noteID),
+                    noteID: noteID, text: { [notes, noteID] in notes.body(for: noteID) ?? "" },
+                    revision: notes.externalRevision(for: noteID),
                     handle: editorHandle, jump: jump,
                     highlight: highlight, isCoveredBySheet: isShowingTools || isShowingActions,
                     onChange: { notes.edit(id: noteID, body: $0) })
