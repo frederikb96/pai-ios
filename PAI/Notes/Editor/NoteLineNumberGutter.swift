@@ -40,7 +40,7 @@ final class NoteLineNumberGutter: UIView {
         let layoutManager = textView.layoutManager
         let top = textView.textContainerInset.top
         let visible = CGRect(
-            x: 0, y: bounds.minY + frame.minY - top, width: textView.bounds.width, height: bounds.height)
+            x: 0, y: frame.minY - top, width: textView.bounds.width, height: bounds.height)
         let toScreen = top - frame.minY
 
         func draw(_ number: Int, at y: CGFloat) {
@@ -100,9 +100,9 @@ final class NoteSearchHighlightLayer: UIView {
         guard let textView, !matches.isEmpty else { return }
         let layoutManager = textView.layoutManager
         let origin = CGPoint(
-            x: textView.textContainerInset.left - bounds.minX, y: textView.textContainerInset.top - bounds.minY)
+            x: textView.textContainerInset.left - frame.minX, y: textView.textContainerInset.top - frame.minY)
         let visible = CGRect(
-            x: 0, y: bounds.minY - textView.textContainerInset.top, width: bounds.width, height: bounds.height)
+            x: 0, y: frame.minY - textView.textContainerInset.top, width: bounds.width, height: bounds.height)
         let glyphs = layoutManager.glyphRange(forBoundingRect: visible, in: textView.textContainer)
         let characters = layoutManager.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
 
