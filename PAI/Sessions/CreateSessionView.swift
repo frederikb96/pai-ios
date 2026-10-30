@@ -46,6 +46,7 @@ struct CreateSessionView: View {
     @State private var composerCaret: Int?
     @FocusState private var isComposerFocused: Bool
 
+    @State private var showingCamera = false
     @State private var showingPhotoPicker = false
     @State private var showingFilePicker = false
     @State private var showingTemporaryNote = false
@@ -126,8 +127,13 @@ struct CreateSessionView: View {
             // persisted pair is cleared (which also drops the effort) so the previous session's choice cannot come back.
             drafts.selectModel(nil)
             // The point of this screen is the text field — true whether it was reached by tapping
-            // "+" or by a home-screen shortcut built to land here ready to type.
-            isComposerFocused = true
+            // "+" or by a home-screen shortcut built to land here ready to type. The camera quick
+            // action opens the camera first; closing it brings the keyboard up instead.
+            if CameraLaunchRequest.shared.consume(), CameraCapture.isAvailable {
+                showingCamera = true
+            } else {
+                isComposerFocused = true
+            }
             // A call tile on the launcher asked for this session to be spoken rather than typed.
             // There is no session yet to bind a call to — the backend will not create one without
             // a first message — so the first turn is dictated into this composer, and the call
@@ -249,6 +255,10 @@ struct CreateSessionView: View {
                         drafts.selectThinking(id)
                     }
                 )
+            }
+            .fullScreenCover(isPresented: $showingCamera, onDismiss: { isComposerFocused = true }) {
+                CameraCapture { staged in stageAttachments([staged]) }
+                    .ignoresSafeArea()
             }
             .sheet(isPresented: $showingPhotoPicker) {
                 PhotoAttachmentPicker { staged in stageAttachments(staged) }
@@ -559,13 +569,13 @@ struct CreateSessionView: View {
                     hasSession: false,
                     offersStartCallAfterSend: !startsCallOnSend,
                     canGrantSecretAccess: false,
-                    // An ultra-fast session has no process of its own to hand a grant to —
-                    // same reason `offersAttachments` below excludes it. `nil` (not `false`)
-                    // is what hides the entry entirely; see `ComposerActionMenu.pregrantArmed`.
+                    // An ultra-fast session has no process of its own to hand a grant to. `nil`
+                    // (not `false`) is what hides the entry entirely; see
+                    // `ComposerActionMenu.pregrantArmed`.
                     pregrantArmed: createSession.isUltrafastSelected ? nil : pregrantArmed,
                     onTogglePregrant: togglePregrant,
                     canRestorePreviousText: canRestorePreviousText,
-                    offersAttachments: !createSession.isUltrafastSelected,
+                    offersFiles: !createSession.isUltrafastSelected,
                     alternateRecordingMode: VoiceRecorderButton.offersStart(
                         controller: voiceController,
                         isMine: voiceController.state == .idle || isRecordingHere(voiceController),
@@ -578,6 +588,7 @@ struct CreateSessionView: View {
                     },
                     onPastRecordings: { showingRecordingsSheet = true },
                     onPastMessages: { showingSentMessagesSheet = true },
+                    onTakePhoto: { showingCamera = true },
                     onAddPhoto: { showingPhotoPicker = true },
                     onAddFile: { showingFilePicker = true },
                     onTemporaryNote: { showingTemporaryNote = true },
