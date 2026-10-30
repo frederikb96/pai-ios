@@ -415,6 +415,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
                 dirty = changed
             }
             textView?.gutter?.setNeedsDisplay()
+            textView?.highlightLayer.textChanged(editedRange: editedRange, delta: delta)
         }
 
         /// Coalesces a typing burst into one repaint of the lines it touched. A repaint running
@@ -534,7 +535,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
 
         // MARK: Highlight
 
-        /// Painted as temporary layout attributes, which live beside the text: no character,
+        /// Painted by a layer behind the text rather than as attributes of it: no character,
         /// attribute run or line height changes, so a search over a large note moves nothing and
         /// costs no layout.
         private func applyHighlight(in view: NoteSourceTextView) {
@@ -543,9 +544,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
             paintedHighlight = query
             highlightToken += 1
             let token = highlightToken
-            let layoutManager = view.layoutManager
-            let everything = NSRange(location: 0, length: view.textStorage.length)
-            layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: everything)
+            view.highlightLayer.matches = []
             guard let query, !query.isEmpty else { return }
             let text = view.text ?? ""
             Task { [weak self] in
@@ -553,11 +552,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
                     SearchText.findMatches(in: text, query: query)
                 }.value
                 guard let self, token == self.highlightToken else { return }
-                let length = view.textStorage.length
-                for match in matches where match.upperBound <= length {
-                    layoutManager.addTemporaryAttribute(
-                        .backgroundColor, value: NoteEditorTheme.searchHighlight, forCharacterRange: match)
-                }
+                view.highlightLayer.matches = matches
             }
         }
 
@@ -736,14 +731,20 @@ struct MarkdownSourceTextView: UIViewRepresentable {
     }
 }
 
-/// The editor's text view: the composer's paste handling, a pinned gutter, and word of its own
-/// size changing.
+/// The editor's text view: the composer's paste handling, the pinned gutter and search highlight,
+/// and word of its own size changing.
 final class NoteSourceTextView: PasteAwareTextView {
     private(set) var gutter: NoteLineNumberGutter?
+    private(set) lazy var highlightLayer: NoteSearchHighlightLayer = {
+        let layer = NoteSearchHighlightLayer(frame: .zero)
+        layer.textView = self
+        insertSubview(layer, at: 0)
+        return layer
+    }()
     /// Called after a layout pass that changed the view's size, with the size before it.
     var onBoundsChange: ((NoteSourceTextView, CGSize) -> Void)?
     private var lastSize = CGSize.zero
-    private var lastGutterOffset = CGFloat.nan
+    private var lastPinnedOffset = CGFloat.nan
 
     func setGutterShown(_ shown: Bool, configure: (NoteLineNumberGutter) -> Void) {
         guard shown else {
@@ -763,13 +764,15 @@ final class NoteSourceTextView: PasteAwareTextView {
     /// the gutter pinned over the visible area.
     override func layoutSubviews() {
         super.layoutSubviews()
+        highlightLayer.frame = bounds
         if let gutter {
             gutter.frame = CGRect(x: 0, y: bounds.minY, width: textContainerInset.left, height: bounds.height)
             bringSubviewToFront(gutter)
-            if bounds.minY != lastGutterOffset {
-                lastGutterOffset = bounds.minY
-                gutter.setNeedsDisplay()
-            }
+        }
+        if bounds.minY != lastPinnedOffset {
+            lastPinnedOffset = bounds.minY
+            gutter?.setNeedsDisplay()
+            highlightLayer.setNeedsDisplay()
         }
         if bounds.size != lastSize {
             let old = lastSize
