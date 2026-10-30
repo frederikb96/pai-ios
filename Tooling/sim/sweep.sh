@@ -17,7 +17,7 @@ set -o pipefail
 # shellcheck source=lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 
-SECTIONS="none routes measure note-timing auth-rejected fullscreen-image fullscreen-pdf secret-prompt
+SECTIONS="none routes measure note-bench auth-rejected fullscreen-image fullscreen-pdf secret-prompt
 new-session-landing notes-filtering notifications-filter scheduler-task-push settings-notes-cache
 note-uncached-online notes-offline jump-landing deep-link-landing warm-jump clamped-landing note-refused"
 
@@ -37,6 +37,16 @@ want() {
   return 1
 }
 
+
+chrome_assert() {
+  curl -sS --max-time 5 "http://127.0.0.1:8765/screen/scroll-views" -o "artifacts/scroll-views-$1.json" || true
+  python3 - "artifacts/scroll-views-$1.json" <<'PY' || { echo "::error::$1: a scroll view besides the list, see scroll-views-$1.json"; fail=1; }
+import json, sys
+views = json.load(open(sys.argv[1]))["views"]
+print(views)
+sys.exit(0 if views and all(v["height"] > 300 for v in views) else 1)
+PY
+}
 
 screenshot() {
   name="$1"; shift
@@ -146,35 +156,23 @@ open('/tmp/t3.txt', 'w').write(' '.join('w%d' % i for i in range(600)))
   done
 fi
 
-if want note-timing; then
-  # Measured on this device rather than reasoned about: how much a debounced repaint
-  # costs with the note-editor gutter and hanging indent on, against the same note with
-  # them off. A large note — dozens of list items long enough to wrap, the shape that
-  # exercises the hanging indent — not a short one nothing would notice.
-  python3 -c "
-lines = []
-for section in range(1, 40):
-    lines.append(f'## Section {section}')
-    lines.append('')
-    for i in range(1, 8):
-        lines.append(
-            f'- item {section}.{i} with enough prose in it to wrap across more than one '
-            'visual line on a phone width, which is the shape that exercises the hanging '
-            'indent this measures rather than a short bullet that never wraps at all')
-    lines.append('')
-    lines.append(
-        'Ordinary prose between the lists, several sentences long, so the note is not '
-        'entirely list markup and reads like something written over weeks of real use '
-        'rather than a synthetic worst case built only to be slow.')
-    lines.append('')
-open('/tmp/large-note.md', 'w').write('\n'.join(lines))
-"
-  wc -c /tmp/large-note.md
-  curl -sS --max-time 15 --data-binary "@/tmp/large-note.md" \
-    "http://127.0.0.1:8765/markdown/note-editor-timing?width=350" \
-    -o artifacts/note-editor-timing.json || true
-  cat artifacts/note-editor-timing.json || true
-  xcrun simctl terminate "$udid" "$bundle" || true
+if want note-bench; then
+  # What a keystroke costs in the open editor on a note the size of the largest real ones, and
+  # whether its heights hold still, with the line numbers off and on. Nothing else runs beside it:
+  # a sampler pauses the app it measures.
+  bench() {
+    local name=$1 query=$2
+    xcrun simctl terminate "$udid" "$bundle" || true
+    screenshot "note-bench-$name" -PaiFixtureRoute noteLarge
+    curl -sS --max-time 90 -X POST "http://127.0.0.1:8765/notes/editor-bench?keys=60&$query" \
+      -o "artifacts/note-editor-bench-$name.json" || true
+    cat "artifacts/note-editor-bench-$name.json" || true
+    echo
+    xcrun simctl io "$udid" screenshot "artifacts/screen-note-bench-$name-after.png" || true
+    xcrun simctl terminate "$udid" "$bundle" || true
+  }
+  bench plain lineNumbers=0
+  bench line-numbers lineNumbers=1
 fi
 
 if want auth-rejected; then
@@ -235,11 +233,14 @@ if want new-session-landing; then
 fi
 
 if want notes-filtering; then
-  # The note index with its filter field focused. The mode switch lives in the search
-  # field's own scope bar, which the system only draws while that field is active — so
-  # the ordinary `notes` screenshot cannot show it, and a scope bar that silently failed
-  # to render would be indistinguishable from one that works.
+  # The note index, then with its filter field focused. Its chip row draws only if the list is the
+  # scroll view the navigation bar treats as content: a thin scroll view in the row takes the bar's
+  # edge effect, which can mask the chips while they stay tappable.
+  screenshot notes-chrome -PaiFixtureRoute notes
+  chrome_assert notes-chrome
+  xcrun simctl terminate "$udid" "$bundle" || true
   screenshot notes-filtering -PaiFixtureRoute notes -PaiFixtureNotesFilterFocused
+  chrome_assert notes-filtering
   xcrun simctl terminate "$udid" "$bundle" || true
 fi
 
