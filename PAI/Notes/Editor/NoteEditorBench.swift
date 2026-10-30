@@ -37,9 +37,11 @@
             let width: Double
             let loadMs: Double?
             let keystrokeMs: Timing
-            let longestFrameGapMs: Double
-            /// The longest stall in the seconds after typing stops, when the autosave runs.
-            let autosaveFrameGapMs: Double
+            /// The longest the main thread answered nothing, with the editor idle, while typing,
+            /// and in the seconds after typing stops, when the autosave runs.
+            let idleMainStallMs: Double
+            let typingMainStallMs: Double
+            let autosaveMainStallMs: Double
             let repaintMs: Timing
             let publishMs: Timing
             /// Opening a fence restyles everything below it, a slice per tick.
@@ -70,7 +72,11 @@
             view.scrollRangeToVisible(view.selectedRange)
             try? await Task.sleep(for: .milliseconds(600))
 
-            let frames = FrameGapRecorder()
+            let idle = MainStallRecorder()
+            try? await Task.sleep(for: .seconds(2))
+            let idleMainStall = idle.finish()
+
+            let typing = MainStallRecorder()
             var keystrokes: [Double] = []
             for key in 0..<keys {
                 let started = DispatchTime.now()
@@ -80,10 +86,10 @@
                 // A fast typist, with a pause now and then for the repaint to run.
                 try? await Task.sleep(for: .milliseconds(key % 16 == 15 ? 250 : 70))
             }
-            let longestFrameGap = frames.finish()
-            let afterTyping = FrameGapRecorder()
+            let typingMainStall = typing.finish()
+            let afterTyping = MainStallRecorder()
             try? await Task.sleep(for: .seconds(3))
-            let autosaveFrameGap = afterTyping.finish()
+            let autosaveMainStall = afterTyping.finish()
             let repaints = coordinator.benchRepaintsMs
             let publishes = coordinator.benchPublishesMs
 
@@ -110,8 +116,8 @@
 
             return Report(
                 utf16Length: storage.length, lineCount: coordinator.index.lineCount, width: view.bounds.width,
-                loadMs: coordinator.benchLoadMs, keystrokeMs: Timing(keystrokes), longestFrameGapMs: longestFrameGap,
-                autosaveFrameGapMs: autosaveFrameGap,
+                loadMs: coordinator.benchLoadMs, keystrokeMs: Timing(keystrokes), idleMainStallMs: idleMainStall,
+                typingMainStallMs: typingMainStall, autosaveMainStallMs: autosaveMainStall,
                 repaintMs: Timing(repaints), publishMs: Timing(publishes),
                 fenceRepaintTotalMs: fenceRepaints.reduce(0, +), fenceRepaintLongestSliceMs: fenceRepaints.max() ?? 0,
                 lastHeadingViewportFraction: fraction, contentHeightAtOpen: contentHeightAtOpen,
@@ -121,29 +127,34 @@
         }
     }
 
-    /// The longest gap between screen refreshes while it runs, which is what a frozen keyboard is.
+    /// The longest gap between ticks of a 4 ms timer on the main queue, which is how long the main
+    /// thread could not have answered a key.
     @MainActor
-    private final class FrameGapRecorder: NSObject {
-        private var link: CADisplayLink?
-        private var last: CFTimeInterval?
-        private var longest: CFTimeInterval = 0
+    private final class MainStallRecorder {
+        private var timer: DispatchSourceTimer?
+        private let box = Box()
 
-        override init() {
-            super.init()
-            let link = CADisplayLink(target: self, selector: #selector(tick))
-            link.add(to: .main, forMode: .common)
-            self.link = link
+        private final class Box: @unchecked Sendable {
+            var last = DispatchTime.now()
+            var longest: UInt64 = 0
         }
 
-        @objc private func tick(_ link: CADisplayLink) {
-            if let last { longest = max(longest, link.timestamp - last) }
-            last = link.timestamp
+        init() {
+            let timer = DispatchSource.makeTimerSource(queue: .main)
+            timer.schedule(deadline: .now(), repeating: .milliseconds(4))
+            timer.setEventHandler { [box] in
+                let now = DispatchTime.now()
+                box.longest = max(box.longest, now.uptimeNanoseconds - box.last.uptimeNanoseconds)
+                box.last = now
+            }
+            timer.resume()
+            self.timer = timer
         }
 
         func finish() -> Double {
-            link?.invalidate()
-            link = nil
-            return longest * 1000
+            timer?.cancel()
+            timer = nil
+            return Double(box.longest) / 1_000_000
         }
     }
 #endif
