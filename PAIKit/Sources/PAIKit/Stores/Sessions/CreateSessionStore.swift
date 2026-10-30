@@ -260,7 +260,8 @@ public final class CreateSessionStore {
     /// here lands first and the session starts without its files. The backend empties the draft
     /// itself when the create lands.
     public func enqueueSend(
-        message: String, files: [PaiFileUpload] = [], draftAttachmentIds: [String] = [], outbox: OutboxStore,
+        message: String, files: [PaiFileUpload] = [], draftAttachmentIds: [String] = [],
+        supersededUploadIds: [String] = [], outbox: OutboxStore,
         drafts: DraftStore? = nil, clientMessageId: String = UUID().uuidString, heldTake: HeldTake? = nil
     ) {
         let inlineFiles = files.map { file in
@@ -280,7 +281,8 @@ public final class CreateSessionStore {
                     workingDir: isUltrafastSelected ? nil : workingDir,
                     model: isUltrafastSelected ? nil : selectedModel,
                     thinking: isUltrafastSelected ? nil : selectedThinking),
-                text: message, draftAttachmentIds: draftAttachmentIds, inlineFiles: inlineFiles, heldTake: heldTake
+                text: message, draftAttachmentIds: draftAttachmentIds, inlineFiles: inlineFiles,
+                supersededUploadIds: supersededUploadIds, heldTake: heldTake
             ),
             inlineFileData: inlineFileData)
         drafts?.setDraftText(key: DraftKey.newSession, text: "")

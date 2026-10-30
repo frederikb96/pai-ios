@@ -109,7 +109,7 @@ final class StagedAttachmentStore {
         Task {
             let file = PaiFileUpload(
                 filename: attachment.filename, mimeType: attachment.mimeType, data: attachment.data)
-            if let uploaded = await drafts.addAttachment(key: sessionID, file: file) {
+            if let uploaded = await drafts.addAttachment(key: sessionID, file: file, id: attachment.uploadId) {
                 updateUploadState(.uploaded(attachmentId: uploaded.id), forId: attachment.id, in: sessionID)
             } else {
                 updateUploadState(.failed, forId: attachment.id, in: sessionID)
@@ -139,8 +139,15 @@ final class StagedAttachmentStore {
     func composerAttachments(for sessionID: String, draft: DraftEntry) -> [ComposerAttachment] {
         let staged = attachments(for: sessionID)
         let remoteOnly = DraftAttachmentDisplay.remoteOnly(
-            draft.attachments, claimedRemoteIds: Set(staged.compactMap(\.remoteAttachmentId)))
+            draft.attachments, claimedRemoteIds: Set(staged.map(\.uploadId) + staged.compactMap(\.remoteAttachmentId)))
         return staged.map(ComposerAttachment.staged) + remoteOnly.map(ComposerAttachment.remote)
+    }
+
+    /// The uploads a send of this draft carries inline: still in the air, or failed here and
+    /// possibly landed all the same. The send names them so the server drops whatever arrives;
+    /// left alone, such a row outlives the send as a chip the next message would claim again.
+    func inlineUploadIds(for sessionID: String) -> [String] {
+        attachments(for: sessionID).filter { $0.remoteAttachmentId == nil }.map(\.uploadId)
     }
 
     /// Reads whatever `persist(_:for:)` wrote before this launch back into memory. Called once,

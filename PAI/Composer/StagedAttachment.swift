@@ -25,6 +25,10 @@ struct StagedAttachment: Identifiable, Equatable {
     /// would be given a fresh one, and the data file named after the old id would be treated as
     /// stale and rewritten on the next save.
     var id = UUID()
+    /// The id of the server row this file becomes, given to its upload. Known before that upload
+    /// is answered, which is what lets a send name it. Lower-cased because the server lists ids
+    /// that way.
+    var uploadId: String { id.uuidString.lowercased() }
     var filename: String
     var mimeType: String
     var data: Data

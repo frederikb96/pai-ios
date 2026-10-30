@@ -227,7 +227,7 @@ private final class FakeDraftsFetching: DraftsFetching, @unchecked Sendable {
         }
     }
 
-    func addDraftAttachment(key: String, file: PaiFileUpload) async throws -> DraftAttachment {
+    func addDraftAttachment(key: String, file: PaiFileUpload, id: String) async throws -> DraftAttachment {
         record("addDraftAttachment:\(key):\(file.filename)")
         if addAttachmentFailuresRemaining > 0 {
             addAttachmentFailuresRemaining -= 1
@@ -904,7 +904,7 @@ final class DraftStoreTests: XCTestCase {
         let store = DraftStore(api: FakeDraftsFetching(), scheduler: InstantDraftScheduler())
         let file = PaiFileUpload(filename: "photo.jpg", mimeType: "image/jpeg", data: Data("bytes".utf8))
 
-        let uploaded = await store.addAttachment(key: "s1", file: file)
+        let uploaded = await store.addAttachment(key: "s1", file: file, id: "a1")
 
         XCTAssertEqual(uploaded?.filename, "photo.jpg")
         XCTAssertEqual(store.draft(for: "s1").attachments.map(\.filename), ["photo.jpg"])
@@ -918,7 +918,7 @@ final class DraftStoreTests: XCTestCase {
         let store = DraftStore(api: fake, scheduler: InstantDraftScheduler())
         let file = PaiFileUpload(filename: "photo.jpg", mimeType: "image/jpeg", data: Data("bytes".utf8))
 
-        let uploaded = await store.addAttachment(key: "s1", file: file)
+        let uploaded = await store.addAttachment(key: "s1", file: file, id: "a1")
 
         XCTAssertNil(uploaded)
         XCTAssertEqual(store.draft(for: "s1").attachments, [])
@@ -930,7 +930,7 @@ final class DraftStoreTests: XCTestCase {
         let fake = FakeDraftsFetching()
         let store = DraftStore(api: fake, scheduler: InstantDraftScheduler())
         let file = PaiFileUpload(filename: "photo.jpg", mimeType: "image/jpeg", data: Data("bytes".utf8))
-        guard let uploaded = await store.addAttachment(key: "s1", file: file) else {
+        guard let uploaded = await store.addAttachment(key: "s1", file: file, id: "a1") else {
             return XCTFail("upload should have succeeded")
         }
 

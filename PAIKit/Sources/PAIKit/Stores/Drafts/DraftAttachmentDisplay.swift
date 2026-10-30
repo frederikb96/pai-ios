@@ -20,6 +20,17 @@ public enum DraftAttachmentDisplay {
         attachments.filter { !claimedRemoteIds.contains($0.id) }
     }
 
+    /// The draft rows a send claims: what the server holds, minus the uploads whose bytes this send
+    /// carries inline. A row still uploading is left out, since a claim would find no file and the
+    /// message would go without it.
+    public static func claimableIds(
+        _ attachments: [DraftAttachment], inlineUploadIds: Set<String>
+    ) -> [String] {
+        attachments.filter { row in
+            (row.state == "stored" || row.state == "unclaimed") && !inlineUploadIds.contains(row.id)
+        }.map(\.id)
+    }
+
     /// A file this device uploaded onto a draft, as far as the staging store can say.
     public struct StagedUpload: Sendable, Equatable {
         public let id: UUID
