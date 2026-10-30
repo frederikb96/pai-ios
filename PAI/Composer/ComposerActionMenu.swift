@@ -41,16 +41,17 @@ struct ComposerActionMenu: View {
     /// one. Offered only while no call is running: the phone has one call, so a second door into
     /// a different destination while one is live would promise something it cannot do.
     var onCallThisSession: () -> Void = {}
-    /// False for an ultra-fast session or draft, which has no attachment path on the pod worker
-    /// — the backend 400s a file on one regardless, but hiding the entries here is what keeps
-    /// the user from discovering that by trying.
-    var offersAttachments: Bool = true
+    /// False for an ultra-fast session or draft, which reads images and nothing else — the
+    /// backend 400s any other file on one, but hiding the entries here is what keeps the user
+    /// from discovering that by trying.
+    var offersFiles: Bool = true
     /// The recording mode the microphone's tap does not start, offered here for where a long
     /// press is unreliable; `nil` while the microphone cannot start a take.
     var alternateRecordingMode: VoiceSttMode? = nil
     var onDictateAlternate: () -> Void = {}
     var onPastRecordings: () -> Void
     var onPastMessages: () -> Void
+    var onTakePhoto: () -> Void
     var onAddPhoto: () -> Void
     var onAddFile: () -> Void
     var onTemporaryNote: () -> Void
@@ -137,22 +138,30 @@ struct ComposerActionMenu: View {
             } label: {
                 Label("Past Messages", systemImage: "text.bubble")
             }
-            if offersAttachments {
+            if CameraCapture.isAvailable {
                 Button {
-                    onAddPhoto()
+                    onTakePhoto()
                 } label: {
-                    Label("Add Photo", systemImage: "photo.on.rectangle")
+                    Label("Take Photo", systemImage: "camera")
                 }
+                .accessibilityIdentifier("composer-menu-take-photo")
+            }
+            Button {
+                onAddPhoto()
+            } label: {
+                Label("Add Photo", systemImage: "photo.on.rectangle")
+            }
+            if offersFiles {
                 Button {
                     onAddFile()
                 } label: {
                     Label("Add File", systemImage: "paperclip")
                 }
-            }
-            Button {
-                onTemporaryNote()
-            } label: {
-                Label("Temporary Note", systemImage: "note.text")
+                Button {
+                    onTemporaryNote()
+                } label: {
+                    Label("Temporary Note", systemImage: "note.text")
+                }
             }
             ForEach(
                 ComposerSessionAction.entries(hasSession: hasSession, offersProcessActions: offersProcessActions),

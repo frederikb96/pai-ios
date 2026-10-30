@@ -1,6 +1,32 @@
 import Foundation
 import Observation
 
+/// The camera quick action's request to the new-session screen: open the camera as soon as the
+/// screen is up, so the photo lands in the composer with the keyboard ready.
+@MainActor
+public final class CameraLaunchRequest {
+    public static let shared = CameraLaunchRequest()
+
+    private var armed = false
+
+    public init() {}
+
+    public func arm() {
+        armed = true
+    }
+
+    /// True at most once per ``arm()``.
+    public func consume() -> Bool {
+        defer { armed = false }
+        return armed
+    }
+
+    /// Lets a tile that wants no camera clear a request an earlier tap left behind.
+    public func cancel() {
+        armed = false
+    }
+}
+
 /// A new session that is meant to become a call the moment it exists.
 ///
 /// A one-shot side channel rather than a field on ``Route/createSession``, for the same reason

@@ -44,6 +44,7 @@ struct ComposerBar: View {
     @State private var isSending = false
     @State private var sendErrorMessage: String?
 
+    @State private var showingCamera = false
     @State private var showingPhotoPicker = false
     @State private var showingFilePicker = false
     @State private var showingTemporaryNote = false
@@ -236,7 +237,7 @@ struct ComposerBar: View {
                     onCallThisSession: {
                         ComputerCallEntry.open(environment, connectSession: sessionID)
                     },
-                    offersAttachments: currentSession?.kind != .ultrafast,
+                    offersFiles: currentSession?.kind != .ultrafast,
                     alternateRecordingMode: VoiceRecorderButton.offersStart(
                         controller: voiceController, isMine: micButtonIsMine(voiceController),
                         canStartOverride: micButtonCanStartOverride(voiceController))
@@ -250,6 +251,7 @@ struct ComposerBar: View {
                     },
                     onPastRecordings: { showingRecordingsSheet = true },
                     onPastMessages: { showingSentMessagesSheet = true },
+                    onTakePhoto: { showingCamera = true },
                     onAddPhoto: { showingPhotoPicker = true },
                     onAddFile: { showingFilePicker = true },
                     onTemporaryNote: { showingTemporaryNote = true },
@@ -324,6 +326,10 @@ struct ComposerBar: View {
         // edge of the screen scrolling under it, not as a floating panel of a different colour.
         // Matches `CreateSessionView`'s own composer-equivalent bar, which already uses this.
         .background(.bar)
+        .fullScreenCover(isPresented: $showingCamera) {
+            CameraCapture { staged in stageAttachments([staged]) }
+                .ignoresSafeArea()
+        }
         .sheet(isPresented: $showingPhotoPicker) {
             PhotoAttachmentPicker { staged in stageAttachments(staged) }
         }

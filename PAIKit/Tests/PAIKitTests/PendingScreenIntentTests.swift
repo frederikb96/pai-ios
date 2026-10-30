@@ -10,6 +10,19 @@ import XCTest
 @MainActor
 final class PendingScreenIntentTests: XCTestCase {
 
+    func testACameraRequestIsConsumedOnceAndCanBeCancelled() async {
+        let request = CameraLaunchRequest()
+        XCTAssertFalse(request.consume())
+
+        request.arm()
+        XCTAssertTrue(request.consume())
+        XCTAssertFalse(request.consume(), "returning from the camera must not open it again")
+
+        request.arm()
+        request.cancel()
+        XCTAssertFalse(request.consume())
+    }
+
     func testACallRequestIsConsumedOnce() async {
         let request = CallModeLaunchRequest()
         XCTAssertFalse(request.consume(), "a fresh request must not claim to have been armed")

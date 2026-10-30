@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Without this key iOS kills the app the moment the camera opens. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Taking a photo to attach to a message.</string>
+
 	<!-- The Keychain group holding what the app shares with its extensions, read at runtime. -->
 	<key>PAISharedKeychainGroup</key>
 	<string>$(PAI_SHARED_KEYCHAIN_GROUP)</string>

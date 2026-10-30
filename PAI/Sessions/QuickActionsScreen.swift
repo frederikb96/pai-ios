@@ -16,8 +16,9 @@ private struct QuickActionShortcut: Equatable {
 
 /// Where the hardware Action Button lands: five rows, reachable without the last being cut off —
 /// the layout the user actually reaches for, not a uniform grid that happens to hold every tile at
-/// one size. The row widths differ on purpose: one full-width tile, three two-up rows, and a
-/// three-up row of shortcuts, each of which the user configures.
+/// one size. The row widths differ on purpose: Computer at two thirds beside the camera, two
+/// three-up session rows, a two-up notes row, and a three-up row of shortcuts, each of which the
+/// user configures.
 ///
 /// The button is pressed without looking — walking, in a coat pocket, mid-sentence — so the whole
 /// screen is one glance and one thumb. That is what sets the shape: large targets rather than a
@@ -41,14 +42,14 @@ struct QuickActionsScreen: View {
 
     private let spacing: CGFloat = 12
     private let padding: CGFloat = 16
-    /// Computer (full-width), Home/Fast/Ultra-fast typed, Home/Fast/Ultra-fast call, notes, and
+    /// Computer and the camera, Home/Fast/Ultra-fast typed, Home/Fast/Ultra-fast call, notes, and
     /// a three-up shortcut row.
     private let rowCount: CGFloat = 5
     /// Big enough to hit without looking, on the smallest phone this runs on.
     private let minRowHeight: CGFloat = 88
     private let maxRowHeight: CGFloat = 104
-    /// The Computer tile is full width, so it needs less height than a half-width tile to carry
-    /// the same label — and it is the one tile whose position is never in doubt.
+    /// The Computer tile is wide, so it needs less height than a narrow tile to carry the same
+    /// label — and it is the one tile whose position is never in doubt.
     private let computerHeightFactor: CGFloat = 0.8
 
     @AppStorage("quickActionShortcut1Name") private var shortcut1Name = ""
@@ -99,7 +100,7 @@ struct QuickActionsScreen: View {
         // against scrolls a few points rather than hard-clipping the bottom row again.
         GeometryReader { proxy in
             ScrollView {
-                grid(rowHeight: rowHeight(in: proxy.size.height))
+                grid(rowHeight: rowHeight(in: proxy.size.height), width: proxy.size.width)
                     .frame(minHeight: proxy.size.height, alignment: .top)
             }
         }
@@ -115,9 +116,23 @@ struct QuickActionsScreen: View {
         }
     }
 
-    private func grid(rowHeight: CGFloat) -> some View {
-        VStack(spacing: spacing) {
-            computerTile(height: rowHeight * computerHeightFactor)
+    private func grid(rowHeight: CGFloat, width: CGFloat) -> some View {
+        // Two of the three columns below it, so the camera sits right above the Ultra-fast column
+        // it starts a session in.
+        let column = (width - padding * 2 - spacing * 2) / 3
+        return VStack(spacing: spacing) {
+            HStack(spacing: spacing) {
+                computerTile(height: rowHeight * computerHeightFactor)
+                    .frame(width: column * 2 + spacing)
+                tile(
+                    title: "Camera", subtitle: "Ultra-fast", systemImage: "camera.fill",
+                    tint: PaiPalette.green500, height: rowHeight * computerHeightFactor,
+                    identifier: "quick-camera"
+                ) {
+                    startSession(type: "ultrafast", call: false, camera: true)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: spacing) {
                 tile(
                     title: "Home", subtitle: "Type", systemImage: "house.fill",
@@ -182,8 +197,6 @@ struct QuickActionsScreen: View {
         .padding(padding)
     }
 
-    /// The always-reachable voice agent — full-width, since it is the one tile meant to be found
-    /// without even glancing at the grid's own two-column rhythm.
     /// Divided out of the measured height, then clamped. `GeometryReader` is what makes the grid
     /// fit a screen it was never tuned against; the clamp is what stops it stretching to fill one.
     private func rowHeight(in availableHeight: CGFloat) -> CGFloat {
@@ -191,6 +204,8 @@ struct QuickActionsScreen: View {
         return min(maxRowHeight, max(minRowHeight, divided))
     }
 
+    /// The always-reachable voice agent — the widest tile, since it is the one meant to be found
+    /// without even glancing at the grid's rhythm.
     private func computerTile(height: CGFloat) -> some View {
         Button {
             ComputerCallEntry.open(environment)
@@ -210,7 +225,7 @@ struct QuickActionsScreen: View {
                 }
                 Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, minHeight: height, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: height, maxHeight: .infinity, alignment: .leading)
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .background(PaiPalette.Semantic.raisedSurface)
@@ -303,13 +318,13 @@ struct QuickActionsScreen: View {
         }
     }
 
-    /// Both session tiles: record the launch choice where `CreateSessionView` already looks for
-    /// one, arm hands-free dictation if this was a call tile, and replace the path.
+    /// Every session tile: record the launch choice where `CreateSessionView` already looks for
+    /// one, arm hands-free dictation or the camera if this tile asks for it, and replace the path.
     ///
     /// The draft is written locally and pushed to the server without being waited on. A local
     /// write is what the screen about to appear actually reads, and holding the navigation for a
     /// round trip would make a button pressed without looking feel like it did nothing.
-    private func startSession(type: String, call: Bool) {
+    private func startSession(type: String, call: Bool, camera: Bool = false) {
         // `selectWorkingDir(nil)` first: a directory chosen on a previous visit is what makes a
         // session custom, and it outranks the type, so leaving one in place would launch the
         // wrong thing while the screen showed the right pill.
@@ -319,6 +334,11 @@ struct QuickActionsScreen: View {
             CallModeLaunchRequest.shared.arm()
         } else {
             CallModeLaunchRequest.shared.cancel()
+        }
+        if camera {
+            CameraLaunchRequest.shared.arm()
+        } else {
+            CameraLaunchRequest.shared.cancel()
         }
         environment.router.replace(with: [.createSession])
     }
