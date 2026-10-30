@@ -63,6 +63,7 @@ struct NoteEditorScreen: View {
         _isPreviewing = State(initialValue: startsInPreview)
         _pendingHeading = State(initialValue: startsAtHeading)
     }
+    @State private var editorHandle = NoteEditorHandle()
     /// Outlives each presentation of the tools sheet, so reopening it lands where it was left.
     @State private var toolsState = NoteToolsPanelState()
 
@@ -147,10 +148,17 @@ struct NoteEditorScreen: View {
         // iOS can suspend before it fires, and the edit would be gone with no sign it existed.
         .onChange(of: scenePhase) { _, phase in
             guard phase != .active else { return }
-            Task { await notes.flush(id: noteID) }
+            flushEditor()
         }
         .onDisappear {
-            Task { await notes.flush(id: noteID) }
+            flushEditor()
+        }
+        // What these sheets read and act on is the store's copy of the body.
+        .onChange(of: isShowingTools) { _, showing in
+            if showing { editorHandle.publishPending() }
+        }
+        .onChange(of: isShowingActions) { _, showing in
+            if showing { editorHandle.publishPending() }
         }
         .sheet(isPresented: $isShowingTools) {
             NavigationStack {
@@ -182,7 +190,8 @@ struct NoteEditorScreen: View {
                     onToggleTask: { notes.toggleTask(id: noteID, renderedBody: body, mark: $0) })
             } else {
                 NoteEditorSurface(
-                    noteID: noteID, text: body, revision: notes.externalRevision(for: noteID), jump: jump,
+                    noteID: noteID, text: body, revision: notes.externalRevision(for: noteID),
+                    handle: editorHandle, jump: jump,
                     highlight: highlight, isCoveredBySheet: isShowingTools || isShowingActions,
                     onChange: { notes.edit(id: noteID, body: $0) })
             }
@@ -229,6 +238,7 @@ struct NoteEditorScreen: View {
                 onSync: { Task { await notes.resumeSync() } },
                 onRetry: { Task { await notes.retrySave(id: noteID) } },
                 onCopy: {
+                    editorHandle.publishPending()
                     UIPasteboard.general.string = notes.body(for: noteID)
                     toasts.show("Copied the text")
                 },
@@ -238,7 +248,7 @@ struct NoteEditorScreen: View {
             Button {
                 // Flushed first, so what the preview renders is what was actually typed rather
                 // than whatever the debounce last happened to save.
-                Task { await notes.flush(id: noteID) }
+                flushEditor()
                 isPreviewing.toggle()
                 // The one place the user actively chooses a mode, so the one place that updates the
                 // sticky preference the next note with no mode of its own falls back to.
@@ -267,6 +277,12 @@ struct NoteEditorScreen: View {
             .accessibilityLabel("Note actions")
             .accessibilityIdentifier("open-note-actions")
         }
+    }
+
+    /// Hand the store whatever the text view holds, then save it.
+    private func flushEditor() {
+        editorHandle.publishPending()
+        Task { await notes.flush(id: noteID) }
     }
 
     /// The note's own name, unlike ``title`` empty rather than "Untitled" when it has none.

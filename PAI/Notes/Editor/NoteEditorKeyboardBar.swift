@@ -133,7 +133,7 @@ final class NoteEditorKeyboardBar: UIView {
         applyShowsFormatting()
     }
 
-    /// Whether the caret is inside a fenced code block — see ``MarkdownFenceState``. Toggles the
+    /// Whether the caret is inside a fenced code block — see ``MarkdownDocumentIndex/isInsideFence(_:)``. Toggles the
     /// command buttons as a group rather than rebuilding anything, so moving the caret in and out
     /// of a fence never flickers.
     func setShowsFormatting(_ shows: Bool) {

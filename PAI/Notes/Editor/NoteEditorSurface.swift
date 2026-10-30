@@ -23,6 +23,8 @@ struct NoteEditorSurface: View {
     /// ``NotesStore/externalBodyRevision``. The editor rebuilds from this rather than from `text`,
     /// because `text` also comes back changed from a save that normalised anything at all.
     let revision: Int
+    /// Keeps the reader's position and reaches the text still inside the view.
+    let handle: NoteEditorHandle
     let jump: NoteJumpRequest?
     /// What the in-note search is looking for, painted across the note — see
     /// ``MarkdownSourceTextView/highlight``.
@@ -44,30 +46,10 @@ struct NoteEditorSurface: View {
     @State private var isFocused = false
     @State private var caret: CaretRequest?
     @State private var caretToken = 0
-    /// Where the page's `ScrollView` sits. Written continuously from ``onScrollGeometryChange``
-    /// below, and read back once on ``onAppear`` to command a jump — `ScrollPosition`'s own
-    /// `x`/`y` go `nil` the moment the reader scrolls by hand, so it is a one-shot "go here", not
-    /// a live readout, and ``lastOffsetY`` is what actually remembers the position.
-    ///
-    /// Kept as this view's own `@State` rather than in a cross-screen store keyed by note id: a
-    /// plain SwiftUI `ScrollView` loses its offset when covered and revealed again on a
-    /// `NavigationStack` — the underlying `UIScrollView` can be torn down and rebuilt even though
-    /// this view's own state survives the round trip — and this binding is the first-party
-    /// mechanism for carrying a position across exactly that. A raw point rather than an anchored
-    /// id: nothing above the reader can change height while this note is off screen, unlike the
-    /// feed, where a pixel offset is unsafe, so "the exact position it
-    /// was left" is literally what a raw offset captures here.
-    @State private var scrollPosition = ScrollPosition()
-    /// The live vertical offset, updated on every scroll — this is what survives being covered
-    /// and revealed, and what ``scrollPosition`` is set from on reappearance.
-    @State private var lastOffsetY: CGFloat = 0
-    /// Fed by `MarkdownSourceTextView.onLineMetrics` — see that property's own doc comment for
-    /// why it stops computing entirely, rather than merely not drawing, while the gutter is off.
-    @State private var lineMetrics = NoteLineMetrics.empty
-    /// What this view last handed upwards. Compared against an incoming `text` to tell "the note
-    /// reloaded from the server" from "this is our own edit coming back", which must not disturb
-    /// the caret.
-    @State private var lastPublished: String
+    @State private var insertion: NoteInsertion?
+    @State private var insertionToken = 0
+    /// A large note is being painted and laid out, which is shown rather than left blank.
+    @State private var isPreparing = false
 
     /// Where an attachment picked from the keyboard bar has to land — a UTF-16 offset into the
     /// note. Captured when the paperclip is tapped rather than read afterwards: presenting a
@@ -79,17 +61,17 @@ struct NoteEditorSurface: View {
     @State private var isUploading = false
 
     init(
-        noteID: String, text: String, revision: Int, jump: NoteJumpRequest?, highlight: String?,
-        isCoveredBySheet: Bool, onChange: @escaping (String) -> Void
+        noteID: String, text: String, revision: Int, handle: NoteEditorHandle, jump: NoteJumpRequest?,
+        highlight: String?, isCoveredBySheet: Bool, onChange: @escaping (String) -> Void
     ) {
         self.noteID = noteID
         self.text = text
         self.revision = revision
+        self.handle = handle
         self.jump = jump
         self.highlight = highlight
         self.isCoveredBySheet = isCoveredBySheet
         self.onChange = onChange
-        _lastPublished = State(initialValue: text)
     }
 
     /// Every sheet that covers this view, whether presented by the screen above or by this view's
@@ -99,67 +81,32 @@ struct NoteEditorSurface: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 0) {
-                    // The gutter is an ordinary sibling here, not a synced overlay — see
-                    // `NoteLineNumberGutter`'s own doc comment for why that is enough to keep it
-                    // in lockstep with the text view as this whole page scrolls, with no offset
-                    // observation of its own.
-                    HStack(alignment: .top, spacing: 0) {
-                        if settings.showsNoteLineNumbers {
-                            NoteLineNumberGutter(metrics: lineMetrics)
-                        }
-                        MarkdownSourceTextView(
-                            text: text, isFocused: isFocused && !isCovered, caret: caret, highlight: highlight,
-                            toolbarLayout: settings.noteToolbarLayout,
-                            onChange: { edited($0) },
-                            onFocus: { isFocused = true },
-                            onAttach: { offset in beginAttachment(at: offset) },
-                            onPasteImages: { offset, images in pasteImages(images, at: offset) },
-                            onLineMetrics: settings.showsNoteLineNumbers ? { lineMetrics = $0 } : nil
-                        )
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    // Tapping under the note puts the caret at its end, which is what a page of
-                    // text does. Stretched to fill whatever the page's own `minHeight` below
-                    // leaves over, rather than a fixed band: a short note in a tall window would
-                    // otherwise leave genuine dead space under that band that this same tap does
-                    // nothing for.
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .frame(minHeight: 140, maxHeight: .infinity)
-                        .onTapGesture { focusAtEnd() }
-                }
-                // At least the visible height, so the catch area above can actually reach the
-                // bottom of the screen instead of only the bottom of a short note's content.
-                .frame(minHeight: geometry.size.height, alignment: .top)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
+        MarkdownSourceTextView(
+            text: text, revision: revision, isFocused: isFocused && !isCovered, caret: caret, insertion: insertion,
+            highlight: highlight, toolbarLayout: settings.noteToolbarLayout,
+            showsLineNumbers: settings.showsNoteLineNumbers, handle: handle,
+            onChange: onChange,
+            onFocus: { isFocused = true },
+            onAttach: { offset in beginAttachment(at: offset) },
+            onPasteImages: { offset, images in pasteImages(images, at: offset) },
+            onLoadingChange: { isPreparing = $0 },
+            onReplaced: {
+                caret = nil
+                isFocused = false
             }
-            .scrollPosition($scrollPosition)
-            .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.y }) { _, newValue in
-                lastOffsetY = newValue
-            }
-            .background(PaiPalette.Notes.background)
-            .overlay(alignment: .top) {
-                if isUploading {
-                    ProgressView("Uploading…")
-                        .padding(10)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-                        .padding(.top, 8)
-                }
+        )
+        .background(PaiPalette.Notes.background)
+        .overlay {
+            if isPreparing { ProgressView("Opening…") }
+        }
+        .overlay(alignment: .top) {
+            if isUploading {
+                ProgressView("Uploading…")
+                    .padding(10)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                    .padding(.top, 8)
             }
         }
-        // Restores the position this note was left at, across being covered by a pushed screen
-        // and revealed again by Back — see ``lastOffsetY``'s own doc comment for why a plain
-        // `ScrollView` needs this at all. A fresh note has never scrolled, so this is a no-op the
-        // first time a note is opened.
-        .onAppear {
-            guard lastOffsetY > 0 else { return }
-            scrollPosition = ScrollPosition(x: 0, y: lastOffsetY)
-        }
-        .onChange(of: revision) { adoptIfChangedElsewhere() }
         .onChange(of: jump) { _, request in goTo(request) }
         .confirmationDialog("Add to this note", isPresented: $isChoosingAttachment, titleVisibility: .visible) {
             Button("Photo") { isPickingPhoto = true }
@@ -174,19 +121,6 @@ struct NoteEditorSurface: View {
         }
     }
 
-    private func edited(_ newText: String) {
-        // Cleared rather than left standing: a caret request is an instruction to move the caret,
-        // and one that outlived the keystroke that produced it would drag the caret back on the
-        // next redraw.
-        caret = nil
-        publish(newText)
-    }
-
-    private func focusAtEnd() {
-        move(to: text.utf16.count)
-        isFocused = true
-    }
-
     private func goTo(_ request: NoteJumpRequest?) {
         guard let request else { return }
         let clamped = min(max(request.characterOffset, 0), text.count)
@@ -197,11 +131,6 @@ struct NoteEditorSurface: View {
         caretToken += 1
         isFocused = true
         caret = CaretRequest(token: caretToken, offset: utf16Offset, settlesAtTopThird: settlingAtTopThird)
-    }
-
-    private func publish(_ newText: String) {
-        lastPublished = newText
-        onChange(newText)
     }
 
     // MARK: Attachments
@@ -268,23 +197,11 @@ struct NoteEditorSurface: View {
         insert(embeds.joined(separator: "\n"), atUtf16: offset)
     }
 
+    /// Goes through the text view, so Undo takes it back and the text typed since the offset was
+    /// captured is not lost to a stale copy of the note.
     private func insert(_ snippet: String, atUtf16 offset: Int) {
-        let mutable = NSMutableString(string: text)
-        let at = min(max(offset, 0), mutable.length)
-        mutable.insert(snippet, at: at)
-        move(to: at + snippet.utf16.count)
-        publish(mutable as String)
-    }
-
-    /// Take on a body that arrived from somewhere other than this view — a first load, a restored
-    /// revision, a conflict resolved in favour of the vault.
-    ///
-    /// Still guarded on the text actually differing: the note is reloaded whenever the tools panel
-    /// refreshes, and rebuilding under a body that came back identical would destroy the caret.
-    private func adoptIfChangedElsewhere() {
-        guard text != lastPublished else { return }
-        lastPublished = text
-        caret = nil
-        isFocused = false
+        insertionToken += 1
+        isFocused = true
+        insertion = NoteInsertion(token: insertionToken, offset: offset, snippet: snippet)
     }
 }

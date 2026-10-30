@@ -1,35 +1,63 @@
 import PAIKit
-import SwiftUI
+import UIKit
 
 /// The line-number gutter beside a note's source — Obsidian's own look: dim numbers, no
 /// background band or separator, right-aligned against the text.
 ///
-/// Drawn as an ordinary sibling in the page's own `ScrollView` rather than a synced overlay —
-/// see `NoteEditorSurface`'s own doc comment for why that removes the scroll-tracking problem a
-/// gutter would otherwise need to solve. Every number sits at the y-offset TextKit already
-/// computed for its line's first visual row, so a wrapped line's continuation carries no number
-/// of its own — the same thing Obsidian's own gutter does.
-struct NoteLineNumberGutter: View {
-    let metrics: NoteLineMetrics
-
+/// Rides inside the scrolling text view, pinned to the visible area, and draws only the numbers
+/// on screen, read off the line fragments TextKit has laid out there. So its cost does not depend
+/// on how long the note is. A wrapped line's continuation carries no number of its own.
+final class NoteLineNumberGutter: UIView {
     static let width: CGFloat = 32
+    /// The space between the numbers and the text they sit beside.
+    static let spacing: CGFloat = 6
 
-    private static let font: Font = .system(size: 13, weight: .regular, design: .monospaced)
+    private static let attributes: [NSAttributedString.Key: Any] = [
+        .font: UIFont.monospacedSystemFont(ofSize: 13, weight: .regular),
+        .foregroundColor: NoteEditorTheme.muted,
+    ]
 
-    var body: some View {
-        ZStack(alignment: .topTrailing) {
-            ForEach(metrics.lines, id: \.lineNumber) { line in
-                Text("\(line.lineNumber)")
-                    .font(Self.font)
-                    .foregroundStyle(PaiPalette.Notes.muted)
-                    .offset(y: line.y)
+    weak var textView: UITextView?
+    /// The number of a line starting at a UTF-16 offset, nil for anywhere else.
+    var lineNumber: (Int) -> Int? = { _ in nil }
+    /// The number of the empty last line a note ending in a terminator has.
+    var lastLineNumber: () -> Int = { 1 }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isOpaque = false
+        contentMode = .redraw
+        // A number is chrome describing the text: taps, selection and VoiceOver go past it.
+        isUserInteractionEnabled = false
+        isAccessibilityElement = false
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not built from a storyboard") }
+
+    override func draw(_ rect: CGRect) {
+        guard let textView else { return }
+        let layoutManager = textView.layoutManager
+        let top = textView.textContainerInset.top
+        let visible = CGRect(
+            x: 0, y: bounds.minY + frame.minY - top, width: textView.bounds.width, height: bounds.height)
+        let toScreen = top - frame.minY
+
+        func draw(_ number: Int, at y: CGFloat) {
+            let label = String(number) as NSString
+            let size = label.size(withAttributes: Self.attributes)
+            label.draw(
+                at: CGPoint(x: textView.textContainerInset.left - Self.spacing - size.width, y: y + toScreen),
+                withAttributes: Self.attributes)
+        }
+
+        let glyphs = layoutManager.glyphRange(forBoundingRect: visible, in: textView.textContainer)
+        layoutManager.enumerateLineFragments(forGlyphRange: glyphs) { [lineNumber] fragment, _, _, range, _ in
+            if let number = lineNumber(layoutManager.characterIndexForGlyph(at: range.location)) {
+                draw(number, at: fragment.minY)
             }
         }
-        .frame(width: Self.width, height: max(metrics.contentHeight, 0), alignment: .topTrailing)
-        .padding(.top, MarkdownSourceTextView.verticalInset)
-        .padding(.trailing, 6)
-        // A gutter number is chrome describing the text, not text itself — VoiceOver and a
-        // selection both skip straight to the note.
-        .accessibilityHidden(true)
+        let extra = layoutManager.extraLineFragmentRect
+        if !extra.isEmpty, extra.intersects(visible) { draw(lastLineNumber(), at: extra.minY) }
     }
 }

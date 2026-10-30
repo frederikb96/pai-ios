@@ -221,7 +221,7 @@ extension Route {
     /// gains a case; the workflow itself asks the running app for this list rather than
     /// hardcoding it, so a new screen becomes photographable without a CI file edit.
     public static let namedScreens: [String] = [
-        "session", "terminal", "settings", "createSession", "subagents", "notes", "note", "noteUncached",
+        "session", "terminal", "settings", "createSession", "subagents", "notes", "note", "noteUncached", "noteLarge",
         "noteContainers", "notePreview", "notifications", "recordings", "arcSpec", "apps", "arcSpecList", "arcReport",
         "arcOverview",
         "schedulerList", "schedulerTask", "quickActions", "computerCall", "canteen", "usage",
@@ -262,6 +262,7 @@ extension Route {
         case "notes": return .notes
         case "note": return .note(id: noteID)
         case "noteUncached": return .note(id: fixtureUncachedNoteID)
+        case "noteLarge": return .note(id: PaiFixtures.largeNoteID)
         case "noteContainers": return .noteContainers
         case "notePreview": return .notePreview(id: noteID)
         case "notifications": return .notifications
