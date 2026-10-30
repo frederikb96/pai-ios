@@ -207,6 +207,8 @@ struct RootView: View {
                         // Sync at once instead of up to a poll interval from now, and let the
                         // open transcript replace a connection the OS suspended while away.
                         connection.sessions.requestSync()
+                        // A file shared into a session from another app is on its draft by now.
+                        Task { await connection.drafts.syncFromServer() }
                         StreamWake.post(force: false)
                         Task {
                             await connection.notifications.refreshSummary()
