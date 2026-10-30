@@ -107,19 +107,35 @@ public struct ToolResult: Codable, Sendable, Equatable {
     public let toolName: String
     public let content: String
     public let isError: Bool
+    public let bashEditDiff: BashEditDiff?
 
     enum CodingKeys: String, CodingKey {
         case toolUseId = "tool_use_id"
         case toolName = "tool_name"
         case content
         case isError = "is_error"
+        case bashEditDiff = "bash_edit_diff"
     }
 
-    public init(toolUseId: String, toolName: String, content: String, isError: Bool) {
+    public init(
+        toolUseId: String, toolName: String, content: String, isError: Bool, bashEditDiff: BashEditDiff? = nil
+    ) {
         self.toolUseId = toolUseId
         self.toolName = toolName
         self.content = content
         self.isError = isError
+        self.bashEditDiff = bashEditDiff
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        toolUseId = try container.decode(String.self, forKey: .toolUseId)
+        toolName = try container.decode(String.self, forKey: .toolName)
+        content = try container.decode(String.self, forKey: .content)
+        isError = try container.decode(Bool.self, forKey: .isError)
+        // A diff is an extra on a row that means something without it, and its shape belongs to
+        // Claude Code, so one this build cannot read costs the diff and never the message.
+        bashEditDiff = try? container.decodeIfPresent(BashEditDiff.self, forKey: .bashEditDiff)
     }
 }
 

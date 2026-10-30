@@ -330,7 +330,7 @@ public enum TranscriptRowLayout {
         case .activity:
             // The label line sits above the body, so a hit inside the body is one line further
             // down than the row's own padding — omitting it lands every activity-row hit high.
-            return TranscriptRowMetrics.activityRowPadding + metrics.activityLineHeight
+            return TranscriptRowMetrics.activityRowPadding + labelLineHeight(of: card, metrics: metrics)
         case .prose:
             return TranscriptRowMetrics.proseRowPadding
         case .me:
@@ -342,6 +342,10 @@ public enum TranscriptRowLayout {
                 return TranscriptRowMetrics.meRowPadding + TranscriptRowMetrics.bubbleVerticalPadding / 2
             }
         }
+    }
+
+    private static func labelLineHeight(of card: TranscriptCardPlan, metrics: MessageLayoutMetrics) -> Double {
+        card.drawsLabelLine ? metrics.activityLineHeight : 0
     }
 
     /// The width `card`'s own text wraps at — the cell width minus whichever horizontal chrome the
@@ -384,10 +388,10 @@ public enum TranscriptRowLayout {
 
         switch card.register {
         case .activity:
-            // Label line, body, trailer — the label is always drawn and always exactly one line,
-            // because it is pinned to `.lineLimit(1)` in the view.
+            // Label line, body, trailer — a label is exactly one line, because it is pinned to
+            // `.lineLimit(1)` in the view.
             return TranscriptRowMetrics.activityRowPadding * 2
-                + metrics.activityLineHeight
+                + labelLineHeight(of: card, metrics: metrics)
                 + content
                 + (isTruncated ? metrics.trailerLineHeight : 0)
 
