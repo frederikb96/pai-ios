@@ -305,6 +305,8 @@ jobs:
             local name=$1 query=$2
             xcrun simctl terminate "$udid" "$bundle" || true
             screenshot "note-bench-$name" -PaiFixtureRoute noteLarge
+            # Where the main thread spends the run, for when a stall needs a name.
+            sample "$(pgrep -x PAI | head -1)" 14 -file "artifacts/note-editor-sample-$name.txt" > /dev/null 2>&1 || true &
             curl -sS --max-time 90 -X POST "http://127.0.0.1:8765/notes/editor-bench?keys=60&$query" \
               -o "artifacts/note-editor-bench-$name.json" || true
             cat "artifacts/note-editor-bench-$name.json" || true
