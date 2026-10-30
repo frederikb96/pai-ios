@@ -36,6 +36,13 @@ final class SkillComposerTests: XCTestCase {
         XCTAssertEqual(SkillComposer.rowItems(text: "/dummy", caret: nil, names: [], liveTake: false), [])
     }
 
+    func testKeywordsListOnceNeedNoListingAndStaySilentDuringALiveTake() {
+        XCTAssertEqual(
+            SkillComposer.keywordWords(text: "ultrathink about it, ULTRATHINK", liveTake: false), ["ultrathink"])
+        XCTAssertEqual(SkillComposer.keywordWords(text: "ultrathink about it", liveTake: true), [])
+        XCTAssertEqual(SkillComposer.keywordWords(text: "ultra think about it", liveTake: false), [])
+    }
+
     func testFixingEditsTheCurrentTextNotTheTextTheChipWasDrawnFor() throws {
         let drawn = try XCTUnwrap(
             SkillComposer.rowItems(text: "see /autp", caret: nil, names: names, liveTake: false).first)

@@ -533,6 +533,7 @@ struct CreateSessionView: View {
                 items: SkillComposer.rowItems(
                     text: text, caret: composerCaret, names: skillNames(createSession),
                     liveTake: liveTakeOwnsBox(voiceController)),
+                keywords: SkillComposer.keywordWords(text: text, liveTake: liveTakeOwnsBox(voiceController)),
                 onFix: { item in fixSkillMention(item, createSession, voiceController) })
 
             // Same left-to-right order as `ComposerBar`: field, plus, mic, send. Two composers
@@ -565,6 +566,16 @@ struct CreateSessionView: View {
                     onTogglePregrant: togglePregrant,
                     canRestorePreviousText: canRestorePreviousText,
                     offersAttachments: !createSession.isUltrafastSelected,
+                    alternateRecordingMode: VoiceRecorderButton.offersStart(
+                        controller: voiceController,
+                        isMine: voiceController.state == .idle || isRecordingHere(voiceController),
+                        canStartOverride: nil) ? settings.alternateRecordingMode : nil,
+                    onDictateAlternate: {
+                        Task {
+                            await toggleRecording(
+                                voiceController: voiceController, sttMode: settings.alternateRecordingMode)
+                        }
+                    },
                     onPastRecordings: { showingRecordingsSheet = true },
                     onPastMessages: { showingSentMessagesSheet = true },
                     onAddPhoto: { showingPhotoPicker = true },
@@ -581,9 +592,12 @@ struct CreateSessionView: View {
                     isMine: voiceController.state == .idle || isRecordingHere(voiceController),
                     onStart: { sttMode in
                         Task { await toggleRecording(voiceController: voiceController, sttMode: sttMode) }
-                    }
+                    },
+                    alternateMode: settings.alternateRecordingMode
                 ) {
-                    Task { await toggleRecording(voiceController: voiceController) }
+                    Task {
+                        await toggleRecording(voiceController: voiceController, sttMode: settings.defaultRecordingMode)
+                    }
                 }
 
                 // Mute holds the slot while a take is actively recording; Finishing gives it back
@@ -892,6 +906,8 @@ struct CreateSessionView: View {
         controller.activeDraftKey == DraftKey.newSession && controller.state != .idle
     }
 
+    /// `sttMode` defaults to live for the call tiles and the hands-free entry, which dictate the
+    /// first turn of a call and never follow the default recording mode.
     private func toggleRecording(voiceController: VoiceRecorderController, sttMode: VoiceSttMode = .live) async {
         guard voiceController.state == .idle || isRecordingHere(voiceController) else {
             errorMessage = "A recording is already running somewhere else."

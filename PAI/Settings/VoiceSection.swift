@@ -31,6 +31,13 @@ struct VoiceSection: View {
                 .accessibilityIdentifier("mic-device")
             }
 
+            Picker("Default recording", selection: recordingModeBinding) {
+                Text("Live").tag(VoiceSttMode.live)
+                Text("Batch").tag(VoiceSttMode.batch)
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("default-recording-mode")
+
             Toggle("Silence gate", isOn: gateEnabledBinding)
                 .accessibilityIdentifier("silence-gate-enabled")
             if settings.silenceGate.enabled {
@@ -66,7 +73,8 @@ struct VoiceSection: View {
     private var footerText: String {
         "The API key is required for voice transcription. Held encrypted on the server; never shown again once set. "
             + "The silence gate stops sending audio after 5 s of quiet and resumes with the second before speech; "
-            + "Auto adapts to the room. Kept on this phone only."
+            + "Auto adapts to the room. Pressing the microphone starts the default recording; a long press or the "
+            + "composer's plus menu starts the other. Kept on this phone only."
     }
 
     private var manualThresholdLabel: String {
@@ -101,6 +109,10 @@ struct VoiceSection: View {
                 gate.manualThresholdDb = Int(value.rounded())
                 settings.setSilenceGate(gate)
             })
+    }
+
+    private var recordingModeBinding: Binding<VoiceSttMode> {
+        Binding(get: { settings.defaultRecordingMode }, set: { settings.setDefaultRecordingMode($0) })
     }
 
     private var micDeviceBinding: Binding<String> {

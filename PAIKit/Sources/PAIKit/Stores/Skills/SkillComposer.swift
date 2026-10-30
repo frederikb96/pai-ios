@@ -22,6 +22,12 @@ public enum SkillComposer {
         public var isFix: Bool { kind == .nearMiss }
     }
 
+    /// The Claude Code keywords the text carries (``PromptKeywords``), each once. Empty while a live
+    /// take owns the box, like ``rowItems(text:caret:names:liveTake:)``; needs no skill listing.
+    public static func keywordWords(text: String, liveTake: Bool) -> [String] {
+        liveTake ? [] : PromptKeywords.words(in: text)
+    }
+
     /// The skills the text names, in order. Empty while a live take owns the box (it rewrites
     /// the text constantly and nothing can be edited) and when the context has no listing.
     ///

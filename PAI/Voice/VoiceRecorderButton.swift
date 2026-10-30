@@ -17,9 +17,12 @@ struct VoiceRecorderButton: View {
     /// or call over to). The composer passes an explicit value so a tap can take over a take or a
     /// call running elsewhere, which `controller.canStart` alone always refuses.
     var canStartOverride: Bool?
-    /// Starts a take in the given mode: a long press on the idle microphone starts batch. `nil`
-    /// leaves the long press inert — a plain tap always starts live.
+    /// Starts a take in the given mode: a long press on the idle microphone starts
+    /// `alternateMode`. `nil` leaves the long press inert — a plain tap starts the default mode
+    /// (`onTap`'s own choice).
     var onStart: ((VoiceSttMode) -> Void)? = nil
+    /// The mode a long press starts: whichever one the tap does not (`SettingsStore.alternateRecordingMode`).
+    var alternateMode: VoiceSttMode = .batch
     var onTap: () -> Void
 
     private var displayState: VoiceRecordingState {
@@ -27,7 +30,22 @@ struct VoiceRecorderButton: View {
     }
 
     private var canStart: Bool {
+        Self.canStart(controller: controller, isMine: isMine, canStartOverride: canStartOverride)
+    }
+
+    private static func canStart(
+        controller: VoiceRecorderController, isMine: Bool, canStartOverride: Bool?
+    ) -> Bool {
         canStartOverride ?? (isMine && controller.canStart)
+    }
+
+    /// Whether this button, drawn with the same arguments, is an idle microphone a press can
+    /// start a take from — what decides if the plus menu offers its own way to the alternate mode.
+    static func offersStart(
+        controller: VoiceRecorderController, isMine: Bool, canStartOverride: Bool?
+    ) -> Bool {
+        (isMine ? controller.state : .idle) == .idle
+            && canStart(controller: controller, isMine: isMine, canStartOverride: canStartOverride)
     }
 
     var body: some View {
@@ -45,7 +63,9 @@ struct VoiceRecorderButton: View {
         // `.stopping` (Finishing) is tappable too: a tap stops waiting for `take_done` or the
         // deadline. Nothing is lost — the server holds the take and its words still come back.
         .disabled(!canStart && displayState == .idle)
-        .modifier(BatchLongPress(onStart: displayState == .idle && canStart ? onStart : nil))
+        .modifier(
+            AlternateLongPress(mode: alternateMode, onStart: displayState == .idle && canStart ? onStart : nil)
+        )
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier("voice-recorder-button")
     }
@@ -88,15 +108,17 @@ struct VoiceRecorderButton: View {
     }
 }
 
-/// A long press on an idle microphone starts batch dictation straight away: it only records while
-/// it runs and puts the whole take's transcript in afterwards — no words appear while speaking,
-/// nothing is billed until the end, and a bad connection costs nothing but the wait. The composer
-/// stays open for typing meanwhile.
+/// A long press on an idle microphone starts the recording mode a tap does not, straight away.
+/// Batch records while it runs and puts the whole take's transcript in afterwards — no words
+/// appear while speaking, nothing is billed until the end, and a bad connection costs nothing but
+/// the wait; the composer stays open for typing meanwhile. Live streams the words in as they are
+/// spoken.
 ///
 /// `.highPriorityGesture`, as on the session list's rows: a bare long-press modifier competes with
 /// the button's own tap and can fire both, which here would start a take and stop it on release.
 /// A press released before the duration fails cleanly and leaves the tap to the button.
-private struct BatchLongPress: ViewModifier {
+private struct AlternateLongPress: ViewModifier {
+    let mode: VoiceSttMode
     let onStart: ((VoiceSttMode) -> Void)?
 
     func body(content: Content) -> some View {
@@ -104,9 +126,9 @@ private struct BatchLongPress: ViewModifier {
             content
                 .highPriorityGesture(
                     LongPressGesture(minimumDuration: 0.45)
-                        .onEnded { _ in onStart(.batch) }
+                        .onEnded { _ in onStart(mode) }
                 )
-                .accessibilityAction(named: "Dictate in batch") { onStart(.batch) }
+                .accessibilityAction(named: mode == .batch ? "Dictate in batch" : "Dictate live") { onStart(mode) }
         } else {
             content
         }
