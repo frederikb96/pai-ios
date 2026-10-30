@@ -1,0 +1,85 @@
+{
+  "keywords": ["ultrathink", "ultracode"],
+  "cases": [
+    {
+      "case": "a keyword anywhere in the text, any case, is found with its offsets",
+      "text": "please UltraThink about this",
+      "expect": [{ "word": "ultrathink", "start": 7, "end": 17 }]
+    },
+    {
+      "case": "every keyword counts, in text order, each occurrence",
+      "text": "ultracode this, then ultrathink, then ultrathink again",
+      "expect": [
+        { "word": "ultracode", "start": 0, "end": 9 },
+        { "word": "ultrathink", "start": 21, "end": 31 },
+        { "word": "ultrathink", "start": 38, "end": 48 }
+      ]
+    },
+    {
+      "case": "other thinking phrases are plain text",
+      "text": "think hard, think harder, be thorough, ultra think",
+      "expect": []
+    },
+    {
+      "case": "a word that merely contains a keyword is not one",
+      "text": "ultrathinking and superultrathink and ultrathink_x",
+      "expect": []
+    },
+    {
+      "case": "a text that starts with a slash is a command, never a keyword carrier",
+      "text": "/dummy ultrathink",
+      "expect": []
+    },
+    {
+      "case": "a slash or backslash before or after, a hyphen either side, or a question mark after, makes it a path or a term",
+      "text": "src/ultrathink and ultrathink/x and a\\ultrathink and ultrathink\\x and re-ultrathink and ultrathink-x and ultrathink?",
+      "expect": []
+    },
+    {
+      "case": "a full stop ends the sentence unless a word character follows it",
+      "text": "think. ultrathink. and ultrathink.md and ultrathink.",
+      "expect": [
+        { "word": "ultrathink", "start": 7, "end": 17 },
+        { "word": "ultrathink", "start": 41, "end": 51 }
+      ]
+    },
+    {
+      "case": "inside quotes, backticks, brackets, braces or parentheses it is quoted, not asked for",
+      "text": "say \"ultrathink\" or `ultrathink` or [ultrathink] or {ultrathink} or (ultrathink)",
+      "expect": []
+    },
+    {
+      "case": "a tag quotes only its own angle brackets, so its content counts",
+      "text": "<b>ultrathink</b> and 1 < ultrathink",
+      "expect": [
+        { "word": "ultrathink", "start": 3, "end": 13 },
+        { "word": "ultrathink", "start": 26, "end": 36 }
+      ]
+    },
+    {
+      "case": "text after a closed span still counts",
+      "text": "(see above) ultrathink",
+      "expect": [{ "word": "ultrathink", "start": 12, "end": 22 }]
+    },
+    {
+      "case": "an unclosed opener quotes nothing",
+      "text": "(ultrathink",
+      "expect": [{ "word": "ultrathink", "start": 1, "end": 11 }]
+    },
+    {
+      "case": "an apostrophe inside a word is no quote, one that opens a word is",
+      "text": "don't ultrathink and 'ultrathink' too",
+      "expect": [{ "word": "ultrathink", "start": 6, "end": 16 }]
+    },
+    {
+      "case": "a quote span is closed by an apostrophe only when no letter follows it",
+      "text": "'a ultrathink's b' ultrathink",
+      "expect": [{ "word": "ultrathink", "start": 19, "end": 29 }]
+    },
+    {
+      "case": "no keyword, no text",
+      "text": "",
+      "expect": []
+    }
+  ]
+}

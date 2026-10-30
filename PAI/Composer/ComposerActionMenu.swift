@@ -45,6 +45,10 @@ struct ComposerActionMenu: View {
     /// — the backend 400s a file on one regardless, but hiding the entries here is what keeps
     /// the user from discovering that by trying.
     var offersAttachments: Bool = true
+    /// The recording mode the microphone's tap does not start, offered here for where a long
+    /// press is unreliable; `nil` while the microphone cannot start a take.
+    var alternateRecordingMode: VoiceSttMode? = nil
+    var onDictateAlternate: () -> Void = {}
     var onPastRecordings: () -> Void
     var onPastMessages: () -> Void
     var onAddPhoto: () -> Void
@@ -119,6 +123,14 @@ struct ComposerActionMenu: View {
                 onPastRecordings()
             } label: {
                 Label("Past Recordings", systemImage: "waveform")
+            }
+            if let alternateRecordingMode {
+                Button {
+                    onDictateAlternate()
+                } label: {
+                    Label("Dictate (\(alternateRecordingMode.wireValue))", systemImage: "mic.fill")
+                }
+                .accessibilityIdentifier("composer-menu-dictate-alternate")
             }
             Button {
                 onPastMessages()

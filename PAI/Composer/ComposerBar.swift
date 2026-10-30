@@ -197,6 +197,8 @@ struct ComposerBar: View {
                 items: SkillComposer.rowItems(
                     text: draftStore.draft(for: sessionID).text, caret: composerCaret, names: skillNames,
                     liveTake: liveTakeOwnsBox(voiceController)),
+                keywords: SkillComposer.keywordWords(
+                    text: draftStore.draft(for: sessionID).text, liveTake: liveTakeOwnsBox(voiceController)),
                 onFix: { item in fixSkillMention(item, draftStore: draftStore, voiceController: voiceController) })
 
             if let sendErrorMessage {
@@ -235,6 +237,17 @@ struct ComposerBar: View {
                         ComputerCallEntry.open(environment, connectSession: sessionID)
                     },
                     offersAttachments: currentSession?.kind != .ultrafast,
+                    alternateRecordingMode: VoiceRecorderButton.offersStart(
+                        controller: voiceController, isMine: micButtonIsMine(voiceController),
+                        canStartOverride: micButtonCanStartOverride(voiceController))
+                        ? settings.alternateRecordingMode : nil,
+                    onDictateAlternate: {
+                        Task {
+                            await toggleRecording(
+                                draftStore: draftStore, voiceController: voiceController,
+                                sttMode: settings.alternateRecordingMode)
+                        }
+                    },
                     onPastRecordings: { showingRecordingsSheet = true },
                     onPastMessages: { showingSentMessagesSheet = true },
                     onAddPhoto: { showingPhotoPicker = true },
@@ -251,16 +264,21 @@ struct ComposerBar: View {
 
                 VoiceRecorderButton(
                     controller: voiceController,
-                    isMine: voiceController.state == .idle || isRecordingHere(voiceController),
+                    isMine: micButtonIsMine(voiceController),
                     canStartOverride: micButtonCanStartOverride(voiceController),
                     onStart: { sttMode in
                         Task {
                             await toggleRecording(
                                 draftStore: draftStore, voiceController: voiceController, sttMode: sttMode)
                         }
-                    }
+                    },
+                    alternateMode: settings.alternateRecordingMode
                 ) {
-                    Task { await toggleRecording(draftStore: draftStore, voiceController: voiceController) }
+                    Task {
+                        await toggleRecording(
+                            draftStore: draftStore, voiceController: voiceController,
+                            sttMode: settings.defaultRecordingMode)
+                    }
                 }
 
                 // Mute holds the slot while a take is actively recording; Finishing gives it back
@@ -455,6 +473,10 @@ struct ComposerBar: View {
         return VoiceHandover.forMicrophoneTap(sessionID: sessionID, microphoneTakeSessionID: running)
     }
 
+    private func micButtonIsMine(_ controller: VoiceRecorderController) -> Bool {
+        controller.state == .idle || isRecordingHere(controller)
+    }
+
     /// `nil` defers to `VoiceRecorderButton`'s own ordinary gate (`controller.canStart`) — the
     /// case where a tap genuinely cannot start anything (already starting, not signed in).
     /// `true` forces the button tappable even though `controller.canStart` would refuse it: a
@@ -469,7 +491,7 @@ struct ComposerBar: View {
     }
 
     private func toggleRecording(
-        draftStore: DraftStore, voiceController: VoiceRecorderController, sttMode: VoiceSttMode = .live
+        draftStore: DraftStore, voiceController: VoiceRecorderController, sttMode: VoiceSttMode
     ) async {
         if isRecordingHere(voiceController) {
             // A tap during Finishing means "stop waiting" rather than "start a second stop" —

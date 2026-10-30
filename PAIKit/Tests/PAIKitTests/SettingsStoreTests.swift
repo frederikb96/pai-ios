@@ -53,6 +53,23 @@ final class SettingsStoreTests: XCTestCase {
             XCTAssertEqual(store.recordings, [])
             XCTAssertEqual(store.showsNoteLineNumbers, false)
             XCTAssertEqual(store.noteToolbarLayout, NoteToolbarLayout.defaultLayout)
+            XCTAssertEqual(store.defaultRecordingMode, .live)
+            XCTAssertEqual(store.alternateRecordingMode, .batch)
+        }
+    }
+
+    func testDefaultRecordingModePersistsAndSwapsTheAlternate() async throws {
+        try await MainActor.run {
+            let storage = SettingsInMemoryKeyValueStore()
+            let first = try Self.makeStore(storage: storage)
+            first.setDefaultRecordingMode(.batch)
+            XCTAssertEqual(first.alternateRecordingMode, .live)
+            first.setDefaultRecordingMode(.unrecognized("x"))
+            XCTAssertEqual(first.defaultRecordingMode, .batch)
+
+            let second = try Self.makeStore(storage: storage)
+            XCTAssertEqual(second.defaultRecordingMode, .batch)
+            XCTAssertEqual(second.alternateRecordingMode, .live)
         }
     }
 

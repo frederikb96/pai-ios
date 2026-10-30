@@ -3,20 +3,30 @@ import SwiftUI
 
 /// The slim row above a composer's text field naming the skills the prompt mentions: the leading
 /// chain (what runs) in the accent colour, later mentions plain, and an amber chip for a token
-/// that is one typo away from a real skill, which corrects the token when tapped.
+/// that is one typo away from a real skill, which corrects the token when tapped. Claude Code
+/// keywords the prompt carries follow as plain chips.
 ///
 /// What the chips say is `SkillComposer`'s decision; this only draws it. Nothing is drawn for an
-/// empty list, so a prompt without skills costs no height.
+/// empty list, so a prompt without skills or keywords costs no height.
 struct SkillMentionRow: View {
     let items: [SkillComposer.RowItem]
+    var keywords: [String] = []
     let onFix: (SkillComposer.RowItem) -> Void
 
     var body: some View {
-        if !items.isEmpty {
+        if !items.isEmpty || !keywords.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(items) { item in
                         chip(item)
+                    }
+                    ForEach(keywords, id: \.self) { word in
+                        chipLabel(
+                            word, foreground: PaiPalette.Semantic.textSecondary,
+                            background: PaiPalette.Semantic.raisedSurface
+                        )
+                        .accessibilityLabel("Keyword \(word): Claude Code acts on it in the next prompt")
+                        .accessibilityIdentifier("prompt-keyword")
                     }
                 }
                 .padding(.horizontal, 4)
