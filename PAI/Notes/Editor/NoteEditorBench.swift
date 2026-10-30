@@ -99,10 +99,10 @@
             view.insertText("```\n")
             while coordinator.hasRepaintPending { try? await Task.sleep(for: .milliseconds(5)) }
             let fenceRepaints = coordinator.benchRepaintsMs
-            let afterFence = view.text
+            let afterFence = view.nativeText
             view.deleteBackward()
             view.undoManager?.undo()
-            let undoRestoredText = view.text == afterFence
+            let undoRestoredText = view.nativeText == afterFence
 
             let source = storage.mutableString
             let lastHeading = source.range(of: "\n## ", options: .backwards).location + 1

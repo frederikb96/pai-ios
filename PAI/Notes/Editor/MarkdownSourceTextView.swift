@@ -620,7 +620,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
                 textView.undoManager?.redo()
             case .command(let command):
                 guard !isInsideFence(textView.selectedRange.location) else { return }
-                let source = textView.text ?? ""
+                let source = textView.nativeText
                 guard let edit = MarkdownEditing.edit(command, in: source, selection: textView.selectedRange)
                 else { return }
                 apply(edit, to: textView)
@@ -637,7 +637,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
             guard !isPresentingLinkForm, var presenter = textView.window?.rootViewController else { return }
             while let next = presenter.presentedViewController { presenter = next }
             let selection = textView.selectedRange
-            let draft = MarkdownLinkEditing.draft(in: textView.text ?? "", selection: selection)
+            let draft = MarkdownLinkEditing.draft(in: textView.nativeText, selection: selection)
 
             let alert = UIAlertController(title: "Link", message: nil, preferredStyle: .alert)
             alert.addTextField { field in
@@ -668,7 +668,7 @@ struct MarkdownSourceTextView: UIViewRepresentable {
             }
             alert.addAction(cancel)
             // Only on an existing `[text](url)`: a bare URL or a new link has nothing to remove.
-            if let unlink = MarkdownLinkEditing.unlinkEdit(replacing: draft, in: textView.text ?? "") {
+            if let unlink = MarkdownLinkEditing.unlinkEdit(replacing: draft, in: textView.nativeText) {
                 alert.addAction(
                     UIAlertAction(title: "Remove link", style: .destructive) { [weak self, weak textView] _ in
                         guard let self, let textView else { return }
@@ -762,15 +762,15 @@ final class NoteSourceTextView: PasteAwareTextView {
     var onBoundsChange: ((NoteSourceTextView, CGSize) -> Void)?
     private var lastSize = CGSize.zero
 
-    /// The text as a native Swift string. `text` hands back a Cocoa-backed one, and comparing or
-    /// walking that goes through the Objective-C runtime a code unit at a time, which on a large
-    /// note is hundreds of milliseconds wherever it lands.
+    /// The text as a native Swift string, copied out in one block. `text` hands back a Cocoa-backed
+    /// string, and comparing or walking one goes through the Objective-C runtime a code unit at a
+    /// time; so does `makeContiguousUTF8()` on it, which took eleven seconds on a 500 KB note.
     var nativeText: String {
-        var native = text ?? ""
-        native.makeContiguousUTF8()
-        return native
+        let source = textStorage.mutableString
+        var units = [unichar](repeating: 0, count: source.length)
+        source.getCharacters(&units, range: NSRange(location: 0, length: source.length))
+        return String(decoding: units, as: UTF16.self)
     }
-    private var lastPinnedOffset = CGFloat.nan
 
     func setGutterShown(_ shown: Bool, configure: (NoteLineNumberGutter) -> Void) {
         guard shown else {
