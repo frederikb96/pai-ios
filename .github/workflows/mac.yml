@@ -193,6 +193,15 @@ jobs:
           bundle=com.frederikberg.pai
           fail=0
 
+          chrome_assert() {
+            curl -sS --max-time 5 "http://127.0.0.1:8765/screen/scroll-views" -o "artifacts/scroll-views-$1.json" || true
+            python3 - "artifacts/scroll-views-$1.json" <<'PY' || { echo "::error::$1: a scroll view besides the list, see scroll-views-$1.json"; fail=1; }
+          import json, sys
+          views = json.load(open(sys.argv[1]))["views"]
+          print(views)
+          sys.exit(0 if views and all(v["height"] > 300 for v in views) else 1)
+          PY
+          }
           screenshot() {
             name="$1"; shift
             xcrun simctl launch "$udid" "$bundle" -PaiFixtureMode "$@" > /dev/null
@@ -366,11 +375,14 @@ jobs:
             fail=1
           fi
 
-          # The note index with its filter field focused. The mode switch lives in the search
-          # field's own scope bar, which the system only draws while that field is active — so
-          # the ordinary `notes` screenshot cannot show it, and a scope bar that silently failed
-          # to render would be indistinguishable from one that works.
+          # The note index, then with its filter field focused. Its chip row draws only if the
+          # list is the scroll view the navigation bar treats as content: a thin scroll view in
+          # the row takes the bar's edge effect, which can mask the chips while they stay tappable.
+          screenshot notes-chrome -PaiFixtureRoute notes
+          chrome_assert notes-chrome
+          xcrun simctl terminate "$udid" "$bundle" || true
           screenshot notes-filtering -PaiFixtureRoute notes -PaiFixtureNotesFilterFocused
+          chrome_assert notes-filtering
           xcrun simctl terminate "$udid" "$bundle" || true
 
           # The notification centre under its source filter. The fixture feed holds a quiet

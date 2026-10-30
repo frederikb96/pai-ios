@@ -178,6 +178,14 @@ struct PAIApp: App {
                 }
             }
 
+            // The scroll views on the app's window, chrome included: a thin one above a list is
+            // what the navigation bar's scroll edge effect can land on instead of the list.
+            router.register("GET", "/screen/scroll-views") { _ in
+                DispatchQueue.main.sync {
+                    MainActor.assumeIsolated { .encoding(ScreenScrollViews.current()) }
+                }
+            }
+
             // The notes cache and what waits to sync: what the offline screenshots assert on, and
             // the one way to read the cache's size and pending edits after a build reaches a
             // phone. Every route calls the store methods the screens call.
