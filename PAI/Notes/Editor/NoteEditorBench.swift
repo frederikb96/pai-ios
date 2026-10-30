@@ -113,6 +113,8 @@
             let visible = view.bounds.height - insets.top - insets.bottom
             let caret = view.selectedTextRange.map { view.caretRect(for: $0.end) } ?? .null
             let fraction = (caret.minY - view.contentOffset.y - insets.top) / visible
+            // Left on screen for the run's closing screenshot of the gutter and the highlight.
+            view.highlightLayer.matches = SearchText.findMatches(in: view.nativeText, query: "ordinary")
 
             return Report(
                 utf16Length: storage.length, lineCount: coordinator.index.lineCount, width: view.bounds.width,
