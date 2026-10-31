@@ -4,9 +4,11 @@ import Foundation
 /// web's `ModelBadge.tsx`.
 @MainActor
 public enum SessionModelSwitch {
-    /// Whether the session has a Claude process whose model can be switched.
+    /// Whether the session has a model that can be switched: a Claude process's, or the one an
+    /// ultra-fast session's next reply reads.
     public static func canSwitch(_ session: Session) -> Bool {
         guard let kind = session.kind else { return true }
+        if kind == .ultrafast { return true }
         return !sessionKindsWithoutProcess.contains(kind) && !sessionKindsPodResident.contains(kind)
     }
 
@@ -30,7 +32,7 @@ public enum SessionModelSwitch {
     }
 
     public static func aliasLabel(_ alias: String) -> String {
-        CreateSessionStore.modelDisplayLabels[alias] ?? alias
+        CreateSessionStore.modelDisplayLabels[alias] ?? UltraFastModelInfo.label(for: alias)
     }
 
     private static func pendingAlias(_ session: Session, live: TranscriptStore.LiveSessionStatus?) -> String? {

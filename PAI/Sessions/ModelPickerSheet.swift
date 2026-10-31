@@ -22,8 +22,8 @@ struct ModelPickerSheet: View {
             List {
                 Section("Model") {
                     modelRow(id: nil, label: "Default")
-                    ForEach(createSession.sessionModels) { model in
-                        modelRow(id: model.id, label: CreateSessionStore.modelDisplayLabels[model.id] ?? model.id)
+                    ForEach(createSession.pickerModels) { model in
+                        modelRow(id: model.id, label: createSession.modelLabel(model.id))
                     }
                 }
 
@@ -38,7 +38,15 @@ struct ModelPickerSheet: View {
                     }
                 }
 
-                if createSession.isFastSelected {
+                if createSession.isUltrafastSelected {
+                    Section {
+                        Text(
+                            "For this session only. A Claude model also reads the images you send; any other model has them read by Haiku."
+                        )
+                        .font(PaiTypography.caption.font)
+                        .foregroundStyle(PaiPalette.Semantic.textMuted)
+                    }
+                } else if createSession.isFastSelected {
                     Section {
                         Text(fastDefaultCaption)
                             .font(PaiTypography.caption.font)

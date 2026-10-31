@@ -70,6 +70,7 @@ public final class SettingsStore {
     public let alertRouting: AlertRoutingStore
     public let voices: SpokenVoiceSettingsStore
     public let statusMessage: StatusMessageStore
+    public let sessionDefaults: SessionDefaultsStore
 
     /// Called for a recording evicted by the 10-entry cap, so whichever store holds the actual
     /// audio (a voice-capture concern, not this one's) can delete it — the same seam the web's
@@ -94,6 +95,7 @@ public final class SettingsStore {
         self.alertRouting = AlertRoutingStore(api: apiClient)
         self.voices = SpokenVoiceSettingsStore(apiClient: apiClient)
         self.statusMessage = StatusMessageStore(api: apiClient)
+        self.sessionDefaults = SessionDefaultsStore(api: apiClient)
 
         silenceGate = storage.value(forKey: Keys.silenceGate) ?? .standard
         micDeviceId = storage.value(forKey: Keys.micDeviceId) ?? ""

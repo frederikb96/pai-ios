@@ -434,6 +434,60 @@ final class SessionStoreCreateSessionTests: XCTestCase {
         XCTAssertEqual(store.resolvedThinking, "high")
     }
 
+    private func ultrafastStore(_ api: FakeCreateSessionApi) async -> CreateSessionStore {
+        await api.setSessionModelsResult(
+            .success([]),
+            ultrafast: UltraFastCatalog(
+                defaultModel: "claude-haiku-5-5", defaultThinking: "none",
+                models: [
+                    UltraFastModelInfo(
+                        id: "claude-haiku-5-5", provider: "anthropic", effortLevels: ["none", "low"]),
+                    UltraFastModelInfo(
+                        id: "claude-opus-5-5", provider: "anthropic", effortLevels: ["low", "high"]),
+                ]))
+        let store = CreateSessionStore(machines: MachineStore(api: FakeMachineDirectoryApi()), api: api)
+        store.selectSessionType("ultrafast")
+        await store.start()
+        return store
+    }
+
+    func testAnUltrafastSessionShowsTheSettingAndOffersThePickedModelsLevels() async {
+        let store = await ultrafastStore(FakeCreateSessionApi())
+
+        XCTAssertEqual(store.resolvedModel, "claude-haiku-5-5")
+        XCTAssertEqual(store.resolvedThinking, "none")
+        store.selectModel("claude-opus-5-5")
+        XCTAssertEqual(store.effortLevelsForResolvedModel, ["low", "high"])
+        XCTAssertEqual(store.modelLabel("google/gemma-4-31B-it"), "gemma-4-31B-it")
+    }
+
+    func testAnUltrafastPickIsSentAndAStaleAliasIsNot() async {
+        let sending = FakeOutboxSending()
+        let store = await ultrafastStore(FakeCreateSessionApi())
+        let outbox = makeOutbox(sending)
+        store.selectModel("claude-opus-5-5")
+        store.selectThinking("high")
+
+        store.enqueueSend(message: "picked", outbox: outbox)
+        await waitForPost(sending)
+
+        let calls = await sending.postMessageCalls
+        XCTAssertEqual(calls[0].model, "claude-opus-5-5")
+        XCTAssertEqual(calls[0].thinking, "high")
+
+        store.selectModel("opus")
+        XCTAssertEqual(store.pickerModels.map(\.id), ["claude-haiku-5-5", "claude-opus-5-5"])
+    }
+
+    func testAPickDoesNotCrossBetweenUltrafastAndTheOtherTypes() async {
+        let store = await ultrafastStore(FakeCreateSessionApi())
+        store.selectModel("claude-opus-5-5")
+
+        store.selectSessionType("home")
+
+        XCTAssertNil(store.selectedModel)
+    }
+
     func testAnExplicitChoiceOnAFastSessionOverridesTheDefaultAndIsWhatGetsSent() async {
         let api = FakeCreateSessionApi()
         let sending = FakeOutboxSending()
@@ -478,11 +532,13 @@ extension FakeOutboxSending {
 extension FakeCreateSessionApi {
     func setSessionModelsResult(
         _ result: Result<[SessionModelInfo], PaiError>,
-        fastDefaultModel: String = "sonnet", fastDefaultThinking: String = "low"
+        fastDefaultModel: String = "sonnet", fastDefaultThinking: String = "low",
+        ultrafast: UltraFastCatalog? = nil
     ) {
         sessionModelsResult = result.map {
             SessionModelsResponse(
-                models: $0, fastDefaultModel: fastDefaultModel, fastDefaultThinking: fastDefaultThinking)
+                models: $0, fastDefaultModel: fastDefaultModel, fastDefaultThinking: fastDefaultThinking,
+                ultrafast: ultrafast)
         }
     }
 }

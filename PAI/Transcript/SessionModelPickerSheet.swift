@@ -74,6 +74,103 @@ struct SessionModelPickerSheet: View {
     }
 }
 
+/// The header's picker for an ultra-fast session: model and thinking, both for this session only,
+/// from its next reply. It stays open after a pick, since the thinking levels depend on the model
+/// just chosen. Mirrors the web's `UltraFastSessionModelPicker`.
+struct UltraFastSessionModelPickerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let store: SessionModelSwitchStore
+    let session: Session
+    /// The picks of this sheet, shown before the session list catches up.
+    @State private var pickedModel: String?
+    @State private var pickedThinking: String?
+
+    private var model: String? { pickedModel ?? session.ultrafastModel ?? store.ultrafastCatalog?.defaultModel }
+    private var thinking: String? {
+        if pickedThinking != nil || pickedModel != nil { return pickedThinking }
+        return session.thinking ?? store.ultrafastCatalog?.defaultThinking
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(store.ultrafastCatalog?.models ?? []) { option in
+                        row(
+                            label: UltraFastModelInfo.label(for: option.id), isSelected: option.id == model,
+                            identifier: "ultrafast-picker-model-\(option.id)"
+                        ) {
+                            guard option.id != model else { return }
+                            Task {
+                                if await store.chooseUltrafast(model: option.id, thinking: nil) {
+                                    pickedModel = option.id
+                                    pickedThinking = nil
+                                }
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Model")
+                } footer: {
+                    Text("Applies to this session only, from its next reply, and stays when it is resumed.")
+                }
+
+                if let model, let levels = store.ultrafastCatalog?.levels(for: model), !levels.isEmpty {
+                    Section("Thinking") {
+                        ForEach(levels, id: \.self) { level in
+                            row(
+                                label: CreateSessionStore.effortLevelLabels[level] ?? level,
+                                isSelected: level == thinking, identifier: "ultrafast-picker-thinking-\(level)"
+                            ) {
+                                Task {
+                                    if await store.chooseUltrafast(model: model, thinking: level) {
+                                        pickedModel = model
+                                        pickedThinking = level
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if let message = store.errorMessage {
+                    Section {
+                        Text(message)
+                            .font(PaiTypography.caption.font)
+                            .foregroundStyle(PaiPalette.Semantic.errorText)
+                    }
+                }
+            }
+            .navigationTitle("Model for this session")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                        .accessibilityIdentifier("ultrafast-picker-done")
+                }
+            }
+        }
+        .task { await store.load() }
+    }
+
+    private func row(
+        label: String, isSelected: Bool, identifier: String, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(label).foregroundStyle(PaiPalette.Semantic.textPrimary)
+                Spacer()
+                if isSelected {
+                    Image(systemName: "checkmark").foregroundStyle(PaiPalette.primary500)
+                }
+            }
+        }
+        .disabled(store.isBusy)
+        .accessibilityIdentifier(identifier)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+}
+
 /// The folder icon beside the usage badge: a tap names the folder and shows the full path
 /// (selectable, to copy), the phone's stand-in for the web's hover.
 struct WorkingFolderButton: View {

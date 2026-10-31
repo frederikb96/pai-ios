@@ -121,9 +121,10 @@ final class SessionModelSwitchTests: XCTestCase {
         XCTAssertNil(SessionModelSwitch.badgeLabel(SessionFixture.make(kind: .subagent), live: nil))
     }
 
-    func testOnlySessionsWithAProcessCanSwitch() async {
+    func testOnlySessionsWithAProcessOrAnUltrafastReplyCanSwitch() async {
         XCTAssertTrue(SessionModelSwitch.canSwitch(SessionFixture.make(kind: .conversation)))
-        for kind in [SessionKind.subagent, .supervisor, .computer, .ultrafast] {
+        XCTAssertTrue(SessionModelSwitch.canSwitch(SessionFixture.make(kind: .ultrafast)))
+        for kind in [SessionKind.subagent, .supervisor, .computer] {
             XCTAssertFalse(SessionModelSwitch.canSwitch(SessionFixture.make(kind: kind)), "\(kind)")
         }
     }
@@ -200,10 +201,51 @@ final class SessionModelSwitchTests: XCTestCase {
         XCTAssertEqual(calls.map(\.model), ["sonnet", "haiku", "fable"])
         XCTAssertEqual(calls.map(\.sessionId), ["s1", "s1", "s1"])
     }
+
+    func testAnUltrafastSessionCanSwitchAndSendsItsEffort() async throws {
+        let session = try makeUltrafast()
+        XCTAssertTrue(SessionModelSwitch.canSwitch(session))
+        XCTAssertEqual(SessionModelSwitch.badgeLabel(session, live: nil), "Opus 5.5")
+
+        let api = FakeSessionModelApi()
+        let store = SessionModelSwitchStore(sessionId: "s1", api: api)
+        let saved = await store.chooseUltrafast(model: "claude-opus-5-5", thinking: "high")
+
+        XCTAssertTrue(saved)
+        let thinkings = await api.thinkings
+        XCTAssertEqual(thinkings, ["high"])
+    }
+
+    func testALiveSwitchReachesTheSessionAndAnEmptyEventKeepsIt() async throws {
+        let session = try makeUltrafast()
+        let switched = session.withLiveStatus(
+            state: nil, blocker: nil, turnState: nil, displayState: nil, activityCounts: nil,
+            secretGrantable: nil, secretPrompt: nil, liveModel: nil, model: nil, pendingModel: nil,
+            ultrafastModel: "claude-sonnet-5-5", thinking: "high")
+        XCTAssertEqual(switched.ultrafastModel, "claude-sonnet-5-5")
+        XCTAssertEqual(switched.thinking, "high")
+
+        let untouched = switched.withLiveStatus(
+            state: nil, blocker: nil, turnState: nil, displayState: nil, activityCounts: nil,
+            secretGrantable: nil, secretPrompt: nil, liveModel: nil, model: nil, pendingModel: nil)
+        XCTAssertEqual(untouched.ultrafastModel, "claude-sonnet-5-5")
+    }
+
+    private func makeUltrafast() throws -> Session {
+        let json = Data(
+            """
+            {"id":"s1","session_type":"ultrafast","kind":"ultrafast","status":"active","state":null,
+             "blocker":null,"title":null,"title_locked":null,"initial_message":null,"session_tokens":0,
+             "claude_session_id":null,"cse_id":null,"created_at":null,"updated_at":null,
+             "last_activity_at":null,"working_dir":null,"model":"claude-opus-5-5"}
+            """.utf8)
+        return try JSONDecoder().decode(Session.self, from: json)
+    }
 }
 
 actor FakeSessionModelApi: SessionModelApiClient {
     private(set) var setCalls: [(sessionId: String, model: String)] = []
+    private(set) var thinkings: [String?] = []
     var result: Result<SetSessionModelResponse, PaiError> = .success(
         SetSessionModelResponse(model: "opus", applied: .now))
 
@@ -213,8 +255,9 @@ actor FakeSessionModelApi: SessionModelApiClient {
         SessionModelsResponse(models: [], fastDefaultModel: "sonnet", fastDefaultThinking: "low")
     }
 
-    func setSessionModel(sessionId: String, model: String) async throws -> SetSessionModelResponse {
+    func setSessionModel(sessionId: String, model: String, thinking: String?) async throws -> SetSessionModelResponse {
         setCalls.append((sessionId, model))
+        thinkings.append(thinking)
         return try result.get()
     }
 }
