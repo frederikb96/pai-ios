@@ -1487,8 +1487,11 @@ final class VoiceRecorderController {
                 await self?.consumeCapturedChunk(samples)
             }
         }
-        capture.onChunk = { samples in
+        // Stamped here rather than in the consumer, which waits on the socket: a connection that
+        // stops taking frames must never read as a dead microphone.
+        capture.onChunk = { [weak self] samples in
             continuation.yield(samples)
+            Task { @MainActor [weak self] in self?.lastChunkAt = Date() }
         }
     }
 
@@ -1496,7 +1499,6 @@ final class VoiceRecorderController {
     /// them — the single place a captured buffer becomes both a disk append and a
     /// `voiceSession.ingestAudioChunk` call.
     private func consumeCapturedChunk(_ samples: [Int16]) async {
-        lastChunkAt = Date()
         // The offset this chunk lands at in the take — read before the append below, so it names
         // where the chunk about to be written *starts*, matching the sample count
         // `ingestAudioChunk(at:)` needs to keep `SessionTimeline` (and everything addressed off
