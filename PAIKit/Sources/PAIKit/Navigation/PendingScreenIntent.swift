@@ -93,6 +93,36 @@ public final class CallModeLaunchRequest {
     }
 }
 
+/// The new-session screen's own choices, carried across a visit that left its take recording.
+///
+/// That screen is rebuilt for each opening, and its machine and "becomes a call" choices live
+/// nowhere else, so a reader who steps away mid-dictation would come back to the same words headed
+/// for a different machine, or no longer a call. In memory only, and one-shot: a take that did not
+/// survive to the next opening has nothing to carry on, and a choice must not outlive it.
+@MainActor
+public final class NewSessionReturn {
+    public static let shared = NewSessionReturn()
+
+    public struct Kept: Equatable, Sendable {
+        public let machine: String?
+        public let startsCall: Bool
+    }
+
+    private var kept: Kept?
+
+    public init() {}
+
+    public func keep(machine: String?, startsCall: Bool) {
+        kept = Kept(machine: machine, startsCall: startsCall)
+    }
+
+    /// What the last visit left, at most once.
+    public func consume() -> Kept? {
+        defer { kept = nil }
+        return kept
+    }
+}
+
 /// The one moment in a new session's life that the new-session screen cannot see for itself.
 ///
 /// A send from that screen does not wait for the network — it hands the message to

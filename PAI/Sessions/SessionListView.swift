@@ -27,6 +27,10 @@ struct SessionListView: View {
     /// height, never at the last row itself.
     private static let loadMoreLeadRows = 8
 
+    private var newSessionIsRecording: Bool {
+        environment.connection?.voice.isRecording(draftKey: DraftKey.newSession) ?? false
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             filterChips
@@ -57,7 +61,15 @@ struct SessionListView: View {
                 Button {
                     isPresentingCreateSession = true
                 } label: {
-                    Image(systemName: "plus")
+                    // A take on the new-session screen has no row of its own, so its way back is
+                    // this button, which shows it for as long as the microphone is held.
+                    if newSessionIsRecording {
+                        Image(systemName: "mic.fill")
+                            .foregroundStyle(PaiPalette.Semantic.errorText)
+                            .accessibilityLabel("New session, recording")
+                    } else {
+                        Image(systemName: "plus")
+                    }
                 }
                 .accessibilityIdentifier("new-session")
             }

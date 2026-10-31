@@ -478,7 +478,7 @@ struct RootView: View {
 /// fixture workflow — nothing else removes it: `CreateSessionView.send()` pushes `.session(id:)`
 /// before dismissing (that function's own comment says why), so by the time this fires
 /// `.createSession` may no longer be the top of the path — `Router.removeRoute` takes it out
-/// wherever it sits rather than assuming it is still on top, so both Cancel (still on top) and a
+/// wherever it sits rather than assuming it is still on top, so both Back (still on top) and a
 /// successful send (now buried under the session just pushed) leave the reader on that session
 /// rather than on a blank, transparent screen with a stray system Back button.
 private struct CreateSessionRouteScreen: View {
