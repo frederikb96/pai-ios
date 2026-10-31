@@ -36,10 +36,10 @@ struct CreateSessionView: View {
     // MARK: - Composer state
     //
     // Text and attachments both live in the shared `DraftStore`/`StagedAttachmentStore`, under
-    // `DraftKey.newSession` — the same mechanism a session's own composer uses, so cancelling out
-    // of this screen and coming back (or a force-quit) loses nothing typed or attached. Only the
-    // machine and launch-type pickers stay local view state; `CreateSessionStore`'s doc comment
-    // explains why.
+    // `DraftKey.newSession` — the same mechanism a session's own composer uses, so leaving this
+    // screen and coming back (or a force-quit) loses nothing typed or attached. Only the machine
+    // and launch-type pickers stay local view state; `CreateSessionStore`'s doc comment explains
+    // why.
 
     @State private var textHeight: CGFloat = ComposerTextEditor.minHeight
     @State private var scrollToTailOnNextUpdate = false
@@ -67,30 +67,38 @@ struct CreateSessionView: View {
             content
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { dismiss() }
+                    // Leaving discards nothing: the draft stays and a take keeps recording, so this
+                    // is a way back, never a cancellation.
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            dismiss()
+                        } label: {
+                            Label("Back", systemImage: "chevron.left")
+                                .labelStyle(.titleAndIcon)
+                        }
+                        .accessibilityIdentifier("create-session-back")
                     }
                 }
         }
         .onDisappear {
-            // 🚨 The recorder is app-wide now, so it survives this sheet — and nothing else can
-            // reach a take started here, because this is the only screen that recognises a take
-            // with no draft key as its own. Left running it would hold the one microphone
-            // indefinitely, disabling the record button in every session's composer with no
-            // visible cause. The audio itself is still saved, so it is recoverable from Past
-            // Recordings; only the live transcript, which had nowhere durable to go from this
-            // screen, is lost.
-            if let voiceController = environment.connection?.voice, isRecordingHere(voiceController) {
-                Task { await voiceController.stop() }
-            }
             // Debounced writes land regardless (the pending `Task` lives on `DraftStore`, not on
-            // this view), but flushing explicitly here is what makes Cancel-then-force-quit safe
-            // without depending on the 700ms window having already elapsed.
+            // this view), but flushing explicitly here is what makes leaving then force-quitting
+            // safe without depending on the 700ms window having already elapsed.
             Task { await drafts.flush(key: DraftKey.newSession) }
-            // Dismissed without sending. Left armed, this would turn whichever session is
-            // created next into a call nobody asked for — `openCreatedSession()` clears the flag
-            // itself for the case where the request is genuinely wanted.
-            if startsCallOnSend { CallModeLaunchRequest.shared.cancel() }
+            // 🚨 A take never ends because this screen closed: the recorder is app-wide, the words
+            // keep landing in the draft, and only the reader's own stop or send ends it. Reopening
+            // finds it still running, and the session list shows it meanwhile.
+            if let voiceController = environment.connection?.voice, isRecordingHere(voiceController),
+                voiceController.state != .stopping
+            {
+                NewSessionReturn.shared.keep(
+                    machine: createSession?.selectedMachine, startsCall: startsCallOnSend)
+            } else if startsCallOnSend {
+                // Dismissed without sending. Left armed, this would turn whichever session is
+                // created next into a call nobody asked for — `openCreatedSession()` clears the
+                // flag itself for the case where the request is genuinely wanted.
+                CallModeLaunchRequest.shared.cancel()
+            }
             // A send that lands from here on has no screen left to open it. Dropping the offer
             // is what stops it opening against the *next* visit to this screen instead — the
             // session is in the list either way.
@@ -107,11 +115,18 @@ struct CreateSessionView: View {
             guard createSession == nil, let connection = environment.connection else { return }
             let store = CreateSessionStore(machines: machines, api: connection.apiClient)
             createSession = store
+            // Back on a take that kept recording: the same composition carries on, on the choices
+            // it was started with. A take that ended meanwhile is an ordinary new opening.
+            let kept = NewSessionReturn.shared.consume()
+            let resumed = isRecordingHere(connection.voice) ? kept : nil
             // Freshest possible online/offline picture at the moment stakes are highest: a
             // session about to launch on whichever machine turns out to be reachable.
             await machines.refresh()
             await store.start()
             await drafts.syncFromServer()
+            if let machine = resumed?.machine, machines.launchableMachines.contains(where: { $0.slug == machine }) {
+                store.selectMachine(machine)
+            }
             // A persisted launch choice — restored after a relaunch, or set by a home-screen
             // shortcut ahead of navigating here — wins over the preselection `store.start()` just
             // applied. `workingDir` implies `sessionType == "custom"` already (`selectWorkingDir`
@@ -125,7 +140,13 @@ struct CreateSessionView: View {
             }
             // Model and effort belong to one creation: every opening starts on Default, and the
             // persisted pair is cleared (which also drops the effort) so the previous session's choice cannot come back.
-            drafts.selectModel(nil)
+            if resumed != nil {
+                store.selectModel(persisted.model)
+                store.selectThinking(persisted.thinking)
+                startsCallOnSend = resumed?.startsCall ?? false
+            } else {
+                drafts.selectModel(nil)
+            }
             // The point of this screen is the text field — true whether it was reached by tapping
             // "+" or by a home-screen shortcut built to land here ready to type. The camera quick
             // action opens the camera first; closing it brings the keyboard up instead.
@@ -140,7 +161,10 @@ struct CreateSessionView: View {
             // itself opens on the session that send creates. Arming the microphone here is what
             // makes that one press rather than two.
             if CallModeLaunchRequest.shared.consume(), let voiceController = environment.connection?.voice {
-                await toggleRecording(voiceController: voiceController)
+                // A take already running here becomes the call's first turn; toggling would end it.
+                if !isRecordingHere(voiceController) {
+                    await toggleRecording(voiceController: voiceController)
+                }
                 // Only a take that actually started commits this session to becoming a call.
                 // The microphone is one shared resource, so a call already running elsewhere
                 // refuses this one — and arming anyway would open a call afterwards on whatever
@@ -914,7 +938,7 @@ struct CreateSessionView: View {
     /// dictated words straight into the field this screen already shows, exactly as
     /// `ComposerBar`'s own take does for an existing session.
     private func isRecordingHere(_ controller: VoiceRecorderController) -> Bool {
-        controller.activeDraftKey == DraftKey.newSession && controller.state != .idle
+        controller.isRecording(draftKey: DraftKey.newSession)
     }
 
     /// `sttMode` defaults to live for the call tiles and the hands-free entry, which dictate the

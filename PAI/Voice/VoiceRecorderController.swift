@@ -105,6 +105,12 @@ final class VoiceRecorderController {
     /// microphone opens and cleared only once the take's final text has been written, so a
     /// composer for a different session can always tell that the recorder is not its own.
     private(set) var activeDraftKey: String?
+
+    /// Whether the running take is the one writing into `draftKey`.
+    func isRecording(draftKey: String) -> Bool {
+        activeDraftKey == draftKey && state != .idle
+    }
+
     /// Whatever was already in that session's draft when the take started. The live transcript is
     /// appended to it rather than replacing it, and it is what a take that transcribed nothing
     /// restores.

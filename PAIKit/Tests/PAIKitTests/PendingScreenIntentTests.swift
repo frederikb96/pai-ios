@@ -41,6 +41,17 @@ final class PendingScreenIntentTests: XCTestCase {
         XCTAssertFalse(request.consume())
     }
 
+    /// Left set, a call choice from a take that ended would turn a later, unrelated new session
+    /// into a call on its second opening.
+    func testWhatAVisitLeftIsTakenOnlyOnce() async {
+        let carry = NewSessionReturn()
+        XCTAssertNil(carry.consume())
+
+        carry.keep(machine: "laptop", startsCall: true)
+        XCTAssertEqual(carry.consume(), NewSessionReturn.Kept(machine: "laptop", startsCall: true))
+        XCTAssertNil(carry.consume(), "a later opening must start clean")
+    }
+
     /// Keyed by session id, because the composer that consumes it is one of many and each one
     /// asks on mount. Answering yes to the wrong session would open a call on a conversation
     /// nobody was starting.
