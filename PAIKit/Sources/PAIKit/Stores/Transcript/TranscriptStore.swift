@@ -88,6 +88,10 @@ public final class TranscriptStore {
         public let model: String?
         /// See `Session.pendingModel`; always the event's own answer.
         public let pendingModel: String?
+        /// See `Session.ultrafastModel`.
+        public let ultrafastModel: String?
+        /// See `Session.thinking`.
+        public let thinking: String?
         /// See `Session.transferredToSessionId`; always the event's own answer.
         public let transfer: SessionMoved.Mark
     }

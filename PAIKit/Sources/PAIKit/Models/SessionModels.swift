@@ -430,6 +430,9 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     /// request (or launch) runs on, shown in place of `liveModel` until a reply from that family
     /// lands. `nil` when nothing is pending. Computed by the backend; clients derive nothing.
     public let pendingModel: String?
+    /// The model an ultra-fast session was pinned to for itself, with `thinking` as its effort;
+    /// `nil` follows the setting. `model` is only the label of whichever model answered last.
+    public let ultrafastModel: String?
     /// The scheduled task that launched this conversation, if any — what the scheduled
     /// session filter matches on. `nil` for an ordinary session.
     public let taskId: String?
@@ -500,6 +503,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         case phaseName = "phase_name"
         case liveModel = "live_model"
         case pendingModel = "pending_model"
+        case ultrafastModel = "ultrafast_model"
         case taskId = "task_id"
         case activityCounts = "activity_counts"
         case secretGrantable = "secret_grantable"
@@ -554,6 +558,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         phaseName: String? = nil,
         liveModel: String? = nil,
         pendingModel: String? = nil,
+        ultrafastModel: String? = nil,
         taskId: String? = nil,
         activityCounts: ActivityCounts? = nil,
         secretGrantable: Bool? = nil,
@@ -606,6 +611,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.phaseName = phaseName
         self.liveModel = liveModel
         self.pendingModel = pendingModel
+        self.ultrafastModel = ultrafastModel
         self.taskId = taskId
         self.activityCounts = activityCounts
         self.secretGrantable = secretGrantable
@@ -631,13 +637,15 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     public func withLiveStatus(
         state: SessionState?, blocker: Blocker?, turnState: TurnState?, displayState: DisplayState?,
         activityCounts: ActivityCounts?, secretGrantable: Bool?, secretPrompt: SecretPrompt?,
-        liveModel: String?, model: String?, pendingModel: String?, transfer: SessionMoved.Mark? = nil
+        liveModel: String?, model: String?, pendingModel: String?, transfer: SessionMoved.Mark? = nil,
+        ultrafastModel: String? = nil, thinking: String? = nil
     ) -> Session {
         // A supplied mark replaces both fields, nil members included; without one they carry over.
         let movedTo = transfer == nil ? transferredToSessionId : transfer?.toSessionId
         let movedAt = transfer == nil ? transferredAt : transfer?.at
         return Session(
-            id: id, sessionType: sessionType, model: model ?? self.model, thinking: thinking, status: status,
+            id: id, sessionType: sessionType, model: model ?? self.model, thinking: thinking ?? self.thinking,
+            status: status,
             state: state,
             blocker: blocker,
             turnState: turnState, displayState: displayState,
@@ -652,7 +660,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
             sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
             projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName,
-            liveModel: liveModel, pendingModel: pendingModel, taskId: taskId,
+            liveModel: liveModel, pendingModel: pendingModel, ultrafastModel: ultrafastModel ?? self.ultrafastModel,
+            taskId: taskId,
             activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
             transferredToSessionId: movedTo, transferredAt: movedAt, namespace: namespace
         )
@@ -679,7 +688,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
             sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
             projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName,
-            liveModel: liveModel, pendingModel: pendingModel, taskId: taskId,
+            liveModel: liveModel, pendingModel: pendingModel, ultrafastModel: ultrafastModel,
+            taskId: taskId,
             activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
             transferredToSessionId: transferredToSessionId, transferredAt: transferredAt,
             namespace: namespace
@@ -706,7 +716,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
             sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
             projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName,
-            liveModel: liveModel, pendingModel: pendingModel, taskId: taskId,
+            liveModel: liveModel, pendingModel: pendingModel, ultrafastModel: ultrafastModel,
+            taskId: taskId,
             activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
             transferredToSessionId: transferredToSessionId, transferredAt: transferredAt,
             namespace: namespace
@@ -830,20 +841,70 @@ public struct SessionModelInfo: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+/// A model an ultra-fast session may pick.
+public struct UltraFastModelInfo: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let provider: String
+    public let effortLevels: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case provider
+        case effortLevels = "effort_levels"
+    }
+
+    public init(id: String, provider: String, effortLevels: [String]) {
+        self.id = id
+        self.provider = provider
+        self.effortLevels = effortLevels
+    }
+
+    /// As a person reads it: a Claude model's name, else the id without its vendor prefix.
+    public static func label(for id: String) -> String {
+        if id.hasPrefix("claude-"), let label = ModelDisplay.label(forWireId: id) { return label }
+        return id.split(separator: "/").last.map(String.init) ?? id
+    }
+}
+
+/// What an ultra-fast session may pick for itself, and what it runs on when it picks nothing (the
+/// setting).
+public struct UltraFastCatalog: Codable, Sendable, Equatable {
+    public let defaultModel: String
+    public let defaultThinking: String
+    public let models: [UltraFastModelInfo]
+
+    enum CodingKeys: String, CodingKey {
+        case defaultModel = "default_model"
+        case defaultThinking = "default_thinking"
+        case models
+    }
+
+    public init(defaultModel: String, defaultThinking: String, models: [UltraFastModelInfo]) {
+        self.defaultModel = defaultModel
+        self.defaultThinking = defaultThinking
+        self.models = models
+    }
+
+    public func levels(for model: String?) -> [String] {
+        models.first { $0.id == model }?.effortLevels ?? []
+    }
+}
+
 public struct SessionModelsResponse: Codable, Sendable {
     public let models: [SessionModelInfo]
-    /// What a fast session launches with when nobody names a choice —
-    /// `pai_cloud.config.FAST_SESSION_DEFAULT_MODEL`/`_EFFORT`, mirroring the agent's own
-    /// `FAST_DEFAULT_MODEL`/`FAST_DEFAULT_EFFORT` by convention. Read this rather than
-    /// hardcoding the pair, or the picker pre-selects and displays a value that has drifted
-    /// from what actually launches.
+    /// What a fast session launches with when nobody names a choice — the setting. Read this
+    /// rather than hardcoding the pair, or the picker pre-selects and displays a value that
+    /// differs from what launches.
     public let fastDefaultModel: String
     public let fastDefaultThinking: String
+    /// `nil` from a backend that predates per-session ultra-fast models.
+    public var ultrafast: UltraFastCatalog? = nil
 
     enum CodingKeys: String, CodingKey {
         case models
         case fastDefaultModel = "fast_default_model"
         case fastDefaultThinking = "fast_default_thinking"
+        case ultrafast
     }
 }
 

@@ -145,11 +145,15 @@ struct SessionDetailView: View {
         }
         .sheet(isPresented: $isPresentingModelPicker) {
             if let modelSwitch, let session = currentSession {
-                SessionModelPickerSheet(
-                    store: modelSwitch,
-                    current: SessionModelSwitch.currentAlias(session, live: transcript.liveStatus[sessionID])
-                )
-                .presentationDetents([.medium])
+                if session.kind == .ultrafast {
+                    UltraFastSessionModelPickerSheet(store: modelSwitch, session: session)
+                } else {
+                    SessionModelPickerSheet(
+                        store: modelSwitch,
+                        current: SessionModelSwitch.currentAlias(session, live: transcript.liveStatus[sessionID])
+                    )
+                    .presentationDetents([.medium])
+                }
             }
         }
         .filePreview($fixtureImageTarget)
@@ -241,7 +245,7 @@ struct SessionDetailView: View {
                 activityCounts: newValue.activityCounts,
                 secretGrantable: newValue.secretGrantable, secretPrompt: newValue.secretPrompt,
                 liveModel: newValue.liveModel, model: newValue.model, pendingModel: newValue.pendingModel,
-                transfer: newValue.transfer
+                transfer: newValue.transfer, ultrafastModel: newValue.ultrafastModel, thinking: newValue.thinking
             )
         }
         .task {

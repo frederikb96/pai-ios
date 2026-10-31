@@ -222,7 +222,7 @@ struct CreateSessionView: View {
                             sunkTypeRow(sunkType)
                         }
 
-                        if !createSession.availableSessionTypes.isEmpty, !createSession.isUltrafastSelected {
+                        if !createSession.availableSessionTypes.isEmpty {
                             modelButton(createSession)
                         }
 
@@ -457,7 +457,7 @@ struct CreateSessionView: View {
     /// sheet itself.
     private func modelButton(_ createSession: CreateSessionStore) -> some View {
         let modelLabel =
-            createSession.resolvedModel.map { CreateSessionStore.modelDisplayLabels[$0] ?? $0 }
+            createSession.resolvedModel.map { createSession.modelLabel($0) }
             ?? "Default"
         let thinkingLabel = createSession.resolvedThinking.map { CreateSessionStore.effortLevelLabels[$0] ?? $0 }
         return Button {

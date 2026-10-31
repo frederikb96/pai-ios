@@ -689,11 +689,25 @@ public struct PaiApiClient: Sendable {
     /// Switches the session's model for this session only. A refusal throws `PaiError.detail`
     /// carrying the server's own words (unknown alias, a session with no process, a process that
     /// refused).
-    public func setSessionModel(sessionId: String, model: String) async throws -> SetSessionModelResponse {
-        struct Body: Encodable { let model: String }
+    public func setSessionModel(
+        sessionId: String, model: String, thinking: String? = nil
+    ) async throws -> SetSessionModelResponse {
+        struct Body: Encodable {
+            let model: String
+            let thinking: String?
+        }
         return try await send(
             path: "/api/session/\(sessionId)/model", method: "POST",
-            body: try Self.jsonBody(Body(model: model)))
+            body: try Self.jsonBody(Body(model: model, thinking: thinking)))
+    }
+
+    /// The defaults of the two session types whose model is a setting.
+    public func getSessionDefaults() async throws -> SessionDefaults {
+        try await send(path: "/api/settings/llm")
+    }
+
+    public func updateSessionDefaults(_ update: SessionDefaultsUpdate) async throws -> SessionDefaults {
+        try await send(path: "/api/settings/llm", method: "PUT", body: try Self.jsonBody(update))
     }
 
     public func closeSession(sessionId: String) async throws -> CloseResponse {

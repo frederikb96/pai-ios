@@ -85,6 +85,10 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
     public let model: String?
     /// See `Session.pendingModel`.
     public let pendingModel: String?
+    /// See `Session.ultrafastModel`.
+    public let ultrafastModel: String?
+    /// See `Session.thinking`.
+    public let thinking: String?
     /// See `Session.transferredToSessionId`.
     public let transferredToSessionId: String?
     /// See `Session.transferredAt`.
@@ -113,6 +117,8 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
         case liveModel = "live_model"
         case model
         case pendingModel = "pending_model"
+        case ultrafastModel = "ultrafast_model"
+        case thinking
         case transferredToSessionId = "transferred_to_session_id"
         case transferredAt = "transferred_at"
         case queuedTexts = "queued_texts"
@@ -132,6 +138,8 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
         liveModel: String? = nil,
         model: String? = nil,
         pendingModel: String? = nil,
+        ultrafastModel: String? = nil,
+        thinking: String? = nil,
         transferredToSessionId: String? = nil,
         transferredAt: String? = nil,
         queued: Int?,
@@ -150,6 +158,8 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
         self.liveModel = liveModel
         self.model = model
         self.pendingModel = pendingModel
+        self.ultrafastModel = ultrafastModel
+        self.thinking = thinking
         self.transferredToSessionId = transferredToSessionId
         self.transferredAt = transferredAt
         self.queued = queued

@@ -166,6 +166,12 @@ public final class DraftStore {
     /// the custom session the type pill said it was not.
     public func selectSessionType(_ id: String?) {
         var entry = draft(for: DraftKey.newSession)
+        // Ultra-fast names its models by wire id and the others by alias.
+        let ultrafast = CreateSessionStore.ultrafastSessionTypeId
+        if (id == ultrafast) != (entry.sessionType == ultrafast) {
+            entry.model = nil
+            entry.thinking = nil
+        }
         entry.sessionType = id
         if id != "custom" { entry.workingDir = nil }
         drafts[DraftKey.newSession] = entry

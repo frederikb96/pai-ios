@@ -73,7 +73,7 @@ public final class CreateSessionStore {
     /// `sessionModels` below (`GET /api/session-models`), never from this map. A level this map
     /// doesn't know falls back to its own id rather than disappearing.
     public static let effortLevelLabels: [String: String] = [
-        "low": "Low", "medium": "Medium", "high": "High", "xhigh": "Extra High", "max": "Max",
+        "none": "No thinking", "low": "Low", "medium": "Medium", "high": "High", "xhigh": "Extra High", "max": "Max",
     ]
 
     /// `modelOptions` above, keyed for a lookup by id — every real alias (`Default`'s `nil` id
@@ -100,29 +100,44 @@ public final class CreateSessionStore {
     /// first fetch lands.
     public private(set) var fastDefaultModel = "sonnet"
     public private(set) var fastDefaultThinking = "low"
+    /// What an ultra-fast session may pick, from the same response; `nil` before it lands.
+    public private(set) var ultrafastCatalog: UltraFastCatalog?
 
     /// Whether `selectedSessionTypeId` is the fast sandbox — the one type whose launch defaults
     /// to a model and thinking level of its own rather than the plan's.
     public var isFastSelected: Bool { selectedSessionTypeId == Self.fastSessionTypeId }
 
-    /// Whether `selectedSessionTypeId` is the pod-resident worker — no Claude model, no Claude
-    /// credential, and no attachments, so the create screen hides all three rather than offering
-    /// controls that have nothing to act on.
+    /// Whether `selectedSessionTypeId` is the pod-resident worker — no Claude credential, a
+    /// model catalogue of its own, and photos as the only attachments.
     public var isUltrafastSelected: Bool { selectedSessionTypeId == Self.ultrafastSessionTypeId }
 
     /// What will actually launch if nothing more is chosen — an explicit selection always wins;
     /// unset falls back to the fast sandbox's own default on a fast session, and to the plan's
     /// own default (`nil`) everywhere else. For display only: leaving this untouched still sends
     /// no flag, exactly as before this picker offered a fast session any choice at all.
-    public var resolvedModel: String? { selectedModel ?? (isFastSelected ? fastDefaultModel : nil) }
+    public var resolvedModel: String? { selectedModel ?? defaultModel }
     public var resolvedThinking: String? {
-        selectedThinking ?? (isFastSelected && resolvedModel == fastDefaultModel ? fastDefaultThinking : nil)
+        selectedThinking ?? (resolvedModel == defaultModel ? defaultThinking : nil)
+    }
+    private var defaultModel: String? {
+        isUltrafastSelected ? ultrafastCatalog?.defaultModel : (isFastSelected ? fastDefaultModel : nil)
+    }
+    private var defaultThinking: String? {
+        isUltrafastSelected ? ultrafastCatalog?.defaultThinking : (isFastSelected ? fastDefaultThinking : nil)
+    }
+    /// The picker's models: ultra-fast's wire ids, or the launch aliases.
+    public var pickerModels: [SessionModelInfo] {
+        guard isUltrafastSelected else { return sessionModels }
+        return (ultrafastCatalog?.models ?? []).map { SessionModelInfo(id: $0.id, effortLevels: $0.effortLevels) }
+    }
+    public func modelLabel(_ id: String) -> String {
+        isUltrafastSelected ? UltraFastModelInfo.label(for: id) : (Self.modelDisplayLabels[id] ?? id)
     }
     /// The effort levels the currently active model accepts — empty for "Default" (no model
     /// resolved) or for a model that declares none of its own.
     public var effortLevelsForResolvedModel: [String] {
         guard let resolvedModel else { return [] }
-        return sessionModels.first { $0.id == resolvedModel }?.effortLevels ?? []
+        return pickerModels.first { $0.id == resolvedModel }?.effortLevels ?? []
     }
 
     /// The legacy flat `/api/session-types` list — a fallback for `selectedMachine ==
@@ -181,6 +196,7 @@ public final class CreateSessionStore {
             sessionModels = response.models
             fastDefaultModel = response.fastDefaultModel
             fastDefaultThinking = response.fastDefaultThinking
+            ultrafastCatalog = response.ultrafast
         }
         applyPreselectionIfNeeded()
     }
@@ -211,6 +227,12 @@ public final class CreateSessionStore {
     /// Any type but Custom drops a previously browsed directory: the directory is what makes a
     /// session custom, and a create carrying one launches there whatever type it names.
     public func selectSessionType(_ id: String) {
+        // Ultra-fast names its models by wire id and the others by alias, so a choice never
+        // crosses between them.
+        if (id == Self.ultrafastSessionTypeId) != isUltrafastSelected {
+            selectedModel = nil
+            selectedThinking = nil
+        }
         selectedSessionTypeId = id
         if id != "custom" { workingDir = nil }
     }
@@ -269,18 +291,18 @@ public final class CreateSessionStore {
         }
         let inlineFileData = Dictionary(
             uniqueKeysWithValues: zip(inlineFiles.map(\.localId), files.map(\.data)))
-        // An ultra-fast session takes no directory, model or effort — the backend refuses a
-        // create carrying any of them, so a previous visit's choice (this store is rebuilt per
-        // visit, but `selectedModel`/`workingDir` can still be set earlier in the SAME visit
-        // before the ultra-fast pill is picked) must never reach the request.
+        // An ultra-fast session takes no directory and only its own models — the backend refuses
+        // anything else, so a previous visit's choice must never reach the request.
+        let keepsChoice =
+            !isUltrafastSelected || ultrafastCatalog?.models.contains { $0.id == selectedModel } == true
         outbox.enqueue(
             OutboxEntry(
                 clientMessageId: clientMessageId,
                 target: .newSession(
                     agent: selectedMachine, sessionType: selectedSessionTypeId,
                     workingDir: isUltrafastSelected ? nil : workingDir,
-                    model: isUltrafastSelected ? nil : selectedModel,
-                    thinking: isUltrafastSelected ? nil : selectedThinking),
+                    model: keepsChoice ? selectedModel : nil,
+                    thinking: keepsChoice ? selectedThinking : nil),
                 text: message, draftAttachmentIds: draftAttachmentIds, inlineFiles: inlineFiles,
                 supersededUploadIds: supersededUploadIds, heldTake: heldTake
             ),

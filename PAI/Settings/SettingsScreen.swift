@@ -31,6 +31,11 @@ struct SettingsScreen: View {
                 StatusMessageSection(store: settings.statusMessage)
             }
 
+            // The memory pipeline's settings row, as on the web.
+            if environment.connection?.me.isGuest != true {
+                SessionDefaultsSection(store: settings.sessionDefaults)
+            }
+
             NotificationsSection()
 
             VoiceSection(settings: settings)
