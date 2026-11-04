@@ -117,9 +117,15 @@
             }
             // The fixture session's draft, replaced by `-PaiFixtureDraftText`.
             if method == "GET", path == "/api/drafts",
-                let text = PaiFixtureLaunch.requestedDraftText(arguments: arguments)
+                PaiFixtureLaunch.requestedDraftText(arguments: arguments) != nil
+                    || PaiFixtureLaunch.requestedNewSessionType(arguments: arguments) != nil
             {
-                return Match(status: 200) { PaiFixtures.data(PaiFixtures.draftsReplacingSessionText(with: text)) }
+                return Match(status: 200) {
+                    PaiFixtures.data(
+                        PaiFixtures.draftsReplacing(
+                            sessionText: PaiFixtureLaunch.requestedDraftText(arguments: arguments),
+                            newSessionType: PaiFixtureLaunch.requestedNewSessionType(arguments: arguments)))
+                }
             }
             // The feed is filtered by the query the way the server filters it, so a screenshot of the
             // Scheduled or Not scheduled view shows the rows that view keeps.
@@ -213,6 +219,8 @@
         private static let routes: [FixtureRoute] = [
             exact("GET", "/api/health") { PaiFixtures.healthOk },
             exact("GET", "/api/session-types") { PaiFixtures.sessionTypes },
+            exact("GET", "/api/session-models") { PaiFixtures.sessionModels },
+            exact("GET", "/api/settings/llm") { PaiFixtures.sessionDefaults },
             exact("GET", "/api/me") { PaiFixtures.me },
             exact("GET", "/api/agents") { PaiFixtures.agents },
             exact("GET", "/api/sessions") { sessionsFixtureBody() },

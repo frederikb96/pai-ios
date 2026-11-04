@@ -17,7 +17,7 @@ set -o pipefail
 # shellcheck source=lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 
-SECTIONS="none routes measure note-bench auth-rejected fullscreen-image fullscreen-pdf secret-prompt compact-chip
+SECTIONS="none routes measure note-bench auth-rejected fullscreen-image fullscreen-pdf secret-prompt compact-chip mailverdict
 new-session-landing notes-filtering notifications-filter scheduler-task-push settings-notes-cache
 note-uncached-online notes-offline jump-landing deep-link-landing warm-jump clamped-landing note-refused"
 
@@ -247,6 +247,14 @@ if want compact-chip; then
   # A draft that starts with `/compact` gets its own chip in the composer's chip row.
   screenshot compact-chip -PaiFixtureRoute session -PaiFixtureDraftText "/compact keep the migration plan"
   fact_assert compact-chip composerDraft "/compact keep the migration plan"
+  xcrun simctl terminate "$udid" "$bundle" || true
+fi
+
+if want mailverdict; then
+  # The assistant: the new-session screen with it chosen, and the Settings section holding the key.
+  screenshot mailverdict-new-session -PaiFixtureRoute createSession -PaiFixtureNewSessionType mailverdict
+  xcrun simctl terminate "$udid" "$bundle" || true
+  screenshot mailverdict-settings -PaiFixtureRoute settings -PaiFixtureScrollTo mailVerdictKey
   xcrun simctl terminate "$udid" "$bundle" || true
 fi
 

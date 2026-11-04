@@ -11,6 +11,7 @@ struct SessionDefaultsSection: View {
             if let defaults = store.defaults {
                 ultrafastGroup(defaults.ultrafast)
                 fastGroup(defaults.fast)
+                if let mailverdict = defaults.mailverdict { mailverdictGroup(mailverdict) }
             } else {
                 Section("Session defaults") {
                     if let error = store.errorMessage {
@@ -41,6 +42,27 @@ struct SessionDefaultsSection: View {
             if let error = store.errorMessage { errorText(error) }
         } header: {
             Text("Ultra-fast sessions")
+        } footer: {
+            Text("A new session can pick another model for itself.")
+        }
+    }
+
+    private func mailverdictGroup(_ mailverdict: SessionDefaults.UltraFast) -> some View {
+        Section {
+            picker(
+                "Model", identifier: "mailverdict-default-model", selection: mailverdict.model,
+                options: store.mailverdictModelIds, label: UltraFastModelInfo.label(for:)
+            ) { id in
+                SessionDefaultsUpdate(mailverdictModel: id)
+            }
+            picker(
+                "Thinking", identifier: "mailverdict-default-thinking", selection: mailverdict.reasoningEffort,
+                options: store.mailverdictEfforts, label: thinkingLabel
+            ) { level in
+                SessionDefaultsUpdate(mailverdictReasoningEffort: level)
+            }
+        } header: {
+            Text("MailVerdict assistant")
         } footer: {
             Text("A new session can pick another model for itself.")
         }

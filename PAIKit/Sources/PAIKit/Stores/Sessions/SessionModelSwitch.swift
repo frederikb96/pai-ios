@@ -8,7 +8,7 @@ public enum SessionModelSwitch {
     /// ultra-fast session's next reply reads.
     public static func canSwitch(_ session: Session) -> Bool {
         guard let kind = session.kind else { return true }
-        if kind == .ultrafast { return true }
+        if kind == .ultrafast || kind == .mailverdict { return true }
         return !sessionKindsWithoutProcess.contains(kind) && !sessionKindsPodResident.contains(kind)
     }
 

@@ -22,6 +22,7 @@
         static let autoCreateSessionFlag = "-PaiFixtureAutoCreateSession"
         static let secretPromptFlag = "-PaiFixtureSecretPrompt"
         static let draftTextFlag = "-PaiFixtureDraftText"
+        static let newSessionTypeFlag = "-PaiFixtureNewSessionType"
         static let notesFilterFocusFlag = "-PaiFixtureNotesFilterFocused"
         static let offlineFlag = "-PaiFixtureOffline"
         static let notesCacheSeededFlag = "-PaiFixtureNotesCacheSeeded"
@@ -61,6 +62,14 @@
         /// skill mention). Absent leaves the corpus's own draft.
         public static func requestedDraftText(arguments: [String] = ProcessInfo.processInfo.arguments) -> String? {
             value(for: draftTextFlag, in: arguments)
+        }
+
+        /// The session type `-PaiFixtureNewSessionType <id>` chooses on the new-session screen, as
+        /// the draft a previous visit left would.
+        public static func requestedNewSessionType(arguments: [String] = ProcessInfo.processInfo.arguments)
+            -> String?
+        {
+            value(for: newSessionTypeFlag, in: arguments)
         }
 
         /// Whether the process was launched with `-PaiFixtureMode`.

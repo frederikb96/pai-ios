@@ -237,6 +237,10 @@ final class AppEnvironment {
         // in a closure written out here, so the join between a landed send and the screen waiting
         // on it is covered by the package's own tests instead of by this line.
         outbox.installHandover(drafts: draftStore, sessions: sessions, handoff: NewSessionHandoff.shared)
+        // The device's MailVerdict key goes out only on a message to an assistant session, read when
+        // that message is sent.
+        outbox.mailVerdictKey = { MailVerdictKeyStore().read() }
+        outbox.isMailVerdictSession = { [weak sessions] in sessions?.session(withId: $0)?.kind == .mailverdict }
         outboxPathObserver?.stop()
         let pathObserver = NetworkPathObserver()
         // Skipping a send's backoff is for a new network: one that came back or a changed primary

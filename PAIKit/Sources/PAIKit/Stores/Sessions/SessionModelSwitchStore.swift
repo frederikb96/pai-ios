@@ -30,6 +30,7 @@ public final class SessionModelSwitchStore {
 
     public private(set) var catalog = SessionModelCatalog()
     public private(set) var ultrafastCatalog: UltraFastCatalog?
+    public private(set) var mailverdictCatalog: ApiSessionCatalog?
     public private(set) var isBusy = false
     /// The server's own words for the last refusal, shown inside the picker (a toast would sit
     /// beneath it).
@@ -47,6 +48,7 @@ public final class SessionModelSwitchStore {
         guard let response = try? await api.getSessionModels() else { return }
         catalog = SessionModelCatalog(response)
         ultrafastCatalog = response.ultrafast
+        mailverdictCatalog = response.mailverdict
     }
 
     /// Switches to `alias`. `current` is what the badge already runs on (`SessionModelSwitch
@@ -69,7 +71,12 @@ public final class SessionModelSwitchStore {
         }
     }
 
-    /// Pins an ultra-fast session to `model` and, when named, `thinking`, from its next reply.
+    /// The catalogue a session of this kind picks from.
+    public func apiCatalog(for kind: SessionKind?) -> ApiSessionCatalog? {
+        kind == .mailverdict ? mailverdictCatalog : ultrafastCatalog
+    }
+
+    /// Pins an ultra-fast or MailVerdict assistant session to `model` and, when named, `thinking`, from its next reply.
     @discardableResult
     public func chooseUltrafast(model: String, thinking: String?) async -> Bool {
         guard !isBusy else { return false }

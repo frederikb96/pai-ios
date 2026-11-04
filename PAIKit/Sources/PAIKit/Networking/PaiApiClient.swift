@@ -230,10 +230,12 @@ public struct PaiApiClient: Sendable {
         query: [URLQueryItem] = [],
         body: Data? = nil,
         contentType: String? = "application/json",
-        timeout: TimeInterval? = nil
+        timeout: TimeInterval? = nil,
+        headers: [String: String] = [:]
     ) async throws -> T {
         let (data, _) = try await sendRaw(
-            path: path, method: method, query: query, body: body, contentType: contentType, timeout: timeout
+            path: path, method: method, query: query, body: body, contentType: contentType, timeout: timeout,
+            headers: headers
         )
         do {
             return try JSONDecoder().decode(T.self, from: data)
@@ -327,11 +329,13 @@ public struct PaiApiClient: Sendable {
         query: [URLQueryItem],
         body: Data?,
         contentType: String?,
-        timeout: TimeInterval? = nil
+        timeout: TimeInterval? = nil,
+        headers: [String: String] = [:]
     ) async throws -> (Data, URLResponse) {
         var request = try requestFactory.makeRequest(
             path: path, method: method, query: query, body: body, contentType: contentType
         )
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         if let timeout { request.timeoutInterval = timeout }
         let (data, response) = try await urlSession.data(for: request)
         try checkStatus(response: response, data: data)
@@ -580,6 +584,33 @@ public struct PaiApiClient: Sendable {
         clientMode: String? = nil,
         heldTake: HeldTake? = nil
     ) async throws -> PostMessageResponse {
+        try await postMessage(
+            sessionId: sessionId, message: message, clientMessageId: clientMessageId, files: files,
+            draftAttachmentIds: draftAttachmentIds, supersededUploadIds: supersededUploadIds,
+            sessionType: sessionType, workingDir: workingDir, agent: agent, model: model, thinking: thinking,
+            clientMode: clientMode, heldTake: heldTake, mailVerdictKey: nil)
+    }
+
+    /// ``postMessage(sessionId:message:clientMessageId:files:draftAttachmentIds:supersededUploadIds:sessionType:workingDir:agent:model:thinking:clientMode:heldTake:)``
+    /// carrying the device's MailVerdict key as the `X-MailVerdict-Key` header. Only a message to a
+    /// MailVerdict assistant session passes one, and the backend holds it in memory for that one
+    /// reply; the key is a parameter of this call and of nothing that outlives it.
+    public func postMessage(
+        sessionId: String?,
+        message: String,
+        clientMessageId: String,
+        files: [PaiFileUpload],
+        draftAttachmentIds: [String],
+        supersededUploadIds: [String],
+        sessionType: String?,
+        workingDir: String?,
+        agent: String?,
+        model: String?,
+        thinking: String?,
+        clientMode: String?,
+        heldTake: HeldTake?,
+        mailVerdictKey: String?
+    ) async throws -> PostMessageResponse {
         let boundary = "PAIKit-\(UUID().uuidString)"
         var body = Data()
         Self.appendFormField(&body, boundary: boundary, name: "message", value: message)
@@ -622,9 +653,13 @@ public struct PaiApiClient: Sendable {
             path: "/api/messages",
             method: "POST",
             body: body,
-            contentType: "multipart/form-data; boundary=\(boundary)"
+            contentType: "multipart/form-data; boundary=\(boundary)",
+            headers: mailVerdictKey.map { [Self.mailVerdictKeyHeader: $0] } ?? [:]
         )
     }
+
+    /// The header a MailVerdict assistant message carries the device key in.
+    public static let mailVerdictKeyHeader = "X-MailVerdict-Key"
 
     static func appendFormField(_ body: inout Data, boundary: String, name: String, value: String) {
         body.append("--\(boundary)\r\n".data(using: .utf8)!)

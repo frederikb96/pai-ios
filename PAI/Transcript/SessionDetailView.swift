@@ -145,7 +145,7 @@ struct SessionDetailView: View {
         }
         .sheet(isPresented: $isPresentingModelPicker) {
             if let modelSwitch, let session = currentSession {
-                if session.kind == .ultrafast {
+                if session.kind == .ultrafast || session.kind == .mailverdict {
                     UltraFastSessionModelPickerSheet(store: modelSwitch, session: session)
                 } else {
                     SessionModelPickerSheet(

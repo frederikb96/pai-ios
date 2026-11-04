@@ -44,6 +44,10 @@ public final class CreateSessionStore {
     /// through `get_selectable_session_types`'s own built-ins, once the backend registers it.
     public static let ultrafastSessionTypeId = "ultrafast"
 
+    /// The MailVerdict assistant's id: built into the pod like `ultrafast`, and answered by the
+    /// same kind of worker (``isApiSessionSelected``).
+    public static let mailverdictSessionTypeId = "mailverdict"
+
     /// Session types built into the pod rather than the ConfigMap (see
     /// `backend/src/pai_cloud/config.py`'s `WEBSEARCH_SESSION_TYPE_ID`) sink under Custom rather
     /// than sitting at the top level next to home and fast, so the top-level
@@ -51,7 +55,7 @@ public final class CreateSessionStore {
     /// below Favourites listing these instead. A deny list rather than an allow list, mirroring
     /// the web's own `sessionTypes.ts` exactly: every ConfigMap-defined type (not just `home`)
     /// stays at the top level automatically, so adding a second one there needs no change here.
-    public static let sunkSessionTypeIds: Set<String> = ["websearch", "confined"]
+    public static let sunkSessionTypeIds: Set<String> = ["websearch", "confined", "mailverdict"]
 
     /// Never offered as something to start, top-level or sunk — mirrors the web's
     /// `EXCLUDED_SESSION_TYPE_IDS`. `supervisor` is an internal conversation kind attached from a
@@ -102,6 +106,8 @@ public final class CreateSessionStore {
     public private(set) var fastDefaultThinking = "low"
     /// What an ultra-fast session may pick, from the same response; `nil` before it lands.
     public private(set) var ultrafastCatalog: UltraFastCatalog?
+    /// What the MailVerdict assistant may pick, from the same response.
+    public private(set) var mailverdictCatalog: ApiSessionCatalog?
 
     /// Whether `selectedSessionTypeId` is the fast sandbox — the one type whose launch defaults
     /// to a model and thinking level of its own rather than the plan's.
@@ -110,6 +116,23 @@ public final class CreateSessionStore {
     /// Whether `selectedSessionTypeId` is the pod-resident worker — no Claude credential, a
     /// model catalogue of its own, and photos as the only attachments.
     public var isUltrafastSelected: Bool { selectedSessionTypeId == Self.ultrafastSessionTypeId }
+
+    /// Whether `selectedSessionTypeId` is the MailVerdict assistant.
+    public var isMailVerdictSelected: Bool { selectedSessionTypeId == Self.mailverdictSessionTypeId }
+
+    /// Whether the selected type is answered by a pod-resident API worker (ultra-fast or the
+    /// MailVerdict assistant): no directory, no Claude credential, no pregrant, photos as the only
+    /// attachments, and a model catalogue of its own.
+    public var isApiSessionSelected: Bool { isUltrafastSelected || isMailVerdictSelected }
+
+    /// The model catalogue of the selected API session type.
+    public var apiCatalog: ApiSessionCatalog? {
+        isMailVerdictSelected ? mailverdictCatalog : (isUltrafastSelected ? ultrafastCatalog : nil)
+    }
+
+    private static func usesApiModels(_ id: String?) -> Bool {
+        id == ultrafastSessionTypeId || id == mailverdictSessionTypeId
+    }
 
     /// What will actually launch if nothing more is chosen — an explicit selection always wins;
     /// unset falls back to the fast sandbox's own default on a fast session, and to the plan's
@@ -120,18 +143,18 @@ public final class CreateSessionStore {
         selectedThinking ?? (resolvedModel == defaultModel ? defaultThinking : nil)
     }
     private var defaultModel: String? {
-        isUltrafastSelected ? ultrafastCatalog?.defaultModel : (isFastSelected ? fastDefaultModel : nil)
+        isApiSessionSelected ? apiCatalog?.defaultModel : (isFastSelected ? fastDefaultModel : nil)
     }
     private var defaultThinking: String? {
-        isUltrafastSelected ? ultrafastCatalog?.defaultThinking : (isFastSelected ? fastDefaultThinking : nil)
+        isApiSessionSelected ? apiCatalog?.defaultThinking : (isFastSelected ? fastDefaultThinking : nil)
     }
     /// The picker's models: ultra-fast's wire ids, or the launch aliases.
     public var pickerModels: [SessionModelInfo] {
-        guard isUltrafastSelected else { return sessionModels }
-        return (ultrafastCatalog?.models ?? []).map { SessionModelInfo(id: $0.id, effortLevels: $0.effortLevels) }
+        guard isApiSessionSelected else { return sessionModels }
+        return (apiCatalog?.models ?? []).map { SessionModelInfo(id: $0.id, effortLevels: $0.effortLevels) }
     }
     public func modelLabel(_ id: String) -> String {
-        isUltrafastSelected ? UltraFastModelInfo.label(for: id) : (Self.modelDisplayLabels[id] ?? id)
+        isApiSessionSelected ? UltraFastModelInfo.label(for: id) : (Self.modelDisplayLabels[id] ?? id)
     }
     /// The effort levels the currently active model accepts — empty for "Default" (no model
     /// resolved) or for a model that declares none of its own.
@@ -197,6 +220,7 @@ public final class CreateSessionStore {
             fastDefaultModel = response.fastDefaultModel
             fastDefaultThinking = response.fastDefaultThinking
             ultrafastCatalog = response.ultrafast
+            mailverdictCatalog = response.mailverdict
         }
         applyPreselectionIfNeeded()
     }
@@ -227,9 +251,9 @@ public final class CreateSessionStore {
     /// Any type but Custom drops a previously browsed directory: the directory is what makes a
     /// session custom, and a create carrying one launches there whatever type it names.
     public func selectSessionType(_ id: String) {
-        // Ultra-fast names its models by wire id and the others by alias, so a choice never
-        // crosses between them.
-        if (id == Self.ultrafastSessionTypeId) != isUltrafastSelected {
+        // The API sessions name their models by wire id and the others by alias, and each API
+        // kind has its own catalogue, so a choice never crosses between them.
+        if id != selectedSessionTypeId, Self.usesApiModels(id) || isApiSessionSelected {
             selectedModel = nil
             selectedThinking = nil
         }
@@ -291,16 +315,16 @@ public final class CreateSessionStore {
         }
         let inlineFileData = Dictionary(
             uniqueKeysWithValues: zip(inlineFiles.map(\.localId), files.map(\.data)))
-        // An ultra-fast session takes no directory and only its own models — the backend refuses
+        // An API session takes no directory and only its own models — the backend refuses
         // anything else, so a previous visit's choice must never reach the request.
         let keepsChoice =
-            !isUltrafastSelected || ultrafastCatalog?.models.contains { $0.id == selectedModel } == true
+            !isApiSessionSelected || apiCatalog?.models.contains { $0.id == selectedModel } == true
         outbox.enqueue(
             OutboxEntry(
                 clientMessageId: clientMessageId,
                 target: .newSession(
                     agent: selectedMachine, sessionType: selectedSessionTypeId,
-                    workingDir: isUltrafastSelected ? nil : workingDir,
+                    workingDir: isApiSessionSelected ? nil : workingDir,
                     model: keepsChoice ? selectedModel : nil,
                     thinking: keepsChoice ? selectedThinking : nil),
                 text: message, draftAttachmentIds: draftAttachmentIds, inlineFiles: inlineFiles,

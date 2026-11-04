@@ -267,6 +267,17 @@ final class DraftStoreTests: XCTestCase {
         XCTAssertEqual(store.draft(for: "unknown"), .empty)
     }
 
+    /// The two API session kinds name models from catalogues of their own, so a model chosen for
+    /// one is dropped when the other is chosen.
+    func testSwitchingBetweenApiSessionTypesDropsTheModel() async {
+        let store = DraftStore(api: FakeDraftsFetching(), scheduler: InstantDraftScheduler())
+        store.selectSessionType("ultrafast")
+        store.selectModel("claude-haiku-5-5")
+        XCTAssertEqual(store.draft(for: DraftKey.newSession).model, "claude-haiku-5-5")
+        store.selectSessionType("mailverdict")
+        XCTAssertNil(store.draft(for: DraftKey.newSession).model)
+    }
+
     func testSettingTextDoesNotClobberAnAlreadyChosenSessionType() async {
         let store = DraftStore(api: FakeDraftsFetching(), scheduler: InstantDraftScheduler())
         store.selectSessionType("fast")

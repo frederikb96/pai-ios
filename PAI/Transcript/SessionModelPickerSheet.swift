@@ -74,7 +74,7 @@ struct SessionModelPickerSheet: View {
     }
 }
 
-/// The header's picker for an ultra-fast session: model and thinking, both for this session only,
+/// The header's picker for an ultra-fast or MailVerdict assistant session: model and thinking, both for this session only,
 /// from its next reply. It stays open after a pick, since the thinking levels depend on the model
 /// just chosen. Mirrors the web's `UltraFastSessionModelPicker`.
 struct UltraFastSessionModelPickerSheet: View {
@@ -85,17 +85,18 @@ struct UltraFastSessionModelPickerSheet: View {
     @State private var pickedModel: String?
     @State private var pickedThinking: String?
 
-    private var model: String? { pickedModel ?? session.ultrafastModel ?? store.ultrafastCatalog?.defaultModel }
+    private var catalog: ApiSessionCatalog? { store.apiCatalog(for: session.kind) }
+    private var model: String? { pickedModel ?? session.ultrafastModel ?? catalog?.defaultModel }
     private var thinking: String? {
         if pickedThinking != nil || pickedModel != nil { return pickedThinking }
-        return session.thinking ?? store.ultrafastCatalog?.defaultThinking
+        return session.thinking ?? catalog?.defaultThinking
     }
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    ForEach(store.ultrafastCatalog?.models ?? []) { option in
+                    ForEach(catalog?.models ?? []) { option in
                         row(
                             label: UltraFastModelInfo.label(for: option.id), isSelected: option.id == model,
                             identifier: "ultrafast-picker-model-\(option.id)"
@@ -115,7 +116,7 @@ struct UltraFastSessionModelPickerSheet: View {
                     Text("Applies to this session only, from its next reply, and stays when it is resumed.")
                 }
 
-                if let model, let levels = store.ultrafastCatalog?.levels(for: model), !levels.isEmpty {
+                if let model, let levels = catalog?.levels(for: model), !levels.isEmpty {
                     Section("Thinking") {
                         ForEach(levels, id: \.self) { level in
                             row(

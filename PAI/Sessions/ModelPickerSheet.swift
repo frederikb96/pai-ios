@@ -38,7 +38,7 @@ struct ModelPickerSheet: View {
                     }
                 }
 
-                if createSession.isUltrafastSelected {
+                if createSession.isApiSessionSelected {
                     Section {
                         Text(
                             "For this session only. A Claude model also reads the images you send; any other model has them read by Haiku."

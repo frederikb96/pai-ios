@@ -240,9 +240,9 @@ struct CreateSessionView: View {
                 // has no session to be listed under. Same bubbles, and the same Retry / Put back
                 // in composer / Discard, as a session's own composer.
                 OutboxBubbleStack(sessionID: nil)
-                // Ultra-fast needs no Claude credential at all — the one session type that
-                // still works while the sign-in gate would otherwise block everything else.
-                if ClaudeAuthPredicates.needsSignIn(claudeAuth.auth), !createSession.isUltrafastSelected {
+                // The API session types (ultra-fast, the MailVerdict assistant) need no Claude credential at
+                // all — the ones that still work while the sign-in gate would otherwise block everything else.
+                if ClaudeAuthPredicates.needsSignIn(claudeAuth.auth), !createSession.isApiSessionSelected {
                     signInBlockedRow
                 } else {
                     composerBar(createSession, voiceController)
@@ -554,7 +554,7 @@ struct CreateSessionView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            if pregrantArmed, !createSession.isUltrafastSelected {
+            if pregrantArmed, !createSession.isApiSessionSelected {
                 pregrantChip
             }
 
@@ -594,13 +594,13 @@ struct CreateSessionView: View {
                     hasSession: false,
                     offersStartCallAfterSend: !startsCallOnSend,
                     canGrantSecretAccess: false,
-                    // An ultra-fast session has no process of its own to hand a grant to. `nil`
+                    // An API session has no process of its own to hand a grant to. `nil`
                     // (not `false`) is what hides the entry entirely; see
                     // `ComposerActionMenu.pregrantArmed`.
-                    pregrantArmed: createSession.isUltrafastSelected ? nil : pregrantArmed,
+                    pregrantArmed: createSession.isApiSessionSelected ? nil : pregrantArmed,
                     onTogglePregrant: togglePregrant,
                     canRestorePreviousText: canRestorePreviousText,
-                    offersFiles: !createSession.isUltrafastSelected,
+                    offersFiles: !createSession.isApiSessionSelected,
                     alternateRecordingMode: VoiceRecorderButton.offersStart(
                         controller: voiceController,
                         isMine: voiceController.state == .idle || isRecordingHere(voiceController),
@@ -889,7 +889,7 @@ struct CreateSessionView: View {
         guard let sessionType = createSession.selectedSessionTypeId else { return nil }
         return .newSession(
             agent: createSession.selectedMachine, sessionType: sessionType,
-            workingDir: createSession.isUltrafastSelected ? nil : createSession.workingDir)
+            workingDir: createSession.isApiSessionSelected ? nil : createSession.workingDir)
     }
 
     private func skillNames(_ createSession: CreateSessionStore) -> [String] {
