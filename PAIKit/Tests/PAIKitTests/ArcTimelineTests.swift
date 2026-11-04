@@ -177,14 +177,14 @@ final class ArcTimelineTests: XCTestCase {
 
     // MARK: - agentLabel / modelCode
 
-    /// The main session's own work carries no model or name — reads as the single word `main`
+    /// The main session's own work carries no model or name — reads as the label `Main agent`
     /// rather than a `type · model · name` line with two blanks, mirroring `arcModel.ts`'s own
     /// short-circuit exactly.
     func test_agentLabel_mainType_readsAsMainRegardlessOfOtherFields() {
         let leader = row(
             id: 1, o: 1, k: .leader, b: 1, g: ArcLeaderAgent(type: "main", model: "opus", name: "should-be-ignored"))
         let timeline = ArcTimelineBuilder.build(rows: [leader], busyAgents: [])
-        XCTAssertEqual(timeline.segments[0].blocks[0].agentLabel, "main")
+        XCTAssertEqual(timeline.segments[0].blocks[0].agentLabel, "Main agent")
     }
 
     func test_agentLabel_joinsTypeModelCodeAndName() {
