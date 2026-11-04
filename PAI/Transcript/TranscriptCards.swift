@@ -118,6 +118,7 @@ struct TranscriptRowContent: View {
                             ? { onToggleReveal(cardIndex) } : nil,
                         sessionID: sessionID,
                         apiClient: apiClient,
+                        messageID: message.id,
                         isPendingBubble: message.isPendingBubble,
                         onPullBackIntoComposer: onPullBackIntoComposer,
                         highlightsByBlockIndex: highlightsByBlockIndex(forCardIndex: cardIndex)
@@ -195,6 +196,8 @@ struct TranscriptCardKindView: View {
     let onToggle: (() -> Void)?
     let sessionID: String
     let apiClient: PaiApiClient
+    /// The message this card belongs to, for the Listen chip under an assistant reply.
+    let messageID: Int
     /// Whether the message this card belongs to is a synthesised server-pending bubble rather
     /// than a confirmed row — see `Message.isPendingBubble`. Gates the "Pull back into composer"
     /// context action below: offering it on an ordinary message would promise something the
@@ -271,11 +274,11 @@ struct TranscriptCardKindView: View {
                     highlights: highlightsByBlockIndex[0] ?? [])
             }
 
-        case .assistantBubble(_, let filePaths):
+        case .assistantBubble(let text, let filePaths):
             ProseRowView {
                 AssistantProseView(
                     blocks: card.plan.blocks, filePaths: filePaths, sessionID: sessionID, apiClient: apiClient,
-                    highlights: highlightsByBlockIndex)
+                    messageID: messageID, replyText: text, highlights: highlightsByBlockIndex)
             }
 
         case .agentMessage(let sender, _):
@@ -1043,6 +1046,9 @@ struct AssistantProseView: View {
     let filePaths: [String]
     let sessionID: String
     let apiClient: PaiApiClient
+    /// The reply's message and full text, for the Listen chip under it.
+    let messageID: Int
+    let replyText: String
     var highlights: [Int: [TranscriptHighlightSpan]] = [:]
 
     var body: some View {
@@ -1056,6 +1062,11 @@ struct AssistantProseView: View {
         // the same disagreement from the other side.
         VStack(alignment: .leading, spacing: TranscriptRowMetrics.attachmentChipSpacing) {
             MarkdownContentView(blocks: blocks, highlights: highlights)
+            // Its height is `TranscriptRowMetrics.listenChipHeight`, in the row's measured height
+            // exactly when the reply has something to read aloud (`PlaybackModel.hasSpeech`).
+            if PlaybackModel.hasSpeech(replyText) {
+                ListenChip(sessionId: sessionID, messageId: messageID, content: replyText)
+            }
             // An agent-offered file, never the reader's own — a non-image confirms before
             // anything is fetched (see `SessionAttachmentChipView`).
             ForEach(filePaths, id: \.self) { path in

@@ -131,6 +131,13 @@ struct ComposerBar: View {
             }
         }
         .onChange(of: currentSecretPrompt) { _, _ in presentSecretPromptIfNeeded() }
+        .sheet(
+            isPresented: Binding(
+                get: { PlaybackController.shared.store.sheetOpen },
+                set: { PlaybackController.shared.store.sheetOpen = $0 })
+        ) {
+            PlaybackSheet(sessionId: sessionID)
+        }
         .sheet(item: $secretGrantTarget, onDismiss: { dismissedSecretPromptAt = currentSecretPrompt?.at }) { _ in
             SecretGrantSheet(sessionID: sessionID, session: currentSession, prompt: currentSecretPrompt)
         }
@@ -167,6 +174,8 @@ struct ComposerBar: View {
                     .foregroundStyle(PaiPalette.Semantic.warningText)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+
+            PlaybackBar(sessionId: sessionID)
 
             // Only for this session's own take — the recorder is shared, and a level meter
             // running above a composer that is not recording is a claim about the wrong screen.
@@ -266,7 +275,12 @@ struct ComposerBar: View {
                     onUndoSend: { Task { await undoSend() } },
                     onSendNow: { Task { await sendNow() } },
                     onMoveToBackground: { Task { await moveToBackground() } },
-                    offersProcessActions: currentSession?.kind.map(sessionKindsPodResident.contains) != true
+                    offersProcessActions: currentSession?.kind.map(sessionKindsPodResident.contains) != true,
+                    playbackOn: PlaybackController.shared.store.isOn(sessionID),
+                    onTogglePlayback: {
+                        PlaybackController.shared.setSessionPlayback(
+                            sessionID, on: !PlaybackController.shared.store.isOn(sessionID))
+                    }
                 )
 
                 VoiceRecorderButton(
@@ -316,6 +330,9 @@ struct ComposerBar: View {
             }
         }
         .task(id: sessionID) { await environment.connection?.skills.load(.session(sessionID)) }
+        #if DEBUG
+            .task(id: sessionID) { await PlaybackController.shared.applyFixtureLaunch(sessionId: sessionID) }
+        #endif
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await environment.connection?.skills.load(.session(sessionID)) } }
         }
@@ -589,7 +606,7 @@ struct ComposerBar: View {
             let entry = OutboxEntry(
                 clientMessageId: clientMessageId, target: .session(sessionId: sessionID), text: messageText,
                 draftAttachmentIds: uploadedAttachmentIds, inlineFiles: inlineFiles,
-                supersededUploadIds: supersededUploadIds, heldTake: held?.heldTake)
+                supersededUploadIds: supersededUploadIds, clientMode: playbackClientMode, heldTake: held?.heldTake)
 
             // Cleared before the request even leaves — the whole point of the outbox is that the
             // bubble it drives (`OutboxBubbleStack`) exists, and survives a kill, before any
@@ -679,6 +696,13 @@ struct ComposerBar: View {
         } else {
             toasts.show("Could not move to the background", kind: .error)
         }
+    }
+
+    // MARK: - Playback
+
+    /// A session with playback on tells the agent to write for the ear: every send carries it.
+    private var playbackClientMode: String? {
+        PlaybackController.shared.store.isOn(sessionID) ? "playback" : nil
     }
 
     // MARK: - Session / machine lookup

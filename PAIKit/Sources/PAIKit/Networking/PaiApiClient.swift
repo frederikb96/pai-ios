@@ -1337,6 +1337,49 @@ public struct PaiApiClient: Sendable {
         return status == 409 ? .alreadyAnswered : .declined
     }
 
+    // MARK: Playback
+
+    /// The statuses a playback route refuses with: each carries a `detail` object whose `message`
+    /// is for the person.
+    private static let playbackRefusalStatuses: Set<Int> = [404, 409, 422, 429, 500, 502, 503]
+
+    /// `GET /api/session/{id}/playback/{message_id}` — a reply's segments and today's allowance.
+    /// Free: nothing is synthesised. A 404 means the reply has nothing to read aloud.
+    public func getPlaybackManifest(sessionId: String, messageId: Int) async throws -> PlaybackManifest {
+        let (status, data) = try await sendPassingThrough(
+            path: "/api/session/\(sessionId)/playback/\(messageId)", method: "GET",
+            passthrough: Self.playbackRefusalStatuses.union([200]))
+        guard status == 200 else { throw PlaybackRefusal.parse(status: status, body: data) }
+        do {
+            return try JSONDecoder().decode(PlaybackManifest.self, from: data)
+        } catch {
+            throw PaiError.decoding("\(error)")
+        }
+    }
+
+    /// One segment's audio and the voice that made it. Synthesised on this request when nobody ever
+    /// asked for that text, so it can be refused (cap, allowance, provider). Fetched whole with the
+    /// bearer rather than streamed, because a stream cannot carry the header and a refusal has to
+    /// be readable.
+    public func fetchPlaybackSegment(sessionId: String, messageId: Int, index: Int) async throws
+        -> PlaybackSegmentAudio
+    {
+        let request = try requestFactory.makeRequest(
+            path: "/api/session/\(sessionId)/playback/\(messageId)/segments/\(index)/audio", method: "GET",
+            query: [], body: nil, contentType: nil)
+        let (data, response) = try await urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw PaiError.transport("Response was not HTTP") }
+        guard http.statusCode == 200 else {
+            if Self.playbackRefusalStatuses.contains(http.statusCode) {
+                throw PlaybackRefusal.parse(status: http.statusCode, body: data)
+            }
+            try checkStatus(response: response, data: data)
+            throw PlaybackRefusal.parse(status: http.statusCode, body: data)
+        }
+        let provider = http.value(forHTTPHeaderField: "X-Playback-Provider").flatMap(PlaybackProvider.init)
+        return PlaybackSegmentAudio(data: data, provider: provider)
+    }
+
     // MARK: Per-person settings
 
     /// `GET /api/settings/me` — the signed-in person's own settings. A namespace's agent is not a

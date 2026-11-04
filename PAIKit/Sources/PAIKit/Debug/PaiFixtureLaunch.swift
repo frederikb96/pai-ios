@@ -23,6 +23,7 @@
         static let secretPromptFlag = "-PaiFixtureSecretPrompt"
         static let draftTextFlag = "-PaiFixtureDraftText"
         static let newSessionTypeFlag = "-PaiFixtureNewSessionType"
+        static let playbackFlag = "-PaiFixturePlayback"
         static let notesFilterFocusFlag = "-PaiFixtureNotesFilterFocused"
         static let offlineFlag = "-PaiFixtureOffline"
         static let notesCacheSeededFlag = "-PaiFixtureNotesCacheSeeded"
@@ -70,6 +71,13 @@
             -> String?
         {
             value(for: newSessionTypeFlag, in: arguments)
+        }
+
+        /// What `-PaiFixturePlayback <state>` puts the player in on the fixture session: `on` (the
+        /// mini bar, nothing playing), `paused` (a reply in hand), `sheet` (that, with the full view
+        /// open) or `error` (a reply the backend refused).
+        public static func requestedPlayback(arguments: [String] = ProcessInfo.processInfo.arguments) -> String? {
+            value(for: playbackFlag, in: arguments)
         }
 
         /// Whether the process was launched with `-PaiFixtureMode`.

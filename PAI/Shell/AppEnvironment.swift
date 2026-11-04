@@ -168,6 +168,7 @@ final class AppEnvironment {
         await connection?.computerCall.end()
         tokens.write(nil)
         shareCredentials()
+        PlaybackController.shared.reset()
         connection = nil
         lastAuthFailure = nil
         router = Router(gate: .needsConfiguration)
@@ -321,6 +322,9 @@ final class AppEnvironment {
             notifications: NotificationCenterStore(api: client),
             transcriptJumps: TranscriptJumpRequests()
         )
+        PlaybackController.shared.configure(
+            api: client, transcript: transcript, sessions: sessions, toasts: toasts,
+            userSettings: settingsStore.userSettings, voice: voice)
         lastAuthFailure = nil
         router.gate = .ready
         return true

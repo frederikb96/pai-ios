@@ -124,6 +124,22 @@ final class PaiFixturesTests: XCTestCase {
         XCTAssertTrue(settings.emailNotifications)
     }
 
+    func testThePlaybackFixturesAreWhatTheEngineDecodesAndTheReplyIsPlayable() throws {
+        let manifest = try JSONDecoder().decode(PlaybackManifest.self, from: Data(PaiFixtures.playbackManifest.utf8))
+        XCTAssertEqual(manifest.segments.count, 2)
+        let refusal = PlaybackRefusal.parse(status: 429, body: Data(PaiFixtures.playbackRefused.utf8))
+        XCTAssertEqual(refusal.code, "playback_cap_reached")
+        let rows = try JSONDecoder().decode([Message].self, from: Data(PaiFixtures.transcript.utf8))
+        let reply = try XCTUnwrap(rows.first { $0.id == PaiFixtures.playbackReplyId })
+        XCTAssertTrue(PlaybackModel.isPlayable(reply), "the screenshots play a reply with something to read")
+        let wav = PaiFixtures.silentWav(seconds: 2)
+        XCTAssertEqual(wav.count, 44 + 16_000)
+        XCTAssertEqual(String(decoding: wav.prefix(4), as: UTF8.self), "RIFF")
+        let manifestRoute = PaiFixtureURLProtocol.route(
+            method: "GET", path: "/api/session/s/playback/9054", arguments: ["-PaiFixturePlayback", "error"])
+        XCTAssertEqual(manifestRoute.status, 429)
+    }
+
     func testNewSessionTypeFlagChoosesTheTypeOfTheNewDraft() throws {
         let match = PaiFixtureURLProtocol.route(
             method: "GET", path: "/api/drafts",
