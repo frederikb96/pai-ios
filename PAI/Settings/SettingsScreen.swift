@@ -34,6 +34,7 @@ struct SettingsScreen: View {
             // The memory pipeline's settings row, as on the web.
             if environment.connection?.me.isGuest != true {
                 SessionDefaultsSection(store: settings.sessionDefaults)
+                MailVerdictKeySection()
             }
 
             NotificationsSection()

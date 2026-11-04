@@ -9,6 +9,7 @@ enum FixtureScrollAnchor: String {
     case notesCache
     case notSaved
     case taskNotifyPush
+    case mailVerdictKey
 }
 
 extension View {

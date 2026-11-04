@@ -47,10 +47,14 @@ public struct SessionDefaults: Codable, Sendable, Equatable {
 
     public let ultrafast: UltraFast
     public let fast: Fast
+    /// The MailVerdict assistant's model, same shape as ultra-fast's; `nil` from a backend that
+    /// predates it.
+    public let mailverdict: UltraFast?
 
-    public init(ultrafast: UltraFast, fast: Fast) {
+    public init(ultrafast: UltraFast, fast: Fast, mailverdict: UltraFast? = nil) {
         self.ultrafast = ultrafast
         self.fast = fast
+        self.mailverdict = mailverdict
     }
 }
 
@@ -60,8 +64,12 @@ public struct SessionDefaultsUpdate: Encodable, Sendable, Equatable {
     public var ultrafastReasoningEffort: String?
     public var fastModel: String?
     public var fastThinking: String?
+    public var mailverdictModel: String?
+    public var mailverdictReasoningEffort: String?
 
     enum CodingKeys: String, CodingKey {
+        case mailverdictModel = "mailverdict_model"
+        case mailverdictReasoningEffort = "mailverdict_reasoning_effort"
         case ultrafastModel = "ultrafast_model"
         case ultrafastReasoningEffort = "ultrafast_reasoning_effort"
         case fastModel = "fast_model"
@@ -70,8 +78,11 @@ public struct SessionDefaultsUpdate: Encodable, Sendable, Equatable {
 
     public init(
         ultrafastModel: String? = nil, ultrafastReasoningEffort: String? = nil,
-        fastModel: String? = nil, fastThinking: String? = nil
+        fastModel: String? = nil, fastThinking: String? = nil,
+        mailverdictModel: String? = nil, mailverdictReasoningEffort: String? = nil
     ) {
+        self.mailverdictModel = mailverdictModel
+        self.mailverdictReasoningEffort = mailverdictReasoningEffort
         self.ultrafastModel = ultrafastModel
         self.ultrafastReasoningEffort = ultrafastReasoningEffort
         self.fastModel = fastModel
@@ -126,6 +137,21 @@ public final class SessionDefaultsStore {
     public var ultrafastEfforts: [String] {
         guard let ultrafast = defaults?.ultrafast else { return [] }
         return Self.ordered(ultrafast.models[ultrafast.model]?.efforts ?? [])
+    }
+
+    /// The assistant's models, ordered like ultra-fast's.
+    public var mailverdictModelIds: [String] {
+        (defaults?.mailverdict?.models ?? [:])
+            .sorted {
+                let (lhs, rhs) = ($0.value.provider == "anthropic", $1.value.provider == "anthropic")
+                return lhs == rhs ? $0.key < $1.key : lhs
+            }
+            .map(\.key)
+    }
+
+    public var mailverdictEfforts: [String] {
+        guard let block = defaults?.mailverdict else { return [] }
+        return Self.ordered(block.models[block.model]?.efforts ?? [])
     }
 
     public var fastModels: [String] {

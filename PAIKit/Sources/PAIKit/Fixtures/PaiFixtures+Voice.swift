@@ -33,18 +33,31 @@ extension PaiFixtures {
         ]
         """#
 
-    /// ``drafts`` with the fixture session's own text replaced — `-PaiFixtureDraftText`.
-    static func draftsReplacingSessionText(with text: String) -> String {
-        guard let encoded = try? JSONEncoder().encode(text), let literal = String(data: encoded, encoding: .utf8)
-        else { return drafts }
+    /// ``drafts`` with the fixture session's own text replaced (`-PaiFixtureDraftText`) and the
+    /// new-session draft's type chosen (`-PaiFixtureNewSessionType`).
+    static func draftsReplacing(sessionText: String?, newSessionType: String?) -> String {
+        var body = drafts
         // A device keeps the draft it last reconciled with and adopts a server row only when its
         // version is higher, so a changed row needs a version above any an earlier launch served.
         let version = Int(Date().timeIntervalSince1970)
-        return drafts.replacingOccurrences(of: sessionDraftTextLiteral, with: literal)
-            .replacingOccurrences(of: sessionDraftVersionLiteral, with: "\"version\": \(version)")
+        if let sessionText, let literal = jsonLiteral(sessionText) {
+            body = body.replacingOccurrences(of: sessionDraftTextLiteral, with: literal)
+            body = body.replacingOccurrences(of: sessionDraftVersionLiteral, with: "\"version\": \(version)")
+        }
+        if let newSessionType, let literal = jsonLiteral(newSessionType) {
+            body = body.replacingOccurrences(of: newDraftSessionTypeLiteral, with: "\"session_type\": \(literal)")
+            body = body.replacingOccurrences(of: newDraftVersionLiteral, with: "\"version\": \(version)")
+        }
+        return body
+    }
+
+    private static func jsonLiteral(_ text: String) -> String? {
+        (try? JSONEncoder().encode(text)).flatMap { String(data: $0, encoding: .utf8) }
     }
 
     private static let sessionDraftVersionLiteral = #""version": 7"#
+    private static let newDraftVersionLiteral = #""version": 12"#
+    private static let newDraftSessionTypeLiteral = #""session_type": "default""#
 
     private static let sessionDraftTextLiteral =
         #""stt-rec: also double check the terminal frame shape and the ack watermark too""#

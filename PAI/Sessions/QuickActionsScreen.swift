@@ -191,7 +191,7 @@ struct QuickActionsScreen: View {
                     title: "Assistant", subtitle: "MailVerdict", systemImage: "envelope.fill",
                     tint: PaiPalette.primary500, height: rowHeight, identifier: "quick-mailverdict-assistant"
                 ) {
-                    MailVerdictAssistantEntry.open(toasts: toasts)
+                    MailVerdictAssistantEntry.open(environment: environment, drafts: drafts)
                 }
             }
             HStack(spacing: spacing) {
@@ -324,29 +324,8 @@ struct QuickActionsScreen: View {
         }
     }
 
-    /// Every session tile: record the launch choice where `CreateSessionView` already looks for
-    /// one, arm hands-free dictation or the camera if this tile asks for it, and replace the path.
-    ///
-    /// The draft is written locally and pushed to the server without being waited on. A local
-    /// write is what the screen about to appear actually reads, and holding the navigation for a
-    /// round trip would make a button pressed without looking feel like it did nothing.
     private func startSession(type: String, call: Bool, camera: Bool = false) {
-        // `selectWorkingDir(nil)` first: a directory chosen on a previous visit is what makes a
-        // session custom, and it outranks the type, so leaving one in place would launch the
-        // wrong thing while the screen showed the right pill.
-        drafts.selectWorkingDir(nil)
-        drafts.selectSessionType(type)
-        if call {
-            CallModeLaunchRequest.shared.arm()
-        } else {
-            CallModeLaunchRequest.shared.cancel()
-        }
-        if camera {
-            CameraLaunchRequest.shared.arm()
-        } else {
-            CameraLaunchRequest.shared.cancel()
-        }
-        environment.router.replace(with: [.createSession])
+        NewSessionLaunch.start(type: type, call: call, camera: camera, environment: environment, drafts: drafts)
     }
 
     private func createNote() async {

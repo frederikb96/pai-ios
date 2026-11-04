@@ -63,8 +63,60 @@ extension PaiFixtures {
         [
           { "id": "default", "name": "Default", "icon": "💬" },
           { "id": "fast", "name": "Fast (sandboxed)", "icon": "⚡" },
-          { "id": "research", "name": "Research", "icon": "🔎", "working_dir": "/home/frederik/Programming" }
+          { "id": "research", "name": "Research", "icon": "🔎", "working_dir": "/home/frederik/Programming" },
+          { "id": "mailverdict", "name": "MailVerdict assistant", "icon": "📬" }
         ]
+        """#
+
+    /// `GET /api/session-models` — the launch aliases and the model catalogues of the two API
+    /// session kinds.
+    public static let sessionModels: String = #"""
+        {
+          "models": [
+            { "id": "sonnet", "effort_levels": ["low", "medium", "high"] },
+            { "id": "opus", "effort_levels": ["low", "medium", "high", "xhigh", "max"] }
+          ],
+          "fast_default_model": "sonnet",
+          "fast_default_thinking": "low",
+          "ultrafast": {
+            "default_model": "claude-haiku-5-5", "default_thinking": "none",
+            "models": [
+              { "id": "claude-haiku-5-5", "provider": "anthropic", "effort_levels": ["none", "low"] },
+              { "id": "google/gemma-4-31B-it", "provider": "infomaniak", "effort_levels": [] }
+            ]
+          },
+          "mailverdict": {
+            "default_model": "claude-opus-5-5", "default_thinking": "low",
+            "models": [
+              { "id": "claude-opus-5-5", "provider": "anthropic", "effort_levels": ["none", "low", "medium"] },
+              { "id": "claude-sonnet-5-5", "provider": "anthropic", "effort_levels": ["none", "low", "medium"] }
+            ]
+          }
+        }
+        """#
+
+    /// `GET /api/settings/llm` — what the API session kinds and fast sessions run on by default.
+    public static let sessionDefaults: String = #"""
+        {
+          "ultrafast": {
+            "model": "claude-haiku-5-5", "reasoning_effort": "none",
+            "models": {
+              "claude-haiku-5-5": { "provider": "anthropic", "efforts": ["none", "low"] },
+              "google/gemma-4-31B-it": { "provider": "infomaniak", "efforts": [] }
+            }
+          },
+          "fast": {
+            "model": "sonnet", "thinking": "low",
+            "models": { "sonnet": ["low", "medium", "high"], "opus": ["low", "medium", "high"] }
+          },
+          "mailverdict": {
+            "model": "claude-opus-5-5", "reasoning_effort": "low",
+            "models": {
+              "claude-opus-5-5": { "provider": "anthropic", "efforts": ["none", "low", "medium"] },
+              "claude-sonnet-5-5": { "provider": "anthropic", "efforts": ["none", "low", "medium"] }
+            }
+          }
+        }
         """#
 
     // MARK: - Identity and health

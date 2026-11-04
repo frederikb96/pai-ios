@@ -116,6 +116,24 @@ final class PaiFixturesTests: XCTestCase {
         XCTAssertEqual(new?["text"] as? String, "Check whether the ")
     }
 
+    func testNewSessionTypeFlagChoosesTheTypeOfTheNewDraft() throws {
+        let match = PaiFixtureURLProtocol.route(
+            method: "GET", path: "/api/drafts",
+            arguments: ["-PaiFixtureMode", "-PaiFixtureNewSessionType", "mailverdict"])
+        let rows = try JSONSerialization.jsonObject(with: match.body()) as? [[String: Any]]
+        XCTAssertEqual(rows?.first { $0["key"] as? String == "new" }?["session_type"] as? String, "mailverdict")
+    }
+
+    func testTheAssistantFixturesDecodeIntoTheRealModels() throws {
+        let models = try JSONDecoder().decode(SessionModelsResponse.self, from: Data(PaiFixtures.sessionModels.utf8))
+        XCTAssertEqual(models.mailverdict?.defaultModel, "claude-opus-5-5")
+        XCTAssertEqual(models.ultrafast?.models.count, 2)
+        let defaults = try JSONDecoder().decode(SessionDefaults.self, from: Data(PaiFixtures.sessionDefaults.utf8))
+        XCTAssertEqual(defaults.mailverdict?.reasoningEffort, "low")
+        let types = try JSONSerialization.jsonObject(with: Data(PaiFixtures.sessionTypes.utf8)) as? [[String: Any]]
+        XCTAssertTrue(types?.contains { $0["id"] as? String == "mailverdict" } == true)
+    }
+
     /// The secret-prompt variant is built by rewriting a line of the ordinary page, which is
     /// exactly the edit that stops a fixture parsing without anything noticing — the screenshot
     /// run would then photograph an error screen and still report success.

@@ -533,12 +533,12 @@ extension FakeCreateSessionApi {
     func setSessionModelsResult(
         _ result: Result<[SessionModelInfo], PaiError>,
         fastDefaultModel: String = "sonnet", fastDefaultThinking: String = "low",
-        ultrafast: UltraFastCatalog? = nil
+        ultrafast: UltraFastCatalog? = nil, mailverdict: ApiSessionCatalog? = nil
     ) {
         sessionModelsResult = result.map {
             SessionModelsResponse(
                 models: $0, fastDefaultModel: fastDefaultModel, fastDefaultThinking: fastDefaultThinking,
-                ultrafast: ultrafast)
+                ultrafast: ultrafast, mailverdict: mailverdict)
         }
     }
 }

@@ -242,7 +242,7 @@ struct ComposerBar: View {
                     onCallThisSession: {
                         ComputerCallEntry.open(environment, connectSession: sessionID)
                     },
-                    offersFiles: currentSession?.kind != .ultrafast,
+                    offersFiles: currentSession?.kind.map(sessionKindsPodResident.contains) != true,
                     alternateRecordingMode: VoiceRecorderButton.offersStart(
                         controller: voiceController, isMine: micButtonIsMine(voiceController),
                         canStartOverride: micButtonCanStartOverride(voiceController))
@@ -266,7 +266,7 @@ struct ComposerBar: View {
                     onUndoSend: { Task { await undoSend() } },
                     onSendNow: { Task { await sendNow() } },
                     onMoveToBackground: { Task { await moveToBackground() } },
-                    offersProcessActions: currentSession?.kind != .ultrafast
+                    offersProcessActions: currentSession?.kind.map(sessionKindsPodResident.contains) != true
                 )
 
                 VoiceRecorderButton(

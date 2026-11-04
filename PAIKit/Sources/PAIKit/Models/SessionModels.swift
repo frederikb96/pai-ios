@@ -202,6 +202,10 @@ public enum SessionKind: Sendable, Hashable {
     /// served by a cheaper model with no Claude credential involved. See
     /// `sessionKindsPodResident`.
     case ultrafast
+    /// The MailVerdict assistant: pod-resident exactly like `.ultrafast` (typed into, no process, no
+    /// terminal, no secret grant), created with `session_type: "mailverdict"`. Every message
+    /// carries the device's MailVerdict key (``OutboxStore``); nothing else does.
+    case mailverdict
     case unrecognized(String)
 }
 
@@ -214,7 +218,7 @@ public let sessionKindsWithoutProcess: Set<SessionKind> = [.subagent, .superviso
 /// Kinds answered by a worker running on the pod itself, never by a tmux session on a machine —
 /// mirrors `SESSION_KINDS_POD_RESIDENT` in `models.py`. Their `state` is the ordinary open/closed
 /// one, so only what would watch or stop a process (the supervisor entry) consults this set.
-public let sessionKindsPodResident: Set<SessionKind> = [.ultrafast]
+public let sessionKindsPodResident: Set<SessionKind> = [.ultrafast, .mailverdict]
 
 /// What `GET /api/sessions?kind=` may be asked for. `.listed` is a named SET rather than a kind:
 /// what belongs in the session list is the server's decision, so a kind added later shows up in
@@ -240,6 +244,7 @@ extension SessionKind {
         case .supervisor: return "supervisor"
         case .computer: return "computer"
         case .ultrafast: return "ultrafast"
+        case .mailverdict: return "mailverdict"
         case let .unrecognized(raw): return raw
         }
     }
@@ -248,7 +253,7 @@ extension SessionKind {
 extension SessionKind: Codable {
     private static let knownValues: [String: SessionKind] = [
         "conversation": .conversation, "subagent": .subagent, "supervisor": .supervisor,
-        "computer": .computer, "ultrafast": .ultrafast,
+        "computer": .computer, "ultrafast": .ultrafast, "mailverdict": .mailverdict,
     ]
 
     public init(from decoder: Decoder) throws {
@@ -890,6 +895,9 @@ public struct UltraFastCatalog: Codable, Sendable, Equatable {
     }
 }
 
+/// What a pod-resident API session (ultra-fast, the MailVerdict assistant) may pick for itself.
+public typealias ApiSessionCatalog = UltraFastCatalog
+
 public struct SessionModelsResponse: Codable, Sendable {
     public let models: [SessionModelInfo]
     /// What a fast session launches with when nobody names a choice — the setting. Read this
@@ -899,12 +907,15 @@ public struct SessionModelsResponse: Codable, Sendable {
     public let fastDefaultThinking: String
     /// `nil` from a backend that predates per-session ultra-fast models.
     public var ultrafast: UltraFastCatalog? = nil
+    /// The MailVerdict assistant's models; `nil` from a backend that predates it.
+    public var mailverdict: ApiSessionCatalog? = nil
 
     enum CodingKeys: String, CodingKey {
         case models
         case fastDefaultModel = "fast_default_model"
         case fastDefaultThinking = "fast_default_thinking"
         case ultrafast
+        case mailverdict
     }
 }
 
