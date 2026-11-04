@@ -17,8 +17,8 @@ private struct QuickActionShortcut: Equatable {
 /// Where the hardware Action Button lands: five rows, reachable without the last being cut off —
 /// the layout the user actually reaches for, not a uniform grid that happens to hold every tile at
 /// one size. The row widths differ on purpose: Computer at two thirds beside the camera, two
-/// three-up session rows, a two-up notes row, and a three-up row of shortcuts, each of which the
-/// user configures.
+/// three-up session rows, a three-up row of Find note, New note and the MailVerdict assistant, and
+/// a three-up row of shortcuts, each of which the user configures.
 ///
 /// The button is pressed without looking — walking, in a coat pocket, mid-sentence — so the whole
 /// screen is one glance and one thumb. That is what sets the shape: large targets rather than a
@@ -42,8 +42,8 @@ struct QuickActionsScreen: View {
 
     private let spacing: CGFloat = 12
     private let padding: CGFloat = 16
-    /// Computer and the camera, Home/Fast/Ultra-fast typed, Home/Fast/Ultra-fast call, notes, and
-    /// a three-up shortcut row.
+    /// Computer and the camera, Home/Fast/Ultra-fast typed, Home/Fast/Ultra-fast call, notes and
+    /// the MailVerdict assistant, and a three-up shortcut row.
     private let rowCount: CGFloat = 5
     /// Big enough to hit without looking, on the smallest phone this runs on.
     private let minRowHeight: CGFloat = 88
@@ -186,6 +186,12 @@ struct QuickActionsScreen: View {
                     tint: PaiPalette.Semantic.textSecondary, height: rowHeight, identifier: "quick-new-note"
                 ) {
                     Task { await createNote() }
+                }
+                tile(
+                    title: "Assistant", subtitle: "MailVerdict", systemImage: "envelope.fill",
+                    tint: PaiPalette.primary500, height: rowHeight, identifier: "quick-mailverdict-assistant"
+                ) {
+                    MailVerdictAssistantEntry.open(toasts: toasts)
                 }
             }
             HStack(spacing: spacing) {
