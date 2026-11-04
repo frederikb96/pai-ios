@@ -5,6 +5,7 @@ import PAIKit
 ///
 /// The assistant has no screen yet: this says so instead of doing nothing, since a tile that
 /// swallows a tap reads as broken.
+@MainActor
 enum MailVerdictAssistantEntry {
     static func open(toasts: ToastCenter) {
         toasts.show("The MailVerdict assistant is not available yet")
