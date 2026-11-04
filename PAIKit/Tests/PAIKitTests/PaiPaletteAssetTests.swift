@@ -87,7 +87,7 @@ final class PaiPaletteAssetTests: XCTestCase {
     /// those layers — no `colorScheme` branching at the call site — silently stops holding.
     /// The asset families whose values genuinely differ between light and dark. Everything else
     /// is a fixed swatch and a per-appearance variant there would be a duplicate, not a fix.
-    private static let appearanceVaryingFamilies: Set<String> = ["Semantic", "Notes"]
+    private static let appearanceVaryingFamilies: Set<String> = ["Semantic", "Notes", "Vault4"]
 
     func testEveryReferencedAssetHasAWellFormedColorSet() throws {
         for name in Self.referencedNames {
@@ -183,6 +183,30 @@ final class PaiPaletteAssetTests: XCTestCase {
                 "\(name) blue")
             XCTAssertEqual(
                 Double(components.alpha) ?? -1, alpha, accuracy: 0.002, "\(name) alpha")
+        }
+    }
+
+    /// Vault 4's three roles, each in both appearances, against the values `index.css` states for
+    /// `--color-vault4-100/300/500/700/950`.
+    func testVault4PairsMatchIndexCss() throws {
+        let expected: [(name: String, light: String, dark: String)] = [
+            ("vault4Background", "#fae8ff", "#4a044e"),
+            ("vault4Text", "#a21caf", "#f0abfc"),
+            ("vault4Ring", "#d946ef", "#d946ef"),
+        ]
+        for (name, light, dark) in expected {
+            let decoded = try Self.decodeColorSet(at: try Self.findColorSet(named: name))
+            let lightEntry = try XCTUnwrap(decoded.colors.first { $0.appearances == nil })
+            let darkEntry = try XCTUnwrap(decoded.colors.first { $0.appearances != nil })
+            for (entry, hex, label) in [(lightEntry, light, "light"), (darkEntry, dark, "dark")] {
+                let want = Self.hexComponents(hex)
+                XCTAssertEqual(
+                    Double(entry.color.components.red) ?? -1, want.red, accuracy: 0.002, "\(name) \(label) red")
+                XCTAssertEqual(
+                    Double(entry.color.components.green) ?? -1, want.green, accuracy: 0.002, "\(name) \(label) green")
+                XCTAssertEqual(
+                    Double(entry.color.components.blue) ?? -1, want.blue, accuracy: 0.002, "\(name) \(label) blue")
+            }
         }
     }
 

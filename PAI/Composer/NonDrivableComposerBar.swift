@@ -25,16 +25,9 @@ struct NonDrivableComposerBar: View {
                     .accessibilityIdentifier("moved-composer-text")
 
             case .subagent:
-                Text("This is a subagent's transcript — read-only.")
-                    .font(PaiTypography.body.font)
-                    .foregroundStyle(PaiPalette.Semantic.textMuted)
-                // Neither a subagent nor a supervisor has a process of its own to resume — the
-                // only way back is to its parent conversation.
-                if let parentSessionId = session.parentSessionId {
-                    Button("Open parent conversation") {
-                        environment.router.push(.session(id: parentSessionId))
-                    }
-                }
+                // A subagent has no process of its own to resume. What can be done with it (a
+                // message through its conversation, an interrupt) is the bar's own business.
+                SubagentBar(session: session)
 
             case .computer:
                 // No parent to offer, unlike the two above: this conversation is not part of

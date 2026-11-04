@@ -501,6 +501,41 @@ extension PaiFixtures {
         }
         """#
 
+    /// `GET /api/session/{id}/subagent-controls` for ``sessionSubagent``: an unnamed agent that can
+    /// be messaged and interrupted (for good), with three past messages in different states and
+    /// none still on its way, so the screen does not poll.
+    public static let subagentControls: String = #"""
+        {
+          "controls": {
+            "can_nudge": true,
+            "can_interrupt": true,
+            "can_resume_after_interrupt": false,
+            "agent_state": "running",
+            "reason": null
+          },
+          "nudges": [
+            { "id": "n1", "text": "Skip the generated files.", "state": "delivered", "error": null,
+              "reworded": false, "created_at": "2026-08-29T09:30:00Z" },
+            { "id": "n2", "text": "Report the API surface as a table.", "state": "delivered", "error": null,
+              "reworded": true, "created_at": "2026-08-29T09:33:00Z" },
+            { "id": "n3", "text": "Also list the SSE events.", "state": "failed",
+              "error": "the conversation did not pass it on", "reworded": false,
+              "created_at": "2026-08-29T09:36:00Z" }
+          ]
+        }
+        """#
+
+    /// `POST /api/session/{id}/subagent-nudge`.
+    public static let subagentNudgeQueued: String = #"""
+        { "nudge": { "id": "n4", "text": "sent", "state": "queued", "error": null,
+                     "reworded": false, "created_at": "2026-08-29T09:40:00Z" } }
+        """#
+
+    /// `POST /api/session/{id}/subagent-interrupt`.
+    public static let subagentInterrupted: String = #"""
+        { "stopped": true, "named": false }
+        """#
+
     /// The "unhappy" session in this file: a **discovered** row PAI never launched, found by the
     /// transcript watcher, written before its first agent round-trip — `state`/`blocker` absent
     /// entirely (not `null`; genuinely missing keys), `title`/`initial_message` still `null`, and
@@ -569,7 +604,8 @@ extension PaiFixtures {
               "secret_grantable": true,
               "secret_prompt": {
                 "at": "2026-08-29T09:41:00Z",
-                "names": ["GH_TOKEN_ADMIN", "KUBECONFIG_HOMELAB"],
+                "names": ["GH_TOKEN_ADMIN", "KUBECONFIG_HOMELAB", "TAILSCALE_ADMIN_KEY"],
+                "vault4": ["TAILSCALE_ADMIN_KEY"],
                 "reason": "deploying the cluster"
               },
             """#
@@ -580,7 +616,8 @@ extension PaiFixtures {
     /// it open unprompted. Kept in step with `sessionsWithSecretPrompt`'s own `names` by hand,
     /// since the two answer different endpoints and the corpus has no single shape both read from.
     public static let secretRequests: String = #"""
-        {"names": ["GH_TOKEN_ADMIN", "KUBECONFIG_HOMELAB"]}
+        {"names": ["GH_TOKEN_ADMIN", "KUBECONFIG_HOMELAB", "TAILSCALE_ADMIN_KEY"],
+         "vault4": ["TAILSCALE_ADMIN_KEY"]}
         """#
 
     // MARK: - Search

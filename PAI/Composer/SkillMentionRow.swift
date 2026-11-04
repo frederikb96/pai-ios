@@ -4,19 +4,29 @@ import SwiftUI
 /// The slim row above a composer's text field naming the skills the prompt mentions: the leading
 /// chain (what runs) in the accent colour, later mentions plain, and an amber chip for a token
 /// that is one typo away from a real skill, which corrects the token when tapped. Claude Code
-/// keywords the prompt carries follow as plain chips.
+/// keywords the prompt carries follow as plain chips, and a built-in command the prompt starts
+/// with (`/compact`) gets its own chip, marked as running like a leading skill.
 ///
 /// What the chips say is `SkillComposer`'s decision; this only draws it. Nothing is drawn for an
 /// empty list, so a prompt without skills or keywords costs no height.
 struct SkillMentionRow: View {
     let items: [SkillComposer.RowItem]
     var keywords: [String] = []
+    var builtinCommand: String?
     let onFix: (SkillComposer.RowItem) -> Void
 
     var body: some View {
-        if !items.isEmpty || !keywords.isEmpty {
+        if !items.isEmpty || !keywords.isEmpty || builtinCommand != nil {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
+                    if let builtinCommand {
+                        chipLabel(
+                            "\u{25B6} /\(builtinCommand)", foreground: PaiPalette.Semantic.accentText,
+                            background: PaiPalette.Semantic.accentBackground
+                        )
+                        .accessibilityLabel("Command /\(builtinCommand): Claude Code runs it when the message is sent")
+                        .accessibilityIdentifier("builtin-command")
+                    }
                     ForEach(items) { item in
                         chip(item)
                     }

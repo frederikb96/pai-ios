@@ -21,6 +21,7 @@
         static let jumpMessageFlag = "-PaiFixtureJumpMessage"
         static let autoCreateSessionFlag = "-PaiFixtureAutoCreateSession"
         static let secretPromptFlag = "-PaiFixtureSecretPrompt"
+        static let draftTextFlag = "-PaiFixtureDraftText"
         static let notesFilterFocusFlag = "-PaiFixtureNotesFilterFocused"
         static let offlineFlag = "-PaiFixtureOffline"
         static let notesCacheSeededFlag = "-PaiFixtureNotesCacheSeeded"
@@ -45,10 +46,21 @@
         /// one id without first discovering which session fixture mode decided to use.
         public static let sessionID = "305df4d3-1554-4fc3-be04-39a354a9e619"
 
+        /// The subagent of ``sessionID`` in the corpus (`PaiFixtures.sessionSubagent`), what
+        /// `-PaiFixtureRoute subagentSession` opens.
+        public static let subagentSessionID = "eb516249-128b-48cd-894c-7afdacc5643c"
+
         /// Whether `-PaiFixtureNotesFilterFocused` was passed — how the Mac workflow reaches the
         /// note index with its search field actually focused, a state a plain launch cannot reach.
         public static func focusesNotesFilter(arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
             arguments.contains(notesFilterFocusFlag)
+        }
+
+        /// The text `-PaiFixtureDraftText <text>` puts in the fixture session's composer, so a
+        /// screenshot can show what the composer draws for a given draft (the `/compact` chip, a
+        /// skill mention). Absent leaves the corpus's own draft.
+        public static func requestedDraftText(arguments: [String] = ProcessInfo.processInfo.arguments) -> String? {
+            value(for: draftTextFlag, in: arguments)
         }
 
         /// Whether the process was launched with `-PaiFixtureMode`.

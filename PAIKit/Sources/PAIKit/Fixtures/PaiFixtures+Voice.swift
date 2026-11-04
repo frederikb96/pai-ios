@@ -33,6 +33,16 @@ extension PaiFixtures {
         ]
         """#
 
+    /// ``drafts`` with the fixture session's own text replaced — `-PaiFixtureDraftText`.
+    static func draftsReplacingSessionText(with text: String) -> String {
+        guard let encoded = try? JSONEncoder().encode(text), let literal = String(data: encoded, encoding: .utf8)
+        else { return drafts }
+        return drafts.replacingOccurrences(of: sessionDraftTextLiteral, with: literal)
+    }
+
+    private static let sessionDraftTextLiteral =
+        #""stt-rec: also double check the terminal frame shape and the ack watermark too""#
+
     /// `PUT /api/drafts/{key}` and `DELETE /api/drafts/{key}` — what a composer's own debounced
     /// write and its clear-after-send get back. Ahead of the session row above so a write's answer
     /// is never read as older than what the poll already delivered, and behind `new`'s for the

@@ -284,6 +284,17 @@
             public static let warningBorder = Color("warningBorder")
         }
 
+        /// Vault 4, the compartment of the gated store a grant-all never carries along, mirroring
+        /// `index.css`'s `--color-vault4-*` tokens: a name held there is drawn in magenta, so it
+        /// cannot be mistaken for an ordinary gated name. Like `Notes`, each pair carries its dark
+        /// variant in the asset catalog (`bg-vault4-100 dark:bg-vault4-950`, `text-vault4-700
+        /// dark:text-vault4-300`, `ring-vault4-500` in both).
+        public enum Vault4 {
+            public static let background = Color("vault4Background")
+            public static let text = Color("vault4Text")
+            public static let ring = Color("vault4Ring")
+        }
+
         /// The note editor and preview, mirroring `index.css`'s `--notes-md-*` block.
         ///
         /// Its own set rather than reuse of `Semantic`, and the reason is the one thing that makes

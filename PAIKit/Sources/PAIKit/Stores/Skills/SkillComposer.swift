@@ -28,6 +28,12 @@ public enum SkillComposer {
         liveTake ? [] : PromptKeywords.words(in: text)
     }
 
+    /// The built-in Claude Code command (``BuiltinCommands``) the text starts with, if any. Empty
+    /// while a live take owns the box, like ``keywordWords(text:liveTake:)``.
+    public static func builtinCommand(text: String, liveTake: Bool) -> String? {
+        liveTake ? nil : BuiltinCommands.find(in: text)
+    }
+
     /// The skills the text names, in order. Empty while a live take owns the box (it rewrites
     /// the text constantly and nothing can be edited) and when the context has no listing.
     ///

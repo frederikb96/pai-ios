@@ -1,0 +1,55 @@
+{
+  "commands": ["compact"],
+  "cases": [
+    {
+      "case": "the command alone is found",
+      "text": "/compact",
+      "expect": "compact"
+    },
+    {
+      "case": "instructions after it are arguments, and the command still counts",
+      "text": "/compact keep the migration plan",
+      "expect": "compact"
+    },
+    {
+      "case": "a newline or tab after it ends the token too",
+      "text": "/compact\nfocus on the tests",
+      "expect": "compact"
+    },
+    {
+      "case": "a longer token that merely starts with it is another command",
+      "text": "/compaction and /compactor",
+      "expect": null
+    },
+    {
+      "case": "punctuation glued to it makes it a different token",
+      "text": "/compact, please",
+      "expect": null
+    },
+    {
+      "case": "the command is case sensitive",
+      "text": "/Compact",
+      "expect": null
+    },
+    {
+      "case": "only the start of the text is a command, a later mention is prose",
+      "text": "please run /compact now",
+      "expect": null
+    },
+    {
+      "case": "leading whitespace means the text does not start with a slash",
+      "text": " /compact",
+      "expect": null
+    },
+    {
+      "case": "a path is not the command",
+      "text": "/compact/notes.md",
+      "expect": null
+    },
+    {
+      "case": "no text",
+      "text": "",
+      "expect": null
+    }
+  ]
+}

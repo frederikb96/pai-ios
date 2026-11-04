@@ -57,8 +57,9 @@ struct SecretGrantSheet: View {
     private enum RequestedAccessState {
         case loading
         /// Gated names the conversation asked for — legitimately empty, meaning "asked, and
-        /// nothing outstanding," distinct from `.notGrantable`.
-        case names([String])
+        /// nothing outstanding," distinct from `.notGrantable`. `vault4` is the subset held in
+        /// vault 4.
+        case names([String], vault4: [String])
         case notGrantable
         case fetchFailed(String)
     }
@@ -68,7 +69,7 @@ struct SecretGrantSheet: View {
     /// `.fetchFailed`. Drives `Decline`/`Grant`'s presence in the toolbar together, so the two stay
     /// in lockstep without restating the same case match twice.
     private var isPromptPending: Bool {
-        if case let .names(names) = requestedAccess { return !names.isEmpty }
+        if case let .names(names, _) = requestedAccess { return !names.isEmpty }
         return false
     }
 
@@ -139,7 +140,7 @@ struct SecretGrantSheet: View {
         }
         do {
             switch try await client.getSecretRequests(sessionId: sessionID) {
-            case let .names(names): requestedAccess = .names(names)
+            case let .names(names, vault4): requestedAccess = .names(names, vault4: vault4)
             case .notGrantable: requestedAccess = .notGrantable
             }
         } catch {
@@ -154,8 +155,8 @@ struct SecretGrantSheet: View {
             switch requestedAccess {
             case .loading:
                 spinnerSection
-            case let .names(names):
-                passphraseSection(names: names)
+            case let .names(names, vault4):
+                passphraseSection(names: names, vault4: vault4)
                 durationSection
                 grantAllSection
             case .notGrantable:
@@ -184,7 +185,7 @@ struct SecretGrantSheet: View {
         }
     }
 
-    private func passphraseSection(names: [String]) -> some View {
+    private func passphraseSection(names: [String], vault4: [String]) -> some View {
         Section {
             SecureField("Passphrase", text: $passphrase)
                 // Marks the field as a password so the keyboard offers the Passwords key and a
@@ -199,7 +200,35 @@ struct SecretGrantSheet: View {
                 .onSubmit { Task { await submit(scope: names.isEmpty ? .all : .requested) } }
                 .accessibilityIdentifier("secret-grant-passphrase")
         } footer: {
+            footer(names: names, vault4: vault4)
+        }
+    }
+
+    /// The sentence under the passphrase field. A vault-4 name the session asked for is drawn as a
+    /// magenta chip among the others, with a notice saying what the grant now covers; a list with
+    /// none stays one plain sentence.
+    @ViewBuilder
+    private func footer(names: [String], vault4: [String]) -> some View {
+        let askedVault4 = names.filter { vault4.contains($0) }
+        if askedVault4.isEmpty {
             Text(footerText(names: names))
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(footerText(names: names, listsNames: false))
+                NoteInlineFlowLayout(spacing: 6, lineSpacing: 6) {
+                    ForEach(names, id: \.self) { name in
+                        if vault4.contains(name) {
+                            Vault4NameChip(name: name)
+                        } else {
+                            Text(name)
+                                .font(PaiTypography.caption.font.monospaced())
+                                .foregroundStyle(PaiPalette.Semantic.textSecondary)
+                        }
+                    }
+                }
+                .accessibilityIdentifier("secret-grant-names")
+                Vault4Notice(names: askedVault4)
+            }
         }
     }
 
@@ -229,7 +258,7 @@ struct SecretGrantSheet: View {
             .disabled(passphrase.isEmpty || isSubmitting)
             .accessibilityIdentifier("secret-grant-all")
         } footer: {
-            Text("Grants every gated secret rather than only what was asked for.")
+            Text("Grants everything in the gated store except vault 4, rather than only what was asked for.")
         }
     }
 
@@ -331,13 +360,17 @@ struct SecretGrantSheet: View {
         return SessionListDomain.secretGrantTarget(for: session, machines: machines.allMachines)
     }
 
-    private func footerText(names: [String]) -> String {
+    /// `listsNames: false` leaves the names out of the sentence, for the caller that draws them as
+    /// chips under it.
+    private func footerText(names: [String], listsNames: Bool = true) -> String {
         guard !names.isEmpty else {
             return "\(target)'s Claude conversation hasn't asked for a gated secret. "
-                + "\"Grant all\" unlocks every gated secret for it, for the duration below."
+                + "\"Grant all\" unlocks everything except vault 4 for it, for the duration below."
         }
         var text =
-            "Unlocks \(names.joined(separator: ", ")) for \(target)'s Claude conversation, "
+            (listsNames
+                ? "Unlocks \(names.joined(separator: ", ")) for \(target)'s Claude conversation, "
+                : "Unlocks these for \(target)'s Claude conversation, ")
             + "for the duration below."
         if let reason = prompt?.reason, !reason.isEmpty {
             text += " It asked because: \(reason)."
@@ -351,5 +384,61 @@ struct SecretGrantSheet: View {
     private func formatted(_ raw: String) -> String {
         guard let date = IsoTimestamp.date(from: raw) else { return raw }
         return date.formatted(date: .abbreviated, time: .shortened)
+    }
+}
+
+/// A vault-4 name: the tag and the name in the vault-4 colours, so it cannot be mistaken for an
+/// ordinary gated name. Mirrors the web's `SecretGrantDialog` chip.
+struct Vault4NameChip: View {
+    let name: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text("VAULT 4")
+                .font(PaiTypography.caption.font.weight(.semibold))
+            Text(name)
+                .font(PaiTypography.caption.font.monospaced())
+        }
+        .foregroundStyle(PaiPalette.Vault4.text)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(PaiPalette.Vault4.background)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(PaiPalette.Vault4.ring, lineWidth: 1))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Vault 4: \(name)")
+        .accessibilityIdentifier("vault4-chip")
+    }
+}
+
+/// What a grant covers when the session named a vault-4 name: said once, in the vault-4 colours,
+/// with a bar on the left, since both grant buttons include the name.
+struct Vault4Notice: View {
+    let names: [String]
+
+    private var message: AttributedString {
+        let pronoun = names.count == 1 ? "it" : "them"
+        var lead = AttributedString("Vault 4 holds high-stakes secrets. ")
+        lead.inlinePresentationIntent = .stronglyEmphasized
+        let covers = "A grant covers \(names.joined(separator: ", ")) only because this session named \(pronoun); "
+        let both = "Grant and Grant all both include \(pronoun). Decline if you did not expect this."
+        lead.append(AttributedString(covers + both))
+        return lead
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Rectangle().fill(PaiPalette.Vault4.ring).frame(width: 4)
+            Text(message)
+                .font(PaiTypography.caption.font)
+                .foregroundStyle(PaiPalette.Vault4.text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+        }
+        .background(PaiPalette.Vault4.background)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("vault4-notice")
     }
 }

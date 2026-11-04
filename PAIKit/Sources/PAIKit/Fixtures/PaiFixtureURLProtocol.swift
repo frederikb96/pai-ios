@@ -115,6 +115,12 @@
                     return Match(status: 200) { messagesResponse(query: query) }
                 }
             }
+            // The fixture session's draft, replaced by `-PaiFixtureDraftText`.
+            if method == "GET", path == "/api/drafts",
+                let text = PaiFixtureLaunch.requestedDraftText(arguments: arguments)
+            {
+                return Match(status: 200) { PaiFixtures.data(PaiFixtures.draftsReplacingSessionText(with: text)) }
+            }
             // The feed is filtered by the query the way the server filters it, so a screenshot of the
             // Scheduled or Not scheduled view shows the rows that view keeps.
             if method == "GET", path == "/api/notifications" {
@@ -212,6 +218,9 @@
             exact("GET", "/api/sessions") { sessionsFixtureBody() },
             exact("GET", "/api/sessions/search") { PaiFixtures.sessionSearchResults },
             sessionScoped("GET", suffix: "/secret-requests") { PaiFixtures.secretRequests },
+            sessionScoped("GET", suffix: "/subagent-controls") { PaiFixtures.subagentControls },
+            sessionScoped("POST", suffix: "/subagent-nudge") { PaiFixtures.subagentNudgeQueued },
+            sessionScoped("POST", suffix: "/subagent-interrupt") { PaiFixtures.subagentInterrupted },
             exact("GET", "/api/drafts") { PaiFixtures.drafts },
             // A composer that is typed into writes its draft and clears it after a send. Without
             // these the table answers 404, which `DraftStore` reads as a failed flush and retries

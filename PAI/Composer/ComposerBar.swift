@@ -200,6 +200,8 @@ struct ComposerBar: View {
                     liveTake: liveTakeOwnsBox(voiceController)),
                 keywords: SkillComposer.keywordWords(
                     text: draftStore.draft(for: sessionID).text, liveTake: liveTakeOwnsBox(voiceController)),
+                builtinCommand: SkillComposer.builtinCommand(
+                    text: draftStore.draft(for: sessionID).text, liveTake: liveTakeOwnsBox(voiceController)),
                 onFix: { item in fixSkillMention(item, draftStore: draftStore, voiceController: voiceController) })
 
             if let sendErrorMessage {

@@ -868,11 +868,18 @@ final class PaiApiClientTests: XCTestCase {
 
         stubJSON(#"{"names":["OPENAI_API_KEY","STRIPE_KEY"]}"#)
         var result = try await client.getSecretRequests(sessionId: "s1")
-        XCTAssertEqual(result, .names(["OPENAI_API_KEY", "STRIPE_KEY"]))
+        XCTAssertEqual(result, .names(["OPENAI_API_KEY", "STRIPE_KEY"], vault4: []))
 
         stubJSON(#"{"names":[]}"#)
         result = try await client.getSecretRequests(sessionId: "s1")
-        XCTAssertEqual(result, .names([]))
+        XCTAssertEqual(result, .names([], vault4: []))
+    }
+
+    func testGetSecretRequestsCarriesTheVault4Subset() async throws {
+        let client = try makeClient()
+        stubJSON(#"{"names":["OPENAI_API_KEY","BANK_KEY"],"vault4":["BANK_KEY"]}"#)
+        let result = try await client.getSecretRequests(sessionId: "s1")
+        XCTAssertEqual(result, .names(["OPENAI_API_KEY", "BANK_KEY"], vault4: ["BANK_KEY"]))
     }
 
     func testGetSecretRequestsMaps409ToNotGrantable() async throws {
