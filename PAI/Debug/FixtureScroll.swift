@@ -10,6 +10,15 @@ enum FixtureScrollAnchor: String {
     case notSaved
     case taskNotifyPush
     case mailVerdictKey
+
+    /// Where in the viewport the anchor's top edge lands. A section scrolled to `.top` has its
+    /// header under the navigation bar.
+    var viewportAnchor: UnitPoint {
+        switch self {
+        case .mailVerdictKey: .center
+        default: .top
+        }
+    }
 }
 
 extension View {
@@ -37,7 +46,7 @@ extension View {
                 content.onReceive(ticks) { _ in
                     guard remaining > 0, let name = PaiFixtureLaunch.requestedScrollAnchor() else { return }
                     remaining -= 1
-                    proxy.scrollTo(name, anchor: .top)
+                    proxy.scrollTo(name, anchor: FixtureScrollAnchor(rawValue: name)?.viewportAnchor ?? .top)
                 }
             }
         }

@@ -47,6 +47,9 @@ extension PaiFixtures {
         if let newSessionType, let literal = jsonLiteral(newSessionType) {
             body = body.replacingOccurrences(of: newDraftSessionTypeLiteral, with: "\"session_type\": \(literal)")
             body = body.replacingOccurrences(of: newDraftVersionLiteral, with: "\"version\": \(version)")
+            // A directory in the draft makes the screen restore the Custom type whatever the type
+            // says, so a draft that chooses a type carries none.
+            body = body.replacingOccurrences(of: newDraftWorkingDirLiteral, with: #""working_dir": null"#)
         }
         return body
     }
@@ -56,6 +59,7 @@ extension PaiFixtures {
     }
 
     private static let sessionDraftVersionLiteral = #""version": 7"#
+    private static let newDraftWorkingDirLiteral = #""working_dir": "/home/frederik/Programming/pai-cloud""#
     private static let newDraftVersionLiteral = #""version": 12"#
     private static let newDraftSessionTypeLiteral = #""session_type": "default""#
 
