@@ -28,7 +28,6 @@ public final class SettingsStore {
         static let showsNoteLineNumbers = "showsNoteLineNumbers"
         static let noteToolbarLayout = "noteToolbarLayout"
         static let notesCacheBudgetBytes = "notesCacheBudgetBytes"
-        static let defaultRecordingMode = "defaultRecordingMode"
     }
 
     static let maxSentMessages = 10
@@ -56,9 +55,9 @@ public final class SettingsStore {
     public private(set) var notesCacheBudgetBytes: Int
 
     /// Which recording mode a press on the microphone starts; a long press and the composer's
-    /// plus menu start the other one (``alternateRecordingMode``). Live is what the press always
-    /// did. Per device and never synced, like the web's `localStorage` setting of the same name.
-    public private(set) var defaultRecordingMode: VoiceSttMode
+    /// plus menu start the other one (``alternateRecordingMode``). The person's own setting, the
+    /// same on every device (``userSettings``); live until it has been read.
+    public var defaultRecordingMode: VoiceSttMode { userSettings.settings?.recordingMode ?? .live }
 
     public let elevenLabsKey: WriteOnlySecretField
     /// The two third-party credentials Computer presents itself. Set here rather than deployed
@@ -71,6 +70,8 @@ public final class SettingsStore {
     public let voices: SpokenVoiceSettingsStore
     public let statusMessage: StatusMessageStore
     public let sessionDefaults: SessionDefaultsStore
+    /// The person's own settings (recording mode, e-mail switch, playback speed and voice).
+    public let userSettings: UserSettingsStore
 
     /// Called for a recording evicted by the 10-entry cap, so whichever store holds the actual
     /// audio (a voice-capture concern, not this one's) can delete it — the same seam the web's
@@ -96,6 +97,7 @@ public final class SettingsStore {
         self.voices = SpokenVoiceSettingsStore(apiClient: apiClient)
         self.statusMessage = StatusMessageStore(api: apiClient)
         self.sessionDefaults = SessionDefaultsStore(api: apiClient)
+        self.userSettings = UserSettingsStore(api: apiClient, cache: storage)
 
         silenceGate = storage.value(forKey: Keys.silenceGate) ?? .standard
         micDeviceId = storage.value(forKey: Keys.micDeviceId) ?? ""
@@ -103,8 +105,6 @@ public final class SettingsStore {
         recordings = storage.value(forKey: Keys.recordings) ?? []
         theme = storage.value(forKey: Keys.theme) ?? .system
         showsNoteLineNumbers = storage.value(forKey: Keys.showsNoteLineNumbers) ?? false
-        let storedMode: String? = storage.value(forKey: Keys.defaultRecordingMode)
-        defaultRecordingMode = storedMode == "batch" ? .batch : .live
         let storedToolbarIds: [String] = storage.value(forKey: Keys.noteToolbarLayout) ?? []
         noteToolbarLayout = NoteToolbarLayout.sanitize(rawIds: storedToolbarIds)
         let storedBudget: Int? = storage.value(forKey: Keys.notesCacheBudgetBytes)
@@ -138,10 +138,10 @@ public final class SettingsStore {
     }
 
     /// Only `live` and `batch` are modes a take can be started in; anything else is ignored.
-    public func setDefaultRecordingMode(_ mode: VoiceSttMode) {
+    /// Saved to the person's settings; a refused write puts the old mode back.
+    public func setDefaultRecordingMode(_ mode: VoiceSttMode) async {
         guard mode == .live || mode == .batch else { return }
-        defaultRecordingMode = mode
-        storage.setValue(mode.wireValue, forKey: Keys.defaultRecordingMode)
+        await userSettings.update(UserSettingsPatch(recordingMode: mode))
     }
 
     public func setShowsNoteLineNumbers(_ enabled: Bool) {

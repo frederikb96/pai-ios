@@ -10,12 +10,13 @@ enum FixtureScrollAnchor: String {
     case notSaved
     case taskNotifyPush
     case mailVerdictKey
+    case emailNotifications
 
     /// Where in the viewport the anchor's top edge lands. A section scrolled to `.top` has its
     /// header under the navigation bar.
     var viewportAnchor: UnitPoint {
         switch self {
-        case .mailVerdictKey: .center
+        case .mailVerdictKey, .emailNotifications: .center
         default: .top
         }
     }

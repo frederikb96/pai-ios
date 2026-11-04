@@ -615,6 +615,10 @@ public struct NamespaceSummary: Codable, Sendable, Equatable {
 public struct MeResponse: Codable, Sendable, Equatable {
     public let identity: String
     public let role: UserRole
+    /// The person signed in; `nil` for a namespace's own agent, which is not a person, for the owner
+    /// while the user row cannot be read, and from a backend that predates people.
+    public let userId: String?
+    public let displayName: String?
     public let allowedSessionIds: [String]
     /// The namespaces a guest belongs to; empty for the owner. `nil` from a backend that
     /// predates namespaces.
@@ -622,17 +626,21 @@ public struct MeResponse: Codable, Sendable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case identity, role, namespaces
+        case userId = "user_id"
+        case displayName = "display_name"
         case allowedSessionIds = "allowed_session_ids"
     }
 
     public init(
         identity: String, role: UserRole, allowedSessionIds: [String],
-        namespaces: [NamespaceSummary]? = nil
+        namespaces: [NamespaceSummary]? = nil, userId: String? = nil, displayName: String? = nil
     ) {
         self.identity = identity
         self.role = role
         self.allowedSessionIds = allowedSessionIds
         self.namespaces = namespaces
+        self.userId = userId
+        self.displayName = displayName
     }
 }
 

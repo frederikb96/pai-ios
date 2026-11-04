@@ -58,21 +58,6 @@ final class SettingsStoreTests: XCTestCase {
         }
     }
 
-    func testDefaultRecordingModePersistsAndSwapsTheAlternate() async throws {
-        try await MainActor.run {
-            let storage = SettingsInMemoryKeyValueStore()
-            let first = try Self.makeStore(storage: storage)
-            first.setDefaultRecordingMode(.batch)
-            XCTAssertEqual(first.alternateRecordingMode, .live)
-            first.setDefaultRecordingMode(.unrecognized("x"))
-            XCTAssertEqual(first.defaultRecordingMode, .batch)
-
-            let second = try Self.makeStore(storage: storage)
-            XCTAssertEqual(second.defaultRecordingMode, .batch)
-            XCTAssertEqual(second.alternateRecordingMode, .live)
-        }
-    }
-
     func testSilenceGateSettingPersistsAcrossStoreInstances() async throws {
         try await MainActor.run {
             let storage = SettingsInMemoryKeyValueStore()

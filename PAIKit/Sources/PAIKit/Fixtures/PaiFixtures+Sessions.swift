@@ -125,7 +125,13 @@ extension PaiFixtures {
     /// `GET /api/me`. `identity` is a synthetic value, not a real one — nothing about
     /// this corpus should be able to leak a real address into a screenshot or a committed file.
     public static let me: String = #"""
-        { "identity": "owner@pai.local", "role": "owner", "allowed_session_ids": ["305df4d3-1554-4fc3-be04-39a354a9e619"] }
+        { "identity": "owner@pai.local", "role": "owner", "user_id": "7f0c1d52-5a53-4b53-8f55-0a5a2b3c4d5e",
+          "display_name": "Owner", "allowed_session_ids": ["305df4d3-1554-4fc3-be04-39a354a9e619"] }
+        """#
+
+    /// `GET`/`PUT /api/settings/me` — the person's own settings.
+    public static let mySettings: String = #"""
+        { "recording_mode": "live", "playback_voice_id": null, "playback_speed": 1.0, "email_notifications": true }
         """#
 
     /// `GET /api/health` — everything connected.

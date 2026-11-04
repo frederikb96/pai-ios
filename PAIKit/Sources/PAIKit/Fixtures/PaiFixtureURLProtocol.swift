@@ -221,6 +221,8 @@
             exact("GET", "/api/session-types") { PaiFixtures.sessionTypes },
             exact("GET", "/api/session-models") { PaiFixtures.sessionModels },
             exact("GET", "/api/settings/llm") { PaiFixtures.sessionDefaults },
+            exact("GET", "/api/settings/me") { PaiFixtures.mySettings },
+            exact("PUT", "/api/settings/me") { PaiFixtures.mySettings },
             exact("GET", "/api/me") { PaiFixtures.me },
             exact("GET", "/api/agents") { PaiFixtures.agents },
             exact("GET", "/api/sessions") { sessionsFixtureBody() },

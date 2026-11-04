@@ -341,6 +341,9 @@ final class AppEnvironment {
         // below and nothing below needs them.
         Task { [notes = connection.notes] in await notes.resumeSync() }
         await connection.settings.refreshSecretPresence()
+        // The person's own settings (recording mode, e-mail switch, playback speed) are read once
+        // per launch; the Settings screen reads them again when it opens.
+        await connection.settings.userSettings.load()
         await connection.machines.refresh()
         await connection.me.refresh()
         await connection.staging.loadPersisted()

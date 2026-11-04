@@ -116,6 +116,14 @@ final class PaiFixturesTests: XCTestCase {
         XCTAssertEqual(new?["text"] as? String, "Check whether the ")
     }
 
+    func testThePersonFixturesDecodeIntoTheRealModels() throws {
+        let me = try JSONDecoder().decode(MeResponse.self, from: Data(PaiFixtures.me.utf8))
+        XCTAssertNotNil(me.userId)
+        XCTAssertEqual(me.displayName, "Owner")
+        let settings = try JSONDecoder().decode(UserSettings.self, from: Data(PaiFixtures.mySettings.utf8))
+        XCTAssertTrue(settings.emailNotifications)
+    }
+
     func testNewSessionTypeFlagChoosesTheTypeOfTheNewDraft() throws {
         let match = PaiFixtureURLProtocol.route(
             method: "GET", path: "/api/drafts",

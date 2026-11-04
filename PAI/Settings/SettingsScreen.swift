@@ -39,6 +39,8 @@ struct SettingsScreen: View {
 
             NotificationsSection()
 
+            EmailNotificationsSection(store: settings.userSettings)
+
             VoiceSection(settings: settings)
 
             ComputerSection(settings: settings)

@@ -17,7 +17,7 @@ set -o pipefail
 # shellcheck source=lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 
-SECTIONS="none routes measure note-bench auth-rejected fullscreen-image fullscreen-pdf secret-prompt compact-chip mailverdict
+SECTIONS="none routes measure note-bench auth-rejected fullscreen-image fullscreen-pdf secret-prompt compact-chip mailverdict person-settings
 new-session-landing notes-filtering notifications-filter scheduler-task-push settings-notes-cache
 note-uncached-online notes-offline jump-landing deep-link-landing warm-jump clamped-landing note-refused"
 
@@ -257,6 +257,13 @@ if want mailverdict; then
   fact_assert mailverdict-new-session environmentRow "MailVerdict assistant"
   xcrun simctl terminate "$udid" "$bundle" || true
   screenshot mailverdict-settings -PaiFixtureRoute settings -PaiFixtureScrollTo mailVerdictKey
+  xcrun simctl terminate "$udid" "$bundle" || true
+fi
+
+if want person-settings; then
+  # The e-mail switch, read from the person's settings.
+  screenshot person-settings -PaiFixtureRoute settings -PaiFixtureScrollTo emailNotifications
+  fact_assert person-settings emailNotifications on
   xcrun simctl terminate "$udid" "$bundle" || true
 fi
 
