@@ -302,6 +302,8 @@ final class NotesStoreOfflineTests: XCTestCase {
     private func openThenGoOffline(_ store: NotesStore, id: String = "n1") async {
         await store.refresh()
         await store.loadNote(id: id)
+        // The copy reaches disk on a background task; a relaunch in a test comes at once.
+        await store.bodyCacheWrite?.value
         server.offline = true
         store.setPathSatisfied(false)
     }
@@ -337,6 +339,8 @@ final class NotesStoreOfflineTests: XCTestCase {
         let first = makeStore()
         await first.refresh()
         await first.loadNote(id: "n1")
+        // The copy reaches disk on a background task; the next launch of the app comes later.
+        await first.bodyCacheWrite?.value
 
         server.offline = true
         let relaunched = makeStore()
