@@ -516,6 +516,8 @@ struct CreateSessionView: View {
                 .buttonStyle(.borderless)
                 .font(PaiTypography.caption.font)
         }
+        .fixtureFact("environmentRow", type.name)
+        .accessibilityIdentifier("new-session-environment-row")
     }
 
     // MARK: - Composer

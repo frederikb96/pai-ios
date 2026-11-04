@@ -37,7 +37,8 @@ extension PaiFixtures {
             },
             "session_types": [
               { "id": "default", "name": "Default", "icon": "💬" },
-              { "id": "fast", "name": "Fast", "icon": "⚡", "working_dir": "/home/frederik/Programming" }
+              { "id": "fast", "name": "Fast", "icon": "⚡", "working_dir": "/home/frederik/Programming" },
+              { "id": "mailverdict", "name": "MailVerdict assistant", "icon": "📬" }
             ]
           },
           {
