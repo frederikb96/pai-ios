@@ -110,10 +110,10 @@ final class SpokenVoiceSettingsStoreTests: XCTestCase {
     /// Key terms travel as a list, and one ElevenLabs would refuse blocks Save rather than
     /// failing the whole PUT server-side.
     func testKeyTermsAreSplitAndAnUnacceptableOneBlocksSave() {
-        var draft = SpokenVoiceSettingsDraft(loaded: loaded(sttKeyterms: ["Computer", "Kai"]))
-        XCTAssertEqual(draft.sttKeyterms, "Computer, Kai")
-        draft.sttKeyterms = " Computer ,Kai,, PAI "
-        XCTAssertEqual(draft.asUpdate()?.sttKeyterms, ["Computer", "Kai", "PAI"])
+        var draft = SpokenVoiceSettingsDraft(loaded: loaded(sttKeyterms: ["Computer"]))
+        XCTAssertEqual(draft.sttKeyterms, "Computer")
+        draft.sttKeyterms = " Computer ,,PAI "
+        XCTAssertEqual(draft.asUpdate()?.sttKeyterms, ["Computer", "PAI"])
 
         draft.sttKeyterms = "Computer, Supercalifragilistic word"
         XCTAssertNotNil(draft.keytermProblem)

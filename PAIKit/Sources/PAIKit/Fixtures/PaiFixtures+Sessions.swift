@@ -150,7 +150,7 @@ extension PaiFixtures {
           "remote_control": true,
           "discovered": false,
           "source_missing": false,
-          "git_branch": "kai/ios-fixtures",
+          "git_branch": "ios-fixtures",
           "claude_version": "2.1.3",
           "project_id": "2b5a5769-a83c-4542-adf1-6ce737d9fc79",
           "phase_id": "e60ab7f0-8a07-4928-a07c-3cbb175a7de0",

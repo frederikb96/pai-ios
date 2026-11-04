@@ -14,7 +14,7 @@ import Foundation
 /// point it was later compacted, rather than making the user pick between two near-identical concepts.
 public enum MessageKind: String, CaseIterable, Sendable, Equatable {
     case user
-    case kai
+    case agent
     case notification
     case boundary
     case agentInvocation = "agent_invocation"
@@ -22,7 +22,7 @@ public enum MessageKind: String, CaseIterable, Sendable, Equatable {
     public var label: String {
         switch self {
         case .user: "Your messages"
-        case .kai: "Kai's replies"
+        case .agent: "Agent replies"
         case .notification: "Push notifications"
         case .boundary: "Session start & compaction"
         case .agentInvocation: "Agent invocations"

@@ -116,7 +116,7 @@ public final class ComputerCallSession {
     static let watchdogTimeoutSeconds: TimeInterval = 12
 
     public private(set) var connectionState: ComputerCallConnectionState = .idle
-    /// `.computer` until Computer connects this bus into a Kai session's own call mode (the
+    /// `.computer` until Computer connects this bus into a PAI session's own call mode (the
     /// switchboard, `docs/VOICE_PROTOCOL.md`'s opening paragraph) — never something this session
     /// requests, only something it is told about.
     public private(set) var busOwner: VoiceBusOwner = .computer
@@ -177,7 +177,7 @@ public final class ComputerCallSession {
 
     public var canStart: Bool { connectionState == .idle }
 
-    /// The Kai session this call was connected straight into, if any — `nil` for an ordinary
+    /// The PAI session this call was connected straight into, if any — `nil` for an ordinary
     /// call that reached Computer first. Re-sent on every `hello`; only a fresh bus reads it.
     public private(set) var directSessionId: String?
 

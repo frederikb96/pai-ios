@@ -135,7 +135,7 @@ extension PaiFixtures {
           "rows": {
             "1": {
               "id": 1, "i": "Set up the demo", "src": "U", "diff": 1, "s": "D", "o": 1.0, "k": "L",
-              "b": 1, "g": {"type": "kai"}, "n": {"1": "Nothing to build, just wiring."}, "r": [], "v": null
+              "b": 1, "g": {"type": "main"}, "n": {"1": "Nothing to build, just wiring."}, "r": [], "v": null
             },
             "2": {
               "id": 2, "i": "Segment one is done", "src": "U", "diff": 0, "s": null, "o": 2.0, "k": "M",

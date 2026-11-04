@@ -32,10 +32,10 @@ final class ArcFixturesTests: XCTestCase {
         XCTAssertEqual(payload.activeSegment.index, 1)
         XCTAssertEqual(payload.activeSegment.busyAgents, ["arc-demo"])
 
-        // `g: {"type": "kai"}` — every field past `type` absent, not merely empty.
-        let kaiLeader = try XCTUnwrap(payload.rows["1"])
-        XCTAssertEqual(kaiLeader.g?.type, "kai")
-        XCTAssertNil(kaiLeader.g?.name)
+        // `g: {"type": "main"}` — every field past `type` absent, not merely empty.
+        let mainLeader = try XCTUnwrap(payload.rows["1"])
+        XCTAssertEqual(mainLeader.g?.type, "main")
+        XCTAssertNil(mainLeader.g?.name)
 
         // The marker row: `s` genuinely null, not merely omitted.
         let marker = try XCTUnwrap(payload.rows["2"])

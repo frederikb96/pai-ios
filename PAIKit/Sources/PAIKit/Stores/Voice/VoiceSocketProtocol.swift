@@ -62,7 +62,7 @@ public struct VoiceDeviceInfo: Sendable, Equatable {
 }
 
 /// A control a screen offers as a button, naming the same thing the call's spoken grammar names
-/// — `docs/VOICE_PROTOCOL.md`'s `command` up frame. Only a bus a Kai session's call mode owns
+/// — `docs/VOICE_PROTOCOL.md`'s `command` up frame. Only a bus a PAI session's call mode owns
 /// acts on these.
 public enum VoiceCallCommand: String, Sendable, Equatable, CaseIterable {
     /// Begin dictating — the button equivalent of saying the wake word.
@@ -85,7 +85,7 @@ public enum VoiceCallCommand: String, Sendable, Equatable, CaseIterable {
 // MARK: - Up frames: client -> backend
 
 public enum VoiceUpFrame: Sendable, Equatable {
-    /// `connectSession` asks the backend to attach this socket straight to that Kai session's
+    /// `connectSession` asks the backend to attach this socket straight to that PAI session's
     /// call mode, skipping Computer and the spoken "connect me to…" round trip — what the
     /// launcher's own call tiles and a composer's "Call this session" send. Only ever read on a
     /// FRESH bus: a reconnect keeps whatever engine it already had, so sending it again on every
