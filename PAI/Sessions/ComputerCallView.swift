@@ -4,7 +4,7 @@ import SwiftUI
 /// The voice screen: one screen with two faces, and the call decides which one shows.
 ///
 /// The Computer face is a conversation with the switchboard. The call face is what a bus looks
-/// like once Computer has connected it into a Kai session — the session's name, what the call is
+/// like once Computer has connected it into a PAI session — the session's name, what the call is
 /// doing, the draft filling in as it is dictated, and a control for each of the things that can
 /// otherwise only be said out loud. Moving between them is not navigation: it is the backend
 /// re-attaching the bus, reported on `state.bus_owner`, so there is nothing here to tap and no
@@ -114,7 +114,7 @@ struct ComputerCallView: View {
     private func title(for face: ComputerCallFace) -> String {
         switch face {
         case .computer: "Computer"
-        case .call(_, let name): name ?? "A Kai session"
+        case .call(_, let name): name ?? "A PAI session"
         }
     }
 

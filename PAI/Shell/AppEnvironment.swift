@@ -96,7 +96,7 @@ final class AppEnvironment {
         /// to outlive the screen that started it — see `VoiceRecorderController`'s doc comment.
         /// There is one microphone, so there is one of these.
         let voice: VoiceRecorderController
-        /// The call with Computer, and the Kai session it may be inside. App-wide for the same
+        /// The call with Computer, and the PAI session it may be inside. App-wide for the same
         /// reason `voice` is: a call outlives the screen that shows it, and leaving that screen
         /// to read a session mid-call is what the voice screen is for.
         let computerCall: ComputerCallController

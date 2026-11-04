@@ -11,7 +11,7 @@ import PAIKit
 /// to the same call, whichever face it is currently showing.
 @MainActor
 enum ComputerCallEntry {
-    /// `connectSession` opens the call straight inside that Kai session rather than with
+    /// `connectSession` opens the call straight inside that PAI session rather than with
     /// Computer — the launcher's call tiles and a composer's "Call this session".
     ///
     /// A call already running is joined as it is, whatever was asked for: the phone has one

@@ -69,8 +69,8 @@ extension ArcRowStatus: Codable {
     }
 }
 
-/// A leader row's `g` — which agent it names, and what came back. `{"type": "kai"}` alone is a
-/// leader Kai does the work under himself, so every field past `type` is optional. `type` itself
+/// A leader row's `g` — which agent it names, and what came back. `{"type": "main"}` alone is a
+/// leader the main session works on itself, so every field past `type` is optional. `type` itself
 /// is optional too: the server only requires `g` to be an object, never that it carries a
 /// `type` key, and a hand-written row (how a leader is made outside `arc block add`, which
 /// always writes one) can omit it — a present-but-invalid nested object would otherwise throw

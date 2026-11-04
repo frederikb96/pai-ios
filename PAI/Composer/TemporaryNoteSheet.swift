@@ -16,7 +16,7 @@ struct TemporaryNoteSheet: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Stays on the VM with this session's other attachments, readable only by Kai's user.")
+                Text("Stays on the VM with this session's other attachments, readable only by you.")
                     .font(PaiTypography.caption.font)
                     .foregroundStyle(PaiPalette.Semantic.textMuted)
 

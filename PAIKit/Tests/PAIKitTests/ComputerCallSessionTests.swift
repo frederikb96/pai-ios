@@ -204,7 +204,7 @@ final class ComputerCallSessionTests: XCTestCase {
         _ = await startTask.value
     }
 
-    /// The launcher's call tiles and a composer's "Call this session" ask for a Kai session's
+    /// The launcher's call tiles and a composer's "Call this session" ask for a PAI session's
     /// call mode directly, skipping Computer and the spoken round trip. The backend reads this on
     /// a FRESH bus only, so it is carried on the session rather than on one connect.
     func testConnectingIntoASessionNamesItInHello() async {
@@ -307,7 +307,7 @@ final class ComputerCallSessionTests: XCTestCase {
     }
 
     /// A `state` frame updates the published phase/owner/session — what the view renders,
-    /// including the switchboard moving this bus into a Kai session's own call mode.
+    /// including the switchboard moving this bus into a PAI session's own call mode.
     func testStateFrameUpdatesPhaseOwnerAndSession() async {
         let transport = FakeComputerCallTransport()
         let session = makeSession(transport: transport)

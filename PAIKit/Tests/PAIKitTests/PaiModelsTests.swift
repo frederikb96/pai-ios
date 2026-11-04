@@ -463,7 +463,7 @@ final class PaiModelsTests: XCTestCase {
     func testMachineDecodesNestedCapabilitiesAndSessionTypes() throws {
         let json = Data(
             """
-            {"slug":"vm","display_name":"Cloud Kai","online":true,"last_seen_at":null,
+            {"slug":"vm","display_name":"Cloud VM","online":true,"last_seen_at":null,
              "ingest_enabled":true,
              "capabilities":{"fast_sessions":true,"reboot":false,"shell":true,
              "rc_local":true},
@@ -472,7 +472,7 @@ final class PaiModelsTests: XCTestCase {
         let machine = try JSONDecoder().decode(Machine.self, from: json)
 
         XCTAssertEqual(machine.id, "vm")
-        XCTAssertEqual(machine.displayName, "Cloud Kai")
+        XCTAssertEqual(machine.displayName, "Cloud VM")
         XCTAssertEqual(machine.capabilities.fastSessions, true)
         XCTAssertEqual(machine.capabilities.reboot, false)
         XCTAssertEqual(machine.capabilities.rcLocal, true)
@@ -484,7 +484,7 @@ final class PaiModelsTests: XCTestCase {
     func testMachineToleratesAnUndeclaredRcRouteField() throws {
         let json = Data(
             """
-            {"slug":"vm","display_name":"Cloud Kai","online":true,"last_seen_at":null,
+            {"slug":"vm","display_name":"Cloud VM","online":true,"last_seen_at":null,
              "ingest_enabled":true,
              "capabilities":{"fast_sessions":true,"reboot":false,"shell":true,
              "rc_local":true,"rc_route":"anthropic"},

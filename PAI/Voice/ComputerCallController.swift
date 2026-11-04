@@ -101,7 +101,7 @@ final class ComputerCallController {
         micChunkConsumerTask?.cancel()
     }
 
-    /// `connectSession` connects straight into that Kai session's call mode rather than
+    /// `connectSession` connects straight into that PAI session's call mode rather than
     /// reaching Computer first — what the launcher's call tiles and a composer's own
     /// "Call this session" ask for.
     func start(connectSession: String? = nil) async {
@@ -143,7 +143,7 @@ final class ComputerCallController {
     }
 
     /// Sends one of the controls the call's own spoken grammar also offers
-    /// (`docs/VOICE_PROTOCOL.md`'s `command` frame). Only a bus a Kai session's call mode owns
+    /// (`docs/VOICE_PROTOCOL.md`'s `command` frame). Only a bus a PAI session's call mode owns
     /// acts on these; Computer's own engine ignores them, so the caller gates on the face it is
     /// showing rather than this type second-guessing which engine is attached.
     func send(command: VoiceCallCommand) async {

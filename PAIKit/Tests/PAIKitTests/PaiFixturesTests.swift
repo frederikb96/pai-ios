@@ -424,7 +424,7 @@ final class PaiFixturesTests: XCTestCase {
         let runs = try decoder.decode(WakeWordRunList.self, from: Data(PaiFixtures.wakeWordRuns.utf8))
         XCTAssertEqual(runs.runs.first?.takes.count, 1)
         let voice = try decoder.decode(SpokenVoiceSettings.self, from: Data(PaiFixtures.spokenVoiceSettings.utf8))
-        XCTAssertEqual(voice.sttKeyterms, ["Computer", "Kai", "PAI"])
+        XCTAssertEqual(voice.sttKeyterms, ["Computer", "PAI"])
         XCTAssertEqual(voice.sttBatchPauseS, 15)
     }
 }

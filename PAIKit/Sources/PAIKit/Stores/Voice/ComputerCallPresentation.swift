@@ -1,7 +1,7 @@
 import Foundation
 
 /// Which of the voice screen's two faces is showing. The call itself decides — a bus the
-/// backend switched into a Kai session's call mode reports that on every `state` frame and on
+/// backend switched into a PAI session's call mode reports that on every `state` frame and on
 /// `ready`, so this is read, never requested, and switching faces is not navigation.
 public enum ComputerCallFace: Equatable, Sendable {
     case computer

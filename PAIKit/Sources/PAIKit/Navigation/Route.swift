@@ -103,7 +103,7 @@ public enum Route: Hashable, Sendable {
     /// underneath it — a hardware button is a fresh start, not a detour from wherever the app
     /// was last left.
     case quickActions
-    /// The voice screen: Computer, and the Kai session a call is inside. One screen with two
+    /// The voice screen: Computer, and the PAI session a call is inside. One screen with two
     /// faces, which the call itself decides between.
     ///
     /// Pushed like any other destination rather than presented as a cover, because the call

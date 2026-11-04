@@ -16,7 +16,7 @@ public enum ArcBadgeState: Sendable, Hashable {
     /// accepted (`s != .done`). An agent resumed by message goes back to `.working` on its next
     /// write; see the design report's D9/§3 for why returned is a timestamp, never a status.
     case returned
-    /// The leader is `Done` — Kai read the report and accepted it.
+    /// The leader is `Done` — the main session read the report and accepted it.
     case accepted
     /// The leader is `Cancelled` (`X`) — S21: stopped mid-run, counted as resolved, kept in the
     /// log greyed rather than removed.
@@ -24,7 +24,7 @@ public enum ArcBadgeState: Sendable, Hashable {
 
     /// `leader`'s own status plus whether its named agent is in `busyAgents` — the same three
     /// facts the design report's §4 says the badge is built from (the agent's own file, its stop
-    /// signal, and Kai marking the leader Done), reduced to what a client can actually read off
+    /// signal, and the main session marking the leader Done), reduced to what a client can actually read off
     /// one `ArcRow`.
     public static func of(leader: ArcRow?, busyAgents: Set<String>) -> ArcBadgeState {
         guard let leader else { return .notSpawned }
@@ -65,13 +65,13 @@ public struct ArcTimelineBlock: Sendable, Equatable, Identifiable {
     public var cancelled: Int { rows.filter { $0.s == .cancelled }.count }
     public var total: Int { rows.count }
 
-    /// The flow card's small type line — `type · model-code · name`, or the single word `Kai`
-    /// for the main session's own work (`g.type == "kai"`, which is never spawned and has no
+    /// The flow card's small type line — `type · model-code · name`, or the single word `main`
+    /// for the main session's own work (`g.type == "main"`, which is never spawned and has no
     /// name to match a subagent lookup against). Mirrors `arcModel.ts`'s `agentLabel` exactly.
     /// `nil` only for a block with no agent assigned yet.
     public var agentLabel: String? {
         guard let g = leader?.g else { return nil }
-        if g.type == "kai" { return "Kai" }
+        if g.type == "main" { return "main" }
         let parts = [g.type, g.modelCode, g.name].compactMap { $0 }.filter { !$0.isEmpty }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
