@@ -227,6 +227,11 @@ extension Route {
         "schedulerList", "schedulerTask", "quickActions", "computerCall", "canteen", "usage", "subagentSession",
     ]
 
+    /// The subagent of the fixture session (`PaiFixtures.sessionSubagent`), what the
+    /// `subagentSession` screen opens. Not in the DEBUG-only fixture launch type, because
+    /// `named(_:)` is compiled into Release.
+    public static let fixtureSubagentSessionID = "eb516249-128b-48cd-894c-7afdacc5643c"
+
     /// Every spec-scoped fixture route answers under, regardless of which uuid the request
     /// actually named — the same fixed-id pattern `fixtureNoteID` uses, so the screenshot
     /// workflow can ask for the ARC screen without first discovering a real spec exists.
@@ -255,7 +260,7 @@ extension Route {
     ) -> Route? {
         switch name {
         case "session": return .session(id: sessionID, messageID: messageID)
-        case "subagentSession": return .session(id: PaiFixtureLaunch.subagentSessionID, messageID: messageID)
+        case "subagentSession": return .session(id: fixtureSubagentSessionID, messageID: messageID)
         case "terminal": return .terminal(sessionID: sessionID)
         case "settings": return .settings
         case "createSession": return .createSession

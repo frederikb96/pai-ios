@@ -126,6 +126,20 @@ screenshot() {
   fi
 }
 
+# Asserts on what the screen on display reported about itself (`fixtureFact`), read after the
+# screenshot has settled. A screen can render, pass every size check and still be the wrong one.
+fact_assert() {
+  local name=$1 key=$2 want=$3 got
+  got=$(curl -sS --max-time 5 "http://127.0.0.1:8765/fixture" \
+    | python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.argv[1], ''))" "$key" 2>/dev/null || echo "")
+  if [ "$got" != "$want" ]; then
+    echo "::error::$name: expected $key='$want' but the app reports '$got'"
+    fail=1
+  else
+    echo "$name: $key=$got"
+  fi
+}
+
 screenshot root
 curl -sS --max-time 5 "http://127.0.0.1:8765/screens" -o artifacts/screens.json \
   || echo '{"screens":[]}' > artifacts/screens.json
@@ -232,6 +246,7 @@ fi
 if want compact-chip; then
   # A draft that starts with `/compact` gets its own chip in the composer's chip row.
   screenshot compact-chip -PaiFixtureRoute session -PaiFixtureDraftText "/compact keep the migration plan"
+  fact_assert compact-chip composerDraft "/compact keep the migration plan"
   xcrun simctl terminate "$udid" "$bundle" || true
 fi
 
@@ -305,6 +320,7 @@ fi
 while IFS= read -r name; do
   [ -n "$name" ] && want "$name" routes || continue
   screenshot "$name" -PaiFixtureRoute "$name"
+  [ "$name" = "subagentSession" ] && fact_assert "$name" composer subagent-bar
   xcrun simctl terminate "$udid" "$bundle" || true
 done <<< "$names"
 

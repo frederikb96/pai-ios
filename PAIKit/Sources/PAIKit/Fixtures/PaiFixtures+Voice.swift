@@ -37,8 +37,14 @@ extension PaiFixtures {
     static func draftsReplacingSessionText(with text: String) -> String {
         guard let encoded = try? JSONEncoder().encode(text), let literal = String(data: encoded, encoding: .utf8)
         else { return drafts }
+        // A device keeps the draft it last reconciled with and adopts a server row only when its
+        // version is higher, so a changed row needs a version above any an earlier launch served.
+        let version = Int(Date().timeIntervalSince1970)
         return drafts.replacingOccurrences(of: sessionDraftTextLiteral, with: literal)
+            .replacingOccurrences(of: sessionDraftVersionLiteral, with: "\"version\": \(version)")
     }
+
+    private static let sessionDraftVersionLiteral = #""version": 7"#
 
     private static let sessionDraftTextLiteral =
         #""stt-rec: also double check the terminal frame shape and the ack watermark too""#
