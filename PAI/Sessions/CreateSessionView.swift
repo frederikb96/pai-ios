@@ -246,6 +246,7 @@ struct CreateSessionView: View {
                     signInBlockedRow
                 } else {
                     composerBar(createSession, voiceController)
+                        .fixtureFact("newSessionType", createSession.selectedSessionTypeId ?? "none")
                 }
             }
             .paiScreenBackground()
