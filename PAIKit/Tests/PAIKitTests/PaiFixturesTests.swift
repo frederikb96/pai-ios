@@ -121,7 +121,9 @@ final class PaiFixturesTests: XCTestCase {
             method: "GET", path: "/api/drafts",
             arguments: ["-PaiFixtureMode", "-PaiFixtureNewSessionType", "mailverdict"])
         let rows = try JSONSerialization.jsonObject(with: match.body()) as? [[String: Any]]
-        XCTAssertEqual(rows?.first { $0["key"] as? String == "new" }?["session_type"] as? String, "mailverdict")
+        let new = rows?.first { $0["key"] as? String == "new" }
+        XCTAssertEqual(new?["session_type"] as? String, "mailverdict")
+        XCTAssertTrue(new?["working_dir"] is NSNull, "a directory in the draft would restore the Custom type")
     }
 
     func testTheAssistantFixturesDecodeIntoTheRealModels() throws {
