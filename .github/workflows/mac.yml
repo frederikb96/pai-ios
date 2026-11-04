@@ -147,6 +147,52 @@ jobs:
             || { echo "::error::the extension's build $share_build differs from the app's $app_build"; exit 1; }
           echo 'background modes, URL scheme, generated keys, framework minimum OS and share extension all present'
 
+      # The controls: the same install-time traps, plus the one a control adds — its intent has to
+      # be in the app's App Intents metadata as well as the extension's, or tapping the control in
+      # Control Center fails without opening the app.
+      - name: The controls extension is embedded and declares what it needs
+        run: |
+          set -o pipefail
+          app=$(find build/dd/Build/Products -name '*.app' -maxdepth 3 | head -1)
+          [ -n "$app" ] || { echo 'build produced no .app'; exit 1; }
+          appex="$app/PlugIns/PAIControls.appex"
+          [ -d "$appex" ] \
+            || { echo '::error::PAIControls.appex is not embedded in PlugIns/ — check the copy phase and the target dependency'; exit 1; }
+
+          plutil -p "$appex/Info.plist" > /tmp/controls-info.txt
+          fail=0
+
+          display_name=$(plutil -extract CFBundleDisplayName raw "$appex/Info.plist" 2>/dev/null || echo "")
+          [ -n "$display_name" ] \
+            || { echo '::error::PAIControls CFBundleDisplayName is empty — fails at install as an opaque "Unable to Install"'; fail=1; }
+
+          point_id=$(plutil -extract NSExtension.NSExtensionPointIdentifier raw "$appex/Info.plist" 2>/dev/null || echo "")
+          [ "$point_id" = "com.apple.widgetkit-extension" ] \
+            || { echo "::error::NSExtensionPointIdentifier is '$point_id', not com.apple.widgetkit-extension"; fail=1; }
+
+          appex_id=$(plutil -extract CFBundleIdentifier raw "$appex/Info.plist" 2>/dev/null || echo "")
+          [ "$appex_id" = "com.frederikberg.pai.controls" ] \
+            || { echo "::error::appex CFBundleIdentifier is '$appex_id', not com.frederikberg.pai.controls"; fail=1; }
+
+          app_short=$(plutil -extract CFBundleShortVersionString raw "$app/Info.plist" 2>/dev/null || echo "")
+          app_build=$(plutil -extract CFBundleVersion raw "$app/Info.plist" 2>/dev/null || echo "")
+          appex_short=$(plutil -extract CFBundleShortVersionString raw "$appex/Info.plist" 2>/dev/null || echo "")
+          appex_build=$(plutil -extract CFBundleVersion raw "$appex/Info.plist" 2>/dev/null || echo "")
+          [ "$app_short" = "$appex_short" ] && [ "$app_build" = "$appex_build" ] \
+            || { echo "::error::version mismatch: app ${app_short}/${app_build} vs appex ${appex_short}/${appex_build} — App Store Connect rejects this"; fail=1; }
+
+          for bundle in "$app" "$appex"; do
+            grep -rqs "OpenQuickActionsIntent" "$bundle/Metadata.appintents" \
+              || { echo "::error::OpenQuickActionsIntent is missing from $(basename "$bundle")/Metadata.appintents — SharedIntents/ is not compiled into it"; \
+                   ls -la "$bundle/Metadata.appintents" 2>&1 || true; fail=1; }
+          done
+
+          if [ "$fail" -ne 0 ]; then
+            cat /tmp/controls-info.txt
+            exit 1
+          fi
+          echo 'controls appex checks out'
+
       # Runs after the app build on purpose. This step compiles the whole package on a macOS host,
       # which is the only place the UIKit-guarded files compile at all — so it fails for reasons
       # that have nothing to do with the app target, and running it first means one bad constant

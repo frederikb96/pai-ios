@@ -44,6 +44,12 @@ views are thin, and anything a unit test could catch lives in the package.
 
 Signing needs one thing the app alone does not: the App Store profile `PAI Share App Store` for `com.frederikberg.pai.share`, in the repository secret `IOS_SHARE_PROVISIONING_PROFILE_BASE64`.
 
+## The Control Center control
+
+`PAIControls/` is a third target, a WidgetKit extension offering one 1x1 control, Quick actions, that opens the quick-actions screen from Control Center, the Lock Screen or the Action button. `SharedIntents/` holds the intent it runs and is compiled into the app as well as the extension: a control opens the app only when the app holds the very same intent type.
+
+Signing needs the App Store profile `PAI Controls App Store` for `com.frederikberg.pai.controls`, in the repository secret `IOS_CONTROLS_PROVISIONING_PROFILE_BASE64`.
+
 ## Notes offline
 
 The notes open without a connection. The index, every note opened on the phone, the favourites,
@@ -83,7 +89,7 @@ The package needs only a Swift 6.2 toolchain, on any platform:
 ```
 swift build --package-path PAIKit --build-tests && \
   swift test --package-path PAIKit --skip-build
-swift format lint --recursive --strict PAIKit PAI PAIShare
+swift format lint --recursive --strict PAIKit PAI PAIShare PAIControls SharedIntents
 ```
 
 Two scans cover the app target without an iOS SDK: `./Tooling/parse-swift.sh` checks syntax (it stops

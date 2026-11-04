@@ -91,6 +91,7 @@ jobs:
           IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
           IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
           IOS_SHARE_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_SHARE_PROVISIONING_PROFILE_BASE64 }}
+          IOS_CONTROLS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_CONTROLS_PROVISIONING_PROFILE_BASE64 }}
           IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
           MARKETING_VERSION: ${{ steps.version.outputs.marketing }}
           CURRENT_PROJECT_VERSION: ${{ steps.version.outputs.build }}
