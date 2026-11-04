@@ -47,6 +47,7 @@ struct SubagentBar: View {
             toasts.show(message, kind: .error)
             store?.clearActionError()
         }
+        .fixtureFact("composer", "subagent-bar")
         .accessibilityIdentifier("subagent-bar")
     }
 

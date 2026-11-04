@@ -81,8 +81,11 @@ struct ComposerBar: View {
                 SessionListDomain.replacesComposer(session, ownsTake: ownsTake)
             {
                 NonDrivableComposerBar(session: session, machines: machines)
+                    .fixtureFact("composer", "non-drivable")
             } else if let draftStore, let voiceController = environment.connection?.voice {
                 drivableComposer(draftStore: draftStore, voiceController: voiceController)
+                    .fixtureFact("composer", "drivable")
+                    .fixtureFact("composerDraft", draftStore.draft(for: sessionID).text)
             } else {
                 Color.clear.frame(height: ComposerTextEditor.minHeight)
             }
@@ -681,7 +684,8 @@ struct ComposerBar: View {
     // MARK: - Session / machine lookup
 
     private var currentSession: Session? {
-        sessions.rows.first { $0.session.id == sessionID }?.session
+        // Not `rows`: the list leaves subagents out, and a subagent's composer is the subagent bar.
+        sessions.session(withId: sessionID)
     }
 
     /// The transcript's own live SSE figure wins once it has reported anything for this session —

@@ -48,7 +48,7 @@
 
         /// The subagent of ``sessionID`` in the corpus (`PaiFixtures.sessionSubagent`), what
         /// `-PaiFixtureRoute subagentSession` opens.
-        public static let subagentSessionID = "eb516249-128b-48cd-894c-7afdacc5643c"
+        public static let subagentSessionID = Route.fixtureSubagentSessionID
 
         /// Whether `-PaiFixtureNotesFilterFocused` was passed — how the Mac workflow reaches the
         /// note index with its search field actually focused, a state a plain launch cannot reach.

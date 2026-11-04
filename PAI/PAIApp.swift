@@ -71,12 +71,15 @@ struct PAIApp: App {
             // screen renders, every check passes and the size floor is satisfied when the gate
             // never opens — the failure is indistinguishable from success without this.
             router.register("GET", "/fixture") { _ in
-                .encoding([
+                // What the screens on display report about themselves (`fixtureFact`) rides along,
+                // so a run can assert on content and not only on the route it launched.
+                let reported: [String: String] = [
                     "fixtureMode": String(PaiFixtureLaunch.isEnabled()),
                     "requestedRoute": PaiFixtureLaunch.requestedRouteName() ?? "none",
                     "hasToken": String(KeychainTokenStore().read() != nil),
                     "keychainWriteStatus": String(KeychainTokenStore.lastWriteStatus),
-                ])
+                ]
+                return .encoding(reported.merging(FixtureFacts.shared.snapshot) { fixed, _ in fixed })
             }
 
             // Parses through the real parser, so this reports what the renderer would actually be
