@@ -67,6 +67,10 @@ struct ComposerActionMenu: View {
     /// a command.
     var offersProcessActions: Bool = true
     var onStartCallAfterSend: () -> Void = {}
+    /// Whether playback (replies read aloud) is on for this session; `nil` where it is not offered
+    /// (the new-session composer has no session to switch it on for).
+    var playbackOn: Bool? = nil
+    var onTogglePlayback: () -> Void = {}
 
     private var computerLabel: String {
         if isOnTheCall { return "Back to the call in this session" }
@@ -119,6 +123,14 @@ struct ComposerActionMenu: View {
                     .accessibilityIdentifier("composer-menu-call-this-session")
                 }
                 Divider()
+            }
+            if let playbackOn {
+                Button {
+                    onTogglePlayback()
+                } label: {
+                    Label(playbackOn ? "Turn off playback" : "Turn on playback", systemImage: "headphones")
+                }
+                .accessibilityIdentifier("composer-menu-playback")
             }
             Button {
                 onPastRecordings()

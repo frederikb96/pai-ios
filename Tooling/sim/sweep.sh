@@ -17,7 +17,7 @@ set -o pipefail
 # shellcheck source=lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 
-SECTIONS="none routes measure note-bench auth-rejected fullscreen-image fullscreen-pdf secret-prompt compact-chip mailverdict person-settings
+SECTIONS="none routes measure note-bench auth-rejected fullscreen-image fullscreen-pdf secret-prompt compact-chip mailverdict person-settings playback
 new-session-landing notes-filtering notifications-filter scheduler-task-push settings-notes-cache
 note-uncached-online notes-offline jump-landing deep-link-landing warm-jump clamped-landing note-refused"
 
@@ -264,6 +264,23 @@ if want person-settings; then
   # The e-mail switch, read from the person's settings.
   screenshot person-settings -PaiFixtureRoute settings -PaiFixtureScrollTo emailNotifications
   fact_assert person-settings emailNotifications on
+  xcrun simctl terminate "$udid" "$bundle" || true
+fi
+
+if want playback; then
+  # The player: the session's Listen chips (the plain session shot), the mini bar with playback on
+  # and nothing playing, with a reply in hand, with a refusal, and the full view.
+  screenshot playback-on -PaiFixtureRoute session -PaiFixturePlayback on
+  fact_assert playback-on playbackBar idle
+  xcrun simctl terminate "$udid" "$bundle" || true
+  screenshot playback-paused -PaiFixtureRoute session -PaiFixturePlayback paused
+  fact_assert playback-paused playbackBar paused
+  xcrun simctl terminate "$udid" "$bundle" || true
+  screenshot playback-error -PaiFixtureRoute session -PaiFixturePlayback error
+  fact_assert playback-error playbackBar error
+  xcrun simctl terminate "$udid" "$bundle" || true
+  screenshot playback-sheet -PaiFixtureRoute session -PaiFixturePlayback sheet
+  fact_assert playback-sheet playbackSheet "Both halves are done."
   xcrun simctl terminate "$udid" "$bundle" || true
 fi
 

@@ -105,8 +105,28 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
 
         let content = measuredContentHeight(
             MarkdownParser.parse(proseSensitiveText), atWidth: 400 - 38, measurer: measurer, cache: cache)
-        // 10 above and 10 below. No timestamp line: no row carries a time of its own.
-        XCTAssertEqual(actual, content + 20)
+        // 10 above and 10 below. No timestamp line: no row carries a time of its own. The Listen
+        // chip (28) sits under the text after a gap of 6.
+        XCTAssertEqual(actual, content + 20 + 28 + 6)
+    }
+
+    /// The Listen chip is part of a reply's measured height exactly when the reply has something to
+    /// read aloud: a reply that is only a file marker keeps the height it had (one 22 pt file
+    /// chip), and a spoken one gains the chip and its gap.
+    func testTheListenChipCostsHeightOnlyUnderAReplyWithSpeech() {
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+        func height(_ content: String) -> Double? {
+            TranscriptRowLayout.height(
+                for: message(type: .assistant, content: content), width: width, environment: environment,
+                isRevealed: revealAll, measurer: measurer, cache: cache, metrics: metrics)
+        }
+        let markerOnly = height("pai-file: /tmp/a.png")!
+        let spoken = height("Hello")!
+        let spokenWithFile = height("Hello\npai-file: /tmp/a.png")!
+        let blockHeight = spoken - 20 - 28 - 6
+        XCTAssertEqual(spokenWithFile, 20 + blockHeight + 6 + 28 + 6 + 22, "text, chip, file chip, three children")
+        XCTAssertEqual(markerOnly, 20 + blockHeight + 6 + 22, "no chip, the marker line is still text")
     }
 
     /// A row's own timestamp costs no height at all — time is a separator above the rows that
@@ -389,7 +409,8 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
             measuredContentHeight(
                 MarkdownParser.parse(proseSensitiveText), atWidth: 400 - 38, measurer: measurer, cache: cache) + 20
 
-        XCTAssertEqual(actual, thinkingHeight + proseHeight)
+        // The reply's Listen chip: 28, after a gap of 6.
+        XCTAssertEqual(actual, thinkingHeight + proseHeight + 28 + 6)
     }
 
     // MARK: - User bubble attachments
@@ -485,8 +506,8 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
 
         let content = measuredContentHeight(
             MarkdownParser.parse(messageContent), atWidth: 400 - 38, measurer: measurer, cache: cache)
-        // 20: the prose row's own padding. 44: two 22pt chips. 12: two 6pt gaps.
-        XCTAssertEqual(actual, 20 + content + 44 + 12)
+        // 20: the prose row's own padding. 44: two 22pt chips and 28 for the Listen chip. 18: three 6pt gaps.
+        XCTAssertEqual(actual, 20 + content + 44 + 28 + 18)
     }
 
     // MARK: - Bubbles a person is behind

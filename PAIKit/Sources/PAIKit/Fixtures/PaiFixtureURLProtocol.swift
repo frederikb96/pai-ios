@@ -49,7 +49,10 @@
             // JSON content-type on binary PNG bytes would still mislead the next person to read it.
             let isStream = path.hasSuffix("/stream") || path.hasSuffix("/terminal")
             let isAttachment = path.hasPrefix("/api/session/") && path.hasSuffix("/attachment")
-            let contentType = isStream ? "text/event-stream" : (isAttachment ? "image/png" : "application/json")
+            let isAudio = path.hasPrefix("/api/session/") && path.hasSuffix("/audio")
+            let contentType =
+                isStream
+                ? "text/event-stream" : (isAttachment ? "image/png" : (isAudio ? "audio/wav" : "application/json"))
             let response = HTTPURLResponse(
                 url: request.url ?? URL(string: "https://fixture.invalid")!,
                 statusCode: match.status,
@@ -126,6 +129,17 @@
                             sessionText: PaiFixtureLaunch.requestedDraftText(arguments: arguments),
                             newSessionType: PaiFixtureLaunch.requestedNewSessionType(arguments: arguments)))
                 }
+            }
+            // Playback: the manifest is a refusal under `-PaiFixturePlayback error`, the audio a silent file.
+            if method == "GET", path.hasPrefix("/api/session/"), let range = path.range(of: "/playback/") {
+                if path.hasSuffix("/audio") {
+                    return Match(status: 200) { PaiFixtures.silentWav(seconds: 2) }
+                }
+                _ = range
+                if PaiFixtureLaunch.requestedPlayback(arguments: arguments) == "error" {
+                    return Match(status: 429) { PaiFixtures.data(PaiFixtures.playbackRefused) }
+                }
+                return Match(status: 200) { PaiFixtures.data(PaiFixtures.playbackManifest) }
             }
             // The feed is filtered by the query the way the server filters it, so a screenshot of the
             // Scheduled or Not scheduled view shows the rows that view keeps.

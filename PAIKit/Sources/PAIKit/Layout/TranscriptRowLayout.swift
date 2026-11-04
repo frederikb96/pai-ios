@@ -55,6 +55,9 @@ public enum TranscriptRowMetrics {
     /// The gap between a user bubble's own text and its first attachment chip, and between
     /// chips themselves — `UserBubbleView`'s own `VStack(spacing: attachmentChipSpacing)`.
     public static let attachmentChipSpacing: Double = 6
+    /// The Listen chip under a reply that has something to read aloud. Always drawn, whether or not
+    /// playback is on, so switching it on never changes a measured row.
+    public static let listenChipHeight: Double = 28
     /// The gap between sibling blocks in one markdown content stack — `MarkdownContentView`'s
     /// own `VStack(spacing: markdownBlockSpacing)`, which draws a card's own top-level blocks and
     /// a list item's or block quote's nested ones identically. `TranscriptCards.swift`'s
@@ -399,8 +402,11 @@ public enum TranscriptRowLayout {
             switch card.kind {
             case .assistantBubble(let text, let filePaths):
                 let hasText = !text.isEmpty
-                let chips = Double(filePaths.count) * TranscriptRowMetrics.attachmentChipHeight
-                let childCount = (hasText ? 1 : 0) + filePaths.count
+                let listenable = PlaybackModel.hasSpeech(text)
+                let chips =
+                    Double(filePaths.count) * TranscriptRowMetrics.attachmentChipHeight
+                    + (listenable ? TranscriptRowMetrics.listenChipHeight : 0)
+                let childCount = (hasText ? 1 : 0) + filePaths.count + (listenable ? 1 : 0)
                 let gaps = childCount > 1 ? Double(childCount - 1) * TranscriptRowMetrics.attachmentChipSpacing : 0
                 return TranscriptRowMetrics.proseRowPadding * 2 + (hasText ? content : 0) + chips + gaps
             default:
