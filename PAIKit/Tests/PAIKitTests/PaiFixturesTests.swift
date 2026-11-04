@@ -128,6 +128,10 @@ final class PaiFixturesTests: XCTestCase {
 
     func testTheAssistantFixturesDecodeIntoTheRealModels() throws {
         let models = try JSONDecoder().decode(SessionModelsResponse.self, from: Data(PaiFixtures.sessionModels.utf8))
+        let agents = try JSONDecoder().decode([Machine].self, from: Data(PaiFixtures.agents.utf8))
+        XCTAssertTrue(
+            agents.first?.sessionTypes.contains { $0.id == "mailverdict" } == true,
+            "the new-session screen draws the environment row only for a type its machine lists")
         XCTAssertEqual(models.mailverdict?.defaultModel, "claude-opus-5-5")
         XCTAssertEqual(models.ultrafast?.models.count, 2)
         let defaults = try JSONDecoder().decode(SessionDefaults.self, from: Data(PaiFixtures.sessionDefaults.utf8))
