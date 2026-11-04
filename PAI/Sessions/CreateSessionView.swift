@@ -568,6 +568,7 @@ struct CreateSessionView: View {
                     text: text, caret: composerCaret, names: skillNames(createSession),
                     liveTake: liveTakeOwnsBox(voiceController)),
                 keywords: SkillComposer.keywordWords(text: text, liveTake: liveTakeOwnsBox(voiceController)),
+                builtinCommand: SkillComposer.builtinCommand(text: text, liveTake: liveTakeOwnsBox(voiceController)),
                 onFix: { item in fixSkillMention(item, createSession, voiceController) })
 
             // Same left-to-right order as `ComposerBar`: field, plus, mic, send. Two composers

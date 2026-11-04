@@ -224,7 +224,7 @@ extension Route {
         "session", "terminal", "settings", "createSession", "subagents", "notes", "note", "noteUncached", "noteLarge",
         "noteContainers", "notePreview", "notifications", "recordings", "arcSpec", "apps", "arcSpecList", "arcReport",
         "arcOverview",
-        "schedulerList", "schedulerTask", "quickActions", "computerCall", "canteen", "usage",
+        "schedulerList", "schedulerTask", "quickActions", "computerCall", "canteen", "usage", "subagentSession",
     ]
 
     /// Every spec-scoped fixture route answers under, regardless of which uuid the request
@@ -255,6 +255,7 @@ extension Route {
     ) -> Route? {
         switch name {
         case "session": return .session(id: sessionID, messageID: messageID)
+        case "subagentSession": return .session(id: PaiFixtureLaunch.subagentSessionID, messageID: messageID)
         case "terminal": return .terminal(sessionID: sessionID)
         case "settings": return .settings
         case "createSession": return .createSession

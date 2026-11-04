@@ -17,7 +17,7 @@ set -o pipefail
 # shellcheck source=lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 
-SECTIONS="none routes measure note-bench auth-rejected fullscreen-image fullscreen-pdf secret-prompt
+SECTIONS="none routes measure note-bench auth-rejected fullscreen-image fullscreen-pdf secret-prompt compact-chip
 new-session-landing notes-filtering notifications-filter scheduler-task-push settings-notes-cache
 note-uncached-online notes-offline jump-landing deep-link-landing warm-jump clamped-landing note-refused"
 
@@ -58,6 +58,22 @@ screenshot() {
       # real screen, passes every check and satisfies the size floor — so without this
       # a wrong screen is indistinguishable from the right one.
       curl -sS --max-time 3 "http://127.0.0.1:8765/fixture" -o "artifacts/fixture-$name.json" || true
+      # The route the running app was launched with must be the one asked for: a launch onto an
+      # app that was still running ignores its arguments and photographs whatever was on screen.
+      want_route=""
+      prev=""
+      for arg in "$@"; do
+        [ "$prev" = "-PaiFixtureRoute" ] && want_route=$arg
+        prev=$arg
+      done
+      if [ -n "$want_route" ]; then
+        got_route=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('requestedRoute',''))" \
+          "artifacts/fixture-$name.json" 2>/dev/null || echo "")
+        if [ "$got_route" != "$want_route" ]; then
+          echo "::error::$name: launched for route '$want_route' but the app reports '$got_route' — a previous instance was still running"
+          fail=1
+        fi
+      fi
       ok=1
       break
     fi
@@ -114,6 +130,10 @@ screenshot root
 curl -sS --max-time 5 "http://127.0.0.1:8765/screens" -o artifacts/screens.json \
   || echo '{"screens":[]}' > artifacts/screens.json
 names=$(python3 -c "import json; print('\n'.join(json.load(open('artifacts/screens.json'))['screens']))")
+
+# `simctl launch` on a running app does nothing, launch arguments included: without this the first
+# screenshot after the root one photographs the root screen again, labelled with its own route.
+xcrun simctl terminate "$udid" "$bundle" || true
 
 # A selection that matches nothing would pass by doing nothing.
 for item in $(echo "$ONLY" | tr ',' ' '); do
@@ -206,6 +226,12 @@ if want secret-prompt; then
   # that is carrying one. Nothing in fixture mode has a live conversation to raise a real
   # prompt, so `-PaiFixtureSecretPrompt` hands the session list one instead.
   screenshot secret-prompt -PaiFixtureRoute session -PaiFixtureSecretPrompt
+  xcrun simctl terminate "$udid" "$bundle" || true
+fi
+
+if want compact-chip; then
+  # A draft that starts with `/compact` gets its own chip in the composer's chip row.
+  screenshot compact-chip -PaiFixtureRoute session -PaiFixtureDraftText "/compact keep the migration plan"
   xcrun simctl terminate "$udid" "$bundle" || true
 fi
 

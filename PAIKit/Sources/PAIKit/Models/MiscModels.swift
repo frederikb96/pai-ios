@@ -161,11 +161,27 @@ public struct SecretPrompt: Codable, Sendable, Equatable {
     public let names: [String]
     /// What the session said it needs them for, if it said anything.
     public let reason: String?
+    /// The subset of `names` held in vault 4, the compartment a grant-all never carries along on
+    /// its own. Empty for a prompt stored before the field existed.
+    public let vault4: [String]
 
-    public init(at: String, names: [String], reason: String?) {
+    public init(at: String, names: [String], reason: String?, vault4: [String] = []) {
         self.at = at
         self.names = names
         self.reason = reason
+        self.vault4 = vault4
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case at, names, reason, vault4
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        at = try container.decode(String.self, forKey: .at)
+        names = try container.decode([String].self, forKey: .names)
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
+        vault4 = try container.decodeIfPresent([String].self, forKey: .vault4) ?? []
     }
 }
 

@@ -172,8 +172,9 @@ public enum SecretGrantResult: Sendable, Equatable {
 public enum SecretRequestsResult: Sendable, Equatable {
     /// Gated names the live conversation has asked for and not yet been granted. Empty is a
     /// legitimate answer — "asked, and got nothing" — distinct from `.notGrantable`, where there
-    /// is no live conversation to have asked anything.
-    case names([String])
+    /// is no live conversation to have asked anything. `vault4` is the subset of `names` held in
+    /// vault 4.
+    case names([String], vault4: [String])
     /// 409 — same predicate as `Session.secretGrantable`; this session cannot be granted access
     /// right now regardless of scope.
     case notGrantable
@@ -1174,7 +1175,10 @@ public struct PaiApiClient: Sendable {
     /// for and not yet been granted, for the sheet to show before anyone types a passphrase.
     /// Owner-only, same as every other session route.
     public func getSecretRequests(sessionId: String) async throws -> SecretRequestsResult {
-        struct Response: Decodable { let names: [String] }
+        struct Response: Decodable {
+            let names: [String]
+            let vault4: [String]?
+        }
         let (status, data) = try await sendPassingThrough(
             path: "/api/session/\(sessionId)/secret-requests",
             method: "GET",
@@ -1182,7 +1186,8 @@ public struct PaiApiClient: Sendable {
         )
         guard status != 409 else { return .notGrantable }
         do {
-            return .names(try JSONDecoder().decode(Response.self, from: data).names)
+            let response = try JSONDecoder().decode(Response.self, from: data)
+            return .names(response.names, vault4: response.vault4 ?? [])
         } catch {
             throw PaiError.decoding("\(error)")
         }
@@ -1295,6 +1300,33 @@ public struct PaiApiClient: Sendable {
             passthrough: [409]
         )
         return status == 409 ? .alreadyAnswered : .declined
+    }
+
+    // MARK: Subagent chat
+
+    /// `GET /api/session/{id}/subagent-controls` — what may be done with this subagent and the
+    /// state of the messages sent to it. Nothing arrives on the agent's own stream when these
+    /// change, so callers re-read it (`SubagentControlsStore`).
+    public func getSubagentControls(sessionId: String) async throws -> SubagentControlsResponse {
+        try await send(path: "/api/session/\(sessionId)/subagent-controls")
+    }
+
+    /// `POST /api/session/{id}/subagent-nudge` — a message for a subagent, passed through its
+    /// conversation. 409 carries the reason it is not allowed, 422 an empty or over-long text.
+    public func sendSubagentNudge(sessionId: String, text: String) async throws -> SubagentNudgeResponse {
+        struct Body: Encodable { let text: String }
+        return try await send(
+            path: "/api/session/\(sessionId)/subagent-nudge",
+            method: "POST",
+            body: try Self.jsonBody(Body(text: text))
+        )
+    }
+
+    /// `POST /api/session/{id}/subagent-interrupt` — stops exactly this agent and tells its
+    /// conversation. 409 carries the reason (or that the agent software is too old), 502 the
+    /// worker's own words.
+    public func interruptSubagent(sessionId: String) async throws -> SubagentInterruptResponse {
+        try await send(path: "/api/session/\(sessionId)/subagent-interrupt", method: "POST")
     }
 
     // MARK: App secrets

@@ -41,6 +41,15 @@ final class RouteNamedTests: XCTestCase {
         XCTAssertEqual(Route.named("arcSpecList", sessionID: "anything"), .arcSpecList)
     }
 
+    func testNamedSubagentSessionOpensTheCorpusSubagent() throws {
+        XCTAssertEqual(
+            Route.named("subagentSession", sessionID: "ignored"),
+            .session(id: PaiFixtureLaunch.subagentSessionID))
+        let rows = try JSONSerialization.jsonObject(with: Data(PaiFixtures.sessions.utf8)) as? [[String: Any]]
+        let row = rows?.first { $0["id"] as? String == PaiFixtureLaunch.subagentSessionID }
+        XCTAssertEqual(row?["kind"] as? String, "subagent", "the route would open a session that is not one")
+    }
+
     func testUnrecognisedNameParsesToNil() {
         XCTAssertNil(Route.named("not-a-real-screen", sessionID: "s1"))
     }

@@ -1,7 +1,7 @@
 import PAIKit
 import SwiftUI
 
-/// Arms a grant of every gated secret for the session the new-session screen is about to start —
+/// Arms a grant of the gated store (vault 4 excepted) for the session the new-session screen is about to start —
 /// there is no conversation to grant yet, so the backend holds the passphrase until the session
 /// the next send creates is up, then grants it. Same shape and passphrase handling as
 /// `SecretGrantSheet`: the passphrase lives only in `passphrase` and is cleared on every exit.
@@ -32,7 +32,7 @@ struct SecretPregrantSheet: View {
                         .accessibilityIdentifier("secret-pregrant-passphrase")
                 } footer: {
                     Text(
-                        "Grants every gated secret to the session your next message starts, once it is up. "
+                        "Grants everything in the gated store except vault 4 to the session your next message starts, once it is up. "
                             + "Cancel it from the plus menu before sending.")
                 }
                 Section {

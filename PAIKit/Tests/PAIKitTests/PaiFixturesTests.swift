@@ -91,6 +91,31 @@ final class PaiFixturesTests: XCTestCase {
         XCTAssertEqual(states, ["starting", "ready", "blocked", "attention", "closed"])
     }
 
+    /// The subagent bar's controls are decoded by the real model, so a key that drifts from the
+    /// contract fails here instead of photographing a read-only bar.
+    func testSubagentControlsFixtureDecodes() throws {
+        let response = try JSONDecoder().decode(
+            SubagentControlsResponse.self, from: Data(PaiFixtures.subagentControls.utf8))
+        XCTAssertTrue(response.controls.canNudge)
+        XCTAssertTrue(response.controls.canInterrupt)
+        XCTAssertEqual(response.nudges.map(\.state), [.delivered, .delivered, .failed])
+        XCTAssertFalse(response.nudges.contains { $0.state.isInFlight }, "an in-flight message would poll forever")
+        _ = try JSONDecoder().decode(SubagentNudgeResponse.self, from: Data(PaiFixtures.subagentNudgeQueued.utf8))
+        _ = try JSONDecoder().decode(
+            SubagentInterruptResponse.self, from: Data(PaiFixtures.subagentInterrupted.utf8))
+    }
+
+    func testDraftTextFlagReplacesOnlyTheSessionDraft() throws {
+        let match = PaiFixtureURLProtocol.route(
+            method: "GET", path: "/api/drafts",
+            arguments: ["-PaiFixtureMode", "-PaiFixtureDraftText", "/compact keep the \"plan\""])
+        let rows = try JSONSerialization.jsonObject(with: match.body()) as? [[String: Any]]
+        let session = rows?.first { $0["key"] as? String == PaiFixtureLaunch.sessionID }
+        XCTAssertEqual(session?["text"] as? String, "/compact keep the \"plan\"")
+        let new = rows?.first { $0["key"] as? String == "new" }
+        XCTAssertEqual(new?["text"] as? String, "Check whether the ")
+    }
+
     /// The secret-prompt variant is built by rewriting a line of the ordinary page, which is
     /// exactly the edit that stops a fixture parsing without anything noticing — the screenshot
     /// run would then photograph an error screen and still report success.
@@ -99,7 +124,9 @@ final class PaiFixturesTests: XCTestCase {
             ($0["secret_prompt"] as? [String: Any]) != nil
         }
         let prompt = waiting?["secret_prompt"] as? [String: Any]
-        XCTAssertEqual(prompt?["names"] as? [String], ["GH_TOKEN_ADMIN", "KUBECONFIG_HOMELAB"])
+        XCTAssertEqual(
+            prompt?["names"] as? [String], ["GH_TOKEN_ADMIN", "KUBECONFIG_HOMELAB", "TAILSCALE_ADMIN_KEY"])
+        XCTAssertEqual(prompt?["vault4"] as? [String], ["TAILSCALE_ADMIN_KEY"])
         XCTAssertEqual(
             jsonArray(PaiFixtures.sessionsWithSecretPrompt).count,
             jsonArray(PaiFixtures.sessions).count,
