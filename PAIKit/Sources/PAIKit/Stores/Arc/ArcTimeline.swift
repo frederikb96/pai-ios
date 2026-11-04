@@ -65,13 +65,13 @@ public struct ArcTimelineBlock: Sendable, Equatable, Identifiable {
     public var cancelled: Int { rows.filter { $0.s == .cancelled }.count }
     public var total: Int { rows.count }
 
-    /// The flow card's small type line — `type · model-code · name`, or the single word `main`
+    /// The flow card's small type line — `type · model-code · name`, or the label `Main agent`
     /// for the main session's own work (`g.type == "main"`, which is never spawned and has no
     /// name to match a subagent lookup against). Mirrors `arcModel.ts`'s `agentLabel` exactly.
     /// `nil` only for a block with no agent assigned yet.
     public var agentLabel: String? {
         guard let g = leader?.g else { return nil }
-        if g.type == "main" { return "main" }
+        if g.type == "main" { return "Main agent" }
         let parts = [g.type, g.modelCode, g.name].compactMap { $0 }.filter { !$0.isEmpty }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }

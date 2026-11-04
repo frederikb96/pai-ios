@@ -406,7 +406,7 @@ private struct ArcMarkerBar: View {
 
 /// One flow card — a coloured icon tile at the left edge (the state, legible without opening the
 /// card, from `ArcStateStyle`'s single shared table), a small type label above the title (who is
-/// doing it: `type · model-code · name`, or `main` for the main session's own work), and the
+/// doing it: `type · model-code · name`, or `Main agent` for the main session's own work), and the
 /// leader's own plain-language sentence as the title. Mirrors `ArcBlockCard.tsx`.
 ///
 /// The icon tile and the title/body area are two SIBLING buttons, not one nested inside the
