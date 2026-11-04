@@ -112,7 +112,9 @@ struct VoiceSection: View {
     }
 
     private var recordingModeBinding: Binding<VoiceSttMode> {
-        Binding(get: { settings.defaultRecordingMode }, set: { settings.setDefaultRecordingMode($0) })
+        Binding(
+            get: { settings.defaultRecordingMode },
+            set: { mode in Task { await settings.setDefaultRecordingMode(mode) } })
     }
 
     private var micDeviceBinding: Binding<String> {
