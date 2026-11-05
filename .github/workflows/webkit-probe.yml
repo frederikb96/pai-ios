@@ -48,7 +48,7 @@ jobs:
       - name: Probe
         env:
           OUT: probe-out
-        run: Tooling/webkit-probe/run.sh "${{ inputs.modes || 'A B C D E' }}"
+        run: Tooling/webkit-probe/run.sh "${{ inputs.modes || 'B A C E A C' }}"
 
       - uses: actions/upload-artifact@v7
         if: always()

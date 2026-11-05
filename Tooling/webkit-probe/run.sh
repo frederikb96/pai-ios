@@ -3,7 +3,8 @@
 # keyboard, once per layout mode, and leaves screenshots, the accessibility frames and the page's
 # own event log in $OUT.
 #
-#   run.sh [modes]   modes default to "A B C D E" (see index.html)
+#   run.sh [modes]   modes default to "A B C D E" (see index.html); a mode may repeat, and each
+#                    round is numbered in the file names
 set -uo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../sim/lib.sh
@@ -32,7 +33,7 @@ curl -sf "http://127.0.0.1:$PORT/index.html" > /dev/null || { echo '::error::pro
 
 idb_() { idb "$@" --udid "$udid" 2>> "$OUT/idb-errors.log"; }
 mark() { curl -sf -X POST "http://127.0.0.1:$PORT/mark?step=$1" > /dev/null; }
-shot() { xcrun simctl io "$udid" screenshot "$OUT/$mode-$1.png" > /dev/null 2>&1; idb_ ui describe-all --json > "$OUT/$mode-$1.ax.json"; mark "$mode-$1"; }
+shot() { xcrun simctl io "$udid" screenshot "$OUT/$round-$mode-$1.png" > /dev/null 2>&1; mark "$round-$mode-$1"; }
 
 # frame <label> → "x y w h" of the first accessibility element with that label, in points. Safari
 # exposes its own controls this way, and the software keyboard's keys, but not the page.
@@ -106,8 +107,10 @@ sleep 5
 dismiss_tips
 xcrun simctl io "$udid" screenshot "$OUT/warmup.png" > /dev/null 2>&1
 
+round=0
 for mode in $MODES; do
-  echo "== mode $mode"
+  round=$((round + 1))
+  echo "== round $round: mode $mode"
   open_mode "$mode"
   shot 1-loaded
 
