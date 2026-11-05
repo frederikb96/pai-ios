@@ -42,6 +42,7 @@ jobs:
           brew install facebook/fb/idb-companion
           python3 -m venv /tmp/idb
           /tmp/idb/bin/pip install --quiet fb-idb
+          python3 -m pip install --quiet pillow
           echo /tmp/idb/bin >> "$GITHUB_PATH"
 
       - name: Probe

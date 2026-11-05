@@ -46,35 +46,32 @@ for e in json.load(sys.stdin):
 " "$1"
 }
 
-# page_frame <element> → "x y w h" in screen points of an element the page reported (input,
-# composer, header), from its latest report. The page's CSS pixels are points at scale 1, its
-# rects are relative to the layout viewport, and the visual viewport's top sits at CONTENT_TOP.
-CONTENT_TOP=61
-page_frame() {
-  python3 - "$OUT/events.jsonl" "$1" "$mode" "$CONTENT_TOP" <<'PY'
-import json, sys
-path, element, mode, top = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
-last = None
-for raw in open(path):
-    entry = json.loads(raw)
-    if entry.get("mode") == mode:
-        last = entry
-if last:
-    r, vv = last[element], last["vv"]
-    print(r["left"], top + r["top"] - vv["offsetTop"], r["width"], r["height"])
-PY
+# composer → "x y w h" in points of the composer as it is drawn right now.
+composer() {
+  xcrun simctl io "$udid" screenshot "$OUT/.locate.png" > /dev/null 2>&1
+  python3 "$HERE/locate.py" "$OUT/.locate.png"
 }
 
-# A key of the software keyboard, tapped where it is drawn; an HID key event when it is not there.
-key() {
-  local label=$1 hid=$2 f
-  f=$(frame "$label")
-  if [ -n "$f" ]; then
-    set -- $f
-    idb_ ui tap $(($1 + $3 / 2)) $(($2 + $4 / 2))
-  else
-    idb_ ui key "$hid"
-  fi
+# Types by tapping the software keyboard's own keys. Keyboard events from idb would read as a
+# hardware keyboard, and iOS then hides the software one, which is the thing under test.
+# Letters and space as themselves, "|" for return, "<" for delete.
+type_keys() {
+  idb_ ui describe-all --json > "$OUT/.keys.json"
+  python3 - "$OUT/.keys.json" "$1" <<'PY' | while read -r x y; do idb_ ui tap "$x" "$y" < /dev/null; done
+import json, sys
+keys = {}
+for e in json.load(open(sys.argv[1])):
+    label = e.get("AXLabel")
+    if e.get("type") == "Button" and label is not None:
+        f = e["frame"]
+        keys[label.lower()] = (int(f["x"] + f["width"] / 2), int(f["y"] + f["height"] / 2))
+for ch in sys.argv[2]:
+    name = {"|": "return", "<": "delete"}.get(ch, ch.lower())
+    if name in keys:
+        print(*keys[name])
+    else:
+        print(f"no key {name!r} on the keyboard", file=sys.stderr)
+PY
 }
 
 # Safari's first launch shows its Start Page over whatever it was asked to open.
@@ -89,27 +86,25 @@ for mode in $MODES; do
   sleep 6
   shot 1-loaded
 
-  c=$(page_frame input)
-  [ -n "$c" ] || { echo "::warning::$mode: the page never reported"; continue; }
+  c=$(composer)
+  [ -n "$c" ] || { echo "::warning::$mode: composer not on screen"; continue; }
   set -- $c
   idb_ ui tap $(($1 + $3 / 2)) $(($2 + $4 / 2))
   sleep 3
   shot 2-focused
 
-  idb_ ui text "first line"
-  for _ in 1 2 3 4 5 6 7 8; do key Return 40; done
-  idb_ ui text "last line"
+  type_keys 'first|||||||last'
   sleep 2
   shot 3-typed
 
-  for _ in $(seq 1 17); do key Delete 42; done
+  type_keys '<<<<<<<<<<<'
+
   sleep 2
   shot 4-deleted
 
   # Tap on the first line of the composer, then again where the caret landed: the second tap is
   # what brings up the edit menu. The log's selectionStart says where the first tap put the caret.
-  sleep 1
-  c=$(page_frame input)
+  c=$(composer)
   if [ -n "$c" ]; then
     set -- $c
     idb_ ui tap $(($1 + 40)) $(($2 + 22))
@@ -124,9 +119,7 @@ for mode in $MODES; do
   fi
 
   # Leave the field so the next mode starts with the keyboard down.
-  sleep 1
-  h=$(page_frame header)
-  if [ -n "$h" ]; then set -- $h; idb_ ui tap $(($1 + $3 / 2)) $(($2 + $4 / 2)); fi
+  idb_ ui tap 200 120
   sleep 2
   shot 8-blurred
 done
