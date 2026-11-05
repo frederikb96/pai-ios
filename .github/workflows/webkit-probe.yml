@@ -1,0 +1,50 @@
+name: WebKit probe
+
+# Runs a web page in the simulator's Safari with real touches and the software keyboard, and
+# keeps the screenshots, the accessibility frames and what the page itself reported. It answers
+# questions about the web UI on iOS WebKit — the keyboard, the caret, the edit menu — that no
+# desktop browser and no device emulation reproduces. `Tooling/webkit-probe/` holds the page and
+# the script; a push to a `webkit-probe/**` branch runs it, so an experiment needs no merge.
+on:
+  push:
+    branches: ['webkit-probe/**']
+  workflow_dispatch:
+    inputs:
+      modes:
+        description: 'Space-separated layout modes of the probe page'
+        type: string
+        default: 'A B C D'
+
+concurrency:
+  group: webkit-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.6'
+
+      - name: Install idb
+        run: |
+          brew tap facebook/fb
+          brew install idb-companion
+          python3 -m venv /tmp/idb
+          /tmp/idb/bin/pip install --quiet fb-idb
+          echo /tmp/idb/bin >> "$GITHUB_PATH"
+
+      - name: Probe
+        env:
+          OUT: probe-out
+        run: Tooling/webkit-probe/run.sh "${{ inputs.modes || 'A B C D' }}"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: webkit-probe
+          path: probe-out
