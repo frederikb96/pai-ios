@@ -69,7 +69,7 @@ syncViewport();
 
 const rect = (el) => {
   const r = el.getBoundingClientRect();
-  return { top: Math.round(r.top), bottom: Math.round(r.bottom), height: Math.round(r.height) };
+  return { top: Math.round(r.top), bottom: Math.round(r.bottom), height: Math.round(r.height), left: Math.round(r.left), width: Math.round(r.width) };
 };
 let seq = 0;
 function report(ev) {

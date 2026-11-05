@@ -34,7 +34,8 @@ idb_() { idb "$@" --udid "$udid" 2>> "$OUT/idb-errors.log"; }
 mark() { curl -sf -X POST "http://127.0.0.1:$PORT/mark?step=$1" > /dev/null; }
 shot() { xcrun simctl io "$udid" screenshot "$OUT/$mode-$1.png" > /dev/null 2>&1; idb_ ui describe-all --json > "$OUT/$mode-$1.ax.json"; mark "$mode-$1"; }
 
-# frame <label> → "x y w h" of the first accessibility element with that label, in points.
+# frame <label> → "x y w h" of the first accessibility element with that label, in points. Safari
+# exposes its own controls this way, and the software keyboard's keys, but not the page.
 frame() {
   idb_ ui describe-all --json | python3 -c "
 import json, sys
@@ -43,6 +44,25 @@ for e in json.load(sys.stdin):
     if (e.get('AXLabel') or '').lower() == want:
         f = e['frame']; print(int(f['x']), int(f['y']), int(f['width']), int(f['height'])); break
 " "$1"
+}
+
+# page_frame <element> → "x y w h" in screen points of an element the page reported (input,
+# composer, header), from its latest report. The page's CSS pixels are points at scale 1, its
+# rects are relative to the layout viewport, and the visual viewport's top sits at CONTENT_TOP.
+CONTENT_TOP=61
+page_frame() {
+  python3 - "$OUT/events.jsonl" "$1" "$mode" "$CONTENT_TOP" <<'PY'
+import json, sys
+path, element, mode, top = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+last = None
+for raw in open(path):
+    entry = json.loads(raw)
+    if entry.get("mode") == mode:
+        last = entry
+if last:
+    r, vv = last[element], last["vv"]
+    print(r["left"], top + r["top"] - vv["offsetTop"], r["width"], r["height"])
+PY
 }
 
 # A key of the software keyboard, tapped where it is drawn; an HID key event when it is not there.
@@ -69,8 +89,8 @@ for mode in $MODES; do
   sleep 6
   shot 1-loaded
 
-  c=$(frame Composer)
-  [ -n "$c" ] || { echo "::warning::$mode: composer not in the accessibility tree"; continue; }
+  c=$(page_frame input)
+  [ -n "$c" ] || { echo "::warning::$mode: the page never reported"; continue; }
   set -- $c
   idb_ ui tap $(($1 + $3 / 2)) $(($2 + $4 / 2))
   sleep 3
@@ -88,7 +108,8 @@ for mode in $MODES; do
 
   # Tap on the first line of the composer, then again where the caret landed: the second tap is
   # what brings up the edit menu. The log's selectionStart says where the first tap put the caret.
-  c=$(frame Composer)
+  sleep 1
+  c=$(page_frame input)
   if [ -n "$c" ]; then
     set -- $c
     idb_ ui tap $(($1 + 40)) $(($2 + 22))
@@ -103,7 +124,8 @@ for mode in $MODES; do
   fi
 
   # Leave the field so the next mode starts with the keyboard down.
-  h=$(frame "Probe header")
+  sleep 1
+  h=$(page_frame header)
   if [ -n "$h" ]; then set -- $h; idb_ ui tap $(($1 + $3 / 2)) $(($2 + $4 / 2)); fi
   sleep 2
   shot 8-blurred
