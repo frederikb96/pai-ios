@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Composer probe</title>
+<style>
+  html, body { margin: 0; background: #020617; color: #e2e8f0; font: 16px -apple-system, system-ui, sans-serif; }
+  #shell { display: flex; flex-direction: column; overflow: hidden; background: #0b1120; }
+  /* A: pinned to the visual viewport by position and transform. */
+  body.mode-A #shell { position: fixed; top: 0; left: 0; right: 0; height: var(--vvh, 100dvh); transform: translateY(var(--vvtop, 0px)); }
+  /* B: in flow, full dynamic viewport height. */
+  body.mode-B #shell { height: 100dvh; }
+  /* C and D: in flow, sized to the visual viewport; C also scrolls the document back to the top. */
+  body.mode-C #shell, body.mode-D #shell { height: var(--vvh, 100dvh); }
+  header { flex: none; height: 48px; display: flex; align-items: center; padding: 0 12px; background: #1e293b; font-weight: 600; }
+  #transcript { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 12px; }
+  #transcript p { margin: 0 0 12px; line-height: 1.5; }
+  #composer { flex: none; display: flex; align-items: flex-end; gap: 8px; padding: 8px 12px 12px; border-top: 1px solid #1e293b; }
+  textarea { flex: 1; resize: none; font: inherit; color: inherit; background: #1e293b; border: 2px solid #3b82f6; border-radius: 16px; padding: 10px 14px; line-height: 1.5; max-height: 200px; box-sizing: border-box; }
+  button { flex: none; height: 44px; width: 44px; border-radius: 12px; border: 0; background: #3b82f6; color: white; font: inherit; }
+</style>
+</head>
+<body>
+<div id="shell">
+  <header aria-label="Probe header" id="header">Mode <span id="mode-name"></span></header>
+  <div id="transcript" aria-label="Transcript"></div>
+  <div id="composer">
+    <textarea id="input" rows="1" aria-label="Composer" placeholder="Message"></textarea>
+    <button type="button" aria-label="Send">↑</button>
+  </div>
+</div>
+<script>
+const mode = new URLSearchParams(location.search).get('mode') || 'B';
+document.body.classList.add('mode-' + mode);
+document.getElementById('mode-name').textContent = mode;
+
+const transcript = document.getElementById('transcript');
+for (let i = 1; i <= 30; i++) {
+  const p = document.createElement('p');
+  p.textContent = `Reply ${i}: a paragraph long enough to wrap over a couple of lines on a phone screen, so the transcript scrolls.`;
+  transcript.appendChild(p);
+}
+transcript.scrollTop = transcript.scrollHeight;
+
+const input = document.getElementById('input');
+// The composer's own autosize, as the web UI's MessageInput does it.
+const autosize = () => {
+  input.style.height = 'auto';
+  input.style.height = `${Math.min(input.scrollHeight, 200)}px`;
+};
+input.addEventListener('input', autosize);
+autosize();
+
+const vv = window.visualViewport;
+const root = document.documentElement;
+const syncViewport = () => {
+  if (mode === 'A' || mode === 'C' || mode === 'D') {
+    root.style.setProperty('--vvh', `${vv.height}px`);
+    root.style.setProperty('--vvtop', `${vv.offsetTop}px`);
+  }
+  if (mode === 'C' && (window.scrollY !== 0 || vv.offsetTop !== 0)) window.scrollTo(0, 0);
+};
+vv.addEventListener('resize', () => { syncViewport(); report('vv-resize'); });
+vv.addEventListener('scroll', () => { syncViewport(); report('vv-scroll'); });
+syncViewport();
+
+const rect = (el) => {
+  const r = el.getBoundingClientRect();
+  return { top: Math.round(r.top), bottom: Math.round(r.bottom), height: Math.round(r.height) };
+};
+let seq = 0;
+function report(ev) {
+  const state = {
+    mode, ev, seq: ++seq, t: Math.round(performance.now()),
+    vv: { height: Math.round(vv.height), offsetTop: Math.round(vv.offsetTop), pageTop: Math.round(vv.pageTop) },
+    scrollY: Math.round(window.scrollY), innerHeight: window.innerHeight,
+    shell: rect(document.getElementById('shell')), header: rect(document.getElementById('header')),
+    input: rect(input), composer: rect(document.getElementById('composer')),
+    selectionStart: input.selectionStart, selectionEnd: input.selectionEnd,
+    valueLength: input.value.length, focused: document.activeElement === input,
+    // What the reader sees: the composer's bottom against the visual viewport's bottom, both in
+    // layout-viewport coordinates. Positive means a strip of something else sits below it.
+    gapBelowComposer: Math.round(vv.offsetTop + vv.height - document.getElementById('composer').getBoundingClientRect().bottom),
+    headerVisible: document.getElementById('header').getBoundingClientRect().bottom > vv.offsetTop,
+  };
+  navigator.sendBeacon('/log', JSON.stringify(state));
+}
+for (const ev of ['focus', 'blur', 'input']) input.addEventListener(ev, () => report(ev));
+document.addEventListener('selectionchange', () => report('selection'));
+window.addEventListener('scroll', () => { syncViewport(); report('window-scroll'); });
+setInterval(() => report('tick'), 1000);
+report('load');
+</script>
+</body>
+</html>
