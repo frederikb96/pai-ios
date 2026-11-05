@@ -9,6 +9,8 @@
   #shell { display: flex; flex-direction: column; overflow: hidden; background: #0b1120; }
   /* A: pinned to the visual viewport by position and transform. */
   body.mode-A #shell { position: fixed; top: 0; left: 0; right: 0; height: var(--vvh, 100dvh); transform: translateY(var(--vvtop, 0px)); }
+  /* E: pinned to the visual viewport by position alone, no transform. */
+  body.mode-E #shell { position: fixed; top: var(--vvtop, 0px); left: 0; right: 0; height: var(--vvh, 100dvh); }
   /* B: in flow, full dynamic viewport height. */
   body.mode-B #shell { height: 100dvh; }
   /* C and D: in flow, sized to the visual viewport; C also scrolls the document back to the top. */
@@ -55,7 +57,7 @@ autosize();
 const vv = window.visualViewport;
 const root = document.documentElement;
 const syncViewport = () => {
-  if (mode === 'A' || mode === 'C' || mode === 'D') {
+  if (mode !== 'B') {
     root.style.setProperty('--vvh', `${vv.height}px`);
     root.style.setProperty('--vvtop', `${vv.offsetTop}px`);
   }
