@@ -57,7 +57,13 @@ composer() {
 # hardware keyboard, and iOS then hides the software one, which is the thing under test.
 # Letters and space as themselves, "|" for return, "<" for delete.
 type_keys() {
-  idb_ ui describe-all --json > "$OUT/.keys.json"
+  # The simulator's accessibility service sometimes answers with nothing; a key map read then
+  # would type nothing and look like a page that swallowed the keystrokes.
+  for _ in 1 2 3 4 5; do
+    idb_ ui describe-all --json > "$OUT/.keys.json"
+    grep -q '"AXLabel": *"return"' "$OUT/.keys.json" && break
+    sleep 2
+  done
   python3 - "$OUT/.keys.json" "$1" <<'PY' | while read -r x y; do idb_ ui tap "$x" "$y" < /dev/null; done
 import json, sys
 keys = {}
