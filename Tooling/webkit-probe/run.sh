@@ -74,16 +74,41 @@ for ch in sys.argv[2]:
 PY
 }
 
+# Safari's own tips (a popover over the toolbar) cover the page; their close buttons are in the
+# accessibility tree.
+dismiss_tips() {
+  idb_ ui describe-all --json | python3 -c "
+import json, sys
+for e in json.load(sys.stdin):
+    if e.get('type') == 'Button' and (e.get('AXLabel') or '').lower() in ('close', 'dismiss', 'not now', 'continue'):
+        f = e['frame']; print(int(f['x'] + f['width'] / 2), int(f['y'] + f['height'] / 2))
+" | while read -r x y; do idb_ ui tap "$x" "$y" < /dev/null; sleep 1; done
+}
+
+# open <mode> loads the page and waits for its own load report, so a screenshot never shows the
+# page before it.
+loads() { local n; n=$(grep -c '"ev":"load"' "$OUT/events.jsonl" 2> /dev/null); echo "${n:-0}"; }
+open_mode() {
+  local before
+  before=$(loads)
+  xcrun simctl openurl "$udid" "http://127.0.0.1:$PORT/index.html?mode=$1"
+  for _ in $(seq 1 30); do
+    [ "$(loads)" -gt "$before" ] && break
+    sleep 1
+  done
+  sleep 2
+  dismiss_tips
+}
+
 # Safari's first launch shows its Start Page over whatever it was asked to open.
-xcrun simctl openurl "$udid" "http://127.0.0.1:$PORT/index.html?mode=B"
-sleep 12
-idb_ ui describe-all --json > "$OUT/warmup.ax.json"
+open_mode B
+sleep 5
+dismiss_tips
 xcrun simctl io "$udid" screenshot "$OUT/warmup.png" > /dev/null 2>&1
 
 for mode in $MODES; do
   echo "== mode $mode"
-  xcrun simctl openurl "$udid" "http://127.0.0.1:$PORT/index.html?mode=$mode"
-  sleep 6
+  open_mode "$mode"
   shot 1-loaded
 
   c=$(composer)
