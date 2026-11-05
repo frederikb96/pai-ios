@@ -17,7 +17,7 @@ set -o pipefail
 # shellcheck source=lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 
-SECTIONS="none routes measure note-bench auth-rejected fullscreen-image fullscreen-pdf secret-prompt compact-chip mailverdict person-settings playback
+SECTIONS="none routes measure note-bench auth-rejected fullscreen-image fullscreen-pdf secret-prompt compact-chip mailverdict person-settings playback playback-voice
 new-session-landing notes-filtering notifications-filter scheduler-task-push settings-notes-cache
 note-uncached-online notes-offline jump-landing deep-link-landing warm-jump clamped-landing note-refused"
 
@@ -281,6 +281,14 @@ if want playback; then
   xcrun simctl terminate "$udid" "$bundle" || true
   screenshot playback-sheet -PaiFixtureRoute session -PaiFixturePlayback sheet
   fact_assert playback-sheet playbackSheet "Both halves are done."
+  xcrun simctl terminate "$udid" "$bundle" || true
+fi
+
+if want playback-voice; then
+  # Settings' playback voices: the person's own voice picked from the account's list (the default
+  # reads while they have picked none), the Try button and the speed row.
+  screenshot playback-voice -PaiFixtureRoute settings -PaiFixtureScrollTo playbackVoice
+  fact_assert playback-voice playbackVoice "Default (George (en))"
   xcrun simctl terminate "$udid" "$bundle" || true
 fi
 

@@ -37,7 +37,9 @@ public protocol PlaybackOutput: AnyObject {
 @MainActor
 public final class PlaybackEngine {
     /// Said in the player's own line when the backup voice starts speaking after another voice.
-    public static let backupVoiceNotice = "Backup voice: playback is saving credits today."
+    public static let backupVoiceNotice = "Backup voice: ElevenLabs is saving credits."
+    /// Said once per reply when a part its voice could not read was left out.
+    public static let skippedPartNotice = "A part of this reply could not be read aloud and was skipped."
     public static let nothingToReadNotice = "There is nothing to read aloud in this reply."
 
     /// The reply the engine holds: its manifest and every segment fetched so far.
@@ -50,6 +52,9 @@ public final class PlaybackEngine {
         var segments: [Int: Data] = [:]
         var inflight: [Int: Task<PlaybackSegmentAudio, Error>] = [:]
         var failed: Set<Int> = []
+        /// Parts their voice refused on their own text; asking again would fail the same way.
+        var unreadable: Set<Int> = []
+        var skipNoted = false
         var measured: [Int: Int] = [:]
         var providers: [Int: PlaybackProvider] = [:]
 
@@ -236,10 +241,15 @@ public final class PlaybackEngine {
         }
         let data: Data
         do {
+            if track.unreadable.contains(index) { throw PlaybackRefusal.unreadablePart }
             data = try await loadSegment(track, index)
         } catch {
             guard mine == epoch else { return }
-            fail(error)
+            if (error as? PlaybackRefusal)?.isPartFailure == true {
+                await skipPart(track, index, epoch: mine)
+            } else {
+                fail(error)
+            }
             return
         }
         guard mine == epoch, self.track === track else { return }
@@ -312,8 +322,23 @@ public final class PlaybackEngine {
             return audio.data
         } catch {
             track.failed.insert(index)
+            if (error as? PlaybackRefusal)?.isPartFailure == true { track.unreadable.insert(index) }
             track.inflight[index] = nil
             throw error
+        }
+    }
+
+    /// Leaves out a part its voice could not read, says so once per reply, and plays on.
+    private func skipPart(_ track: Track, _ index: Int, epoch mine: Int) async {
+        guard self.track === track else { return }
+        if !track.skipNoted {
+            track.skipNoted = true
+            notify(Self.skippedPartNotice, false)
+        }
+        if index + 1 < track.manifest.segments.count {
+            await playSegment(index + 1, offsetMs: 0, epoch: mine)
+        } else {
+            await finishReply(track)
         }
     }
 
@@ -370,6 +395,10 @@ public final class PlaybackEngine {
             await playSegment(next, offsetMs: 0, epoch: epoch)
             return
         }
+        await finishReply(track)
+    }
+
+    private func finishReply(_ track: Track) async {
         store.markHeard(track.messageId)
         retry = nil
         releaseTrack()

@@ -141,6 +141,10 @@
                 }
                 return Match(status: 200) { PaiFixtures.data(PaiFixtures.playbackManifest) }
             }
+            // Voice samples are a silent file, whichever voice is asked for.
+            if method == "GET", path == "/api/playback/voices/sample" {
+                return Match(status: 200) { PaiFixtures.silentWav(seconds: 2) }
+            }
             // The feed is filtered by the query the way the server filters it, so a screenshot of the
             // Scheduled or Not scheduled view shows the rows that view keeps.
             if method == "GET", path == "/api/notifications" {
@@ -235,6 +239,7 @@
             exact("GET", "/api/session-types") { PaiFixtures.sessionTypes },
             exact("GET", "/api/session-models") { PaiFixtures.sessionModels },
             exact("GET", "/api/settings/llm") { PaiFixtures.sessionDefaults },
+            exact("GET", "/api/playback/voices") { PaiFixtures.playbackVoices },
             exact("GET", "/api/settings/me") { PaiFixtures.mySettings },
             exact("PUT", "/api/settings/me") { PaiFixtures.mySettings },
             exact("GET", "/api/me") { PaiFixtures.me },

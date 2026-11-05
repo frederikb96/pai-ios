@@ -16,10 +16,23 @@ extension PaiFixtures {
               "provider": null, "fallback": false }
           ],
           "usage": {
-            "credits_used": 1200, "daily_credit_cap": 5000, "allowance_limited": false,
-            "allowance_credits": null, "available_credits": 3800, "resets_at": "2026-08-30T00:00:00+00:00",
+            "credits_used": 1200, "daily_credit_cap": 5000, "resets_at": "2026-08-30T00:00:00+00:00",
             "backup": { "available": true, "budget_cents": 200, "spent_cents": 0 }
           }
+        }
+        """#
+
+    /// `GET /api/playback/voices` — a short account list; the person has picked none, so the
+    /// default (George) reads for them.
+    public static let playbackVoices: String = #"""
+        {
+          "elevenlabs": [
+            { "voice_id": "JBFqnCBsd6RMkjVDRZzb", "name": "George", "language": "en", "gender": "male" },
+            { "voice_id": "nztoarMvjgs3c0c5DINJ", "name": "Oma Elisabeth", "language": "de", "gender": "female" },
+            { "voice_id": "EXAVITQu4vr4xnSDxMaL", "name": "Sarah", "language": null, "gender": "female" }
+          ],
+          "default_voice_id": "JBFqnCBsd6RMkjVDRZzb", "builtin_voice_id": "JBFqnCBsd6RMkjVDRZzb",
+          "backup": ["marin", "cedar", "alloy"], "backup_voice": "marin"
         }
         """#
 

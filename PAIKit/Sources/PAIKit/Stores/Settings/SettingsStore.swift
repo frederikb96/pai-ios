@@ -72,6 +72,8 @@ public final class SettingsStore {
     public let sessionDefaults: SessionDefaultsStore
     /// The person's own settings (recording mode, e-mail switch, playback speed and voice).
     public let userSettings: UserSettingsStore
+    /// The voices the person can pick for read-aloud playback, and their Try samples.
+    public let playbackVoices: PlaybackVoicesStore
 
     /// Called for a recording evicted by the 10-entry cap, so whichever store holds the actual
     /// audio (a voice-capture concern, not this one's) can delete it — the same seam the web's
@@ -98,6 +100,7 @@ public final class SettingsStore {
         self.statusMessage = StatusMessageStore(api: apiClient)
         self.sessionDefaults = SessionDefaultsStore(api: apiClient)
         self.userSettings = UserSettingsStore(api: apiClient, cache: storage)
+        self.playbackVoices = PlaybackVoicesStore(api: apiClient)
 
         silenceGate = storage.value(forKey: Keys.silenceGate) ?? .standard
         micDeviceId = storage.value(forKey: Keys.micDeviceId) ?? ""
