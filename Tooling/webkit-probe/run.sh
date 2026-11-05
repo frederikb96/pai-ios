@@ -118,35 +118,51 @@ for mode in $MODES; do
   sleep 3
   shot 2-focused
 
-  type_keys 'first|||||||last'
+  # Eight lines: past the composer's 200 px cap, so it scrolls inside itself.
+  type_keys 'one|two|three|four|five|six|seven|eight'
   sleep 2
   shot 3-typed
 
-  type_keys '<<<<<<<<<<<'
-
+  # Back to six lines ("one".."six"), so each tap below has a line it should land on:
+  # "one" is characters 0-3, "two" 4-7, "three" 8-13.
+  type_keys '<<<<<<<<<<<<'
   sleep 2
-  shot 4-deleted
+  shot 4-shrunk
 
-  # Tap on the first line of the composer, then again where the caret landed: the second tap is
-  # what brings up the edit menu. The log's selectionStart says where the first tap put the caret.
+  line() { echo $(($2 + 13 + 24 * $1 - 12)); }
   c=$(composer)
   if [ -n "$c" ]; then
     set -- $c
-    idb_ ui tap $(($1 + 40)) $(($2 + 22))
+    x=$(($1 + 30)) top=$2
+    idb_ ui tap "$x" "$(line 1 "$top")"
     sleep 1.5
-    shot 5-tap-first-line
-    idb_ ui tap $(($1 + 40)) $(($2 + 22))
+    shot 5-tap-line1
+    idb_ ui tap "$x" "$(line 1 "$top")"
     sleep 1.5
-    shot 6-second-tap
-    idb_ ui tap $(($1 + $3 - 30)) $(($2 + $4 - 22))
+    shot 6-second-tap-line1
+    idb_ ui tap "$x" "$(line 3 "$top")"
     sleep 1.5
-    shot 7-tap-last-line
+    shot 7-tap-line3
+    # Scroll the transcript with the keyboard up, then aim at line 2 of wherever the composer is now.
+    idb_ ui swipe 200 200 200 320 --duration 0.4
+    sleep 1.5
+    c=$(composer)
+    if [ -n "$c" ]; then
+      set -- $c
+      idb_ ui tap $(($1 + 30)) "$(line 2 "$2")"
+      sleep 1.5
+      shot 8-scrolled-tap-line2
+    fi
   fi
+
+  type_keys '<<<<<<<<<<<<<<<<<<<<<<<<<<<'
+  sleep 2
+  shot 9-emptied
 
   # Leave the field so the next mode starts with the keyboard down.
   idb_ ui tap 200 120
   sleep 2
-  shot 8-blurred
+  shot 10-blurred
 done
 
 python3 "$HERE/summarise.py" "$OUT/events.jsonl" | tee "$OUT/summary.txt"
