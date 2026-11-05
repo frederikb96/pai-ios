@@ -157,6 +157,50 @@ final class PlaybackEngineTests: XCTestCase {
         XCTAssertEqual(rig.store.current?.status, .playing)
     }
 
+    func testAPartItsVoiceCouldNotReadIsSkippedWithOneNoticeAndTheReplyPlaysOn() async {
+        let rig = makeRig()
+        rig.output.lengthMs = 5_000
+        await rig.source.set(manifest: playbackManifest(messageId: 1, estMs: [5_000, 5_000, 5_000]), for: 1)
+        await rig.source.refuseSegment(
+            1, PlaybackRefusal(status: 502, code: "playback_backup_failed", message: "The backup voice failed."))
+        await rig.engine.start(sessionId: "s1", messageId: 1, title: "T")
+
+        rig.output.onFinished?()
+        try? await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(rig.store.current?.status, .playing, "the third part plays")
+        XCTAssertEqual(rig.output.loads.map(\.bytes), [4, 4])
+        XCTAssertEqual(rig.notices.messages.map(\.0), [PlaybackEngine.skippedPartNotice])
+        XCTAssertEqual(rig.notices.messages.last?.1, false, "a skipped part is information, not an error")
+        let fetched = await rig.source.fetched
+        XCTAssertEqual(fetched, ["1:0", "1:1", "1:2"])
+    }
+
+    func testAllPartsSkippedFinishesTheReply() async {
+        let rig = makeRig()
+        rig.output.lengthMs = 5_000
+        await rig.source.set(manifest: playbackManifest(messageId: 1, estMs: [5_000, 5_000]), for: 1)
+        let failed = PlaybackRefusal(status: 502, code: "playback_synthesis_failed", message: "failed")
+        await rig.source.refuseSegment(0, failed)
+        await rig.source.refuseSegment(1, failed)
+        await rig.engine.start(sessionId: "s1", messageId: 1, title: "T")
+        XCTAssertEqual(rig.notices.messages.map(\.0), [PlaybackEngine.skippedPartNotice], "once per reply")
+        XCTAssertTrue(rig.store.heard.contains(1))
+        XCTAssertNil(rig.store.current, "the player is idle, not stuck in an error")
+    }
+
+    func testALimitStopsThePlayerInsteadOfSkipping() async {
+        let rig = makeRig()
+        rig.output.lengthMs = 5_000
+        await rig.source.set(manifest: playbackManifest(messageId: 1, estMs: [5_000, 5_000]), for: 1)
+        await rig.source.refuseSegment(
+            1, PlaybackRefusal(status: 503, code: "playback_saving_credits", message: "Saving credits."))
+        await rig.engine.start(sessionId: "s1", messageId: 1, title: "T")
+        rig.output.onFinished?()
+        try? await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(rig.store.current?.status, .error)
+        XCTAssertEqual(rig.store.current?.notice, "Saving credits.")
+    }
+
     func testTheBackupVoiceIsAnnouncedOnlyWhenItFollowsAnotherVoice() async {
         let rig = makeRig()
         rig.output.lengthMs = 5_000

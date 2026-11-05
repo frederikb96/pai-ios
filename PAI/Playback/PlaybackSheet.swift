@@ -10,8 +10,6 @@ struct PlaybackSheet: View {
     @State private var dragMs: Double?
 
     private static let maxListed = 30
-    /// Below this many credits left today the sheet says so before a refusal does.
-    private static let lowCredits = 500
 
     private var controller: PlaybackController { .shared }
 
@@ -27,11 +25,6 @@ struct PlaybackSheet: View {
                     scrubber(current: current)
                     transport(current: current, replies: replies)
                     options(store: store, session: shownSession)
-                    if let available = lowAllowance(current) {
-                        Text("Playback is nearly used up for today (\(available) credits left).")
-                            .font(PaiTypography.caption.font)
-                            .foregroundStyle(PaiPalette.Semantic.warningText)
-                    }
                     repliesList(replies: replies, current: current, heard: store.heard)
                 }
                 .padding(16)
@@ -173,7 +166,7 @@ struct PlaybackSheet: View {
                 }
             }
             .accessibilityElement(children: .contain)
-            .accessibilityLabel("Speed")
+            .accessibilityLabel("Your speed, on every device")
         }
     }
 
@@ -217,13 +210,5 @@ struct PlaybackSheet: View {
                 }
             }
         }
-    }
-
-    /// Only a day with a shared allowance has anything to say about running low.
-    private func lowAllowance(_ current: PlaybackCurrent?) -> Int? {
-        guard let usage = current?.usage, usage.allowanceLimited, let available = usage.availableCredits,
-            available < Self.lowCredits
-        else { return nil }
-        return available
     }
 }

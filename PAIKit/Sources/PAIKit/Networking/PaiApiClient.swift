@@ -1343,7 +1343,7 @@ public struct PaiApiClient: Sendable {
     /// is for the person.
     private static let playbackRefusalStatuses: Set<Int> = [404, 409, 422, 429, 500, 502, 503]
 
-    /// `GET /api/session/{id}/playback/{message_id}` — a reply's segments and today's allowance.
+    /// `GET /api/session/{id}/playback/{message_id}` — a reply's segments and today's credits.
     /// Free: nothing is synthesised. A 404 means the reply has nothing to read aloud.
     public func getPlaybackManifest(sessionId: String, messageId: Int) async throws -> PlaybackManifest {
         let (status, data) = try await sendPassingThrough(
@@ -1358,15 +1358,39 @@ public struct PaiApiClient: Sendable {
     }
 
     /// One segment's audio and the voice that made it. Synthesised on this request when nobody ever
-    /// asked for that text, so it can be refused (cap, allowance, provider). Fetched whole with the
-    /// bearer rather than streamed, because a stream cannot carry the header and a refusal has to
-    /// be readable.
+    /// asked for that text, so it can be refused (the ceiling, the gate, a failed voice). Fetched
+    /// whole with the bearer rather than streamed, because a stream cannot carry the header and a
+    /// refusal has to be readable.
     public func fetchPlaybackSegment(sessionId: String, messageId: Int, index: Int) async throws
         -> PlaybackSegmentAudio
     {
+        let (data, http) = try await fetchPlaybackAudio(
+            path: "/api/session/\(sessionId)/playback/\(messageId)/segments/\(index)/audio", query: [])
+        let provider = http.value(forHTTPHeaderField: "X-Playback-Provider").flatMap(PlaybackProvider.init)
+        return PlaybackSegmentAudio(data: data, provider: provider)
+    }
+
+    /// `GET /api/playback/voices` — the voices a person can pick from, for any signed-in person.
+    public func getPlaybackVoices() async throws -> PlaybackVoices {
+        try await send(path: "/api/playback/voices")
+    }
+
+    /// `GET /api/playback/voices/sample` — a short mp3 of one voice: an ElevenLabs voice's own free
+    /// preview (404 when it has none), or the backup voice reading one sentence, made once and
+    /// charged to the caller's backup budget.
+    public func fetchPlaybackVoiceSample(provider: PlaybackProvider, voiceId: String) async throws -> Data {
+        try await fetchPlaybackAudio(
+            path: "/api/playback/voices/sample",
+            query: [
+                URLQueryItem(name: "provider", value: provider.rawValue),
+                URLQueryItem(name: "voice_id", value: voiceId),
+            ]
+        ).0
+    }
+
+    private func fetchPlaybackAudio(path: String, query: [URLQueryItem]) async throws -> (Data, HTTPURLResponse) {
         let request = try requestFactory.makeRequest(
-            path: "/api/session/\(sessionId)/playback/\(messageId)/segments/\(index)/audio", method: "GET",
-            query: [], body: nil, contentType: nil)
+            path: path, method: "GET", query: query, body: nil, contentType: nil)
         let (data, response) = try await urlSession.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw PaiError.transport("Response was not HTTP") }
         guard http.statusCode == 200 else {
@@ -1376,8 +1400,7 @@ public struct PaiApiClient: Sendable {
             try checkStatus(response: response, data: data)
             throw PlaybackRefusal.parse(status: http.statusCode, body: data)
         }
-        let provider = http.value(forHTTPHeaderField: "X-Playback-Provider").flatMap(PlaybackProvider.init)
-        return PlaybackSegmentAudio(data: data, provider: provider)
+        return (data, http)
     }
 
     // MARK: Per-person settings

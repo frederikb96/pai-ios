@@ -29,8 +29,8 @@ struct ComputerSection: View {
 }
 
 /// The synced voice settings, in three groups — one per engine the backend drives, since each
-/// takes different knobs: Computer (OpenAI Realtime), session replies (ElevenLabs text-to-speech),
-/// and dictation (ElevenLabs Scribe). One Save for all three: they are one row on the backend.
+/// takes different knobs: Computer (OpenAI Realtime), call mode (ElevenLabs text-to-speech reading a
+/// session's replies during a call), and dictation (ElevenLabs Scribe). One Save for all three: they are one row on the backend.
 struct SpokenVoiceSection: View {
     let store: SpokenVoiceSettingsStore
 
@@ -42,7 +42,7 @@ struct SpokenVoiceSection: View {
     var body: some View {
         if store.draft != nil {
             computerGroup
-            repliesGroup
+            callGroup
             dictationGroup
             Section {
                 Button("Save") { Task { await store.save() } }
@@ -97,14 +97,14 @@ struct SpokenVoiceSection: View {
         }
     }
 
-    private var repliesGroup: some View {
+    private var callGroup: some View {
         Section {
-            TextField("ElevenLabs voice id", text: field(\.callVoiceId))
+            TextField("Call voice — ElevenLabs voice id", text: field(\.callVoiceId))
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .accessibilityIdentifier("call-voice-id")
             Link("Voice library", destination: Self.elevenLabsVoicesURL)
-            LabeledContent("Reply speed") {
+            LabeledContent("Call speed") {
                 TextField("1", text: field(\.callSpeed))
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
@@ -114,10 +114,10 @@ struct SpokenVoiceSection: View {
                 invalid("Speed must be a number between \(bounds(callSpeedRange)).")
             }
         } header: {
-            Text("Session replies — ElevenLabs")
+            Text("Call mode — ElevenLabs")
         } footer: {
             Text(
-                "How a session's replies are read aloud in a call. ElevenLabs takes no style text, only a voice and a speed."
+                "Reads a session's replies to you during a call. Empty is the built-in voice. Replies read aloud outside a call use the playback voices below. ElevenLabs takes no style text, only a voice and a speed."
             )
         }
     }

@@ -205,6 +205,7 @@ final class AppEnvironment {
         // Built ahead of the literal rather than inside it: the recorder needs both of these, and
         // a struct literal cannot refer to fields it is still building.
         let settingsStore = SettingsStore(apiClient: client, storage: defaults)
+        settingsStore.playbackVoices.player = VoiceSampleOutput()
         #if DEBUG
             // Recordings have no REST route for `PaiFixtureURLProtocol` to answer — they are
             // client-side only, so fixture mode has to seed `SettingsStore` directly. Without

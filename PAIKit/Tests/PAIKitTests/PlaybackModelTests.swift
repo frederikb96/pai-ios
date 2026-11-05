@@ -17,9 +17,7 @@ func playbackManifest(messageId: Int = 1, estMs: [Int], durationsMs: [Int?]? = n
                 index: index, chars: 100, estMs: est, durationMs: durationsMs?[index],
                 ready: durationsMs?[index] != nil)
         },
-        usage: PlaybackUsage(
-            creditsUsed: 0, dailyCreditCap: 1000, allowanceLimited: false, allowanceCredits: nil,
-            availableCredits: 1000, resetsAt: "2026-11-05T00:00:00Z", backup: nil))
+        usage: PlaybackUsage(creditsUsed: 0, dailyCreditCap: 1000, resetsAt: "2026-11-05T00:00:00Z", backup: nil))
 }
 
 extension PlaybackManifest {
@@ -35,16 +33,10 @@ extension PlaybackManifest {
 }
 
 extension PlaybackUsage {
-    init(
-        creditsUsed: Int, dailyCreditCap: Int, allowanceLimited: Bool, allowanceCredits: Int?, availableCredits: Int?,
-        resetsAt: String, backup: PlaybackBackupUsage?
-    ) {
-        var object: [String: Any] = [
-            "credits_used": creditsUsed, "daily_credit_cap": dailyCreditCap, "allowance_limited": allowanceLimited,
-            "resets_at": resetsAt,
+    init(creditsUsed: Int, dailyCreditCap: Int?, resetsAt: String, backup: PlaybackBackupUsage?) {
+        let object: [String: Any] = [
+            "credits_used": creditsUsed, "daily_credit_cap": dailyCreditCap as Any, "resets_at": resetsAt,
         ]
-        if let availableCredits { object["available_credits"] = availableCredits }
-        if let allowanceCredits { object["allowance_credits"] = allowanceCredits }
         self = try! JSONDecoder().decode(
             PlaybackUsage.self, from: JSONSerialization.data(withJSONObject: object))
     }
@@ -124,7 +116,42 @@ final class PlaybackModelTests: XCTestCase {
         let manifest = try JSONDecoder().decode(PlaybackManifest.self, from: Data(json.utf8))
         XCTAssertEqual(manifest.segments.map(\.provider), [.openai, nil])
         XCTAssertTrue(manifest.segments[0].fallback)
-        XCTAssertEqual(manifest.usage.availableCredits, 640)
+        XCTAssertEqual(manifest.usage.dailyCreditCap, 5000, "the allowance keys an older server sends are ignored")
         XCTAssertEqual(manifest.usage.backup?.budgetCents, 200)
+    }
+
+    func testUsageDecodesWithoutTheRemovedKeysAndWithANullCeiling() throws {
+        let json = #"{"credits_used": 0, "daily_credit_cap": null, "resets_at": "2026-11-05T00:00:00+00:00"}"#
+        let usage = try JSONDecoder().decode(PlaybackUsage.self, from: Data(json.utf8))
+        XCTAssertNil(usage.dailyCreditCap)
+        XCTAssertNil(usage.backup)
+    }
+
+    func testOnlyThePartFailuresAreRefusalsAboutOnePart() {
+        func refusal(_ code: String?) -> PlaybackRefusal { PlaybackRefusal(status: 502, code: code, message: "m") }
+        XCTAssertTrue(refusal("playback_backup_failed").isPartFailure)
+        XCTAssertTrue(refusal("playback_synthesis_failed").isPartFailure)
+        for other in ["playback_saving_credits", "playback_cap_reached", nil] {
+            XCTAssertFalse(refusal(other).isPartFailure, "\(other ?? "no code") is a limit, not one part")
+        }
+    }
+
+    func testTheVoiceListDecodesAndNamesItsVoicesAndTheDefault() throws {
+        let voices = try JSONDecoder().decode(PlaybackVoices.self, from: Data(PaiFixtures.playbackVoices.utf8))
+        XCTAssertEqual(voices.elevenlabs.map(\.label), ["George (en)", "Oma Elisabeth (de)", "Sarah"])
+        XCTAssertEqual(voices.defaultVoiceLabel, "George (en)")
+        XCTAssertEqual(voices.backup, ["marin", "cedar", "alloy"])
+    }
+
+    func testAVoiceValueStandsOnTheDefaultAListedVoiceOrACustomId() throws {
+        let listed = try JSONDecoder().decode(PlaybackVoices.self, from: Data(PaiFixtures.playbackVoices.utf8))
+            .elevenlabs
+        XCTAssertEqual(PlaybackVoiceSelection.of(nil, listed: listed), .defaultVoice)
+        XCTAssertEqual(PlaybackVoiceSelection.of("", listed: listed), .defaultVoice)
+        XCTAssertEqual(
+            PlaybackVoiceSelection.of("nztoarMvjgs3c0c5DINJ", listed: listed), .listed("nztoarMvjgs3c0c5DINJ"))
+        XCTAssertEqual(PlaybackVoiceSelection.of("someone-else", listed: listed), .custom)
+        XCTAssertEqual(
+            PlaybackVoiceSelection.of("someone-else", listed: []), .custom, "an unreadable account lists nothing")
     }
 }

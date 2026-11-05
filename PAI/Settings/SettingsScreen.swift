@@ -45,6 +45,8 @@ struct SettingsScreen: View {
 
             ComputerSection(settings: settings)
 
+            PlaybackVoiceSection(userSettings: settings.userSettings, voices: settings.playbackVoices)
+
             HistorySection(settings: settings)
 
             NotesCacheSection(settings: settings)
@@ -59,6 +61,7 @@ struct SettingsScreen: View {
             }
         }
         .fixtureScrollsToAnchor()
+        .task { await settings.playbackVoices.load() }
         .paiListBackground()
         .navigationTitle("Settings")
         .accessibilityIdentifier("settings-screen")
