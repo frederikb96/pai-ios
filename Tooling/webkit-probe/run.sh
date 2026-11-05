@@ -3,7 +3,7 @@
 # keyboard, once per layout mode, and leaves screenshots, the accessibility frames and the page's
 # own event log in $OUT.
 #
-#   run.sh [modes]   modes default to "A B C D" (see index.html)
+#   run.sh [modes]   modes default to "A B C D E" (see index.html)
 set -uo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../sim/lib.sh
@@ -11,7 +11,7 @@ HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 OUT=${OUT:-probe-out}
 PORT=8123
-MODES=${1:-A B C D}
+MODES=${1:-A B C D E}
 mkdir -p "$OUT"
 
 # The software keyboard only appears with no hardware keyboard attached; it is what pans the page.
@@ -30,13 +30,13 @@ trap 'kill $server 2>/dev/null' EXIT
 sleep 1
 curl -sf "http://127.0.0.1:$PORT/index.html" > /dev/null || { echo '::error::probe server not answering'; exit 1; }
 
-idb_() { idb "$@" --udid "$udid"; }
+idb_() { idb "$@" --udid "$udid" 2>> "$OUT/idb-errors.log"; }
 mark() { curl -sf -X POST "http://127.0.0.1:$PORT/mark?step=$1" > /dev/null; }
-shot() { xcrun simctl io "$udid" screenshot "$OUT/$mode-$1.png" > /dev/null 2>&1; idb_ ui describe-all --json > "$OUT/$mode-$1.ax.json" 2>/dev/null; mark "$mode-$1"; }
+shot() { xcrun simctl io "$udid" screenshot "$OUT/$mode-$1.png" > /dev/null 2>&1; idb_ ui describe-all --json > "$OUT/$mode-$1.ax.json"; mark "$mode-$1"; }
 
 # frame <label> → "x y w h" of the first accessibility element with that label, in points.
 frame() {
-  idb_ ui describe-all --json 2>/dev/null | python3 -c "
+  idb_ ui describe-all --json | python3 -c "
 import json, sys
 want = sys.argv[1].lower()
 for e in json.load(sys.stdin):
@@ -56,6 +56,12 @@ key() {
     idb_ ui key "$hid"
   fi
 }
+
+# Safari's first launch shows its Start Page over whatever it was asked to open.
+xcrun simctl openurl "$udid" "http://127.0.0.1:$PORT/index.html?mode=B"
+sleep 12
+idb_ ui describe-all --json > "$OUT/warmup.ax.json"
+xcrun simctl io "$udid" screenshot "$OUT/warmup.png" > /dev/null 2>&1
 
 for mode in $MODES; do
   echo "== mode $mode"
