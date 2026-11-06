@@ -46,6 +46,8 @@ public struct StreamActivity: Equatable, Sendable {
         lastEventAt = date
     }
 
+    public var isConnected: Bool { connectedAt != nil }
+
     /// - Parameters:
     ///   - idleThreshold: elapsed time past which a receiving stream reads as merely quiet.
     ///   - stallThreshold: elapsed time past which a quiet stream reads as worth flagging.

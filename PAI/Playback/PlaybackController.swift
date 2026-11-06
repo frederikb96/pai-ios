@@ -2,6 +2,7 @@ import Foundation
 import MediaPlayer
 import Observation
 import PAIKit
+import UIKit
 
 /// The app's one player, global like the call controller: a reply keeps playing across screens,
 /// with the screen locked, and from the lock screen and the headset.
@@ -9,8 +10,9 @@ import PAIKit
 /// A transcript cell is its own SwiftUI tree and cannot read the screen's environment, so the Listen
 /// chips reach this through ``shared``. Everything that decides what plays is the package's
 /// ``PlaybackEngine``; this class wires it to the speaker (``AudioPlayerOutput``), the Now Playing
-/// card and remote commands, the person's speed, autoplay arrivals and the dictation that pauses a
-/// reply.
+/// card and remote commands, the person's speed, autoplay arrivals, the dictation that pauses a
+/// reply, and the silence that keeps the app running between autoplayed replies while it is out of
+/// sight (``PlaybackKeepAlive`` decides when).
 @MainActor
 @Observable
 final class PlaybackController {
@@ -24,6 +26,12 @@ final class PlaybackController {
     @ObservationIgnored private var toasts: ToastCenter?
     @ObservationIgnored private var userSettings: UserSettingsStore?
     @ObservationIgnored private var voice: VoiceRecorderController?
+    @ObservationIgnored private var computerCall: ComputerCallController?
+    @ObservationIgnored private let silence = SilentKeepAlive()
+    @ObservationIgnored private var keepAlive = PlaybackKeepAlive()
+    @ObservationIgnored private var keepAliveTimer: Timer?
+    @ObservationIgnored private var outOfSight = false
+    @ObservationIgnored private var lifecycleObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var watcher = PlaybackReplyWatcher()
     /// Bumped by every `configure`/`reset`, so the observation loops of an earlier connection end.
     @ObservationIgnored private var generation = 0
@@ -41,13 +49,14 @@ final class PlaybackController {
             }
         #endif
         store = PlaybackStore(storage: UserDefaults.standard)
+        observeLifecycle()
     }
 
     // MARK: Connection
 
     func configure(
         api: PaiApiClient, transcript: TranscriptStore, sessions: SessionListStore, toasts: ToastCenter,
-        userSettings: UserSettingsStore, voice: VoiceRecorderController
+        userSettings: UserSettingsStore, voice: VoiceRecorderController, computerCall: ComputerCallController
     ) {
         generation += 1
         let mine = generation
@@ -56,6 +65,7 @@ final class PlaybackController {
         self.toasts = toasts
         self.userSettings = userSettings
         self.voice = voice
+        self.computerCall = computerCall
         watcher = PlaybackReplyWatcher()
         engine = PlaybackEngine(store: store, source: api, output: output) { [weak toasts] message, warning in
             toasts?.show(message, kind: warning ? .error : .info)
@@ -67,8 +77,19 @@ final class PlaybackController {
         track(mine, { transcript.messages }) { [weak self] in self?.watchArrivals() }
         track(mine, { transcript.windows }) { [weak self] in self?.watchArrivals() }
         watchArrivals()
-        track(mine, { voice.state }) { [weak self] in self?.dictationMayHaveStarted() }
-        track(mine, { [store] in store.current }) { [weak self] in self?.updateNowPlaying() }
+        track(mine, { voice.state }) { [weak self] in
+            self?.dictationMayHaveStarted()
+            self?.updateKeepAlive()
+        }
+        track(mine, { [store] in store.current }) { [weak self] in
+            self?.updateKeepAlive()
+            self?.updateNowPlaying()
+        }
+        track(mine, { [store] in store.modes }) { [weak self] in self?.updateKeepAlive() }
+        track(mine, { transcript.isProcessing }) { [weak self] in self?.updateKeepAlive() }
+        track(mine, { computerCall.session.connectionState }) { [weak self] in self?.updateKeepAlive() }
+        silence.onEnded = { [weak self] in self?.endWait() }
+        updateKeepAlive()
     }
 
     /// Lets go of the player when the person signs out.
@@ -81,6 +102,8 @@ final class PlaybackController {
         toasts = nil
         userSettings = nil
         voice = nil
+        computerCall = nil
+        updateKeepAlive()
         updateNowPlaying()
     }
 
@@ -125,6 +148,10 @@ final class PlaybackController {
 
     func toggle() {
         guard let engine else { return }
+        guard store.current != nil else {
+            endWait()
+            return
+        }
         Task { await engine.toggle() }
     }
 
@@ -139,6 +166,10 @@ final class PlaybackController {
     }
 
     func pause() {
+        guard store.current != nil else {
+            endWait()
+            return
+        }
         engine?.pause()
     }
 
@@ -196,6 +227,74 @@ final class PlaybackController {
         engine?.pause()
     }
 
+    // MARK: Out of sight between replies
+
+    private func observeLifecycle() {
+        let center = NotificationCenter.default
+        // Resigning active rather than entering the background: by the time the app is in the
+        // background, iOS may refuse to start the silence when nothing is playing yet.
+        lifecycleObservers.append(
+            center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) {
+                [weak self] _ in
+                MainActor.assumeIsolated { self?.setOutOfSight(true) }
+            })
+        lifecycleObservers.append(
+            center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) {
+                [weak self] _ in
+                MainActor.assumeIsolated { self?.setOutOfSight(false) }
+            })
+    }
+
+    private func setOutOfSight(_ value: Bool) {
+        outOfSight = value
+        updateKeepAlive()
+    }
+
+    /// Pause on the waiting card, or another app's audio or a call taking the session.
+    private func endWait() {
+        keepAlive.release()
+        applyKeepAlive()
+    }
+
+    private func updateKeepAlive() {
+        let modes = store.modes
+        let streaming: (String) -> Bool = { [transcript] in transcript?.sseActivity(for: $0).isConnected ?? false }
+        let working = PlaybackKeepAlive.autoplayWorking(
+            modes: modes, isProcessing: { [transcript] in transcript?.isProcessing(for: $0) ?? false },
+            isStreaming: streaming)
+        let voiceBusy =
+            (voice.map { $0.state != .idle } ?? false)
+            || (computerCall.map { $0.session.connectionState != .idle } ?? false)
+        let inputs = PlaybackKeepAlive.Inputs(
+            outOfSight: outOfSight && engine != nil, autoplayOn: modes.values.contains { $0.autoplay },
+            player: store.current?.status, autoplayWorking: working,
+            autoplayWatching: PlaybackKeepAlive.autoplayWatching(modes: modes, isStreaming: streaming),
+            voiceBusy: voiceBusy,
+            otherAppPlaying: !silence.isPlaying && silence.otherAppIsPlaying)
+        keepAlive.update(inputs, now: Date())
+        applyKeepAlive()
+    }
+
+    /// Plays or stops the silence to match the decision, and re-checks it while holding so the
+    /// grace runs out with nothing else happening.
+    private func applyKeepAlive() {
+        let wasPlaying = silence.isPlaying
+        if keepAlive.holding {
+            if !silence.start() { keepAlive.release() }
+        } else {
+            silence.stop()
+        }
+        if keepAlive.holding, keepAliveTimer == nil {
+            keepAliveTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateKeepAlive() }
+            }
+        } else if !keepAlive.holding {
+            keepAliveTimer?.invalidate()
+            keepAliveTimer = nil
+        }
+        if wasPlaying != silence.isPlaying, store.current == nil { updateNowPlaying() }
+    }
+
     // MARK: Lock screen and headset
 
     private func registerRemoteCommands() {
@@ -216,7 +315,7 @@ final class PlaybackController {
             }
         }
         handle(center.playCommand) { [weak self] _ in
-            guard let self, self.store.current?.status != .playing else { return }
+            guard let self, let status = self.store.current?.status, status != .playing else { return }
             self.toggle()
         }
         handle(center.pauseCommand) { [weak self] _ in self?.pause() }
@@ -237,9 +336,19 @@ final class PlaybackController {
     private func updateNowPlaying() {
         let center = MPNowPlayingInfoCenter.default()
         guard let current = store.current else {
-            center.nowPlayingInfo = nil
-            center.playbackState = .stopped
             shownMessage = nil
+            guard keepAlive.holding else {
+                center.nowPlayingInfo = nil
+                center.playbackState = .stopped
+                return
+            }
+            // The silence is the app's audio as far as iOS is concerned; the card says what it is
+            // for, and Pause on it ends the wait.
+            center.playbackState = .playing
+            center.nowPlayingInfo = [
+                MPMediaItemPropertyTitle: "Waiting for the next reply",
+                MPMediaItemPropertyArtist: "PAI",
+            ]
             return
         }
         let playing = current.status == .playing

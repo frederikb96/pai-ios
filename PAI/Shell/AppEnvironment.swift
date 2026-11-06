@@ -325,7 +325,7 @@ final class AppEnvironment {
         )
         PlaybackController.shared.configure(
             api: client, transcript: transcript, sessions: sessions, toasts: toasts,
-            userSettings: settingsStore.userSettings, voice: voice)
+            userSettings: settingsStore.userSettings, voice: voice, computerCall: computerCall)
         lastAuthFailure = nil
         router.gate = .ready
         return true
