@@ -16,6 +16,8 @@ struct RootView: View {
     /// fresh client the same way opening a session again builds a fresh `PaiSseClient` rather
     /// than un-stopping the old one.
     @State private var notificationStream: PaiNotificationStreamClient?
+    /// When a notification for the open session counts as seen — see `SessionAttention`.
+    @State private var attention = SessionAttention()
 
     /// The parked deep link, if one is waiting. Read through the observable inbox rather than
     /// polled, so a notification tapped while the app is already open navigates immediately
@@ -56,15 +58,29 @@ struct RootView: View {
             .onChange(of: environment.router.gate) { _, _ in consumeDeepLink() }
             // Reaching a session — by any route other than tapping the notification itself,
             // which already marks its own row read on the way in
-            // (`resolveAndOpenNotification`) — clears whatever is still waiting for it. Read
-            // from the router rather than tracked separately, the same reason `openSessionID`
-            // itself is derived: the session list, a deep link, and a freshly created session
-            // all funnel through this one value changing. The live-arrival case (a notification
-            // for the session already on screen) is handled where it arrives, in
-            // `connectNotificationStream`'s `onNotification`.
+            // (`resolveAndOpenNotification`) — clears whatever is still waiting for it, once the
+            // reader is engaged (`SessionAttention`): the tap that opened it clears at once, a
+            // session restored at launch waits for the first touch. Read from the router rather
+            // than tracked separately, the same reason `openSessionID` itself is derived: the
+            // session list, a deep link, and a freshly created session all funnel through this one
+            // value changing. The live-arrival case (a notification for the session already on
+            // screen) is handled where it arrives, in `connectNotificationStream`'s
+            // `onNotification`, under the same rule.
             .onChange(of: environment.router.openSessionID) { _, sessionID in
                 guard let sessionID, let store = environment.connection?.notifications else { return }
-                Task { await store.markSessionRead(sessionID) }
+                if attention.shouldClearNow(sessionID) {
+                    Task { await store.markSessionRead(sessionID) }
+                }
+            }
+            // The held request is released by the next touch or key in any window.
+            .onAppear {
+                UserActivityRecognizer.onActivity = { [attention, environment] in
+                    guard let held = attention.noteActivity(), held == environment.router.openSessionID,
+                        let store = environment.connection?.notifications
+                    else { return }
+                    Task { await store.markSessionRead(held) }
+                }
+                UserActivityRecognizer.installOnAllWindows()
             }
             // The URL half — a shortcut or widget that opens the app by URL rather than through
             // an App Intent. Parked through the same inbox so there is one path to a screen from
@@ -196,6 +212,8 @@ struct RootView: View {
                 .onChange(of: scenePhase) { _, phase in
                     switch phase {
                     case .active:
+                        attention.setAppActive(true)
+                        UserActivityRecognizer.installOnAllWindows()
                         AppVoiceDiagnosticsLog.shared.log(.info, .lifecycle, "app active")
                         connectNotificationStream(connection)
                         connection.wakeWordSamples.drain()
@@ -215,6 +233,7 @@ struct RootView: View {
                             await PushRegistrar.reconcileDeliveredNotifications(against: connection.notifications)
                         }
                     case .background:
+                        attention.setAppActive(false)
                         // The one place a backgrounding is guaranteed to be observed — flushed here
                         // rather than trusting the periodic loop alone, since a device suspended
                         // for hours right after this could otherwise lose everything since its
@@ -224,7 +243,7 @@ struct RootView: View {
                         notificationStream?.disconnect()
                         notificationStream = nil
                     case .inactive:
-                        break
+                        attention.setAppActive(false)
                     @unknown default:
                         break
                     }
@@ -345,6 +364,9 @@ struct RootView: View {
     private func consumeDeepLink() {
         guard environment.router.gate == .ready, let connection = environment.connection else { return }
         guard let link = deepLinks.consume() else { return }
+        // A link the reader followed from outside the app (a tapped banner, a widget, a shortcut)
+        // is a deliberate open with no touch inside the app to show for it.
+        attention.noteActivity()
         // `.notification` is the one case `DeepLink.routes` cannot answer on its own — see its
         // doc comment. Resolving it needs a network round trip, so it gets its own path instead
         // of the synchronous `replace(with: link.routes)` every other case uses.
@@ -413,10 +435,12 @@ struct RootView: View {
             callbacks: PaiNotificationStreamClient.Callbacks(
                 onNotification: { [weak store] event in
                     store?.applyLiveUnread(event.unread)
-                    // Arriving for the session already on screen — being on screen is the
-                    // condition, not being routed to, so this clears it the same way reaching
-                    // the session does above, just without a navigation to react to.
-                    if let sessionId = event.notification.sessionId, sessionId == environment.router.openSessionID {
+                    // Arriving for the session already on screen clears it under the same rule as
+                    // reaching the session above: at once while the reader is engaged, otherwise
+                    // at the next touch.
+                    if let sessionId = event.notification.sessionId, sessionId == environment.router.openSessionID,
+                        attention.shouldClearNow(sessionId)
+                    {
                         Task { [weak store] in await store?.markSessionRead(sessionId) }
                     }
                 },
