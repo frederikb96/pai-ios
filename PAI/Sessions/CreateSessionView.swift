@@ -240,9 +240,10 @@ struct CreateSessionView: View {
                 // has no session to be listed under. Same bubbles, and the same Retry / Put back
                 // in composer / Discard, as a session's own composer.
                 OutboxBubbleStack(sessionID: nil)
-                // The API session types (ultra-fast, the MailVerdict assistant) need no Claude credential at
-                // all — the ones that still work while the sign-in gate would otherwise block everything else.
-                if ClaudeAuthPredicates.needsSignIn(claudeAuth.auth), !createSession.isApiSessionSelected {
+                // The API session types (ultra-fast, the MailVerdict assistant) and Hermes need no Claude
+                // credential at all — the ones that still work while the sign-in gate would otherwise
+                // block everything else.
+                if createSession.signInBlocksStart(claudeAuth.auth) {
                     signInBlockedRow
                 } else {
                     composerBar(createSession, voiceController)
