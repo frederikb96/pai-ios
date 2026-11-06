@@ -47,6 +47,10 @@ public final class CreateSessionStore {
     /// The MailVerdict assistant's id: built into the pod like `ultrafast`, and answered by the
     /// same kind of worker (``isApiSessionSelected``).
     public static let mailverdictSessionTypeId = "mailverdict"
+    /// The emergency engine, answered by Hermes Agent: it needs no Claude credential, so it can be
+    /// started while the sign-in gate blocks everything else. Mirrors the web's
+    /// `HERMES_SESSION_TYPE_ID`.
+    public static let hermesSessionTypeId = "hermes"
 
     /// Session types built into the pod rather than the ConfigMap (see
     /// `backend/src/pai_cloud/config.py`'s `WEBSEARCH_SESSION_TYPE_ID`) sink under Custom rather
@@ -119,6 +123,16 @@ public final class CreateSessionStore {
 
     /// Whether `selectedSessionTypeId` is the MailVerdict assistant.
     public var isMailVerdictSelected: Bool { selectedSessionTypeId == Self.mailverdictSessionTypeId }
+
+    /// Whether `selectedSessionTypeId` is the Hermes emergency engine. Not an API session: it keeps
+    /// the ordinary composer, files and model picker.
+    public var isHermesSelected: Bool { selectedSessionTypeId == Self.hermesSessionTypeId }
+
+    /// Whether a signed-out Claude stops the selected type from starting. The API session types and
+    /// Hermes need no Claude credential.
+    public func signInBlocksStart(_ auth: ClaudeAuth) -> Bool {
+        ClaudeAuthPredicates.needsSignIn(auth) && !isApiSessionSelected && !isHermesSelected
+    }
 
     /// Whether the selected type is answered by a pod-resident API worker (ultra-fast or the
     /// MailVerdict assistant): no directory, no Claude credential, no pregrant, photos as the only
