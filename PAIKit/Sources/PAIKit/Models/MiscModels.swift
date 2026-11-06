@@ -963,9 +963,18 @@ public struct DeleteResponse: Codable, Sendable, Equatable {
 
 public struct ReadPositionAck: Codable, Sendable, Equatable {
     public let ok: Bool
+    /// The server's time for this save — what ``TranscriptAnchor/seed(current:persisted:lastOwnSave:)``
+    /// compares a persisted position against.
+    public let savedAt: String?
 
-    public init(ok: Bool) {
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case savedAt = "saved_at"
+    }
+
+    public init(ok: Bool, savedAt: String? = nil) {
         self.ok = ok
+        self.savedAt = savedAt
     }
 }
 

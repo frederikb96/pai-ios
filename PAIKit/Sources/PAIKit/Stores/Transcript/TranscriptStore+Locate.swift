@@ -62,6 +62,22 @@ extension TranscriptStore {
         return .notFound
     }
 
+    /// Where an ordinary open lands: the read position, loaded first when the window does not
+    /// hold it — more arrived since than the tail page carries, or a position saved on another
+    /// device further back — the same page a deep link lands on. The bottom when that page does
+    /// not bring it either.
+    public func readPositionLanding(
+        for anchor: TranscriptAnchor?, sessionId: String,
+        fetchAround: (_ aroundId: Int, _ limit: Int) async throws -> MessagesAroundResult
+    ) async -> TranscriptRestoreTarget {
+        if let anchor {
+            let target = anchor.lastSeen?.messageId ?? anchor.messageId
+            _ = await locate(target, sessionId: sessionId, fetchAround: fetchAround)
+        }
+        let loadedIds = Self.displayMessages(messages[sessionId] ?? []).map(\.id)
+        return TranscriptRestore.target(for: anchor, loadedMessageIds: loadedIds)
+    }
+
     /// Where a transcript opened at a deep link lands first — the linked message itself, once one
     /// attempt at locating it has put it in the window, so the first positioning the reader sees
     /// is the jump rather than the bottom followed by a jump. `nil` when that one attempt did not

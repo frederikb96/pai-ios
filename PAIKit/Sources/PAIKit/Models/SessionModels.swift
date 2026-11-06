@@ -394,13 +394,15 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     public let subagentModel: String?
     /// Where the user last stopped reading this transcript, persisted so returning to it restores
     /// the same position across a reload or a different device. `readPositionAtBottom` is `nil`
-    /// until a position has ever been recorded; `true` means "go straight to the live edge" and
-    /// beats the other two, which are `nil` together in that case. The anchor is a MESSAGE id
+    /// until a position has ever been recorded; `true` means it was at the live edge, and the
+    /// other two are then the newest message seen there (`nil` from a client that records none).
+    /// `readPositionSavedAt` is the server's time for the save. The anchor is a MESSAGE id
     /// plus an offset within it, never a scroll offset alone — rows are virtualized, so
     /// everything above the reader changes height as it lays out.
     public let readPositionMessageId: Int?
     public let readPositionOffsetPx: Int?
     public let readPositionAtBottom: Bool?
+    public let readPositionSavedAt: String?
     /// Whether this CONVERSATION has ever registered with Remote Control — historical and
     /// monotonic, never a statement about whether PAI can drive it now. That question is
     /// `state`; see `docs/ARCHITECTURE.md` "What decides whether a session can be typed into".
@@ -497,6 +499,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         case readPositionMessageId = "read_position_message_id"
         case readPositionOffsetPx = "read_position_offset_px"
         case readPositionAtBottom = "read_position_at_bottom"
+        case readPositionSavedAt = "read_position_saved_at"
         case remoteControl = "remote_control"
         case discovered
         case sourceMissing = "source_missing"
@@ -552,6 +555,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         readPositionMessageId: Int? = nil,
         readPositionOffsetPx: Int? = nil,
         readPositionAtBottom: Bool? = nil,
+        readPositionSavedAt: String? = nil,
         remoteControl: Bool?,
         discovered: Bool?,
         sourceMissing: Bool? = nil,
@@ -605,6 +609,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.readPositionMessageId = readPositionMessageId
         self.readPositionOffsetPx = readPositionOffsetPx
         self.readPositionAtBottom = readPositionAtBottom
+        self.readPositionSavedAt = readPositionSavedAt
         self.remoteControl = remoteControl
         self.discovered = discovered
         self.sourceMissing = sourceMissing
@@ -662,7 +667,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             parentSessionId: parentSessionId, subagentName: subagentName, subagentType: subagentType,
             subagentDescription: subagentDescription, subagentModel: subagentModel,
             readPositionMessageId: readPositionMessageId, readPositionOffsetPx: readPositionOffsetPx,
-            readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
+            readPositionAtBottom: readPositionAtBottom, readPositionSavedAt: readPositionSavedAt,
+            remoteControl: remoteControl, discovered: discovered,
             sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
             projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName,
             liveModel: liveModel, pendingModel: pendingModel, ultrafastModel: ultrafastModel ?? self.ultrafastModel,
@@ -690,7 +696,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             parentSessionId: parentSessionId, subagentName: subagentName, subagentType: subagentType,
             subagentDescription: subagentDescription, subagentModel: subagentModel,
             readPositionMessageId: readPositionMessageId, readPositionOffsetPx: readPositionOffsetPx,
-            readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
+            readPositionAtBottom: readPositionAtBottom, readPositionSavedAt: readPositionSavedAt,
+            remoteControl: remoteControl, discovered: discovered,
             sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
             projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName,
             liveModel: liveModel, pendingModel: pendingModel, ultrafastModel: ultrafastModel,
@@ -718,7 +725,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             parentSessionId: parentSessionId, subagentName: subagentName, subagentType: subagentType,
             subagentDescription: subagentDescription, subagentModel: subagentModel,
             readPositionMessageId: readPositionMessageId, readPositionOffsetPx: readPositionOffsetPx,
-            readPositionAtBottom: readPositionAtBottom, remoteControl: remoteControl, discovered: discovered,
+            readPositionAtBottom: readPositionAtBottom, readPositionSavedAt: readPositionSavedAt,
+            remoteControl: remoteControl, discovered: discovered,
             sourceMissing: sourceMissing, gitBranch: gitBranch, claudeVersion: claudeVersion,
             projectId: projectId, phaseId: phaseId, projectName: projectName, phaseName: phaseName,
             liveModel: liveModel, pendingModel: pendingModel, ultrafastModel: ultrafastModel,

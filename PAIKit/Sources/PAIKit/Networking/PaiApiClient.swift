@@ -834,8 +834,8 @@ public struct PaiApiClient: Sendable {
     }
 
     /// Persists where the user stopped reading this session's transcript — debounced client-side,
-    /// see `TranscriptAnchor.readPositionPayload(for:)`. `messageId`/`offsetPx` are `nil`
-    /// together when `atBottom` is true: the reader is caught up, nothing to pin a message at.
+    /// see `TranscriptAnchor.readPositionPayload(for:)`. With `atBottom`, `messageId`/`offsetPx`
+    /// are the newest message seen at the live edge.
     @discardableResult
     public func putReadPosition(
         sessionId: String, messageId: Int?, offsetPx: Int?, atBottom: Bool
