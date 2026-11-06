@@ -161,6 +161,9 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// property alone would forget it on every return. Seeded once per session, on this
     /// process's first visit, from `persistedReadPosition` — see `bootstrap()`.
     private static var lastAnchors: [String: TranscriptAnchor] = [:]
+    /// The server's time for this process's last acknowledged read-position save, per session —
+    /// what tells a persisted position saved later, by another device, from this one's own.
+    private static var lastOwnSaves: [String: Date] = [:]
     /// What the server last had for this session, from `Session.readPosition*` — read once, in
     /// `bootstrap()`, to seed `lastAnchors` the first time this process visits this session.
     /// `nil` both when there has never been a recorded position and when the session was not yet
@@ -222,11 +225,12 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// into this open's first landing (`TranscriptStore.deepLinkLanding`) and clears it, so a
     /// later reconnect or width change never re-triggers the jump.
     private var initialJumpMessageID: Int?
-    /// True while bootstrap is resolving a deep link into its first landing. Nothing may lay out
-    /// the tail in that gap — the landing is about to replace it, and a tail painted first is
+    /// True while bootstrap is resolving this open's first landing — a deep link, or a read
+    /// position the tail does not hold — which may fetch a page first. Nothing may lay out the
+    /// tail in that gap — the landing is about to replace it, and a tail painted first is
     /// exactly the bottom-then-jump this resolution exists to avoid. The landing itself
     /// recomputes every row from live state, so nothing held back meanwhile is lost.
-    private var isResolvingDeepLink = false
+    private var isResolvingLanding = false
     /// False until bootstrap has made this open's first landing. A jump request arriving before
     /// then is held in `queuedJumpMessageID` rather than run: run early, it would land on a window
     /// the tail bootstrap then replaces, and the bottom landing that follows would carry the
@@ -303,9 +307,12 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             Task { @MainActor in
                 let payload = TranscriptAnchor.readPositionPayload(
                     for: anchor, hasNewer: store.window(for: sessionID).hasNewer)
-                try? await client.putReadPosition(
+                let ack = try? await client.putReadPosition(
                     sessionId: sessionID, messageId: payload.messageId, offsetPx: payload.offsetPx,
                     atBottom: payload.atBottom)
+                if let savedAt = ack?.savedAt.flatMap(IsoTimestamp.date(from:)) {
+                    Self.lastOwnSaves[sessionID] = savedAt
+                }
             }
         }
     }
@@ -529,17 +536,17 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         }
         if let jumpTarget = initialJumpMessageID {
             initialJumpMessageID = nil
-            isResolvingDeepLink = true
+            isResolvingLanding = true
             connectStream(initialCursor: streamCursor)
             let landing = await store.deepLinkLanding(
                 for: jumpTarget, sessionId: sessionID, fetchAround: fetchAroundPage)
-            isResolvingDeepLink = false
+            isResolvingLanding = false
             guard !Task.isCancelled else { return }
             if let landing {
                 land(on: landing)
                 await finishLanding()
             } else {
-                fallBackToReadPosition()
+                await fallBackToReadPosition()
                 // Landed on the fallback, so a request arriving during the retry ladder below
                 // runs straight away and supersedes it.
                 hasLanded = true
@@ -548,7 +555,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             return
         }
 
-        fallBackToReadPosition()
+        await fallBackToReadPosition()
         connectStream(initialCursor: streamCursor)
         await finishLanding()
     }
@@ -578,12 +585,18 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// ever seeds `lastAnchors` when it is an EMPTY slot — a session revisited later in the same
     /// process already has a more current in-memory anchor than whatever the server held when
     /// this screen was constructed, and that must win.
-    private func fallBackToReadPosition() {
-        if Self.lastAnchors[sessionID] == nil, let seeded = TranscriptAnchor.fromPersisted(persistedReadPosition) {
-            Self.lastAnchors[sessionID] = seeded
-        }
-        let loadedIds = TranscriptStore.displayMessages(store.messages[sessionID] ?? []).map(\.id)
-        land(on: TranscriptRestore.target(for: Self.lastAnchors[sessionID], loadedMessageIds: loadedIds))
+    private func fallBackToReadPosition() async {
+        let seeded = TranscriptAnchor.seed(
+            current: Self.lastAnchors[sessionID], persisted: persistedReadPosition,
+            lastOwnSave: Self.lastOwnSaves[sessionID])
+        Self.lastAnchors[sessionID] = seeded.anchor
+        Self.lastOwnSaves[sessionID] = seeded.lastOwnSave
+        isResolvingLanding = true
+        let target = await store.readPositionLanding(
+            for: seeded.anchor, sessionId: sessionID, fetchAround: fetchAroundPage)
+        isResolvingLanding = false
+        guard !Task.isCancelled else { return }
+        land(on: target)
     }
 
     /// A deep link's jump on a transcript that has already landed — the side channel for the
@@ -597,7 +610,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         let (loaded, _) = await locate(targetID, retryLadder: Self.deepLinkRetryDelays)
         guard token == jumpToken else { return }  // a newer jump superseded this one
         guard loaded else {
-            fallBackToReadPosition()
+            await fallBackToReadPosition()
             return
         }
         // Always one immediate write, as the web's own transcript does: an animation is a stream
@@ -684,7 +697,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// a pure head removal — and the arrival that follows is the ordinary append it always was.
     private func trimLiveWindowIfFollowing() {
         guard hasLanded, edgeFollow.isPinned, !readerMotion.isReaderDriven, !holdController.isActive,
-            !isResolvingDeepLink, !isApplyingRows, highlightedMessageId == nil, !searchState.isActive,
+            !isResolvingLanding, !isApplyingRows, highlightedMessageId == nil, !searchState.isActive,
             measurementWidth() > 0
         else { return }
         guard
@@ -822,8 +835,8 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// height synchronously, so this one completion, timed to the actual layout pass rather than
     /// to when the call returns, is all a caller needs.
     private func recomputeRows(applying intent: UpdateIntent, onSettled: (() -> Void)? = nil) {
-        if isResolvingDeepLink {
-            // See `isResolvingDeepLink`. `onSettled` still runs, so a caller waiting on a layout
+        if isResolvingLanding {
+            // See `isResolvingLanding`. `onSettled` still runs, so a caller waiting on a layout
             // is never left suspended on one that was skipped.
             guard case .initialLoad = intent else {
                 onSettled?()
@@ -1819,10 +1832,14 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         // fire well after that scroll, and `loadNewer`'s catch-up can have settled the flag in
         // between.
         let payload = TranscriptAnchor.readPositionPayload(for: anchor, hasNewer: store.window(for: sessionID).hasNewer)
+        let sessionID = sessionID
         Task {
-            try? await apiClient.putReadPosition(
+            let ack = try? await apiClient.putReadPosition(
                 sessionId: sessionID, messageId: payload.messageId, offsetPx: payload.offsetPx,
                 atBottom: payload.atBottom)
+            if let savedAt = ack?.savedAt.flatMap(IsoTimestamp.date(from:)) {
+                Self.lastOwnSaves[sessionID] = savedAt
+            }
         }
     }
 

@@ -54,6 +54,44 @@ final class TranscriptLocateTests: XCTestCase {
         return store
     }
 
+    // MARK: - The first landing of an ordinary open
+
+    /// A read position further back than the tail — saved on another device, or more arrived
+    /// since than the tail carries — lands on its message, not at the bottom.
+    func testAReadPositionOlderThanTheTailIsLoadedAndLandedOn() async {
+        let server = FakeServer(ids: Array(1...1000))
+        let store = bootstrappedStore(server: server)
+
+        let landing = await store.readPositionLanding(
+            for: TranscriptAnchor(messageId: 100, offset: 0), sessionId: "s1", fetchAround: server.around)
+
+        XCTAssertEqual(landing, .message(id: 100))
+        XCTAssertTrue(store.isLoaded(100, sessionId: "s1"))
+    }
+
+    /// Left at the live edge with more arriving since than the tail holds: back on the last
+    /// message seen, the ones after it loaded below.
+    func testALastSeenMessageOlderThanTheTailIsLoadedAndLandedOn() async {
+        let server = FakeServer(ids: Array(1...1000))
+        let store = bootstrappedStore(server: server)
+        let anchor = TranscriptAnchor(
+            messageId: 98, offset: -40, lastSeen: TranscriptRowPosition(messageId: 100, offset: 500))
+
+        let landing = await store.readPositionLanding(for: anchor, sessionId: "s1", fetchAround: server.around)
+
+        XCTAssertEqual(landing, .lastSeen(id: 100))
+    }
+
+    func testAReadPositionTheServerNoLongerHasLandsAtTheBottom() async {
+        let server = FakeServer(ids: Array(1...1000))
+        let store = bootstrappedStore(server: server)
+
+        let landing = await store.readPositionLanding(
+            for: TranscriptAnchor(messageId: 5000, offset: 0), sessionId: "s1", fetchAround: server.around)
+
+        XCTAssertEqual(landing, .bottom)
+    }
+
     // MARK: - The first landing of a deep-linked open
 
     /// A notification for a message older than the tail must not open the session at its bottom

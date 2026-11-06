@@ -62,6 +62,24 @@ extension TranscriptAnchor {
     /// to seed: no position has ever been recorded, or one at the live edge from a client that
     /// records no message there, which `TranscriptRestore.target` already falls back to the
     /// bottom for.
+    /// The anchor an open starts from: the one this process remembers, unless the server holds a
+    /// position saved later than this process's own last acknowledged save — another device, or
+    /// the web, has read further since. Both times are the server's clock, so devices whose clocks
+    /// disagree still order correctly. Returns the save time to remember alongside the anchor.
+    public static func seed(
+        current: TranscriptAnchor?, persisted: PersistedReadPosition?, lastOwnSave: Date?
+    ) -> (anchor: TranscriptAnchor?, lastOwnSave: Date?) {
+        guard let persisted else { return (current, lastOwnSave) }
+        let savedElsewhereSince: Bool
+        if let savedAt = persisted.savedAt {
+            savedElsewhereSince = lastOwnSave.map { savedAt > $0 } ?? true
+        } else {
+            savedElsewhereSince = false
+        }
+        guard current == nil || savedElsewhereSince else { return (current, lastOwnSave) }
+        return (fromPersisted(persisted), persisted.savedAt ?? lastOwnSave)
+    }
+
     public static func fromPersisted(_ persisted: PersistedReadPosition?) -> TranscriptAnchor? {
         guard let persisted, let messageId = persisted.messageId, let offsetPx = persisted.offsetPx
         else { return nil }
@@ -77,11 +95,14 @@ public struct PersistedReadPosition: Equatable, Sendable {
     public let messageId: Int?
     public let offsetPx: Int?
     public let atBottom: Bool
+    /// The server's time for the save; `nil` for one saved before it recorded that.
+    public let savedAt: Date?
 
-    public init(messageId: Int?, offsetPx: Int?, atBottom: Bool) {
+    public init(messageId: Int?, offsetPx: Int?, atBottom: Bool, savedAt: Date? = nil) {
         self.messageId = messageId
         self.offsetPx = offsetPx
         self.atBottom = atBottom
+        self.savedAt = savedAt
     }
 }
 

@@ -108,4 +108,35 @@ final class TranscriptAnchorTests: XCTestCase {
         let persisted = PersistedReadPosition(messageId: 42, offsetPx: nil, atBottom: false)
         XCTAssertNil(TranscriptAnchor.fromPersisted(persisted))
     }
+
+    // MARK: - seed
+
+    private static let tenOClock = Date(timeIntervalSince1970: 1_800_000_000)
+    private static let remembered = TranscriptAnchor(messageId: 4, offset: 0)
+
+    /// Read further on another device since this one last saved: that position wins.
+    func testSeedTakesAPositionSavedElsewhereAfterThisProcessLastSaved() {
+        let phone = PersistedReadPosition(
+            messageId: 2, offsetPx: 0, atBottom: false, savedAt: Self.tenOClock.addingTimeInterval(300))
+        let seeded = TranscriptAnchor.seed(current: Self.remembered, persisted: phone, lastOwnSave: Self.tenOClock)
+        XCTAssertEqual(seeded.anchor?.messageId, 2)
+        XCTAssertEqual(seeded.lastOwnSave, phone.savedAt)
+    }
+
+    /// This process's own save coming back, or an older one, leaves the remembered position alone.
+    func testSeedKeepsTheRememberedPositionAgainstItsOwnOrAnOlderSave() {
+        for savedAt in [Self.tenOClock, Self.tenOClock.addingTimeInterval(-60)] {
+            let persisted = PersistedReadPosition(messageId: 2, offsetPx: 0, atBottom: false, savedAt: savedAt)
+            let seeded = TranscriptAnchor.seed(
+                current: Self.remembered, persisted: persisted, lastOwnSave: Self.tenOClock)
+            XCTAssertEqual(seeded.anchor, Self.remembered)
+        }
+    }
+
+    /// A position saved before the server recorded the time can never outrank one in memory.
+    func testSeedKeepsTheRememberedPositionAgainstAnUntimedOne() {
+        let persisted = PersistedReadPosition(messageId: 2, offsetPx: 0, atBottom: false)
+        let seeded = TranscriptAnchor.seed(current: Self.remembered, persisted: persisted, lastOwnSave: nil)
+        XCTAssertEqual(seeded.anchor, Self.remembered)
+    }
 }

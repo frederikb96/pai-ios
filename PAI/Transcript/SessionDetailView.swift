@@ -69,7 +69,8 @@ struct SessionDetailView: View {
                         persistedReadPosition: currentSession.map {
                             PersistedReadPosition(
                                 messageId: $0.readPositionMessageId, offsetPx: $0.readPositionOffsetPx,
-                                atBottom: $0.readPositionAtBottom ?? false)
+                                atBottom: $0.readPositionAtBottom ?? false,
+                                savedAt: $0.readPositionSavedAt.flatMap(IsoTimestamp.date(from:)))
                         },
                         onPullBackIntoComposer: { Task { await pullPendingBackIntoComposer() } }
                     )
