@@ -1430,12 +1430,18 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                 edgeFollow = EdgeFollowLatch(isPinned: true)
                 scrollToBottom(animated: false)
                 holdController.begin(.bottom)
-            case .message(let id):
+            case .message(let id), .lastSeen(let id):
                 if let index = rows.firstIndex(where: { $0.id == id }) {
                     edgeFollow = EdgeFollowLatch(isPinned: false)
                     readerMotion.appScrolled()
-                    collectionView.scrollToItem(at: IndexPath(item: index, section: 0), at: .top, animated: false)
-                    holdController.begin(.restore(messageId: id))
+                    if case .lastSeen = target {
+                        collectionView.scrollToItem(
+                            at: IndexPath(item: index, section: 0), at: .bottom, animated: false)
+                        holdController.begin(.lastSeen(messageId: id))
+                    } else {
+                        collectionView.scrollToItem(at: IndexPath(item: index, section: 0), at: .top, animated: false)
+                        holdController.begin(.restore(messageId: id))
+                    }
                 } else {
                     // The row named by the restore target isn't in this load after all — the
                     // display filter can drop it even though `loadedMessageIds` at bootstrap said
@@ -1711,6 +1717,11 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             readerMotion.appScrolled()
             collectionView.scrollToItem(at: IndexPath(item: index, section: 0), at: .top, animated: false)
             return true
+        case .lastSeen(let messageId):
+            guard let index = rows.firstIndex(where: { $0.id == messageId }) else { return false }
+            readerMotion.appScrolled()
+            collectionView.scrollToItem(at: IndexPath(item: index, section: 0), at: .bottom, animated: false)
+            return true
         }
     }
 
@@ -1770,9 +1781,15 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         guard let id = topVisibleRowId(), let offsetTop = layout.offsetTop(forRowId: id) else { return }
         let viewportOffset = offsetTop - collectionView.contentOffset.y
         let distance = maxContentOffsetY() - collectionView.contentOffset.y
-        let anchor = TranscriptAnchor(
-            messageId: id, offset: Double(viewportOffset),
-            atLiveEdge: EdgeFollowLatch.isAtLiveEdge(distanceFromBottom: Double(distance)))
+        var lastSeen: TranscriptRowPosition?
+        if EdgeFollowLatch.isAtLiveEdge(distanceFromBottom: Double(distance)),
+            let newest = rows.last(where: { !$0.message.isPendingBubble }),
+            let newestTop = layout.offsetTop(forRowId: newest.id)
+        {
+            lastSeen = TranscriptRowPosition(
+                messageId: newest.id, offset: Double(newestTop - collectionView.contentOffset.y))
+        }
+        let anchor = TranscriptAnchor(messageId: id, offset: Double(viewportOffset), lastSeen: lastSeen)
         lastRecordedAnchor = anchor
         // Kept beyond this instance's own lifetime — see `lastAnchors`'s doc comment.
         Self.lastAnchors[sessionID] = anchor
