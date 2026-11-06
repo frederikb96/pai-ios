@@ -19,6 +19,8 @@ public struct SystemWallClock: WallClock {
 public enum TranscriptHoldKind: Equatable, Sendable {
     case bottom
     case restore(messageId: Int)
+    /// A return to a position left at the live edge: the row's end kept at the viewport's bottom.
+    case lastSeen(messageId: Int)
 }
 
 /// A held scroll position: a target, and how long it stays defended.
