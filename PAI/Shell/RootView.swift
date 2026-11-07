@@ -353,6 +353,8 @@ struct RootView: View {
             CanteenView()
         case .usage:
             UsageView()
+        case .decisions:
+            DecisionsView()
         }
     }
 
@@ -452,8 +454,15 @@ struct RootView: View {
                 // The list is an incremental sync; the stream only says when to run it. Connecting
                 // runs one too, since the stream replays nothing from while it was down.
                 onSessionsChanged: { [weak sessions = connection.sessions] in sessions?.requestSync() },
+                // Read again on connect too: an event sent while the stream was down is not replayed.
+                onDecisionsChanged: { [weak decisions = connection.decisions] in
+                    Task { await decisions?.refresh() }
+                },
                 onActivity: {},
-                onConnected: { [weak sessions = connection.sessions] in sessions?.requestSync() },
+                onConnected: { [weak sessions = connection.sessions, weak decisions = connection.decisions] in
+                    sessions?.requestSync()
+                    Task { await decisions?.refresh() }
+                },
                 onDisconnected: {}
             )
         )

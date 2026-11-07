@@ -76,8 +76,23 @@ public enum PaiError: Error, Equatable {
     }
 }
 
+/// `detail` is a string for almost every refusal; the decision routes answer a conflict with
+/// `{message, numbers}` instead, whose `message` is the text to show.
 private struct ErrorBody: Decodable {
     let detail: String
+
+    private struct Structured: Decodable { let message: String }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let text = try? container.decode(String.self, forKey: .detail) {
+            detail = text
+        } else {
+            detail = try container.decode(Structured.self, forKey: .detail).message
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey { case detail }
 }
 
 extension PaiError {

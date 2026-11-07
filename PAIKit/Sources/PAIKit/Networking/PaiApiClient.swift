@@ -1204,6 +1204,44 @@ public struct PaiApiClient: Sendable {
         )
     }
 
+    // MARK: Decisions
+
+    /// `GET /api/decisions` — every open decision across the owner's sessions, newest first.
+    /// Owner-only: a guest's 403 would read as a rejected credential, so callers gate on the role.
+    public func getOpenDecisions() async throws -> OpenDecisionsResponse {
+        try await send(path: "/api/decisions")
+    }
+
+    /// `POST /api/session/{id}/decisions/answer` — the answers reach the session as one message.
+    /// A decision that is no longer open (or moved since `updatedAt`) answers 409 before anything
+    /// is sent, its `message` surfacing as the error's text. A repeated `clientMessageId` sends
+    /// nothing again.
+    public func answerDecisions(
+        sessionId: String, answers: [DecisionAnswer], clientMessageId: String
+    ) async throws -> AnswerDecisionsResponse {
+        struct Body: Encodable {
+            let answers: [DecisionAnswer]
+            let clientMessageId: String
+            enum CodingKeys: String, CodingKey {
+                case answers
+                case clientMessageId = "client_message_id"
+            }
+        }
+        return try await send(
+            path: "/api/session/\(sessionId)/decisions/answer", method: "POST",
+            body: try Self.jsonBody(Body(answers: answers, clientMessageId: clientMessageId)))
+    }
+
+    /// `POST /api/session/{id}/decisions/{number}/withdraw` — drops a decision the owner already
+    /// answered in the conversation. 409 once it is no longer open.
+    public func withdrawDecision(sessionId: String, number: Int) async throws -> Decision {
+        struct Response: Decodable { let decision: Decision }
+        let response: Response = try await send(
+            path: "/api/session/\(sessionId)/decisions/\(number)/withdraw", method: "POST",
+            body: nil, contentType: nil)
+        return response.decision
+    }
+
     // MARK: Gated secret grant
 
     /// `GET /api/session/{id}/secret-requests` — the gated names the live conversation has asked

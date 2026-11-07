@@ -2,7 +2,7 @@ import PAIKit
 import SwiftUI
 
 /// Where the top bar's "Apps" button leads — a small picker over Quick Actions, Arc, Notes, the
-/// Scheduler, the Canteen and Usage.
+/// Scheduler, the Canteen, Usage and (owner only) Decisions.
 /// Mirrors the web's own `AppsFlyout`/`AppsHome` pairing (a modal listing every registered app),
 /// minus Memory and Notifications: PAI Cloud's Memory app is notes plus projects/phases/search,
 /// and this repo never built a separate Memory screen — the note index (`.notes`) is the one
@@ -43,6 +43,23 @@ struct AppsHomeSheet: View {
                     Label("Usage", systemImage: "gauge.with.dots.needle.33percent")
                 }
                 .accessibilityIdentifier("apps-open-usage")
+                // Owner only, like the routes behind it: a guest's request would be refused.
+                if environment.connection?.me.isOwner == true {
+                    Button(action: openDecisions) {
+                        Label {
+                            HStack {
+                                Text("Decisions")
+                                Spacer()
+                                if let count = environment.connection?.decisions.open.count, count > 0 {
+                                    Text("\(count)").foregroundStyle(PaiPalette.Semantic.textMuted)
+                                }
+                            }
+                        } icon: {
+                            Image(systemName: "checklist")
+                        }
+                    }
+                    .accessibilityIdentifier("apps-open-decisions")
+                }
             }
             .listStyle(.plain)
             .navigationTitle("Apps")
@@ -84,6 +101,11 @@ struct AppsHomeSheet: View {
 
     private func openCanteen() {
         environment.router.push(.canteen)
+        dismiss()
+    }
+
+    private func openDecisions() {
+        environment.router.push(.decisions)
         dismiss()
     }
 

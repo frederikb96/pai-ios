@@ -112,6 +112,9 @@ final class AppEnvironment {
         /// App-wide rather than per-screen so `RootView`, which has no `TranscriptCollectionView`
         /// of its own, can still reach whichever one is alive.
         let transcriptJumps: TranscriptJumpRequests
+        /// The open decisions of every session — app-wide because the pin above any transcript and
+        /// the Decisions app read the same list.
+        let decisions: DecisionsStore
     }
 
     private static let backendURLKey = "backendURL"
@@ -294,6 +297,7 @@ final class AppEnvironment {
         }
 
         let notesBrowse = NotesBrowseStore(api: client, storage: defaults)
+        let me = MeStore(api: client)
         connection = Connection(
             requestFactory: factory,
             apiClient: client,
@@ -303,7 +307,7 @@ final class AppEnvironment {
             transcript: transcript,
             settings: settingsStore,
             drafts: draftStore,
-            me: MeStore(api: client),
+            me: me,
             toasts: toasts,
             push: PushRegistrationStore(storage: defaults) { token, mutedChannels in
                 try await client.registerDevice(token: token, mutedChannels: mutedChannels)
@@ -321,7 +325,8 @@ final class AppEnvironment {
             computerCall: computerCall,
             wakeWordSamples: wakeWordSamples,
             notifications: NotificationCenterStore(api: client),
-            transcriptJumps: TranscriptJumpRequests()
+            transcriptJumps: TranscriptJumpRequests(),
+            decisions: DecisionsStore(api: client, isOwner: { [weak me] in me?.isOwner ?? false })
         )
         PlaybackController.shared.configure(
             api: client, transcript: transcript, sessions: sessions, toasts: toasts,
@@ -351,6 +356,7 @@ final class AppEnvironment {
         await connection.settings.userSettings.load()
         await connection.machines.refresh()
         await connection.me.refresh()
+        await connection.decisions.refresh()
         await connection.staging.loadPersisted()
         await connection.notifications.refreshSummary()
         // Synchronous and disk-only — no reason to make a take the user is trying to find wait on
