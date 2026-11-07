@@ -107,11 +107,10 @@ struct DecisionListView: View {
                 optionButton("Other…", selected: state.writing == decision.number, dashed: true) {
                     state.toggleWriting(for: decision)
                 }
+                optionButton("Dismiss", selected: false, muted: true) { dismissing = decision }
+                    .accessibilityIdentifier("decision-dismiss-\(decision.number)")
             }
             if state.writing == decision.number { ownWordsField(decision) }
-            Button("Dismiss — already answered in chat", role: .destructive) { dismissing = decision }
-                .font(PaiTypography.caption.font)
-                .accessibilityIdentifier("decision-dismiss-\(decision.number)")
         }
     }
 
@@ -127,20 +126,28 @@ struct DecisionListView: View {
         }
     }
 
-    private func optionButton(_ label: String, selected: Bool, dashed: Bool = false, action: @escaping () -> Void)
-        -> some View
-    {
+    /// `muted` is the quieter look of an action that sends nothing (Dismiss): same outlined shape as
+    /// the answers, secondary text colour and the default border instead of the strong one.
+    private func optionButton(
+        _ label: String, selected: Bool, dashed: Bool = false, muted: Bool = false, action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Text(label)
                 .font(PaiTypography.captionEmphasized.font)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .foregroundStyle(selected ? Color.white : PaiPalette.Semantic.textPrimary)
+                .foregroundStyle(
+                    selected
+                        ? Color.white
+                        : muted ? PaiPalette.Semantic.textSecondary : PaiPalette.Semantic.textPrimary
+                )
                 .background(selected ? PaiPalette.primary500 : Color.clear, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .strokeBorder(
-                            selected ? PaiPalette.primary500 : PaiPalette.Semantic.borderStrong,
+                            selected
+                                ? PaiPalette.primary500
+                                : muted ? PaiPalette.Semantic.borderDefault : PaiPalette.Semantic.borderStrong,
                             style: StrokeStyle(lineWidth: 1, dash: dashed ? [4] : []))
                 )
         }
