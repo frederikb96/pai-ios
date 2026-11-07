@@ -836,21 +836,51 @@ public struct SessionType: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
-/// One `claude --model` alias and the `claude --effort` levels it supports — `GET
-/// /api/session-models`, the one declaration a model picker reads rather than hand-mirroring its
-/// own copy (`pai_cloud.config.SESSION_MODEL_EFFORT_LEVELS`).
+/// One entry of the model picker — `GET /api/session-models`, the one declaration a model picker
+/// reads rather than hand-mirroring its own copy (`pai_cloud.config.SESSION_MODEL_EFFORT_LEVELS`).
+/// A Claude entry is a `claude --model` alias with the `claude --effort` levels it supports; a
+/// Hermes entry (`hermes:<alias>`) carries no levels.
+///
+/// An older server sends neither `label` nor `engine`: the label then stays `nil` (callers fall
+/// back to their own name for the id) and the engine is read off the `hermes:` id prefix.
 public struct SessionModelInfo: Codable, Sendable, Equatable, Identifiable {
+    public static let claudeEngine = "claude"
+    public static let hermesEngine = "hermes"
+    static let hermesIdPrefix = "hermes:"
+
     public let id: String
     public let effortLevels: [String]
+    /// What the picker shows, as the server names it.
+    public let label: String?
+    /// Which engine answers a session on this entry; decides whether a Claude sign-in matters.
+    public let engine: String
 
     enum CodingKeys: String, CodingKey {
-        case id
+        case id, label, engine
         case effortLevels = "effort_levels"
     }
 
-    public init(id: String, effortLevels: [String]) {
+    public init(id: String, effortLevels: [String], label: String? = nil, engine: String? = nil) {
         self.id = id
         self.effortLevels = effortLevels
+        self.label = label
+        self.engine = engine ?? Self.engine(forId: id)
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            id: container.decode(String.self, forKey: .id),
+            effortLevels: container.decode([String].self, forKey: .effortLevels),
+            label: container.decodeIfPresent(String.self, forKey: .label),
+            engine: container.decodeIfPresent(String.self, forKey: .engine))
+    }
+
+    public var isHermes: Bool { engine == Self.hermesEngine }
+
+    /// The engine a model id implies when the server did not say.
+    public static func engine(forId id: String) -> String {
+        id.hasPrefix(hermesIdPrefix) ? hermesEngine : claudeEngine
     }
 }
 

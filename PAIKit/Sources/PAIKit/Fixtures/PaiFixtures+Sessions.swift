@@ -74,8 +74,9 @@ extension PaiFixtures {
     public static let sessionModels: String = #"""
         {
           "models": [
-            { "id": "sonnet", "effort_levels": ["low", "medium", "high"] },
-            { "id": "opus", "effort_levels": ["low", "medium", "high", "xhigh", "max"] }
+            { "id": "sonnet", "label": "Sonnet", "engine": "claude", "effort_levels": ["low", "medium", "high"] },
+            { "id": "opus", "label": "Opus", "engine": "claude", "effort_levels": ["low", "medium", "high", "xhigh", "max"] },
+            { "id": "hermes:kimi", "label": "Hermes · Kimi", "engine": "hermes", "effort_levels": [] }
           ],
           "fast_default_model": "sonnet",
           "fast_default_thinking": "low",

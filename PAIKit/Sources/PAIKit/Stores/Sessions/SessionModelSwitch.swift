@@ -26,13 +26,24 @@ public enum SessionModelSwitch {
         _ session: Session, live: TranscriptStore.LiveSessionStatus?
     ) -> String? {
         if let pending = pendingAlias(session, live: live) { return aliasLabel(pending) }
+        // A Hermes session names its route, not the provider's model id its replies report.
+        if let alias = live?.model ?? session.model, isHermesAlias(alias) { return aliasLabel(alias) }
         if let label = ModelDisplay.label(forWireId: live?.liveModel ?? session.liveModel) { return label }
         if let alias = live?.model ?? session.model { return aliasLabel(alias) }
         return canSwitch(session) ? "Default" : nil
     }
 
+    /// An alias or wire id as a person reads it. A Hermes route the picker's catalogue did not
+    /// label (`SessionModelInfo.label`) reads "Hermes · Kimi".
     public static func aliasLabel(_ alias: String) -> String {
-        CreateSessionStore.modelDisplayLabels[alias] ?? UltraFastModelInfo.label(for: alias)
+        if isHermesAlias(alias) {
+            return "Hermes · \(alias.dropFirst(SessionModelInfo.hermesIdPrefix.count).capitalized)"
+        }
+        return CreateSessionStore.modelDisplayLabels[alias] ?? UltraFastModelInfo.label(for: alias)
+    }
+
+    private static func isHermesAlias(_ alias: String) -> Bool {
+        SessionModelInfo.engine(forId: alias) == SessionModelInfo.hermesEngine
     }
 
     private static func pendingAlias(_ session: Session, live: TranscriptStore.LiveSessionStatus?) -> String? {
