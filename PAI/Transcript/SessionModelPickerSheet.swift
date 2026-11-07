@@ -14,7 +14,7 @@ struct SessionModelPickerSheet: View {
             List {
                 Section {
                     ForEach(store.catalog.models) { model in
-                        modelRow(id: model.id)
+                        modelRow(model)
                     }
                 } header: {
                     Text("Model")
@@ -43,13 +43,14 @@ struct SessionModelPickerSheet: View {
         .task { await store.load() }
     }
 
-    private func modelRow(id: String) -> some View {
+    private func modelRow(_ model: SessionModelInfo) -> some View {
+        let id = model.id
         let isSelected = current == id
         return Button {
             Task { await choose(id) }
         } label: {
             HStack {
-                Text(SessionModelSwitch.aliasLabel(id)).foregroundStyle(PaiPalette.Semantic.textPrimary)
+                Text(model.label ?? SessionModelSwitch.aliasLabel(id)).foregroundStyle(PaiPalette.Semantic.textPrimary)
                 Spacer()
                 if isSelected {
                     Image(systemName: "checkmark").foregroundStyle(PaiPalette.primary500)

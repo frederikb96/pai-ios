@@ -47,10 +47,10 @@ public final class CreateSessionStore {
     /// The MailVerdict assistant's id: built into the pod like `ultrafast`, and answered by the
     /// same kind of worker (``isApiSessionSelected``).
     public static let mailverdictSessionTypeId = "mailverdict"
-    /// The emergency engine, answered by Hermes Agent: it needs no Claude credential, so it can be
-    /// started while the sign-in gate blocks everything else. Mirrors the web's
-    /// `HERMES_SESSION_TYPE_ID`.
-    public static let hermesSessionTypeId = "hermes"
+
+    /// The session types a Hermes model entry may start (the server refuses it elsewhere), so
+    /// the picker offers those entries on these types only.
+    private static let hermesCapableSessionTypeIds: Set<String> = ["home", "custom"]
 
     /// Session types built into the pod rather than the ConfigMap (see
     /// `backend/src/pai_cloud/config.py`'s `WEBSEARCH_SESSION_TYPE_ID`) sink under Custom rather
@@ -124,14 +124,18 @@ public final class CreateSessionStore {
     /// Whether `selectedSessionTypeId` is the MailVerdict assistant.
     public var isMailVerdictSelected: Bool { selectedSessionTypeId == Self.mailverdictSessionTypeId }
 
-    /// Whether `selectedSessionTypeId` is the Hermes emergency engine. Not an API session: it keeps
-    /// the ordinary composer, files and model picker.
-    public var isHermesSelected: Bool { selectedSessionTypeId == Self.hermesSessionTypeId }
+    /// Whether the chosen model entry is answered by Hermes, which keeps the ordinary composer,
+    /// files and model picker but needs no Claude credential.
+    public var isHermesModelSelected: Bool {
+        guard let selectedModel else { return false }
+        let entry = sessionModels.first { $0.id == selectedModel }
+        return (entry?.engine ?? SessionModelInfo.engine(forId: selectedModel)) == SessionModelInfo.hermesEngine
+    }
 
-    /// Whether a signed-out Claude stops the selected type from starting. The API session types and
-    /// Hermes need no Claude credential.
+    /// Whether a signed-out Claude stops the selected type and model from starting. The API
+    /// session types and a Hermes model need no Claude credential.
     public func signInBlocksStart(_ auth: ClaudeAuth) -> Bool {
-        ClaudeAuthPredicates.needsSignIn(auth) && !isApiSessionSelected && !isHermesSelected
+        ClaudeAuthPredicates.needsSignIn(auth) && !isApiSessionSelected && !isHermesModelSelected
     }
 
     /// Whether the selected type is answered by a pod-resident API worker (ultra-fast or the
@@ -162,13 +166,19 @@ public final class CreateSessionStore {
     private var defaultThinking: String? {
         isApiSessionSelected ? apiCatalog?.defaultThinking : (isFastSelected ? fastDefaultThinking : nil)
     }
-    /// The picker's models: ultra-fast's wire ids, or the launch aliases.
+    /// The picker's models: ultra-fast's wire ids, or the launch aliases plus, on a type that can
+    /// start them, the Hermes entries.
     public var pickerModels: [SessionModelInfo] {
-        guard isApiSessionSelected else { return sessionModels }
+        guard isApiSessionSelected else {
+            let hermesCapable = selectedSessionTypeId.map(Self.hermesCapableSessionTypeIds.contains) ?? false
+            return sessionModels.filter { hermesCapable || !$0.isHermes }
+        }
         return (apiCatalog?.models ?? []).map { SessionModelInfo(id: $0.id, effortLevels: $0.effortLevels) }
     }
     public func modelLabel(_ id: String) -> String {
-        isApiSessionSelected ? UltraFastModelInfo.label(for: id) : (Self.modelDisplayLabels[id] ?? id)
+        if isApiSessionSelected { return UltraFastModelInfo.label(for: id) }
+        let served = sessionModels.first { $0.id == id }?.label
+        return served ?? Self.modelDisplayLabels[id] ?? id
     }
     /// The effort levels the currently active model accepts — empty for "Default" (no model
     /// resolved) or for a model that declares none of its own.
@@ -268,6 +278,11 @@ public final class CreateSessionStore {
         // The API sessions name their models by wire id and the others by alias, and each API
         // kind has its own catalogue, so a choice never crosses between them.
         if id != selectedSessionTypeId, Self.usesApiModels(id) || isApiSessionSelected {
+            selectedModel = nil
+            selectedThinking = nil
+        }
+        // A Hermes entry only starts on the types that can run it.
+        if isHermesModelSelected, !Self.hermesCapableSessionTypeIds.contains(id) {
             selectedModel = nil
             selectedThinking = nil
         }

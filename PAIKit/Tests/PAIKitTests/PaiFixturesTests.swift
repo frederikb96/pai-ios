@@ -158,6 +158,7 @@ final class PaiFixturesTests: XCTestCase {
             "the new-session screen draws the environment row only for a type its machine lists")
         XCTAssertEqual(models.mailverdict?.defaultModel, "claude-opus-5-5")
         XCTAssertEqual(models.ultrafast?.models.count, 2)
+        XCTAssertEqual(models.models.first { $0.id == "hermes:kimi" }?.engine, "hermes")
         let defaults = try JSONDecoder().decode(SessionDefaults.self, from: Data(PaiFixtures.sessionDefaults.utf8))
         XCTAssertEqual(defaults.mailverdict?.reasoningEffort, "low")
         let types = try JSONSerialization.jsonObject(with: Data(PaiFixtures.sessionTypes.utf8)) as? [[String: Any]]
