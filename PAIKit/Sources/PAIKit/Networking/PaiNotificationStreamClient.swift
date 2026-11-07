@@ -39,6 +39,9 @@ public final class PaiNotificationStreamClient {
         /// incremental sync the list already runs, never a second way of deriving the rows.
         /// Optional with a no-op default, like `PaiSseClient.Callbacks.onArc`.
         public var onSessionsChanged: @MainActor @Sendable () -> Void
+        /// A decision was added, changed or resolved somewhere (owner streams only). Carries
+        /// nothing; the open ones are only ever read one way, `GET /api/decisions`.
+        public var onDecisionsChanged: @MainActor @Sendable () -> Void
         /// Fired for every successfully-parsed record, including a bare `ping` with no
         /// `onNotification`/`onRead` counterpart — see `PaiSseClient.Callbacks.onActivity`.
         public var onActivity: @MainActor @Sendable () -> Void
@@ -49,6 +52,7 @@ public final class PaiNotificationStreamClient {
             onNotification: @escaping @MainActor @Sendable (SseNotificationEvent) -> Void,
             onRead: @escaping @MainActor @Sendable (SseNotificationReadEvent) -> Void,
             onSessionsChanged: @escaping @MainActor @Sendable () -> Void = {},
+            onDecisionsChanged: @escaping @MainActor @Sendable () -> Void = {},
             onActivity: @escaping @MainActor @Sendable () -> Void,
             onConnected: @escaping @MainActor @Sendable () -> Void,
             onDisconnected: @escaping @MainActor @Sendable () -> Void
@@ -56,6 +60,7 @@ public final class PaiNotificationStreamClient {
             self.onNotification = onNotification
             self.onRead = onRead
             self.onSessionsChanged = onSessionsChanged
+            self.onDecisionsChanged = onDecisionsChanged
             self.onActivity = onActivity
             self.onConnected = onConnected
             self.onDisconnected = onDisconnected
@@ -185,6 +190,9 @@ public final class PaiNotificationStreamClient {
 
         case "sessions":
             callbacks.onSessionsChanged()
+
+        case "decisions":
+            callbacks.onDecisionsChanged()
 
         case "ping":
             break  // No-op handler that exists only to advance `lastEventTime`, already done above.

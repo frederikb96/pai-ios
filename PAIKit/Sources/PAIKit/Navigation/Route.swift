@@ -119,6 +119,9 @@ public enum Route: Hashable, Sendable {
     /// Plan usage — reached from Apps' "Usage" row and by tapping the usage figure in a
     /// session's header. Carries no identity concern of its own.
     case usage
+    /// Every open decision across the owner's sessions — reached from Apps' "Decisions" row.
+    /// Carries no identity concern of its own.
+    case decisions
 
     /// Ignores `session`'s `messageID` and `notePreview`'s `heading` — see those cases. Everything else is a plain
     /// per-case comparison, same as the synthesized version this replaces.
@@ -146,6 +149,7 @@ public enum Route: Hashable, Sendable {
         case (.computerCall, .computerCall): return true
         case (.canteen, .canteen): return true
         case (.usage, .usage): return true
+        case (.decisions, .decisions): return true
         default: return false
         }
     }
@@ -208,6 +212,8 @@ public enum Route: Hashable, Sendable {
             hasher.combine(21)
         case .usage:
             hasher.combine(22)
+        case .decisions:
+            hasher.combine(23)
         }
     }
 }
@@ -224,7 +230,8 @@ extension Route {
         "session", "terminal", "settings", "createSession", "subagents", "notes", "note", "noteUncached", "noteLarge",
         "noteContainers", "notePreview", "notifications", "recordings", "arcSpec", "apps", "arcSpecList", "arcReport",
         "arcOverview",
-        "schedulerList", "schedulerTask", "quickActions", "computerCall", "canteen", "usage", "subagentSession",
+        "schedulerList", "schedulerTask", "quickActions", "computerCall", "canteen", "usage", "decisions",
+        "subagentSession",
     ]
 
     /// The subagent of the fixture session (`PaiFixtures.sessionSubagent`), what the
@@ -284,6 +291,7 @@ extension Route {
         case "computerCall": return .computerCall
         case "canteen": return .canteen
         case "usage": return .usage
+        case "decisions": return .decisions
         default: return nil
         }
     }
@@ -447,7 +455,7 @@ public final class Router {
             case .terminal(let sessionID): return sessionID
             case .settings, .createSession, .subagents, .notes, .note, .noteContainers, .notePreview,
                 .notifications, .recordings, .arcSpec, .apps, .arcSpecList, .arcReport, .arcOverview,
-                .schedulerList, .schedulerTask, .quickActions, .computerCall, .canteen, .usage:
+                .schedulerList, .schedulerTask, .quickActions, .computerCall, .canteen, .usage, .decisions:
                 continue
             }
         }
@@ -462,7 +470,7 @@ public final class Router {
             case .note(let id), .notePreview(let id, _): return id
             case .session, .terminal, .settings, .createSession, .subagents, .notes, .noteContainers,
                 .notifications, .recordings, .arcSpec, .apps, .arcSpecList, .arcReport, .arcOverview,
-                .schedulerList, .schedulerTask, .quickActions, .computerCall, .canteen, .usage:
+                .schedulerList, .schedulerTask, .quickActions, .computerCall, .canteen, .usage, .decisions:
                 continue
             }
         }

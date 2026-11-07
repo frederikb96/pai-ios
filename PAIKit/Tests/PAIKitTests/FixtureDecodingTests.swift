@@ -125,6 +125,8 @@ final class FixtureDecodingTests: XCTestCase {
         _ = try decode(MeResponse.self, from: PaiFixtures.me, "me")
         _ = try decode(Usage.self, from: PaiFixtures.usage, "usage")
         _ = try decode(Usage.self, from: PaiFixtures.usageEmpty, "empty usage")
+        XCTAssertEqual(
+            try decode(OpenDecisionsResponse.self, from: PaiFixtures.openDecisions, "decisions").decisions.count, 2)
         _ = try decode([Draft].self, from: PaiFixtures.drafts, "drafts")
         _ = try decode([Draft].self, from: PaiFixtures.emptyDrafts, "empty drafts")
         _ = try decode(SecretStatusMap.self, from: PaiFixtures.secretStatuses, "secret statuses")

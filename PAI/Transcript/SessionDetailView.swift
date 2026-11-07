@@ -62,6 +62,7 @@ struct SessionDetailView: View {
                         sessionID: sessionID, sessionList: sessions, api: connection.apiClient,
                         onOpenTerminal: { environment.router.push(.terminal(sessionID: sessionID)) })
                     deliveryFailureBanner
+                    SessionDecisionsBanner(sessionID: sessionID)
                     TranscriptCollectionView(
                         sessionID: sessionID, store: transcript, apiClient: connection.apiClient, settings: settings,
                         outbox: outbox, requestFactory: connection.requestFactory, searchState: searchState,
