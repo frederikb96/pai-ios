@@ -121,12 +121,31 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
                 for: message(type: .assistant, content: content), width: width, environment: environment,
                 isRevealed: revealAll, measurer: measurer, cache: cache, metrics: metrics)
         }
-        let markerOnly = height("pai-file: /tmp/a.png")!
+        let markerOnly = height("pai-file: /tmp/a.txt")!
         let spoken = height("Hello")!
-        let spokenWithFile = height("Hello\npai-file: /tmp/a.png")!
+        let spokenWithFile = height("Hello\npai-file: /tmp/a.txt")!
         let blockHeight = spoken - 20 - 28 - 6
         XCTAssertEqual(spokenWithFile, 20 + blockHeight + 6 + 28 + 6 + 22, "text, chip, file chip, three children")
         XCTAssertEqual(markerOnly, 20 + blockHeight + 6 + 22, "no chip, the marker line is still text")
+    }
+
+    /// An image a reply's marker names is drawn inline, so its row reserves the image's box rather
+    /// than a chip's line — before the image is fetched, since nothing may change the row after.
+    /// Which files count is the filename's extension, in any case; a PDF stays a chip.
+    func testAnImageMarkerReservesMoreThanAFileChipAndAPdfStaysAChip() {
+        let measurer = StubBlockMeasurer()
+        let cache = BlockHeightCache()
+        func height(_ file: String) -> Double? {
+            TranscriptRowLayout.height(
+                for: message(type: .assistant, content: "pai-file: /tmp/\(file)"), width: width,
+                environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache, metrics: metrics)
+        }
+        // Same filename length, so the marker line measures the same in every row.
+        let text = height("abcd.txt")!
+        XCTAssertEqual(height("abcd.pdf")!, text)
+        for image in ["abcd.png", "abcd.JPG", "abc.jpeg", "abc.webp", "abcd.gif"] {
+            XCTAssertGreaterThan(height(image)!, text + 100, image)
+        }
     }
 
     /// A row's own timestamp costs no height at all — time is a separator above the rows that
@@ -491,11 +510,11 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
     // MARK: - Assistant file markers
 
     /// Mirrors the user-bubble attachment tests just above: a `pai-file:` marker becomes its own
-    /// fixed-height chip below the reply, gapped the same way — but unlike a user attachment, the
+    /// fixed-height chip (an image its fixed-height box) below the reply, gapped the same way — but unlike a user attachment, the
     /// marker LINE stays in the rendered text too, since the message is never rewritten for this
     /// (`MessageRouting.extractFilePaths`), so the measured content includes it.
     func testAssistantFileMarkersAddChipHeightsAndGapsBelowTheUnmodifiedProse() {
-        let messageContent = "\(proseSensitiveText)\n\npai-file: /tmp/one.png\npai-file: /tmp/two.png"
+        let messageContent = "\(proseSensitiveText)\n\npai-file: /tmp/one.png\npai-file: /tmp/two.zip"
         let msg = message(type: .assistant, content: messageContent, timestamp: nil)
         let measurer = StubBlockMeasurer()
         let cache = BlockHeightCache()
@@ -506,8 +525,9 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
 
         let content = measuredContentHeight(
             MarkdownParser.parse(messageContent), atWidth: 400 - 38, measurer: measurer, cache: cache)
-        // 20: the prose row's own padding. 44: two 22pt chips and 28 for the Listen chip. 18: three 6pt gaps.
-        XCTAssertEqual(actual, 20 + content + 44 + 28 + 18)
+        // 20: the prose row's own padding. 240 for the image's box, 22 for the zip's chip, 28 for
+        // the Listen chip. 18: three 6pt gaps.
+        XCTAssertEqual(actual, 20 + content + 240 + 22 + 28 + 18)
     }
 
     // MARK: - Bubbles a person is behind

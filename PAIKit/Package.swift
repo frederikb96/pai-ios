@@ -1,8 +1,8 @@
 // swift-tools-version: 6.2
 import PackageDescription
 
-// TextKit measurement is Apple-only — the only thing standing between this package and a free
-// Linux CI runner. Excluding it there keeps every other model, parser and client testable for
+// TextKit measurement and math typesetting are Apple-only — the only things standing between this
+// package and a free Linux CI runner. Excluding them there keeps every other model, parser and client testable for
 // nothing, the two streaming clients included: they read the network through
 // `URLSessionDataDelegate`, which swift-corelibs-foundation implements, rather than
 // `URLSession.bytes(for:)`, which it does not. Keep any new transport on that side of the line.
@@ -11,7 +11,8 @@ import PackageDescription
 // false under Xcode on macOS, true on the Linux runner.
 #if os(Linux)
     let applePlatformOnly = [
-        "Layout/TextKitBlockMeasurer.swift"
+        "Layout/TextKitBlockMeasurer.swift",
+        "Layout/MathTypesetter.swift",
     ]
     let applePlatformOnlyTests: [String] = []
 #else
@@ -38,13 +39,19 @@ let package = Package(
         //
         // Pinned to the next minor rather than the next major: this is pre-1.0, where a minor
         // bump is allowed to break API, and `from:` would accept every one of them.
-        .package(url: "https://github.com/apple/swift-markdown.git", .upToNextMinor(from: "0.8.0"))
+        .package(url: "https://github.com/apple/swift-markdown.git", .upToNextMinor(from: "0.8.0")),
+        // LaTeX typeset natively (a Swift port of iosMath, CoreText and CoreGraphics), so a
+        // formula's size is known synchronously, the way the precomputed row heights need it. A
+        // web view running KaTeX would answer only after an asynchronous render. Apple-only, so
+        // the Linux build never compiles it; `MathTypesetter` is its one user.
+        .package(url: "https://github.com/mgriebling/SwiftMath.git", .upToNextMinor(from: "1.7.3")),
     ],
     targets: [
         .target(
             name: "PAIKit",
             dependencies: [
-                .product(name: "Markdown", package: "swift-markdown")
+                .product(name: "Markdown", package: "swift-markdown"),
+                .product(name: "SwiftMath", package: "SwiftMath", condition: .when(platforms: [.iOS, .macOS])),
             ],
             exclude: applePlatformOnly
         ),

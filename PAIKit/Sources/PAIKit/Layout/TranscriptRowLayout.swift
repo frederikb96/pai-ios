@@ -52,12 +52,23 @@ public enum TranscriptRowMetrics {
     public static let meRowPadding: Double = 6
     /// One attachment chip under a user bubble.
     public static let attachmentChipHeight: Double = 22
+    /// The box an image a reply's `pai-file:` line names is drawn in, inline under the reply.
+    /// Fixed whatever the image's shape, which is only known once it is fetched: the image is
+    /// fitted inside it, so a picture arriving late never changes the row's height.
+    public static let inlineImageHeight: Double = 240
+    /// The height one `pai-file:` path takes under a reply: an image's box, or any other file's
+    /// chip. The view draws the same split through `isImageAttachmentPath`.
+    public static func fileMarkerHeight(_ path: String) -> Double {
+        isImageAttachmentPath(path) ? inlineImageHeight : attachmentChipHeight
+    }
     /// The gap between a user bubble's own text and its first attachment chip, and between
     /// chips themselves — `UserBubbleView`'s own `VStack(spacing: attachmentChipSpacing)`.
     public static let attachmentChipSpacing: Double = 6
     /// The Listen chip under a reply that has something to read aloud. Always drawn, whether or not
     /// playback is on, so switching it on never changes a measured row.
     public static let listenChipHeight: Double = 28
+    /// Above and below a display formula, inside the room it takes.
+    public static let mathBlockPadding: Double = 6
     /// The gap between sibling blocks in one markdown content stack — `MarkdownContentView`'s
     /// own `VStack(spacing: markdownBlockSpacing)`, which draws a card's own top-level blocks and
     /// a list item's or block quote's nested ones identically. `TranscriptCards.swift`'s
@@ -481,7 +492,7 @@ public enum TranscriptRowLayout {
                 let hasText = !text.isEmpty
                 let listenable = PlaybackModel.hasSpeech(text)
                 let chips =
-                    Double(filePaths.count) * TranscriptRowMetrics.attachmentChipHeight
+                    filePaths.map(TranscriptRowMetrics.fileMarkerHeight).reduce(0, +)
                     + (listenable ? TranscriptRowMetrics.listenChipHeight : 0)
                 let childCount = (hasText ? 1 : 0) + filePaths.count + (listenable ? 1 : 0)
                 let gaps = childCount > 1 ? Double(childCount - 1) * TranscriptRowMetrics.attachmentChipSpacing : 0

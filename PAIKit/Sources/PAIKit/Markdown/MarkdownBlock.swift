@@ -37,6 +37,9 @@ public enum MarkdownBlock: Hashable, Sendable {
     /// in any HTML consumer and showing one as "source" would not be an honest degradation of
     /// anything a reader was meant to see.
     case htmlBlock(String)
+    /// A display formula, as LaTeX without its delimiters (``MarkdownMath``). Never wraps: wider
+    /// than its row, it scrolls sideways like a code block.
+    case math(String)
 }
 
 extension MarkdownBlock {
@@ -56,6 +59,8 @@ extension MarkdownBlock {
             return text
         case .htmlBlock(let raw):
             return raw
+        case .math(let latex):
+            return latex
         case .thematicBreak:
             // A rule is a border, not text. Matching it would send search somewhere with
             // nothing to highlight.
@@ -132,6 +137,11 @@ public struct InlineStyle: OptionSet, Hashable, Sendable {
     public static let italic = InlineStyle(rawValue: 1 << 1)
     public static let strikethrough = InlineStyle(rawValue: 1 << 2)
     public static let code = InlineStyle(rawValue: 1 << 3)
+    /// The run's text is a formula's LaTeX, drawn as the formula (``MarkdownMath``).
+    public static let math = InlineStyle(rawValue: 1 << 4)
+    /// A display formula on its way from the parse to a block of its own; no parsed block carries
+    /// it, since `MarkdownParser` makes it a ``MarkdownBlock/math(_:)`` or demotes it to ``math``.
+    static let displayMath = InlineStyle(rawValue: 1 << 5)
 }
 
 public struct MarkdownList: Hashable, Sendable {

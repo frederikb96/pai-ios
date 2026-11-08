@@ -112,6 +112,21 @@ final class InlineDecisionsTests: XCTestCase {
         XCTAssertEqual(open.pendingCount, 2)
     }
 
+    /// A resolved decision stays one line until the reader opens it; opened, it shows the whole
+    /// decision and its row makes room for it. Each decision opens on its own.
+    func testAResolvedDecisionTheReaderOpenedShowsItsWholeCard() throws {
+        let answered = decision(1, state: .answered, answer: "no")
+        let listed = [answered, decision(2, state: .withdrawn)]
+        let context = InlineDecisionContext(mayDecide: true, listed: listed, reopened: [1])
+        XCTAssertEqual(context.display(for: 1), .reopened(answered))
+        XCTAssertEqual(context.display(for: 2), .resolved(number: 2, title: "Title 2", answer: nil))
+
+        let line = try XCTUnwrap(
+            cards("{{D1}}", displays: [1: .resolved(number: 1, title: "Title 1", answer: "no")]).first)
+        let opened = try XCTUnwrap(cards("{{D1}}", displays: [1: .reopened(answered)]).first)
+        XCTAssertGreaterThan(opened.height, line.height)
+    }
+
     // MARK: - The room a card takes
 
     private let environment = MeasurementEnvironment(sizeCategoryToken: "")

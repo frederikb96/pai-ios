@@ -59,6 +59,17 @@
             case .list(let list):
                 return NestedBlockLayout.listHeight(list, width: width, environment: environment, measurer: self)
 
+            case .math(let latex):
+                // Typeset, not laid out by TextKit: the formula never wraps, so its height is the
+                // image's at any width. The view draws the same cached image (`MathTypesetter`).
+                let formula = MainActor.assumeIsolated {
+                    MathTypesetter.formula(latex, style: .display, environment: environment)
+                }
+                guard let formula else {
+                    return height(of: .codeBlock(language: nil, code: latex), width: width, environment: environment)
+                }
+                return formula.height + 2 * TranscriptRowMetrics.mathBlockPadding
+
             default:
                 let attributed = Self.attributedString(for: block, environment: environment)
                 guard attributed.length > 0 else { return 0 }
@@ -97,9 +108,11 @@
             let category = UIContentSizeCategory(rawValue: environment.sizeCategoryToken)
             switch block {
             case .paragraph(let text):
-                return attributed(inline: text, style: PaiTypography.markdownBody, category: category)
+                return attributed(
+                    inline: text, style: PaiTypography.markdownBody, category: category, environment: environment)
             case .heading(let level, let text):
-                return attributed(inline: text, style: headingStyle(level), category: category)
+                return attributed(
+                    inline: text, style: headingStyle(level), category: category, environment: environment)
             case .codeBlock(_, let code):
                 return NSAttributedString(
                     string: code, attributes: attributes(for: PaiTypography.markdownCodeBlock, category: category))
@@ -123,27 +136,55 @@
             case .htmlBlock(let raw):
                 return NSAttributedString(
                     string: raw, attributes: attributes(for: PaiTypography.markdownCodeBlock, category: category))
-            case .blockQuote, .list, .table, .thematicBreak:
-                // Each of these is handled before this is ever reached: `.blockQuote`/`.list` in
-                // `height(of:width:environment:)`'s own cases above, `.table`/`.thematicBreak` in
-                // its cases at the top of the same switch.
+            case .blockQuote, .list, .table, .thematicBreak, .math:
+                // Each of these is handled before this is ever reached: `.blockQuote`/`.list`/
+                // `.math` in `height(of:width:environment:)`'s own cases above,
+                // `.table`/`.thematicBreak` in its cases at the top of the same switch.
                 return NSAttributedString(string: "")
             }
         }
 
         private static func attributed(
-            inline text: InlineText, style: PaiTypography.Style, category: UIContentSizeCategory
+            inline text: InlineText, style: PaiTypography.Style, category: UIContentSizeCategory,
+            environment: MeasurementEnvironment
         )
             -> NSAttributedString
         {
             let result = NSMutableAttributedString()
             for run in text.runs {
+                if run.style.contains(.math) {
+                    result.append(formula(run.text, style: style, category: category, environment: environment))
+                    continue
+                }
                 result.append(
                     NSAttributedString(
                         string: run.text, attributes: attributes(for: style, category: category, inlineStyle: run.style)
                     ))
             }
             return result
+        }
+
+        /// An inline formula as TextKit lays it out: an attachment exactly the typeset image's
+        /// size, its baseline on the line's, which is where `MarkdownContentView` draws the image.
+        /// LaTeX that does not typeset is its source in the inline code font, as drawn.
+        private static func formula(
+            _ latex: String, style: PaiTypography.Style, category: UIContentSizeCategory,
+            environment: MeasurementEnvironment
+        ) -> NSAttributedString {
+            let formula = MainActor.assumeIsolated {
+                MathTypesetter.formula(latex, style: .inline, environment: environment)
+            }
+            guard let formula else {
+                return NSAttributedString(
+                    string: MathTypesetter.inlineFallback(latex),
+                    attributes: attributes(for: style, category: category, inlineStyle: .code))
+            }
+            let attachment = NSTextAttachment()
+            attachment.bounds = CGRect(x: 0, y: -formula.descent, width: formula.width, height: formula.height)
+            let attributed = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))
+            attributed.addAttributes(
+                attributes(for: style, category: category), range: NSRange(location: 0, length: attributed.length))
+            return attributed
         }
 
         private static func headingStyle(_ level: Int) -> PaiTypography.Style {

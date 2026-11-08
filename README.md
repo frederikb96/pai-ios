@@ -14,7 +14,7 @@ reusing, and because a public repository gets unmetered CI.
 | A chat transcript that never jumps while loading older messages — `UICollectionView`, precomputed heights, prepend compensation in the layout rather than after a batch update | `PAIKit/Sources/PAIKit/Layout/`, `PAI/Transcript/` |
 | A markdown editor over one plain `UITextView`, with syntax highlighting over the source rather than a live preview | `PAIKit/Sources/PAIKit/Editor/`, `PAI/Notes/Editor/` |
 | Notes that work in flight mode: a cached index and notes, files kept under a size budget, and an outbox that holds every unsaved edit until the server has it, with conflicts settled without asking and nothing lost | `PAIKit/Sources/PAIKit/Stores/Notes/` |
-| A markdown parser that decomposes into synchronously measurable blocks, on top of swift-markdown | `PAIKit/Sources/PAIKit/Markdown/` |
+| A markdown parser that decomposes into synchronously measurable blocks, on top of swift-markdown, with LaTeX typeset natively by SwiftMath so a formula's size is known before layout | `PAIKit/Sources/PAIKit/Markdown/`, `PAIKit/Sources/PAIKit/Layout/MathTypesetter.swift` |
 | A debug bridge — an HTTP server inside the app, `#if DEBUG`, so CI can ask the app what it thinks instead of reading pixels off a screenshot | `PAIKit/Sources/PAIKit/Debug/` |
 | Streaming over `URLSessionDataDelegate` rather than `URLSession.bytes(for:)`, so the transport compiles and tests on Linux | `PAIKit/Sources/PAIKit/Networking/` |
 | Building and shipping an iOS app **without owning a Mac** — signing from Linux via the App Store Connect API, a hand-written project file, TestFlight from CI | `.github/workflows/`, `fastlane/`, `Tooling/` |

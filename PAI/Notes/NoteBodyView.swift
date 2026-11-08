@@ -262,6 +262,13 @@ struct NotePreviewBlockView: View {
                 raw, font: PaiTypography.markdownCodeBlock.font, highlights: highlightSpans(in: raw)
             )
             .foregroundStyle(PaiPalette.Notes.muted)
+
+        case .math(let latex):
+            // A note's preview parses no math, so it never draws this; the source is the safe
+            // fallback if that ever changes.
+            Text(latex)
+                .font(PaiTypography.markdownCodeBlock.font)
+                .foregroundStyle(PaiPalette.Notes.text)
         }
     }
 

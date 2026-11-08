@@ -288,6 +288,7 @@ struct PAIApp: App {
             case .table: "table"
             case .thematicBreak: "thematicBreak"
             case .htmlBlock: "htmlBlock"
+            case .math: "math"
             }
         }
     }

@@ -12,7 +12,8 @@ import SwiftUI
 /// `docs/ARCHITECTURE.md` "Reading the transcript"), so nothing here
 /// may grow to show a loaded image inline. An image or PDF goes straight to
 /// ``FilePreviewViewer`` instead once it loads, which is the right call on iOS when
-/// inline expansion would cost a row a height nobody measured.
+/// inline expansion would cost a row a height nobody measured. An image a reply's marker names is
+/// not a chip at all: ``SessionInlineImageView`` draws it in a box of fixed height.
 struct SessionAttachmentChipView: View {
     let sessionID: String
     let apiClient: PaiApiClient
