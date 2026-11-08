@@ -30,60 +30,99 @@ public enum MarkdownParser {
 
     /// Exposed so a test can parse the same source under different options and show that the
     /// option under test is the thing making the difference.
+    ///
+    /// Math is taken out of the source first and put back into the blocks (``MarkdownMath``).
     static func parse(_ source: String, options: ParseOptions) -> [MarkdownBlock] {
-        blocks(from: Document(parsing: source, options: options).children)
+        let (text, math) = MarkdownMath.protect(source)
+        return blocks(from: Document(parsing: text, options: options).children, math: math)
     }
 
     // MARK: - Blocks
 
-    private static func blocks(from children: MarkupChildren) -> [MarkdownBlock] {
-        children.compactMap(block(from:))
+    private static func blocks(from children: MarkupChildren, math: MarkdownMath) -> [MarkdownBlock] {
+        children.flatMap { blocks(from: $0, math: math) }
     }
 
+    /// One node's block, for a caller walking the document itself (a note's preview), which
+    /// parses no math: without it no node becomes more than one block.
     static func block(from markup: Markup) -> MarkdownBlock? {
+        blocks(from: markup, math: .none).first
+    }
+
+    /// One node's blocks: one, none for a node with nothing to show, or several for a paragraph a
+    /// display formula sits in, which is cut around it.
+    private static func blocks(from markup: Markup, math: MarkdownMath) -> [MarkdownBlock] {
         switch markup {
         case let heading as Heading:
-            return .heading(level: heading.level, text: inlineText(from: heading.children))
+            return [.heading(level: heading.level, text: inlineText(from: heading.children, math: math))]
 
         case let paragraph as Paragraph:
-            let text = inlineText(from: paragraph.children)
-            return text.isEmpty ? nil : .paragraph(text)
+            return paragraphBlocks(runs(from: paragraph.children, math: math))
 
         case let code as CodeBlock:
             let language = code.language.flatMap { $0.isEmpty ? nil : $0 }
-            return .codeBlock(language: language, code: withoutTrailingNewline(code.code))
+            return [.codeBlock(language: language, code: math.restore(withoutTrailingNewline(code.code)))]
 
         case let quote as BlockQuote:
-            return .blockQuote(blocks(from: quote.children))
+            return [.blockQuote(blocks(from: quote.children, math: math))]
 
         case let list as UnorderedList:
-            return .list(MarkdownList(marker: .bullet, items: listItems(from: list.listItems)))
+            return [.list(MarkdownList(marker: .bullet, items: listItems(from: list.listItems, math: math)))]
 
         case let list as OrderedList:
-            return .list(MarkdownList(marker: .ordered(start: list.startIndex), items: listItems(from: list.listItems)))
+            return [
+                .list(
+                    MarkdownList(
+                        marker: .ordered(start: list.startIndex), items: listItems(from: list.listItems, math: math)))
+            ]
 
         case let table as Table:
-            return .table(convertTable(table))
+            return [.table(convertTable(table, math: math))]
 
         case is ThematicBreak:
-            return .thematicBreak
+            return [.thematicBreak]
 
         case let html as HTMLBlock:
-            let raw = withoutTrailingNewline(html.rawHTML)
+            let raw = math.restore(withoutTrailingNewline(html.rawHTML))
             // A block that is nothing but an HTML comment carries no visible meaning in any
             // HTML consumer — showing it as literal source (the general rule for raw HTML,
             // above) is showing a reader something an author never meant them to see. Dropping
             // it here also means it is never measured, which the general rendering fix alone
             // would not have covered.
-            return isHTMLCommentOnly(raw) ? nil : .htmlBlock(raw)
+            return isHTMLCommentOnly(raw) ? [] : [.htmlBlock(raw)]
 
         default:
             // Block directives, Doxygen commands and custom blocks are unreachable under the
             // options above. Falling through to the contained text means an unexpected node
             // loses its styling rather than its content.
-            let text = inlineText(from: markup.children)
-            return text.isEmpty ? nil : .paragraph(text)
+            let text = inlineText(from: markup.children, math: math)
+            return text.isEmpty ? [] : [.paragraph(text)]
         }
+    }
+
+    /// A paragraph's runs as blocks: the paragraph, or, around each display formula in it, the
+    /// text before, the formula as a block of its own, and the text after. The line breaks that
+    /// joined the formula's line to its neighbours go with it.
+    private static func paragraphBlocks(_ runs: [InlineRun]) -> [MarkdownBlock] {
+        var blocks: [MarkdownBlock] = []
+        var pending: [InlineRun] = []
+        func flush() {
+            while pending.last?.text == "\n" { pending.removeLast() }
+            while pending.first?.text == "\n" { pending.removeFirst() }
+            let text = InlineText(runs: merged(pending))
+            if !text.isEmpty { blocks.append(.paragraph(text)) }
+            pending = []
+        }
+        for run in runs {
+            if run.style.contains(.displayMath) {
+                flush()
+                blocks.append(.math(run.text))
+            } else {
+                pending.append(run)
+            }
+        }
+        flush()
+        return blocks
     }
 
     /// cmark terminates every code block and HTML block with a newline that is a delimiter
@@ -104,9 +143,9 @@ public enum MarkdownParser {
 
     // MARK: - Lists
 
-    private static func listItems(from items: some Sequence<ListItem>) -> [MarkdownListItem] {
+    private static func listItems(from items: some Sequence<ListItem>, math: MarkdownMath) -> [MarkdownListItem] {
         items.map { item in
-            MarkdownListItem(checkbox: checkbox(from: item.checkbox), blocks: blocks(from: item.children))
+            MarkdownListItem(checkbox: checkbox(from: item.checkbox), blocks: blocks(from: item.children, math: math))
         }
     }
 
@@ -120,13 +159,13 @@ public enum MarkdownParser {
 
     // MARK: - Tables
 
-    private static func convertTable(_ table: Table) -> MarkdownTable {
+    private static func convertTable(_ table: Table, math: MarkdownMath) -> MarkdownTable {
         // `cells` and `rows` are lazy sequences, whose `map` stays lazy. Making each an array
         // first keeps the result a plain `[[InlineText]]` rather than nested lazy views.
         let alignments = table.columnAlignments.map(alignment(from:))
-        let header = Array(table.head.cells).map { inlineText(from: $0.children) }
+        let header = Array(table.head.cells).map { inlineText(from: $0.children, math: math) }
         let rows = Array(table.body.rows).map { row in
-            Array(row.cells).map { inlineText(from: $0.children) }
+            Array(row.cells).map { inlineText(from: $0.children, math: math) }
         }
 
         // GFM decides a table's width from its delimiter row, but a malformed source can still
@@ -159,63 +198,80 @@ public enum MarkdownParser {
 
     // MARK: - Inline
 
-    private static func inlineText(from children: MarkupChildren) -> InlineText {
-        var runs: [InlineRun] = []
-        appendRuns(from: children, style: [], destination: nil, into: &runs)
+    /// Inline content anywhere but a paragraph: a display formula there is drawn inline.
+    private static func inlineText(from children: MarkupChildren, math: MarkdownMath) -> InlineText {
+        let runs = runs(from: children, math: math).map { run in
+            guard run.style.contains(.displayMath) else { return run }
+            return InlineRun(text: run.text, style: .math, destination: run.destination)
+        }
         return InlineText(runs: merged(runs))
+    }
+
+    private static func runs(from children: MarkupChildren, math: MarkdownMath) -> [InlineRun] {
+        var runs: [InlineRun] = []
+        appendRuns(from: children, style: [], destination: nil, math: math, into: &runs)
+        return runs
     }
 
     private static func appendRuns(
         from children: MarkupChildren,
         style: InlineStyle,
         destination: String?,
+        math: MarkdownMath,
         into runs: inout [InlineRun]
     ) {
         for child in children {
             switch child {
             case let text as Markdown.Text:
-                // GFM tables, strikethrough and task lists are attached to the underlying cmark
-                // parser as syntax extensions (`CommonMarkConverter.swift`); the GFM "autolink"
-                // extension — the one that would turn a bare `https://…` into a link on its own —
-                // is not. So a plain `Markdown.Text` node here can genuinely contain a URL that
-                // parsed as nothing but text, and this is where that gets a second look. Skipped
-                // when `destination` is already set: that text is already the label of a real
-                // markdown link (or an image's alt text), and re-splitting it would only ever
-                // shorten the tappable region, never usefully change it.
-                runs.append(
-                    contentsOf: destination == nil
-                        ? autolinkedRuns(in: text.string, style: style)
-                        : [InlineRun(text: text.string, style: style, destination: destination)])
+                for piece in math.pieces(of: text.string) {
+                    switch piece {
+                    case .formula(let number):
+                        let formula = math.formulas[number]
+                        let kind: InlineStyle = formula.kind == .display ? .displayMath : .math
+                        runs.append(InlineRun(text: formula.latex, style: kind, destination: destination))
+                    case .text(let string):
+                        appendText(string, style: style, destination: destination, into: &runs)
+                    }
+                }
 
             case let code as InlineCode:
-                runs.append(InlineRun(text: code.code, style: style.union(.code), destination: destination))
+                runs.append(
+                    InlineRun(text: math.restore(code.code), style: style.union(.code), destination: destination))
 
             case is Emphasis:
-                appendRuns(from: child.children, style: style.union(.italic), destination: destination, into: &runs)
+                appendRuns(
+                    from: child.children, style: style.union(.italic), destination: destination, math: math,
+                    into: &runs)
 
             case is Strong:
-                appendRuns(from: child.children, style: style.union(.bold), destination: destination, into: &runs)
+                appendRuns(
+                    from: child.children, style: style.union(.bold), destination: destination, math: math,
+                    into: &runs)
 
             case is Strikethrough:
                 appendRuns(
                     from: child.children,
                     style: style.union(.strikethrough),
                     destination: destination,
+                    math: math,
                     into: &runs
                 )
 
             case let link as Link:
                 // An outer link wins over an inner one: nesting is malformed, and the outer is
                 // the one the reader's tap lands on.
-                appendRuns(from: link.children, style: style, destination: destination ?? link.destination, into: &runs)
+                appendRuns(
+                    from: link.children, style: style, destination: destination ?? link.destination.map(math.restore),
+                    math: math, into: &runs)
 
             case let image as Image:
                 // An image cannot report a height without loading, and every row's height is
                 // computed before anything reaches the screen. Showing the alt text as a link
                 // keeps the reference readable and tappable instead of dropping it.
-                let label = inlineText(from: image.children).plainText
-                let shown = label.isEmpty ? (image.source ?? "") : label
-                runs.append(InlineRun(text: shown, style: style, destination: destination ?? image.source))
+                let source = image.source.map(math.restore)
+                let label = inlineText(from: image.children, math: math).plainText
+                let shown = label.isEmpty ? (source ?? "") : label
+                runs.append(InlineRun(text: shown, style: style, destination: destination ?? source))
 
             case is SoftBreak:
                 // A newline inside a paragraph is a line break, as in the web client — both
@@ -228,12 +284,28 @@ public enum MarkdownParser {
                 runs.append(InlineRun(text: "\n", style: style, destination: destination))
 
             case let html as InlineHTML:
-                runs.append(InlineRun(text: html.rawHTML, style: style, destination: destination))
+                runs.append(InlineRun(text: math.restore(html.rawHTML), style: style, destination: destination))
 
             default:
-                appendRuns(from: child.children, style: style, destination: destination, into: &runs)
+                appendRuns(from: child.children, style: style, destination: destination, math: math, into: &runs)
             }
         }
+    }
+
+    /// GFM tables, strikethrough and task lists are attached to the underlying cmark parser as
+    /// syntax extensions (`CommonMarkConverter.swift`); the GFM "autolink" extension — the one that
+    /// would turn a bare `https://…` into a link on its own — is not. So a plain `Markdown.Text`
+    /// node can genuinely contain a URL that parsed as nothing but text, and this is where that
+    /// gets a second look. Skipped when `destination` is already set: that text is already the
+    /// label of a real markdown link (or an image's alt text), and re-splitting it would only ever
+    /// shorten the tappable region, never usefully change it.
+    private static func appendText(
+        _ text: String, style: InlineStyle, destination: String?, into runs: inout [InlineRun]
+    ) {
+        runs.append(
+            contentsOf: destination == nil
+                ? autolinkedRuns(in: text, style: style)
+                : [InlineRun(text: text, style: style, destination: destination)])
     }
 
     /// GFM's "extended autolink" grammar (the same one `remark-gfm` applies on the web side of
@@ -358,11 +430,13 @@ public enum MarkdownParser {
 
     /// Joins neighbouring runs that share styling, so `**bold `code`**` is not three runs where
     /// two would do. Measurement cost scales with run count, and a merged list is also what
-    /// makes an expected value in a test readable.
+    /// makes an expected value in a test readable. Two formulas side by side stay two.
     private static func merged(_ runs: [InlineRun]) -> [InlineRun] {
         runs.reduce(into: []) { result, run in
             guard !run.text.isEmpty else { return }
-            if let last = result.last, last.style == run.style, last.destination == run.destination {
+            if let last = result.last, last.style == run.style, last.destination == run.destination,
+                !run.style.contains(.math)
+            {
                 result[result.count - 1] = InlineRun(
                     text: last.text + run.text,
                     style: last.style,

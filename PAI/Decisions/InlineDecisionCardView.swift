@@ -14,13 +14,15 @@ struct InlineDecisionActions {
     /// Send every answer picked for the session; the number is the card whose Send was tapped.
     let send: @MainActor (Int) -> Void
     let clearPicks: @MainActor () -> Void
+    /// Open a resolved decision's full card again, or close it back to its line.
+    let toggleReopened: @MainActor (Int) -> Void
 }
 
 /// One decision where a reply embeds it, or where an unembedded one is placed: while open, the
 /// card the pin opens to (title, recommendation, context, its answers, Other…, Dismiss, Send),
 /// answered through the session's shared picks; once resolved, one line with its answer or that
-/// it was withdrawn; for a guest or a number the session never had, the marker text. Swift port of
-/// the web's `InlineDecision.tsx`.
+/// it was withdrawn, which a tap opens to the read-only card and closes again; for a guest or a
+/// number the session never had, the marker text. Swift port of the web's `InlineDecision.tsx`.
 ///
 /// Every section is pinned to the height `InlineDecisionLayout` measured for it, and every text is
 /// drawn by the transcript's own markdown view, which the measurer mirrors, so the card is exactly
@@ -39,6 +41,8 @@ struct InlineDecisionCardView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             case .resolved(let number, let title, let answer):
                 resolved(number: number, title: title, answer: answer)
+            case .reopened(let reopened):
+                ReopenedDecisionCard(decision: reopened, measured: decision.measured, actions: actions)
             case .open(let open):
                 OpenDecisionCard(open: open, measured: decision.measured, actions: actions)
             }
@@ -47,16 +51,119 @@ struct InlineDecisionCardView: View {
     }
 
     private func resolved(number: Int, title: String, answer: String?) -> some View {
-        MarkdownContentView(
-            blocks: [InlineDecisionLayout.resolvedBlock(number: number, title: title, answer: answer)]
-        )
-        .foregroundStyle(PaiPalette.Semantic.textSecondary)
+        Button {
+            actions?.toggleReopened(number)
+        } label: {
+            MarkdownContentView(
+                blocks: [InlineDecisionLayout.resolvedBlock(number: number, title: title, answer: answer)]
+            )
+            .foregroundStyle(PaiPalette.Semantic.textSecondary)
+            .padding(.horizontal, InlineDecisionLayout.cardHorizontalPadding)
+            .padding(.vertical, InlineDecisionLayout.resolvedVerticalPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(PaiPalette.Semantic.borderDefault))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Shows the whole decision")
+        .accessibilityIdentifier("inline-decision-\(number)")
+    }
+}
+
+/// A resolved decision opened again: its line, which closes it, then what the open card said —
+/// recommendation, context, the options with the answered one marked — with nothing to press.
+private struct ReopenedDecisionCard: View {
+    let decision: Decision
+    let measured: InlineDecisionLayout.Measured
+    let actions: InlineDecisionActions?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: InlineDecisionLayout.sectionSpacing) {
+            section(measured.title) {
+                Button {
+                    actions?.toggleReopened(decision.number)
+                } label: {
+                    MarkdownContentView(
+                        blocks: [
+                            InlineDecisionLayout.resolvedBlock(
+                                number: decision.number, title: decision.title,
+                                answer: InlineDecisionLayout.resolvedAnswer(decision))
+                        ]
+                    )
+                    .foregroundStyle(PaiPalette.Semantic.textSecondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Shows only the answer")
+            }
+            if measured.recommendation > 0 {
+                section(measured.recommendation) {
+                    MarkdownContentView(blocks: [InlineDecisionLayout.recommendationBlock(decision)])
+                        .foregroundStyle(PaiPalette.Semantic.accentText)
+                }
+            }
+            if measured.context > 0 {
+                section(measured.context) {
+                    MarkdownContentView(blocks: InlineDecisionLayout.contextBlocks(decision))
+                }
+            }
+            // Left out when there are no options, as the measurement leaves out its gap.
+            if !measured.answerRows.isEmpty { optionGrid }
+        }
+        .foregroundStyle(PaiPalette.Semantic.textPrimary)
         .padding(.horizontal, InlineDecisionLayout.cardHorizontalPadding)
         .padding(.vertical, InlineDecisionLayout.resolvedVerticalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(PaiPalette.Semantic.borderDefault))
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("inline-decision-\(number)")
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("inline-decision-\(decision.number)")
+    }
+
+    private func section(_ height: Double, @ViewBuilder content: () -> some View) -> some View {
+        content().frame(maxWidth: .infinity, alignment: .topLeading).frame(height: height, alignment: .top)
+    }
+
+    /// The options in the open card's grid, each row pinned to its measured height.
+    private var optionGrid: some View {
+        let answers = InlineDecisionLayout.reopenedAnswers(decision)
+        let columns = InlineDecisionLayout.optionColumns
+        let rows: [[InlineDecisionLayout.Answer]] = stride(from: 0, to: answers.count, by: columns).map {
+            Array(answers[$0..<min($0 + columns, answers.count)])
+        }
+        return VStack(spacing: InlineDecisionLayout.optionRowSpacing) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                HStack(spacing: InlineDecisionLayout.optionColumnSpacing) {
+                    ForEach(row, id: \.self) { answer in option(answer) }
+                    ForEach(row.count..<columns, id: \.self) { _ in
+                        Color.clear.frame(maxWidth: .infinity)
+                    }
+                }
+                .frame(height: measured.answerRows.indices.contains(index) ? measured.answerRows[index] : 0)
+            }
+        }
+    }
+
+    private func option(_ answer: InlineDecisionLayout.Answer) -> some View {
+        let chosen: Bool
+        if case .option(let text) = answer, decision.state == .answered, decision.answer == text {
+            chosen = true
+        } else {
+            chosen = false
+        }
+        let border: Color = chosen ? PaiPalette.primary500 : PaiPalette.Semantic.borderDefault
+        return MarkdownContentView(
+            blocks: [
+                .paragraph(InlineText(runs: [InlineRun(text: InlineDecisionLayout.label(of: answer, in: decision))]))
+            ]
+        )
+        .foregroundStyle(chosen ? PaiPalette.Semantic.textPrimary : PaiPalette.Semantic.textSecondary)
+        .padding(.horizontal, InlineDecisionLayout.optionHorizontalPadding)
+        .padding(.vertical, InlineDecisionLayout.optionVerticalPadding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(border, lineWidth: chosen ? 2 : 1))
+        .accessibilityAddTraits(chosen ? .isSelected : [])
     }
 }
 

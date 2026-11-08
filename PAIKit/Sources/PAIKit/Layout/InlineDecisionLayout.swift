@@ -21,8 +21,12 @@ public enum InlineDecisionDisplay: Hashable, Sendable {
     case loading
     /// The card the pin opens to: title, recommendation, context, the answers, and Send.
     case open(InlineOpenDecision)
-    /// One line: the title and the answer, or `nil` for a decision that was withdrawn.
+    /// One line: the title and the answer, or `nil` for a decision that was withdrawn. A tap
+    /// opens it as ``reopened(_:)``.
     case resolved(number: Int, title: String, answer: String?)
+    /// A resolved decision the reader tapped open: the same line, then its recommendation,
+    /// context and options, the answered one marked. Read-only; a tap on the line closes it.
+    case reopened(Decision)
 }
 
 /// An open decision as its card shows it right now.
@@ -56,6 +60,8 @@ public struct InlineDecisionContext: Sendable {
     public let pendingCount: Int
     /// Per decision number: a Send or Dismiss from its card in flight, and its last refusal.
     public let cardStates: [Int: CardState]
+    /// The resolved decisions the reader opened again, by number.
+    public let reopened: Set<Int>
 
     public struct CardState: Hashable, Sendable {
         public let isSending: Bool
@@ -69,13 +75,14 @@ public struct InlineDecisionContext: Sendable {
 
     public init(
         mayDecide: Bool, listed: [Decision]?, picks: [Int: DecisionPick] = [:], pendingCount: Int = 0,
-        cardStates: [Int: CardState] = [:]
+        cardStates: [Int: CardState] = [:], reopened: Set<Int> = []
     ) {
         self.mayDecide = mayDecide
         self.listed = listed
         self.picks = picks
         self.pendingCount = pendingCount
         self.cardStates = cardStates
+        self.reopened = reopened
     }
 
     public func display(for number: Int) -> InlineDecisionDisplay {
@@ -89,10 +96,10 @@ public struct InlineDecisionContext: Sendable {
                 InlineOpenDecision(
                     decision: decision, picked: picks[number]?.text, pendingCount: pendingCount,
                     isSending: state?.isSending ?? false, errorMessage: state?.errorMessage))
-        case .answered:
-            return .resolved(number: number, title: decision.title, answer: decision.answer ?? "")
-        case .withdrawn, .unrecognized:
-            return .resolved(number: number, title: decision.title, answer: nil)
+        case .answered, .withdrawn, .unrecognized:
+            if reopened.contains(number) { return .reopened(decision) }
+            return .resolved(
+                number: number, title: decision.title, answer: InlineDecisionLayout.resolvedAnswer(decision))
         }
     }
 }
@@ -161,6 +168,17 @@ public enum InlineDecisionLayout {
     /// Whether the chip line shows: the decision blocks the agent, or an answer is picked.
     public static func showsChips(_ open: InlineOpenDecision) -> Bool {
         open.decision.blocks || open.picked != nil
+    }
+
+    /// What a resolved decision's line says it was answered with, `nil` for one withdrawn.
+    public static func resolvedAnswer(_ decision: Decision) -> String? {
+        decision.state == .answered ? decision.answer ?? "" : nil
+    }
+
+    /// A reopened decision's option grid: its options only, since Other… and Dismiss answer an
+    /// open one.
+    public static func reopenedAnswers(_ decision: Decision) -> [Answer] {
+        decision.options.map(Answer.option)
     }
 
     /// A resolved decision's line: number and title, then the answer or that it was withdrawn.
@@ -271,19 +289,8 @@ public enum InlineDecisionLayout {
                     measurer: measurer, cache: cache
                 ).totalHeight
 
-            let labelWidth = answerLabelWidth(cardWidth: width)
-            let buttons = answers(decision).map { answer in
-                height(paragraph(label(of: answer, in: decision)), at: labelWidth) + 2 * optionVerticalPadding
-            }
-            var answerRows: [Double] = []
-            var index = 0
-            while index < buttons.count {
-                let row = buttons[index..<min(index + optionColumns, buttons.count)]
-                answerRows.append(row.max() ?? 0)
-                index += optionColumns
-            }
-            let grid =
-                answerRows.reduce(0, +) + optionRowSpacing * Double(max(0, answerRows.count - 1))
+            let answerRows = gridRows(answers(decision), of: decision, cardWidth: width, height: height(_:at:))
+            let grid = gridHeight(answerRows)
 
             let sendBar = open.pendingCount > 0 ? metrics.proseLineHeight + 2 * sendBarVerticalPadding : 0
             let error = open.errorMessage.map { height(errorBlock($0), at: inner) } ?? 0
@@ -295,6 +302,48 @@ public enum InlineDecisionLayout {
             return Measured(
                 height: total, title: title, recommendation: recommendation, chips: chips, context: context,
                 answerRows: answerRows, sendBar: sendBar, error: error)
+
+        case .reopened(let decision):
+            let inner = innerWidth(cardWidth: width)
+            let line = height(
+                resolvedBlock(number: decision.number, title: decision.title, answer: resolvedAnswer(decision)),
+                at: inner)
+            let recommendation = height(recommendationBlock(decision), at: inner)
+            let context =
+                MessageContentLayoutComposer.layout(
+                    of: contextBlocks(decision), width: inner, environment: environment, metrics: metrics,
+                    measurer: measurer, cache: cache
+                ).totalHeight
+            let answerRows = gridRows(reopenedAnswers(decision), of: decision, cardWidth: width, height: height(_:at:))
+            let sections = [line, recommendation, context, gridHeight(answerRows)].filter { $0 > 0 }
+            let total =
+                sections.reduce(0, +) + sectionSpacing * Double(max(0, sections.count - 1))
+                + 2 * resolvedVerticalPadding
+            return Measured(
+                height: total, title: line, recommendation: recommendation, chips: 0, context: context,
+                answerRows: answerRows, sendBar: 0, error: 0)
         }
+    }
+
+    /// One height per row of an answer grid: the tallest button in it.
+    private static func gridRows(
+        _ answers: [Answer], of decision: Decision, cardWidth: Double, height: (MarkdownBlock, Double) -> Double
+    ) -> [Double] {
+        let labelWidth = answerLabelWidth(cardWidth: cardWidth)
+        let buttons = answers.map { answer in
+            height(paragraph(label(of: answer, in: decision)), labelWidth) + 2 * optionVerticalPadding
+        }
+        var rows: [Double] = []
+        var index = 0
+        while index < buttons.count {
+            let row = buttons[index..<min(index + optionColumns, buttons.count)]
+            rows.append(row.max() ?? 0)
+            index += optionColumns
+        }
+        return rows
+    }
+
+    private static func gridHeight(_ rows: [Double]) -> Double {
+        rows.reduce(0, +) + optionRowSpacing * Double(max(0, rows.count - 1))
     }
 }

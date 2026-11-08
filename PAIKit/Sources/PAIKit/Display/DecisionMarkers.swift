@@ -33,11 +33,11 @@ public enum DecisionMarkers {
 
         for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
             if let open = fence {
-                if closesFence(line, character: open.character, length: open.length) { fence = nil }
+                if MarkdownFence.closes(line, character: open.character, length: open.length) { fence = nil }
                 chunk.append(line)
                 continue
             }
-            if let opened = fenceOpening(line) {
+            if let opened = MarkdownFence.opening(line) {
                 fence = opened
                 chunk.append(line)
                 continue
@@ -127,15 +127,9 @@ public enum DecisionMarkers {
 
     // MARK: - Line grammar
 
-    /// Up to three leading spaces, as markdown allows before a block.
-    private static func dropIndent(_ line: Substring) -> Substring? {
-        let spaces = line.prefix { $0 == " " }.count
-        return spaces <= 3 ? line.dropFirst(spaces) : nil
-    }
-
     /// The number of a line that is exactly `{{D<n>}}`, trailing spaces or tabs allowed.
     private static func markerNumber(_ line: Substring) -> Int? {
-        guard var rest = dropIndent(line), rest.hasPrefix("{{D") else { return nil }
+        guard var rest = MarkdownFence.dropIndent(line), rest.hasPrefix("{{D") else { return nil }
         rest = rest.dropFirst(3)
         let digits = rest.prefix { $0.isASCII && $0.isNumber }
         guard !digits.isEmpty, let number = Int(digits) else { return nil }
@@ -143,20 +137,5 @@ public enum DecisionMarkers {
         guard rest.hasPrefix("}}") else { return nil }
         rest = rest.dropFirst(2)
         return rest.allSatisfy { $0 == " " || $0 == "\t" } ? number : nil
-    }
-
-    /// A fence opening: three or more backticks or tildes, anything after.
-    private static func fenceOpening(_ line: Substring) -> (character: Character, length: Int)? {
-        guard let rest = dropIndent(line), let first = rest.first, first == "`" || first == "~" else { return nil }
-        let length = rest.prefix { $0 == first }.count
-        return length >= 3 ? (first, length) : nil
-    }
-
-    /// A closing fence: the opening one's character, at least as many, nothing after.
-    private static func closesFence(_ line: Substring, character: Character, length: Int) -> Bool {
-        guard let rest = dropIndent(line), rest.first == character else { return false }
-        let run = rest.prefix { $0 == character }.count
-        guard run >= length else { return false }
-        return rest.dropFirst(run).allSatisfy { $0 == " " || $0 == "\t" }
     }
 }

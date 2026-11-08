@@ -1052,8 +1052,8 @@ struct ResentBubbleView: View {
 struct AssistantProseView: View {
     let blocks: [MarkdownBlock]
     /// Every `pai-file:` marker path in this reply — the message itself is never rewritten to
-    /// remove the marker line, so `blocks` already renders it as ordinary text; these chips are
-    /// purely an addition below it (see `MessageRouting.extractFilePaths`).
+    /// remove the marker line, so `blocks` already renders it as ordinary text; the images and
+    /// chips are purely an addition below it (see `MessageRouting.extractFilePaths`).
     let filePaths: [String]
     let sessionID: String
     let apiClient: PaiApiClient
@@ -1071,9 +1071,9 @@ struct AssistantProseView: View {
         // leaves. Anything added here narrows what the text wraps at without narrowing what was
         // measured, which is a row drawn taller than the cell it was given.
         //
-        // The shape mirrors `UserBubbleView`: content first, one fixed-height chip per marker
-        // after it, the same spacing constant — a number that moves in one and not the other is
-        // the same disagreement from the other side.
+        // The shape mirrors `UserBubbleView`: content first, one fixed-height image box or chip
+        // per marker after it, the same spacing constant — a number that moves in one and not the
+        // other is the same disagreement from the other side.
         VStack(alignment: .leading, spacing: TranscriptRowMetrics.attachmentChipSpacing) {
             if decisions.isEmpty {
                 MarkdownContentView(blocks: blocks, highlights: highlights)
@@ -1086,11 +1086,16 @@ struct AssistantProseView: View {
             if PlaybackModel.hasSpeech(replyText) {
                 ListenChip(sessionId: sessionID, messageId: messageID, content: replyText)
             }
-            // An agent-offered file, never the reader's own — a non-image confirms before
-            // anything is fetched (see `SessionAttachmentChipView`).
+            // An agent-offered file, never the reader's own: an image drawn in its fixed box, any
+            // other file a chip that confirms before anything is fetched (see
+            // `SessionAttachmentChipView`). The split is `TranscriptRowMetrics.fileMarkerHeight`'s.
             ForEach(filePaths, id: \.self) { path in
-                SessionAttachmentChipView(
-                    sessionID: sessionID, apiClient: apiClient, path: path, requiresConfirmation: true)
+                if isImageAttachmentPath(path) {
+                    SessionInlineImageView(sessionID: sessionID, apiClient: apiClient, path: path)
+                } else {
+                    SessionAttachmentChipView(
+                        sessionID: sessionID, apiClient: apiClient, path: path, requiresConfirmation: true)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1215,6 +1220,12 @@ struct CommandCardView: View {
 struct MarkdownContentView: View {
     let blocks: [MarkdownBlock]
     var highlights: [Int: [TranscriptHighlightSpan]] = [:]
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    /// The text size a formula is typeset at, read the way the transcript's measurer reads it.
+    private var measurementEnvironment: MeasurementEnvironment {
+        MeasurementEnvironment(sizeCategoryToken: UIContentSizeCategory(dynamicTypeSize).rawValue)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: TranscriptContentMetrics.blockSpacing) {
@@ -1303,6 +1314,23 @@ struct MarkdownContentView: View {
                 raw, font: PaiTypography.markdownCodeBlock.font, highlights: highlights
             )
             .foregroundStyle(PaiPalette.Semantic.textMuted)
+
+        case .math(let latex):
+            // Never wraps; a formula wider than the row scrolls sideways like a code block. The
+            // image and its height are `MathTypesetter`'s, which the measurer read too, and LaTeX
+            // it cannot typeset is the code block the measurer measured instead.
+            if let formula = MathTypesetter.formula(latex, style: .display, environment: measurementEnvironment) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    Image(uiImage: formula.image)
+                        .renderingMode(.template)
+                        .foregroundStyle(PaiPalette.Semantic.textPrimary)
+                        .padding(.vertical, TranscriptRowMetrics.mathBlockPadding)
+                }
+                .frame(height: formula.height + 2 * TranscriptRowMetrics.mathBlockPadding)
+                .accessibilityLabel(latex)
+            } else {
+                MarkdownContentView(blocks: [.codeBlock(language: nil, code: latex)])
+            }
         }
     }
 
@@ -1376,7 +1404,48 @@ struct MarkdownContentView: View {
         }
 
         TranscriptTextHighlighting.apply(highlights, to: &attributed, source: source)
-        return Text(attributed)
+        return withFormulas(attributed, inline: inline, source: source)
+    }
+
+    /// The paragraph with each formula run drawn as its typeset image on the baseline, where the
+    /// measurer placed an attachment of the same size. Interpolated rather than joined with `+`,
+    /// which iOS 26 deprecates. The pieces between keep every attribute, highlights included.
+    private func withFormulas(_ attributed: AttributedString, inline: InlineText, source: String) -> Text {
+        guard inline.runs.contains(where: { $0.style.contains(.math) }) else { return Text(attributed) }
+        var pieces: [Text] = []
+        var pieceStart = attributed.startIndex
+        var cursor = 0
+        for run in inline.runs {
+            let length = run.text.utf16.count
+            defer { cursor += length }
+            guard run.style.contains(.math),
+                let range = TranscriptTextHighlighting.attributedRange(
+                    NSRange(location: cursor, length: length), source: source, in: attributed)
+            else { continue }
+            if pieceStart < range.lowerBound {
+                pieces.append(Text(AttributedString(attributed[pieceStart..<range.lowerBound])))
+            }
+            pieces.append(formulaText(run.text))
+            pieceStart = range.upperBound
+        }
+        if pieceStart < attributed.endIndex {
+            pieces.append(Text(AttributedString(attributed[pieceStart...])))
+        }
+        guard var text = pieces.first else { return Text(attributed) }
+        for piece in pieces.dropFirst() {
+            text = Text("\(text)\(piece)")
+        }
+        return text
+    }
+
+    private func formulaText(_ latex: String) -> Text {
+        guard let formula = MathTypesetter.formula(latex, style: .inline, environment: measurementEnvironment) else {
+            var fallback = AttributedString(MathTypesetter.inlineFallback(latex))
+            fallback.font = PaiTypography.markdownInlineCode.font
+            return Text(fallback)
+        }
+        let image = Image(uiImage: formula.image).renderingMode(.template)
+        return Text("\(image)").baselineOffset(-formula.descent)
     }
 }
 

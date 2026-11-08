@@ -142,6 +142,8 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// bounded preview is the design, and a row left open is a reader's momentary choice, not a
     /// setting.
     private var revealed: Set<RevealKey> = []
+    /// The resolved decisions the reader tapped open again, by number — kept like `revealed`.
+    private var reopenedDecisions: Set<Int> = []
 
     private var edgeFollow = EdgeFollowLatch()
     /// What lets `edgeFollow` tell the reader returning to the end from one of this controller's
@@ -1095,7 +1097,14 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         guard decisions.ownerMayDecide else { return InlineDecisionContext(mayDecide: false, listed: nil) }
         return InlineDecisionContext(
             mayDecide: true, listed: decisions.bySession[sessionID], picks: decisions.picks[sessionID] ?? [:],
-            pendingCount: decisions.pendingAnswers(sessionId: sessionID).count, cardStates: decisionCardStates)
+            pendingCount: decisions.pendingAnswers(sessionId: sessionID).count, cardStates: decisionCardStates,
+            reopened: reopenedDecisions)
+    }
+
+    private func toggleReopened(_ number: Int) {
+        if reopenedDecisions.remove(number) == nil { reopenedDecisions.insert(number) }
+        // The same anchoring path as opening any other card in a row.
+        recomputeRows(applying: .compensateFromTopVisibleRow)
     }
 
     /// What each loaded row's decisions show: the ones its reply embeds, and the open ones placed
@@ -1150,7 +1159,8 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             clearPicks: { [weak self] in
                 guard let self else { return }
                 self.decisions?.clearPicks(sessionId: self.sessionID)
-            })
+            },
+            toggleReopened: { [weak self] number in self?.toggleReopened(number) })
     }
 
     /// The topmost controller this one can present over — a prompt raised while a sheet is up

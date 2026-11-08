@@ -80,6 +80,10 @@ public enum SpeechText {
         case .htmlBlock(let raw):
             let lineCount = raw.split(separator: "\n", omittingEmptySubsequences: false).count
             return "HTML block, \(lineCount) \(pluralize("line", lineCount))."
+
+        case .math:
+            // LaTeX read aloud is noise; the formula is announced, like a code block.
+            return "Formula."
         }
     }
 
