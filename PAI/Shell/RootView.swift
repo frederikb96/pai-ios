@@ -83,10 +83,11 @@ struct RootView: View {
                 UserActivityRecognizer.installOnAllWindows()
             }
             // The URL half — a shortcut or widget that opens the app by URL rather than through
-            // an App Intent. Parked through the same inbox so there is one path to a screen from
-            // outside, not two that can disagree.
+            // an App Intent, and a universal link tapped in another app, which SwiftUI hands
+            // here as its URL rather than as a browsing user activity. Parked through the same
+            // inbox so there is one path to a screen from outside, not two that can disagree.
             .onOpenURL { url in
-                guard let link = DeepLink.from(url: url) else { return }
+                guard let link = DeepLink.from(url: url) ?? DeepLink.from(webURL: url) else { return }
                 deepLinks.receive(link)
             }
             // The network came back while the app is in front: replace a stream the path change
