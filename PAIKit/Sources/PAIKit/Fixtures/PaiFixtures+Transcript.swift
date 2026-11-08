@@ -228,7 +228,7 @@ extension PaiFixtures {
 
           { "id": 9028, "session_id": "305df4d3-1554-4fc3-be04-39a354a9e619", "type": "assistant", "subtype": null,
             "timestamp": "2026-08-29T07:15:00Z",
-            "content": "Here's the cost comparison I found:\n\n| Model | Input | Output | Context |\n|---|---:|---:|---:|\n| Opus 5 (1M) | $15/MTok | $75/MTok | 1M |\n| Sonnet 5 | $3/MTok | $15/MTok | 200K |\n| Haiku 4.5 | $0.80/MTok | $4/MTok | 200K |\n\nSonnet 5 is the default for the review pass.",
+            "content": "Here's the cost comparison I found:\n\n| Model | Input | Output | Context |\n|---|---:|---:|---:|\n| Opus 5 (1M) | $15/MTok | $75/MTok | 1M |\n| Sonnet 5 | $3/MTok | $15/MTok | 200K |\n| Haiku 4.5 | $0.80/MTok | $4/MTok | 200K |\n\nSonnet 5 is the default for the review pass.\n\n{{D1}}",
             "thinking": null, "tool_calls": null, "tool_result": null, "hook_summary": null, "tokens": null,
             "created_at": "2026-08-29T07:15:00Z" },
 
@@ -375,7 +375,7 @@ extension PaiFixtures {
 
           { "id": 9054, "session_id": "305df4d3-1554-4fc3-be04-39a354a9e619", "type": "assistant", "subtype": null,
             "timestamp": "2026-08-29T09:42:15Z",
-            "content": "**Both halves are done.** The transcript now shows what happened rather than that something happened, and the numbers came out better than the design predicted.\n\nWhat changed, in order of how much it matters:\n\n- A command shows the command and the start of its output, instead of a box containing the word `Bash`.\n- An edit renders as a real diff with its file path above it, wrapped and always readable.\n- A reply is prose on the page rather than a bubble, at the full width of the row.\n\nThe measurement, on one pinned session with 450 rows loaded, is **8.4 times more text for 24% more height per row**. The height check agrees to a third of a point across sixty rows, which is the number that actually matters: a row drawn taller than its cell is what drags the reader around.\n\n```swift\nlet cap = visualCap(for: card, metrics: metrics)\nlet clamped = cap.map { min(content.totalHeight, $0) } ?? content.totalHeight\n```\n\nOne thing left for you: install the build. Everything else is shipped.",
+            "content": "**Both halves are done.** The transcript now shows what happened rather than that something happened, and the numbers came out better than the design predicted.\n{{D3}}\n\nWhat changed, in order of how much it matters:\n\n- A command shows the command and the start of its output, instead of a box containing the word `Bash`.\n- An edit renders as a real diff with its file path above it, wrapped and always readable.\n- A reply is prose on the page rather than a bubble, at the full width of the row.\n\nThe measurement, on one pinned session with 450 rows loaded, is **8.4 times more text for 24% more height per row**. The height check agrees to a third of a point across sixty rows, which is the number that actually matters: a row drawn taller than its cell is what drags the reader around.\n\n```swift\nlet cap = visualCap(for: card, metrics: metrics)\nlet clamped = cap.map { min(content.totalHeight, $0) } ?? content.totalHeight\n```\n\nOne thing left for you: install the build. Everything else is shipped.",
             "thinking": null, "tool_calls": null, "tool_result": null, "hook_summary": null, "tokens": null,
             "created_at": "2026-08-29T09:42:15Z" }
         """#

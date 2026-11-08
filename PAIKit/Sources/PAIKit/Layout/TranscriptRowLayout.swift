@@ -135,10 +135,13 @@ public struct MeasuredCard: Sendable, Equatable {
     public let isTruncated: Bool
     /// Each block's top, relative to the start of this card's content.
     public let blockOffsets: [Double]
+    /// One per ``TranscriptCardPlan/decisionSlots`` entry, in the same order: what the slot draws
+    /// and how tall each part of it is.
+    public let decisions: [MeasuredDecision]
 
     public init(
         plan: TranscriptCardPlan, offset: Double, height: Double, contentHeight: Double, isTruncated: Bool,
-        blockOffsets: [Double], headerHeight: Double = 0
+        blockOffsets: [Double], headerHeight: Double = 0, decisions: [MeasuredDecision] = []
     ) {
         self.plan = plan
         self.offset = offset
@@ -147,6 +150,25 @@ public struct MeasuredCard: Sendable, Equatable {
         self.isTruncated = isTruncated
         self.blockOffsets = blockOffsets
         self.headerHeight = headerHeight
+        self.decisions = decisions
+    }
+}
+
+/// One decision a prose card draws among its blocks, measured.
+public struct MeasuredDecision: Sendable, Equatable {
+    public let slot: DecisionSlot
+    public let display: InlineDecisionDisplay
+    public let measured: InlineDecisionLayout.Measured
+    /// Its top, relative to the start of the card's content.
+    public let offset: Double
+
+    public init(
+        slot: DecisionSlot, display: InlineDecisionDisplay, measured: InlineDecisionLayout.Measured, offset: Double
+    ) {
+        self.slot = slot
+        self.display = display
+        self.measured = measured
+        self.offset = offset
     }
 }
 
@@ -173,18 +195,21 @@ public enum TranscriptRowLayout {
         measurer: some BlockMeasuring,
         cache: BlockHeightCache,
         metrics: MessageLayoutMetrics,
-        hasTimeSeparator: Bool = false
+        hasTimeSeparator: Bool = false,
+        decisionDisplays: [Int: InlineDecisionDisplay] = [:],
+        trailingDecisions: [Int] = []
     ) -> [MeasuredCard] {
-        let cards = TranscriptRowPlan.cards(for: message, isRevealed: isRevealed)
+        let cards = TranscriptRowPlan.cards(
+            for: message, isRevealed: isRevealed, trailingDecisions: trailingDecisions)
         var measured: [MeasuredCard] = []
         measured.reserveCapacity(cards.count)
 
         var cursor: Double = hasTimeSeparator ? timeSeparatorHeight(metrics: metrics) : 0
         for card in cards {
             let cardWidth = contentWidth(for: card.register, cellWidth: width)
-            let content = MessageContentLayoutComposer.layout(
-                of: card.blocks, width: cardWidth,
-                environment: environment, metrics: metrics, measurer: measurer, cache: cache)
+            let content = composeContent(
+                of: card, width: cardWidth, environment: environment, metrics: metrics, measurer: measurer,
+                cache: cache, displays: decisionDisplays)
 
             // Measured on its own, at the body's width, through the same wrapping block kind the
             // view draws it as — so a path too long for one line costs exactly the lines it takes.
@@ -212,11 +237,57 @@ public enum TranscriptRowLayout {
             measured.append(
                 MeasuredCard(
                     plan: card, offset: cursor, height: height, contentHeight: clamped,
-                    isTruncated: isTruncated, blockOffsets: content.blocks.map(\.offset),
-                    headerHeight: headerHeight))
+                    isTruncated: isTruncated, blockOffsets: content.blockOffsets,
+                    headerHeight: headerHeight, decisions: content.decisions))
             cursor += height
         }
         return measured
+    }
+
+    /// A card's content: its blocks, and the decisions placed among them, stacked with the one
+    /// block spacing between every two drawn items, as the drawing view's stack does. A decision
+    /// draws what `displays` names for its number, its marker text when it names none
+    /// (``InlineDecisionContext/display(for:)`` resolves them), and one that draws nothing
+    /// (``InlineDecisionDisplay/loading``) takes neither room nor a gap.
+    private static func composeContent(
+        of card: TranscriptCardPlan, width: Double, environment: MeasurementEnvironment,
+        metrics: MessageLayoutMetrics, measurer: some BlockMeasuring, cache: BlockHeightCache,
+        displays: [Int: InlineDecisionDisplay]
+    ) -> (totalHeight: Double, blockOffsets: [Double], decisions: [MeasuredDecision]) {
+        guard !card.decisionSlots.isEmpty else {
+            let content = MessageContentLayoutComposer.layout(
+                of: card.blocks, width: width, environment: environment, metrics: metrics, measurer: measurer,
+                cache: cache)
+            return (content.totalHeight, content.blocks.map(\.offset), [])
+        }
+
+        var cursor: Double = 0
+        var hasItem = false
+        var blockOffsets: [Double] = []
+        var decisions: [MeasuredDecision] = []
+        var slots = card.decisionSlots[...]
+        for position in 0...card.blocks.count {
+            while let slot = slots.first, slot.position == position {
+                slots = slots.dropFirst()
+                let display = displays[slot.number] ?? .marker(number: slot.number)
+                let size = InlineDecisionLayout.measure(
+                    display, width: width, environment: environment, metrics: metrics, measurer: measurer,
+                    cache: cache)
+                if size.height > 0 {
+                    if hasItem { cursor += metrics.blockSpacing }
+                    hasItem = true
+                }
+                decisions.append(MeasuredDecision(slot: slot, display: display, measured: size, offset: cursor))
+                cursor += size.height
+            }
+            guard position < card.blocks.count else { break }
+            if hasItem { cursor += metrics.blockSpacing }
+            hasItem = true
+            blockOffsets.append(cursor)
+            cursor += cache.height(
+                of: card.blocks[position], width: width, environment: environment, measurer: measurer)
+        }
+        return (cursor, blockOffsets, decisions)
     }
 
     /// The height one time separator occupies above the row that carries it — one line of the same
@@ -236,12 +307,15 @@ public enum TranscriptRowLayout {
         measurer: some BlockMeasuring,
         cache: BlockHeightCache,
         metrics: MessageLayoutMetrics,
-        hasTimeSeparator: Bool = false
+        hasTimeSeparator: Bool = false,
+        decisionDisplays: [Int: InlineDecisionDisplay] = [:],
+        trailingDecisions: [Int] = []
     ) -> Double? {
         height(
             of: measure(
                 for: message, width: width, environment: environment, isRevealed: isRevealed, measurer: measurer,
-                cache: cache, metrics: metrics, hasTimeSeparator: hasTimeSeparator),
+                cache: cache, metrics: metrics, hasTimeSeparator: hasTimeSeparator, decisionDisplays: decisionDisplays,
+                trailingDecisions: trailingDecisions),
             hasTimeSeparator: hasTimeSeparator, metrics: metrics)
     }
 
@@ -279,11 +353,14 @@ public enum TranscriptRowLayout {
         measurer: some BlockMeasuring,
         cache: BlockHeightCache,
         metrics: MessageLayoutMetrics,
-        hasTimeSeparator: Bool = false
+        hasTimeSeparator: Bool = false,
+        decisionDisplays: [Int: InlineDecisionDisplay] = [:],
+        trailingDecisions: [Int] = []
     ) -> Double? {
         let cards = measure(
             for: message, width: width, environment: environment, isRevealed: isRevealed, measurer: measurer,
-            cache: cache, metrics: metrics, hasTimeSeparator: hasTimeSeparator)
+            cache: cache, metrics: metrics, hasTimeSeparator: hasTimeSeparator, decisionDisplays: decisionDisplays,
+            trailingDecisions: trailingDecisions)
         guard cards.indices.contains(cardIndex) else { return nil }
 
         let card = cards[cardIndex]

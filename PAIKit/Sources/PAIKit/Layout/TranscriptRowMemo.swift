@@ -12,7 +12,7 @@ import Foundation
 ///
 /// A remembered measurement is returned only when the message is equal to the one it was measured
 /// from and every input that shapes the row is unchanged — width, measurement environment, which
-/// cards are open and whether the row carries a separator. Anything else is measured afresh, so a
+/// cards are open, whether the row carries a separator and what its decisions show. Anything else is measured afresh, so a
 /// row can never be laid out at a height measured for something it no longer is. Comparing the
 /// message is cheap in the common case: a window keeps the same values from pass to pass, and
 /// equal storage compares without reading the text.
@@ -27,16 +27,25 @@ public final class TranscriptRowMemo {
         public let environment: MeasurementEnvironment
         public let revealedCards: Set<Int>
         public let hasTimeSeparator: Bool
+        /// What each decision this row draws shows right now, by number — its embedded ones and
+        /// its trailing ones alike. Empty for a row that draws none.
+        public let decisions: [Int: InlineDecisionDisplay]
+        /// The decisions placed under this message because no reply embeds them.
+        public let trailingDecisions: [Int]
 
         /// `width` is rounded to the point for the same reason ``BlockHeightCache`` rounds it: two
         /// layout passes report one visual width a few ULPs apart, and an exact key would miss on
         /// every pass for a width that never changed.
-        public init(width: Double, environment: MeasurementEnvironment, revealedCards: Set<Int>, hasTimeSeparator: Bool)
-        {
+        public init(
+            width: Double, environment: MeasurementEnvironment, revealedCards: Set<Int>, hasTimeSeparator: Bool,
+            decisions: [Int: InlineDecisionDisplay] = [:], trailingDecisions: [Int] = []
+        ) {
             self.width = width.rounded()
             self.environment = environment
             self.revealedCards = revealedCards
             self.hasTimeSeparator = hasTimeSeparator
+            self.decisions = decisions
+            self.trailingDecisions = trailingDecisions
         }
     }
 

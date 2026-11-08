@@ -3,9 +3,10 @@ import SwiftUI
 
 /// The notification centre: every alert transition and every agent push, newest
 /// first, filterable, with unread state and mark-all-read. A plain `List` rather than the
-/// transcript's `UICollectionView` — rows here are clamped to two lines of body text, so per the
-/// scroll-stability checklist this needs no virtualization or
-/// measurement machinery, and `List` gives swipe actions for free besides.
+/// transcript's `UICollectionView` — rows here are clamped to a few lines of body text and open
+/// only when the reader taps Show more on the row in front of them, so per the scroll-stability
+/// checklist this needs no virtualization or measurement machinery, and `List` gives swipe
+/// actions for free besides.
 struct NotificationCenterScreen: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(NotificationCenterStore.self) private var store

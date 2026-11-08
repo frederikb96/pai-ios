@@ -1212,6 +1212,13 @@ public struct PaiApiClient: Sendable {
         try await send(path: "/api/decisions")
     }
 
+    /// `GET /api/session/{id}/decisions?state=all` — one session's decisions in every state, by
+    /// number: what its transcript draws where a reply embeds them. Owner-only, like the rest.
+    public func getSessionDecisions(sessionId: String) async throws -> SessionDecisionsResponse {
+        try await send(
+            path: "/api/session/\(sessionId)/decisions", query: [URLQueryItem(name: "state", value: "all")])
+    }
+
     /// `POST /api/session/{id}/decisions/answer` — the answers reach the session as one message.
     /// A decision that is no longer open (or moved since `updatedAt`) answers 409 before anything
     /// is sent, its `message` surfacing as the error's text. A repeated `clientMessageId` sends

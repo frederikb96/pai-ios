@@ -3,6 +3,7 @@ import Observation
 
 public protocol DecisionsApiClient: Sendable {
     func getOpenDecisions() async throws -> OpenDecisionsResponse
+    func getSessionDecisions(sessionId: String) async throws -> SessionDecisionsResponse
     func answerDecisions(sessionId: String, answers: [DecisionAnswer], clientMessageId: String) async throws
         -> AnswerDecisionsResponse
     func withdrawDecision(sessionId: String, number: Int) async throws -> Decision
@@ -10,26 +11,53 @@ public protocol DecisionsApiClient: Sendable {
 
 extension PaiApiClient: DecisionsApiClient {}
 
-/// Every open decision across the owner's sessions, as the server last listed them. Swift port of
-/// `stores/decisions.ts`. App-wide: the pin above a transcript, the Decisions app and the Apps
-/// row's count all read the one list, refreshed on the notification stream's `decisions` event, on
-/// every stream (re)connect and when a decision view appears.
+/// A picked answer, and the version of the decision it was picked on: a decision the agent changed
+/// since is refused by the server rather than answered.
+public struct DecisionPick: Equatable, Sendable {
+    public let text: String
+    public let updatedAt: String
+
+    public init(text: String, updatedAt: String) {
+        self.text = text
+        self.updatedAt = updatedAt
+    }
+}
+
+/// Every open decision across the owner's sessions, every decision of each session a transcript
+/// shows, and the answers picked and not yet sent. Swift port of `stores/decisions.ts`. App-wide:
+/// the pin above a transcript, the cards inside its replies, the Decisions app and the Apps row's
+/// count all read it, refreshed on the notification stream's `decisions` event, on every stream
+/// (re)connect and when a decision view appears.
 ///
 /// Owner only: the routes answer a guest 403, which the API client reads as a rejected credential
-/// and signs out, so `refresh()` asks `isOwner` before every request and a guest never sends one.
+/// and signs out, so every read asks `isOwner` first and a guest never sends one.
 @MainActor
 @Observable
 public final class DecisionsStore {
     public private(set) var open: [Decision] = []
+    /// Every decision, in any state, of each session a transcript watches, by number — what the
+    /// cards inside its replies draw. A session is absent until its first read lands.
+    public private(set) var bySession: [String: [Decision]] = [:]
+    /// Answers picked and not sent yet, per session and decision number. One set however many
+    /// surfaces show a session's decisions (the pin, the cards in its replies, the Decisions app),
+    /// so a Send anywhere sends all of them as one message.
+    public private(set) var picks: [String: [Int: DecisionPick]] = [:]
 
     private let api: DecisionsApiClient
     private let isOwner: @MainActor () -> Bool
     private var refreshSequence = 0
+    private var sessionSequences: [String: Int] = [:]
+    /// How many shown transcripts watch each session.
+    private var watchers: [String: Int] = [:]
 
     public init(api: DecisionsApiClient, isOwner: @escaping @MainActor () -> Bool) {
         self.api = api
         self.isOwner = isOwner
     }
+
+    /// Whether this account may see decisions at all; a guest's transcript shows a marker line as
+    /// the text it is.
+    public var ownerMayDecide: Bool { isOwner() }
 
     /// One session's open decisions, by number.
     public func decisions(forSession sessionId: String) -> [Decision] {
@@ -55,22 +83,102 @@ public final class DecisionsStore {
         }
     }
 
-    /// Best-effort: a failed read keeps what was shown until the next event or appearance.
+    /// Best-effort: a failed read keeps what was shown until the next event or appearance. Re-reads
+    /// every watched session's decisions too.
     public func refresh() async {
         guard isOwner() else { return }
         refreshSequence += 1
         let sequence = refreshSequence
-        guard let response = try? await api.getOpenDecisions() else { return }
-        // A slower, older read must not overwrite a newer one.
-        if sequence == refreshSequence { open = response.decisions }
+        if let response = try? await api.getOpenDecisions(), sequence == refreshSequence {
+            // A slower, older read must not overwrite a newer one.
+            open = response.decisions
+        }
+        for sessionId in watchers.keys.sorted() {
+            await loadSession(sessionId)
+        }
     }
 
-    /// Sends the answers of one session as one message. They leave `open` at once on success;
-    /// a refusal (409: one was answered or withdrawn meanwhile, nothing was sent) rethrows and
-    /// the list is re-read.
+    /// Keeps one session's decisions read while a transcript of it is shown, starting with a read
+    /// now. Pair every call with ``unwatch(sessionId:)``.
+    public func watch(sessionId: String) async {
+        watchers[sessionId, default: 0] += 1
+        await loadSession(sessionId)
+    }
+
+    public func unwatch(sessionId: String) {
+        let left = (watchers[sessionId] ?? 1) - 1
+        watchers[sessionId] = left > 0 ? left : nil
+    }
+
+    private func loadSession(_ sessionId: String) async {
+        guard isOwner() else { return }
+        let sequence = (sessionSequences[sessionId] ?? 0) + 1
+        sessionSequences[sessionId] = sequence
+        guard let response = try? await api.getSessionDecisions(sessionId: sessionId),
+            sessionSequences[sessionId] == sequence
+        else { return }
+        bySession[sessionId] = response.decisions
+    }
+
+    // MARK: - Picks
+
+    /// Picks an answer without sending it, or takes it back when it is the one already picked.
+    public func pick(_ text: String, for decision: Decision) {
+        var session = picks[decision.sessionId] ?? [:]
+        if session[decision.number]?.text == text {
+            session[decision.number] = nil
+        } else {
+            session[decision.number] = DecisionPick(text: text, updatedAt: decision.updatedAt)
+        }
+        picks[decision.sessionId] = session
+    }
+
+    /// Picks each decision's recommendation, replacing any pick for the same decisions.
+    public func pickAllRecommended(_ decisions: [Decision]) {
+        for decision in decisions {
+            picks[decision.sessionId, default: [:]][decision.number] = DecisionPick(
+                text: decision.recommendation, updatedAt: decision.updatedAt)
+        }
+    }
+
+    public func clearPicks(sessionId: String) {
+        picks[sessionId] = nil
+    }
+
+    /// The answer picked for decision `number` of a session, if any.
+    public func picked(sessionId: String, number: Int) -> String? {
+        picks[sessionId]?[number]?.text
+    }
+
+    /// The session's picks still worth sending, by number, each naming the version it was picked
+    /// on: those whose decision is open as far as this client knows. The session's own listing
+    /// wins where it has the decision (it is read in every state); the open list decides the rest.
+    public func pendingAnswers(sessionId: String) -> [DecisionAnswer] {
+        guard let session = picks[sessionId], !session.isEmpty else { return [] }
+        var listedState: [Int: DecisionState] = [:]
+        for decision in bySession[sessionId] ?? [] { listedState[decision.number] = decision.state }
+        var openHere = Set<Int>()
+        for decision in open where decision.sessionId == sessionId { openHere.insert(decision.number) }
+        var answers: [DecisionAnswer] = []
+        for (number, pick) in session {
+            let stillOpen = listedState[number].map { $0 == .open } ?? openHere.contains(number)
+            if stillOpen {
+                answers.append(DecisionAnswer(number: number, answer: pick.text, updatedAt: pick.updatedAt))
+            }
+        }
+        return answers.sorted { $0.number < $1.number }
+    }
+
+    // MARK: - Sending
+
+    /// Sends the answers of one session as one message. On success they leave `open` at once, the
+    /// session's listing takes the answered rows the server returned, and their picks are dropped;
+    /// a refusal (409: one was answered, withdrawn or changed meanwhile, nothing was sent) rethrows
+    /// and the lists are re-read.
     public func answer(sessionId: String, answers: [DecisionAnswer]) async throws {
+        let response: AnswerDecisionsResponse
         do {
-            _ = try await api.answerDecisions(
+            response = try await api.answerDecisions(
                 sessionId: sessionId, answers: answers, clientMessageId: UUID().uuidString)
         } catch {
             await refresh()
@@ -78,19 +186,38 @@ public final class DecisionsStore {
         }
         let answered = Set(answers.map(\.number))
         open.removeAll { $0.sessionId == sessionId && answered.contains($0.number) }
+        merge(response.answered, intoSession: sessionId)
+        dropPicks(sessionId: sessionId, numbers: answered)
         await refresh()
     }
 
     /// Drops a decision the owner answered in the conversation instead.
     public func withdraw(_ decision: Decision) async throws {
+        let withdrawn: Decision
         do {
-            _ = try await api.withdrawDecision(sessionId: decision.sessionId, number: decision.number)
+            withdrawn = try await api.withdrawDecision(sessionId: decision.sessionId, number: decision.number)
         } catch {
             await refresh()
             throw error
         }
         open.removeAll { $0.id == decision.id }
+        merge([withdrawn], intoSession: decision.sessionId)
+        dropPicks(sessionId: decision.sessionId, numbers: [decision.number])
         await refresh()
+    }
+
+    /// The session's listing with these rows in place of their earlier versions; a session never
+    /// read stays unread rather than becoming one with only these.
+    private func merge(_ rows: [Decision], intoSession sessionId: String) {
+        guard let listed = bySession[sessionId], !rows.isEmpty else { return }
+        let byNumber = Dictionary(rows.map { ($0.number, $0) }, uniquingKeysWith: { _, newer in newer })
+        bySession[sessionId] = listed.map { byNumber[$0.number] ?? $0 }
+    }
+
+    private func dropPicks(sessionId: String, numbers: Set<Int>) {
+        guard var session = picks[sessionId] else { return }
+        for number in numbers { session[number] = nil }
+        picks[sessionId] = session.isEmpty ? nil : session
     }
 }
 

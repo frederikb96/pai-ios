@@ -92,6 +92,8 @@ struct TranscriptRowContent: View {
     /// message with no text range to paint via `highlights`/`currentHit`, and a landing on a text
     /// hit wants its row visibly marked too, not only the highlighted span inside it.
     var isRinged = false
+    /// What a decision card inside one of this row's replies may do; `nil` draws them inert.
+    var decisionActions: InlineDecisionActions? = nil
 
     var body: some View {
         // No spacing between cards: the gap is a property of each register's own padding, not of
@@ -121,7 +123,8 @@ struct TranscriptRowContent: View {
                         messageID: message.id,
                         isPendingBubble: message.isPendingBubble,
                         onPullBackIntoComposer: onPullBackIntoComposer,
-                        highlightsByBlockIndex: highlightsByBlockIndex(forCardIndex: cardIndex)
+                        highlightsByBlockIndex: highlightsByBlockIndex(forCardIndex: cardIndex),
+                        decisionActions: decisionActions
                     )
                 }
             }
@@ -205,6 +208,7 @@ struct TranscriptCardKindView: View {
     var isPendingBubble: Bool = false
     var onPullBackIntoComposer: () -> Void = {}
     var highlightsByBlockIndex: [Int: [TranscriptHighlightSpan]] = [:]
+    var decisionActions: InlineDecisionActions? = nil
 
     var body: some View {
         switch card.plan.kind {
@@ -278,7 +282,14 @@ struct TranscriptCardKindView: View {
             ProseRowView {
                 AssistantProseView(
                     blocks: card.plan.blocks, filePaths: filePaths, sessionID: sessionID, apiClient: apiClient,
-                    messageID: messageID, replyText: text, highlights: highlightsByBlockIndex)
+                    messageID: messageID, replyText: text, highlights: highlightsByBlockIndex,
+                    decisions: card.decisions, decisionActions: decisionActions)
+            }
+
+        case .decisionCards:
+            ProseRowView {
+                ProseWithDecisionsView(
+                    blocks: [], decisions: card.decisions, highlights: [:], actions: decisionActions)
             }
 
         case .agentMessage(let sender, _):
@@ -1050,6 +1061,9 @@ struct AssistantProseView: View {
     let messageID: Int
     let replyText: String
     var highlights: [Int: [TranscriptHighlightSpan]] = [:]
+    /// The decisions drawn among `blocks` (`TranscriptCardPlan.decisionSlots`), measured.
+    var decisions: [MeasuredDecision] = []
+    var decisionActions: InlineDecisionActions? = nil
 
     var body: some View {
         // No bubble, no gutter and no padding of its own: `ProseRowView` owns this row's whole
@@ -1061,7 +1075,12 @@ struct AssistantProseView: View {
         // after it, the same spacing constant — a number that moves in one and not the other is
         // the same disagreement from the other side.
         VStack(alignment: .leading, spacing: TranscriptRowMetrics.attachmentChipSpacing) {
-            MarkdownContentView(blocks: blocks, highlights: highlights)
+            if decisions.isEmpty {
+                MarkdownContentView(blocks: blocks, highlights: highlights)
+            } else {
+                ProseWithDecisionsView(
+                    blocks: blocks, decisions: decisions, highlights: highlights, actions: decisionActions)
+            }
             // Its height is `TranscriptRowMetrics.listenChipHeight`, in the row's measured height
             // exactly when the reply has something to read aloud (`PlaybackModel.hasSpeech`).
             if PlaybackModel.hasSpeech(replyText) {
@@ -1076,6 +1095,49 @@ struct AssistantProseView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .modifier(OptionalCopyAndExpand(text: blocks.map(\.plainText).joined(separator: "\n")))
+    }
+}
+
+/// A reply's blocks with its decisions drawn between and after them, in one stack with the
+/// markdown view's own block spacing between every two items — the stack
+/// `TranscriptRowLayout` measured. A decision that draws nothing is left out of the stack, so it
+/// adds no gap either. A block is drawn as a markdown view of its own, which lays it out exactly as
+/// it would inside the reply's single one.
+struct ProseWithDecisionsView: View {
+    let blocks: [MarkdownBlock]
+    let decisions: [MeasuredDecision]
+    let highlights: [Int: [TranscriptHighlightSpan]]
+    let actions: InlineDecisionActions?
+
+    private enum Item: Hashable {
+        case block(Int)
+        case decision(Int)
+    }
+
+    private var items: [Item] {
+        var items: [Item] = []
+        var next = 0
+        for index in 0...blocks.count {
+            while next < decisions.count, decisions[next].slot.position == index {
+                if decisions[next].measured.height > 0 { items.append(.decision(next)) }
+                next += 1
+            }
+            if index < blocks.count { items.append(.block(index)) }
+        }
+        return items
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: TranscriptContentMetrics.blockSpacing) {
+            ForEach(items, id: \.self) { item in
+                switch item {
+                case .block(let index):
+                    MarkdownContentView(blocks: [blocks[index]], highlights: highlights[index].map { [0: $0] } ?? [:])
+                case .decision(let index):
+                    InlineDecisionCardView(decision: decisions[index], actions: actions)
+                }
+            }
+        }
     }
 }
 

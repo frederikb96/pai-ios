@@ -16,11 +16,11 @@ final class DecisionsTests: XCTestCase {
 
     private func decision(
         _ number: Int, session: String = "s1", title: String = "Ship it", recommendation: String = "yes",
-        updatedAt: String = "2026-09-01T08:15:00.506812+00:00"
+        state: DecisionState = .open, updatedAt: String = "2026-09-01T08:15:00.506812+00:00"
     ) -> Decision {
         Decision(
             id: "d-\(session)-\(number)", sessionId: session, sessionTitle: "Title \(session)", number: number,
-            title: title, recommendation: recommendation, updatedAt: updatedAt)
+            title: title, recommendation: recommendation, state: state, updatedAt: updatedAt)
     }
 
     /// Answers from a script and records what it was asked. `firstRead` can hold the first
@@ -30,6 +30,9 @@ final class DecisionsTests: XCTestCase {
         private var _requests: [String] = []
         private var _answers: [[DecisionAnswer]] = []
         var reads: [OpenDecisionsResponse] = []
+        /// One session's reads in turn; once used up, a read fails and the store keeps what it has.
+        var sessionReads: [SessionDecisionsResponse] = []
+        var answered: [Decision] = []
         var answerError: Error?
         var heldFirstRead: CheckedContinuation<OpenDecisionsResponse, Error>?
         var holdFirstRead = false
@@ -58,6 +61,14 @@ final class DecisionsTests: XCTestCase {
             return lock.withLock { reads.isEmpty ? OpenDecisionsResponse(decisions: []) : reads.removeFirst() }
         }
 
+        func getSessionDecisions(sessionId: String) async throws -> SessionDecisionsResponse {
+            try lock.withLock {
+                _requests.append("session \(sessionId)")
+                guard !sessionReads.isEmpty else { throw PaiError.http(statusCode: 503, reason: "unavailable") }
+                return sessionReads.removeFirst()
+            }
+        }
+
         func answerDecisions(sessionId: String, answers: [DecisionAnswer], clientMessageId: String) async throws
             -> AnswerDecisionsResponse
         {
@@ -66,7 +77,7 @@ final class DecisionsTests: XCTestCase {
                 _answers.append(answers)
             }
             if let answerError { throw answerError }
-            return AnswerDecisionsResponse(message: "ok", answered: [])
+            return AnswerDecisionsResponse(message: "ok", answered: answered)
         }
 
         func withdrawDecision(sessionId: String, number: Int) async throws -> Decision {
@@ -160,7 +171,28 @@ final class DecisionsTests: XCTestCase {
         let api = FakeApi()
         let store = makeStore(api, owner: false)
         await store.refresh()
+        await store.watch(sessionId: "s1")
+        await store.refresh()
         XCTAssertEqual(api.requests, [])
+    }
+
+    /// A transcript on screen keeps its session's decisions current through every refresh the
+    /// stream triggers, and stops costing a read once it is gone.
+    func testRefreshRereadsAWatchedSessionUntilItIsUnwatched() async {
+        let api = FakeApi()
+        api.sessionReads = [
+            SessionDecisionsResponse(decisions: [decision(3)]),
+            SessionDecisionsResponse(decisions: [decision(3, state: .answered)]),
+        ]
+        let store = makeStore(api)
+        await store.watch(sessionId: "s1")
+        XCTAssertEqual(store.bySession["s1"]?.first?.state, .open)
+        await store.refresh()
+        XCTAssertEqual(store.bySession["s1"]?.first?.state, .answered)
+
+        store.unwatch(sessionId: "s1")
+        await store.refresh()
+        XCTAssertEqual(api.requests.filter { $0 == "session s1" }.count, 2)
     }
 
     func testAnOlderSlowReadDoesNotOverwriteANewerOne() async {
@@ -194,48 +226,95 @@ final class DecisionsTests: XCTestCase {
         XCTAssertEqual(store.groups.first?.sessionTitle, "Title b")
     }
 
-    // MARK: - List state
+    // MARK: - Picks shared by every surface
 
-    func testOnlyPicksOfStillOpenDecisionsAreSentAndEachCarriesItsUpdatedAt() async {
-        let state = DecisionListState()
-        state.pick(1, "yes")
-        state.pick(2, "no, because it is late")
-        state.pick(7, "maybe")  // answered elsewhere, no longer listed
+    /// The pin and a card inside a reply pick into one set, so one Send sends both, and each
+    /// answer names the version it was picked on: the agent changing the decision since is for the
+    /// server to refuse, not for the phone to paper over with the newer version.
+    func testPicksFromTwoSurfacesGoOutAsOneMessageEachWithTheVersionItWasPickedOn() async {
+        let api = FakeApi()
+        api.reads = [OpenDecisionsResponse(decisions: [decision(1, updatedAt: "u1"), decision(2, updatedAt: "u2")])]
+        api.sessionReads = [
+            SessionDecisionsResponse(decisions: [decision(1, updatedAt: "u1"), decision(2, updatedAt: "u2")]),
+            SessionDecisionsResponse(decisions: [decision(1, updatedAt: "u1"), decision(2, updatedAt: "u2-edited")]),
+        ]
+        let store = makeStore(api)
+        await store.watch(sessionId: "s1")
+        await store.refresh()
 
-        let answers = state.pendingAnswers(for: [
-            decision(2, updatedAt: "u2"), decision(1, updatedAt: "u1"),
-        ])
+        let pin = DecisionListState()
+        store.pick("yes", for: decision(1, updatedAt: "u1"))
+        DecisionListState.useOwnWords("  not before Friday ", for: decision(2, updatedAt: "u2"), store: store)
+        await store.refresh()
+        await pin.send(sessionId: "s1", store: store)
+
         XCTAssertEqual(
-            answers,
+            api.answers,
             [
-                DecisionAnswer(number: 1, answer: "yes", updatedAt: "u1"),
-                DecisionAnswer(number: 2, answer: "no, because it is late", updatedAt: "u2"),
+                [
+                    DecisionAnswer(number: 1, answer: "yes", updatedAt: "u1"),
+                    DecisionAnswer(number: 2, answer: "not before Friday", updatedAt: "u2"),
+                ]
             ])
+    }
+
+    /// The session's own listing is read in every state, so it knows a decision was answered on
+    /// another device before the cross-session open list does; a pick on that one is not sent.
+    func testAPickIsSentOnlyWhileItsDecisionIsOpenAsFarAsThePhoneKnows() async {
+        let api = FakeApi()
+        api.reads = [OpenDecisionsResponse(decisions: [decision(7), decision(8)])]
+        api.sessionReads = [SessionDecisionsResponse(decisions: [decision(7, state: .answered)])]
+        let store = makeStore(api)
+        await store.refresh()
+        await store.watch(sessionId: "s1")
+
+        store.pick("yes", for: decision(7))
+        store.pick("no", for: decision(8))
+        store.pick("maybe", for: decision(9))  // in neither list
+        XCTAssertEqual(store.pendingAnswers(sessionId: "s1").map(\.number), [8])
+    }
+
+    /// An answer that landed shows as answered in the reply at once, without waiting for a read,
+    /// and its pick is gone.
+    func testAnAnswerThatLandsResolvesItsCardAndDropsItsPick() async {
+        let api = FakeApi()
+        api.sessionReads = [SessionDecisionsResponse(decisions: [decision(2), decision(3)])]
+        api.answered = [decision(3, state: .answered)]
+        let store = makeStore(api)
+        await store.watch(sessionId: "s1")
+        store.pick("yes", for: decision(2))
+        store.pick("yes", for: decision(3))
+
+        try? await store.answer(sessionId: "s1", answers: [DecisionAnswer(number: 3, answer: "yes")])
+        XCTAssertEqual(store.bySession["s1"]?.map(\.state), [.open, .answered])
+        XCTAssertEqual(store.picked(sessionId: "s1", number: 3), nil)
+        XCTAssertEqual(store.picked(sessionId: "s1", number: 2), "yes")
     }
 
     func testAPickIsKeptWhenTheSendIsRefusedAndClearedWhenItLands() async {
         let api = FakeApi()
+        api.reads = [OpenDecisionsResponse(decisions: [decision(3)]), OpenDecisionsResponse(decisions: [decision(3)])]
         let store = makeStore(api)
+        await store.refresh()
         let state = DecisionListState()
-        let decisions = [decision(3)]
-        state.pick(3, "yes")
+        store.pick("yes", for: decision(3))
 
         api.answerError = PaiError.detail("D3 was answered meanwhile", statusCode: 409)
-        await state.send(sessionId: "s1", decisions: decisions, store: store)
-        XCTAssertEqual(state.picked, [3: "yes"])
+        await state.send(sessionId: "s1", store: store)
+        XCTAssertEqual(store.picked(sessionId: "s1", number: 3), "yes")
         XCTAssertEqual(state.errorMessage, "D3 was answered meanwhile")
         XCTAssertTrue(api.requests.contains("read"), "a refusal re-reads the list")
 
         api.answerError = nil
-        await state.send(sessionId: "s1", decisions: decisions, store: store)
-        XCTAssertEqual(state.picked, [:])
+        await state.send(sessionId: "s1", store: store)
+        XCTAssertNil(store.picked(sessionId: "s1", number: 3))
         XCTAssertNil(state.errorMessage)
     }
 
     func testPickingTheSameAnswerTwiceTakesItBack() async {
-        let state = DecisionListState()
-        state.pick(3, "yes")
-        state.pick(3, "yes")
-        XCTAssertNil(state.picked[3])
+        let store = makeStore(FakeApi())
+        store.pick("yes", for: decision(3))
+        store.pick("yes", for: decision(3))
+        XCTAssertNil(store.picked(sessionId: "s1", number: 3))
     }
 }
