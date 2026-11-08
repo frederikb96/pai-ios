@@ -7,6 +7,7 @@
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>webcredentials:pai.frederikberg.com</string>
+		<string>applinks:pai.frederikberg.com</string>
 	</array>
 	<!-- The app's own group stays first: that is where a write with no group lands, so the
 	     backend token stays where it has always been. -->

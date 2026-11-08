@@ -142,6 +142,47 @@ extension DeepLink {
         }
     }
 
+    /// A universal link: a web UI page tapped in another app, which iOS hands over instead of
+    /// opening Safari.
+    ///
+    /// `/session/<id>` (with the web's `?m=<message id>` jump, or `?n=<notification id>` for a
+    /// notification whose anchor resolves on read) and `/apps/notes/<id>`, including the
+    /// note's `/preview` subpaths. Anything else is no link: the domain's association file claims
+    /// paths this parser does not know, and those open the app where it already is.
+    ///
+    /// The host is not checked. iOS delivers a browsing activity only for a domain the app's
+    /// entitlement names and the server's association file confirms, so the entitlement is the
+    /// one place the domain is decided.
+    public static func from(webURL url: URL) -> DeepLink? {
+        guard url.scheme?.lowercased() == "https",
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else { return nil }
+        let segments = components.percentEncodedPath.split(separator: "/").map(String.init)
+        let query = components.queryItems ?? []
+        func value(_ name: String) -> String? {
+            query.first { $0.name == name }?.value.flatMap { $0.isEmpty ? nil : $0 }
+        }
+        func id(at index: Int) -> String? {
+            let raw = segments[index]
+            let id = raw.removingPercentEncoding ?? raw
+            return id.isEmpty ? nil : id
+        }
+        switch segments.first {
+        case "session":
+            guard segments.count == 2, let sessionID = id(at: 1) else { return nil }
+            if let notificationID = value("n") { return .notification(id: notificationID) }
+            // Message ids are positive integers; anything else drops the jump, not the session.
+            let messageID = value("m").flatMap(Int.init).flatMap { $0 > 0 ? $0 : nil }
+            return .session(id: sessionID, messageID: messageID)
+        case "apps":
+            guard segments.count >= 3, segments[1] == "notes", let noteID = id(at: 2) else { return nil }
+            guard segments.count == 3 || segments[3] == "preview" else { return nil }
+            return .note(id: noteID)
+        default:
+            return nil
+        }
+    }
+
     /// `session`'s `messageID` never appears here — a URL is what a shortcut or widget persists
     /// and reopens months later, exactly the staleness this type's own doc comment already rules
     /// out for everything else. `messageID` only ever travels fresh, over an APNs payload this

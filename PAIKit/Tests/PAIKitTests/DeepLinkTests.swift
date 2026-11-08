@@ -131,6 +131,39 @@ final class DeepLinkTests: XCTestCase {
         }
     }
 
+    // MARK: Universal links
+
+    /// The two pages a person shares out of the web UI, in the shapes the web writes them.
+    func testParsesTheWebUIsSessionAndNotePages() {
+        XCTAssertEqual(
+            DeepLink.from(webURL: URL(string: "https://pai.example/session/s1")!), .session(id: "s1"))
+        XCTAssertEqual(
+            DeepLink.from(webURL: URL(string: "https://pai.example/session/s1?m=42")!),
+            .session(id: "s1", messageID: 42))
+        XCTAssertEqual(
+            DeepLink.from(webURL: URL(string: "https://pai.example/apps/notes/n1")!), .note(id: "n1"))
+        XCTAssertEqual(
+            DeepLink.from(webURL: URL(string: "https://pai.example/apps/notes/n1/preview/intro")!),
+            .note(id: "n1"))
+    }
+
+    /// A notification link carries `?n=` because its anchor was not known when it was sent;
+    /// opening only the session would drop the jump the web makes from the same URL.
+    func testASessionPageWithANotificationOpensThroughTheNotification() {
+        XCTAssertEqual(
+            DeepLink.from(webURL: URL(string: "https://pai.example/session/s1?n=n9")!),
+            .notification(id: "n9"))
+    }
+
+    /// The association file claims paths owned by features this app does not have; those must
+    /// leave the app where it is rather than open some other screen.
+    func testAnUnknownWebPathIsNoLink() {
+        XCTAssertNil(DeepLink.from(webURL: URL(string: "https://pai.example/apps/browser/b1")!))
+        XCTAssertNil(DeepLink.from(webURL: URL(string: "https://pai.example/apps/notes/n1/delete")!))
+        XCTAssertNil(DeepLink.from(webURL: URL(string: "https://pai.example/session/s1/extra")!))
+        XCTAssertNil(DeepLink.from(webURL: URL(string: "https://pai.example/")!))
+    }
+
     // MARK: Routes
 
     /// A note opened from a shortcut must have the index underneath it — arriving with an empty
