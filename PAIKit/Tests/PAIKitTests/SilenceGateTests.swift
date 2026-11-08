@@ -7,9 +7,8 @@ import XCTest
 /// the three implementations shows up here as a red vector rather than as two clients that
 /// withhold differently.
 ///
-/// After V1 the floor sits near −75 dBFS, but the open threshold is clamped at −60 (it is never
-/// set below that), so close is −63 and the loud-onset level −50 — which is what V3 and V4 sit
-/// either side of.
+/// After V1 the floor sits near −75 dBFS, so open is −67, close −70 and the loud-onset level
+/// −57 — which is what V3 and V4 sit either side of.
 final class SilenceGateTests: XCTestCase {
     private static let frameSamples = 1600
 
@@ -91,10 +90,20 @@ final class SilenceGateTests: XCTestCase {
         run.feed(db: -40, count: 30)
         run.feed(db: -75, count: 60)
         let sentBefore = run.sent.count
-        run.feed(db: -56, count: 1)
+        run.feed(db: -58, count: 1)
         run.feed(db: -75, count: 5)
         XCTAssertTrue(run.gate.isWithholding)
         XCTAssertEqual(run.sent.count, sentBefore)
+    }
+
+    /// A phone lying on a desk: the room reads near digital silence and speech arrives around
+    /// −70 dBFS, below the old −60 clamp on the open threshold. Speech must resume the stream.
+    func testSpeechFarBelowTheOldClampResumesInAQuietRoom() {
+        var run = Run()
+        run.feed(db: -95, count: 120)
+        XCTAssertTrue(run.gate.isWithholding)
+        run.feed(db: -70, count: 2)
+        XCTAssertFalse(run.gate.isWithholding)
     }
 
     /// V4 — one frame ≥ open + 10 dB resumes immediately.

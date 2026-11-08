@@ -76,7 +76,7 @@ struct VoiceVolumeOverlay: View {
                 ForEach(Array(history.enumerated()), id: \.offset) { _, level in
                     RoundedRectangle(cornerRadius: 1)
                         .fill(PaiPalette.primary500)
-                        .frame(width: max(1, barWidth - 2), height: max(2, proxy.size.height * CGFloat(level) * 4))
+                        .frame(width: max(1, barWidth - 2), height: max(2, proxy.size.height * CGFloat(level)))
                 }
             }
             .frame(maxHeight: .infinity)

@@ -43,7 +43,11 @@ public struct SilenceGate: Sendable {
     public static let floorPercentile = 0.10
     public static let floorMinHistoryMs = 1000.0
     public static let autoMarginDb = 8.0
-    public static let autoOpenMinDb = -60.0
+    /// The auto open threshold never goes below this, whatever the floor. A 100 ms frame this quiet
+    /// is a few least-significant bits of 16-bit audio, so below it a level is rounding, not sound.
+    /// Anything higher holds back real speech: a phone lying on a desk or a whisper reaches the
+    /// microphone at −55 to −70 dBFS.
+    public static let autoOpenMinDb = -80.0
     /// A floor above this means a loud room, where withholding would risk cutting speech — the
     /// gate then never withholds. Withheld speech is the one failure that must never happen;
     /// paying for some silence is the acceptable one.
@@ -92,13 +96,19 @@ public struct SilenceGate: Sendable {
     public private(set) var withheldRanges: [SampleRange] = []
     private var capturedEnd = 0
 
-    private var floorHistory: [(levelDb: Double, durationMs: Double)] = []
+    private var room = RoomFloor()
     private var quietMs = 0.0
     private var aboveRunMs = 0.0
     private var ring: [Frame] = []
 
     public init(settings: SilenceGateSettings) {
         self.settings = settings
+    }
+
+    /// The level that counts as someone speaking in a room whose floor is `floorDb`: auto mode's
+    /// open threshold, and what the level meter calls hearing you.
+    public static func speechThresholdDb(floorDb: Double) -> Double {
+        max(floorDb + autoMarginDb, autoOpenMinDb)
     }
 
     /// RMS of the samples in dBFS, clamped at `silentDb` for digital zero.
@@ -120,7 +130,7 @@ public struct SilenceGate: Sendable {
         closeWithheld(at: capturedEnd)
         isWithholding = false
         withheldFrom = nil
-        floorHistory = []
+        room.reset()
         quietMs = 0
         aboveRunMs = 0
         ring = []
@@ -153,7 +163,7 @@ public struct SilenceGate: Sendable {
         quietMs = isQuiet(frame, close: thresholds.close) ? quietMs + frame.durationMs : 0
         guard settings.enabled, allowed, quietMs >= Self.quietWindowMs else { return Output(send: [frame]) }
         if settings.mode == .auto {
-            guard historyMs >= Self.floorMinHistoryMs, floorPermitsWithholding else { return Output(send: [frame]) }
+            guard room.isMeasured, floorPermitsWithholding else { return Output(send: [frame]) }
         }
         isWithholding = true
         withheldFrom = frame.endOffset
@@ -208,28 +218,10 @@ public struct SilenceGate: Sendable {
 
     private mutating func recordFloor(_ frame: Frame) {
         guard settings.mode == .auto else { return }
-        floorHistory.append((frame.levelDb, frame.durationMs))
-        var total = historyMs
-        while let first = floorHistory.first, total - first.durationMs >= Self.floorWindowMs {
-            floorHistory.removeFirst()
-            total -= first.durationMs
-        }
+        room.observe(levelDb: frame.levelDb, durationMs: frame.durationMs)
     }
 
-    private var historyMs: Double { floorHistory.reduce(0) { $0 + $1.durationMs } }
-
-    /// Duration-weighted percentile of the levels in the window.
-    private var floorDb: Double {
-        let total = historyMs
-        guard total > 0 else { return Self.silentDb }
-        let sorted = floorHistory.sorted { $0.levelDb < $1.levelDb }
-        var cumulative = 0.0
-        for entry in sorted {
-            cumulative += entry.durationMs
-            if cumulative >= total * Self.floorPercentile { return entry.levelDb }
-        }
-        return sorted.last?.levelDb ?? Self.silentDb
-    }
+    private var floorDb: Double { room.floorDb }
 
     private var floorPermitsWithholding: Bool { floorDb <= Self.autoMaxFloorDb }
 
@@ -247,7 +239,7 @@ public struct SilenceGate: Sendable {
         let open: Double =
             switch settings.mode {
             case .manual: Double(settings.manualThresholdDb)
-            case .auto: max(floorDb + Self.autoMarginDb, Self.autoOpenMinDb)
+            case .auto: Self.speechThresholdDb(floorDb: floorDb)
             }
         return (open, open - Self.hysteresisDb)
     }

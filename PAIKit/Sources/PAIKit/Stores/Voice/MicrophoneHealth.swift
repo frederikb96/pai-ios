@@ -10,9 +10,9 @@ import Foundation
 /// enough to zero, and the two must look different, since one is a normal room and the other is a
 /// take capturing nothing. Only the absence of buffers arriving at all means the second one.
 public enum MicrophoneHealthState: Equatable, Sendable {
-    /// Buffers are arriving and the latest one reads above the quiet floor.
+    /// Buffers are arriving and the latest one rose to speech in this room (`MicrophoneLevelMeter`).
     case hearing(level: Double)
-    /// Buffers are arriving; the latest reads at or below the quiet floor. Normal — a pause
+    /// Buffers are arriving; the latest did not rise to speech. Normal — a pause
     /// between sentences looks exactly like this.
     case quiet
     /// No buffer has arrived within the stall window — the same absence
@@ -20,7 +20,16 @@ public enum MicrophoneHealthState: Equatable, Sendable {
     /// display rather than for recovery.
     case notHearing
 
-    /// Below this, a buffer reads as `.quiet` rather than `.hearing` — a flat line for an
-    /// ordinary silent room, not a decorative floor.
-    public static let quietFloor = 0.02
+    /// The state for the latest chunk: `stalled` (no buffer within the stall window) wins over
+    /// whatever the last reading said, and otherwise the meter's own judgement of whether the
+    /// chunk rose to speech in this room decides between hearing and quiet.
+    public init(stalled: Bool, reading: MicrophoneLevelMeter.Reading) {
+        if stalled {
+            self = .notHearing
+        } else if reading.heard {
+            self = .hearing(level: reading.level)
+        } else {
+            self = .quiet
+        }
+    }
 }

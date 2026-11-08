@@ -22,8 +22,9 @@ final class MicrophoneCapture: RecoverableAudioInput, @unchecked Sendable {
     /// converted, matching `ingestAudioChunk`'s contract that it never resamples on its own, with
     /// `DictationInputGain` applied, and the same samples the take's local recording stores.
     var onChunk: (@Sendable ([Int16]) -> Void)?
-    /// One RMS reading per buffer, normalised to `0...1` and scaled by `DictationInputGain` like the samples — what `VoiceRecordingSession.ingestLevel`
-    /// and the recording's own level metering both want, computed once here rather than twice.
+    /// One RMS reading per buffer, normalised to `0...1` and scaled by `DictationInputGain` like
+    /// the samples — the recording's level statistics. The volume overlay is fed from `onChunk`
+    /// instead, so it judges the same samples the silence gate does.
     var onLevel: (@Sendable (Double) -> Void)?
     /// 🚨 The engine has stopped itself and every tap and connection on it is now invalid —
     /// `AVAudioEngine`'s documented behaviour on a configuration change, which a route change
