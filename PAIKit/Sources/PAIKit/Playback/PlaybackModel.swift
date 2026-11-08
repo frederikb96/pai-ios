@@ -35,12 +35,18 @@ public enum PlaybackModel {
         return "\(seconds / 60):" + String(format: "%02d", seconds % 60)
     }
 
-    /// What a reply says, minus the `pai-file:` lines that are attachments, not speech.
+    /// What a reply says, minus the `pai-file:` lines that are attachments and the `{{D<n>}}`
+    /// lines that are decision cards (``DecisionMarkers``), neither of them speech.
     public static func replyText(_ content: String?) -> String {
         guard let content else { return "" }
         let kept = content.split(separator: "\n", omittingEmptySubsequences: false)
             .filter { !$0.hasPrefix("pai-file:") }
-        return kept.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            .joined(separator: "\n")
+        var prose: [String] = []
+        for segment in DecisionMarkers.split(kept) {
+            if case .markdown(let text) = segment { prose.append(text) }
+        }
+        return prose.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Whether a reply's text has anything to read aloud; the server still answers 404 for one that is all code.

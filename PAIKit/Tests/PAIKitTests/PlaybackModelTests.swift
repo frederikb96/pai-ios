@@ -82,6 +82,12 @@ final class PlaybackModelTests: XCTestCase {
         XCTAssertTrue(PlaybackModel.isPlayable(playbackReply(id: 1, content: "hello")))
     }
 
+    func testADecisionCardLineIsNeitherSpeechNorPartOfTheName() {
+        XCTAssertFalse(PlaybackModel.isPlayable(playbackReply(id: 1, content: "{{D3}}")))
+        let reply = playbackReply(id: 2, content: "Which one?\n{{D3}}\nThe rest waits.")
+        XCTAssertEqual(PlaybackModel.snippet(of: reply), "Which one? The rest waits.")
+    }
+
     func testTheSnippetIsPlainAndShort() {
         let message = playbackReply(
             id: 1, content: "## Heading\n\nSome **bold** text with a [link](https://x.y) and `code`.\n```\nskip\n```")
