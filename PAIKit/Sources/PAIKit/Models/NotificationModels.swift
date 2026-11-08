@@ -80,6 +80,10 @@ public struct PaiNotification: Codable, Sendable, Equatable, Identifiable {
     /// and for alerts and ordinary sessions.
     public let taskId: String?
     public let taskName: String?
+    /// The run's short name a list leads the title with (`slug · title`), the one the push title
+    /// carries. The backend decides it (`nil` where the push adds nothing, and for every alert);
+    /// the app never derives it from the task or session name.
+    public let runSlug: String?
 
     enum CodingKeys: String, CodingKey {
         case id, kind, title, body, anchor, alert
@@ -89,12 +93,13 @@ public struct PaiNotification: Codable, Sendable, Equatable, Identifiable {
         case sessionTitle = "session_title"
         case taskId = "task_id"
         case taskName = "task_name"
+        case runSlug = "run_slug"
     }
 
     public init(
         id: String, kind: PaiNotificationKind, title: String, body: String, createdAt: String, readAt: String?,
         sessionId: String?, sessionTitle: String?, anchor: PaiNotificationAnchor?, alert: PaiNotificationAlert?,
-        taskId: String?, taskName: String?
+        taskId: String?, taskName: String?, runSlug: String? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -108,6 +113,7 @@ public struct PaiNotification: Codable, Sendable, Equatable, Identifiable {
         self.alert = alert
         self.taskId = taskId
         self.taskName = taskName
+        self.runSlug = runSlug
     }
 
     /// The same row with a different read state or alert — the one place a row is rebuilt from
@@ -116,10 +122,22 @@ public struct PaiNotification: Codable, Sendable, Equatable, Identifiable {
         PaiNotification(
             id: id, kind: kind, title: title, body: body, createdAt: createdAt, readAt: readAt,
             sessionId: sessionId, sessionTitle: sessionTitle, anchor: anchor, alert: alert, taskId: taskId,
-            taskName: taskName)
+            taskName: taskName, runSlug: runSlug)
     }
 
     public var isUnread: Bool { readAt == nil }
+
+    /// The title as a list shows it: led by the run's slug when the backend named one.
+    public var listTitle: String {
+        guard let runSlug else { return title }
+        return "\(runSlug) · \(title)"
+    }
+
+    /// The body as a list shows it: an agent's without its `{{D<n>}}` card lines (the open
+    /// decisions already lead it), an alert's as it is.
+    public var listBody: String {
+        kind == .agent ? DecisionMarkers.withoutMarkers(body) : body
+    }
 }
 
 /// Which notifications the feed keeps by origin: every one, only those a scheduled task's run
