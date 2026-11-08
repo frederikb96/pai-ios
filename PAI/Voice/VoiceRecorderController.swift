@@ -215,19 +215,20 @@ final class VoiceRecorderController {
     /// This covers the rest, including whatever is not on that list, because the failure is
     /// detectable without knowing its cause: audio was flowing, and now it is not.
     private var lastChunkAt: Date?
-    /// The most recent buffer's own RMS, `0...1` — what the volume overlay draws its waveform
-    /// from. Updated at the same ~100ms cadence buffers actually arrive at; nothing here re-taps
-    /// the microphone or runs a second `AnalyserNode`-equivalent.
-    private(set) var currentLevel: Double = 0
+    /// The level display's room and its latest reading, fed the same gained 16 kHz chunks the
+    /// silence gate sees. Updated at the cadence buffers actually arrive at; nothing here re-taps
+    /// the microphone.
+    private var levelMeter = MicrophoneLevelMeter()
+    /// `0...1`, what the volume overlay draws its waveform from.
+    var currentLevel: Double { levelMeter.reading.level }
     /// What the volume overlay actually renders — see `MicrophoneHealthState`'s own doc comment
     /// for why "no buffers arriving" is never derived from amplitude. `.notHearing` while nothing
     /// is even recording is meaningless to a caller that already checks `state != .idle` first.
     var microphoneHealth: MicrophoneHealthState {
         guard isCapturing else { return .quiet }
-        if let lastChunkAt, Date().timeIntervalSince(lastChunkAt) > Self.captureStallSeconds {
-            return .notHearing
-        }
-        return currentLevel > MicrophoneHealthState.quietFloor ? .hearing(level: currentLevel) : .quiet
+        var stalled = false
+        if let lastChunkAt { stalled = Date().timeIntervalSince(lastChunkAt) > Self.captureStallSeconds }
+        return MicrophoneHealthState(stalled: stalled, reading: levelMeter.reading)
     }
     private var captureWatchdogTask: Task<Void, Never>?
     private var captureRestartAttempts = 0
@@ -1356,7 +1357,10 @@ final class VoiceRecorderController {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.refreshAvailableMicrophones()
-                if self.isCapturing { await self.voiceSession.inputRouteChanged() }
+                if self.isCapturing {
+                    self.levelMeter.reset()
+                    await self.voiceSession.inputRouteChanged()
+                }
             }
         }
     }
@@ -1453,6 +1457,7 @@ final class VoiceRecorderController {
         peakAmplitude = 0
         levelSum = 0
         levelCount = 0
+        levelMeter.reset()
         streamingSent = StreamingRecordingFile(url: audioStorage.sentURL(id: id), sampleRate: Self.sampleRate)
     }
 
@@ -1463,7 +1468,6 @@ final class VoiceRecorderController {
         capture.onLevel = { [weak self] rms in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.currentLevel = rms
                 self.peakAmplitude = max(self.peakAmplitude, rms)
                 self.levelSum += rms
                 self.levelCount += 1
@@ -1491,7 +1495,15 @@ final class VoiceRecorderController {
         // stops taking frames must never read as a dead microphone.
         capture.onChunk = { [weak self] samples in
             continuation.yield(samples)
-            Task { @MainActor [weak self] in self?.lastChunkAt = Date() }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.lastChunkAt = Date()
+                if self.voiceSession.isMuted {
+                    self.levelMeter.pushMuted()
+                } else {
+                    self.levelMeter.push(samples: samples)
+                }
+            }
         }
     }
 
