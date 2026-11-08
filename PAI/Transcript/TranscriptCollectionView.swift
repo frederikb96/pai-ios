@@ -58,6 +58,18 @@ private struct TranscriptRow: Equatable {
     /// is measured, and read by both the height and the cell — a row that reserves a separator and
     /// then draws none is a gap, and the reverse is an overlap.
     let timeSeparator: String?
+    /// What the decisions this row draws show, decided with its height and read by its cell.
+    let decisions: RowDecisions
+}
+
+/// The decisions one row draws: what each shows, by number, and which are placed under it because
+/// no reply embeds them. Part of the row's identity, so a pick that changes a card without
+/// changing its height still redraws the cell.
+private struct RowDecisions: Equatable {
+    var displays: [Int: InlineDecisionDisplay] = [:]
+    var trailing: [Int] = []
+
+    static let empty = RowDecisions()
 }
 
 /// The transcript list: a `UICollectionView` on ``TranscriptLayout``, owning the bootstrap/SSE
@@ -100,6 +112,14 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// between them. Nothing here mutates it except ``searchState/isLoadingFullHistory``; every
     /// other field is the search bar's own, and this controller only ever reacts to it.
     private let searchState: TranscriptSearchState
+    /// The session's decisions, drawn where its replies embed them — the store the pin above the
+    /// transcript reads, so a pick in either is the same pick. `nil` draws every marker as text.
+    private let decisions: DecisionsStore?
+    /// Each inline card's own Send or Dismiss in flight and its last refusal, by decision number.
+    private var decisionCardStates: [Int: InlineDecisionContext.CardState] = [:]
+    /// The decision numbers each loaded reply embeds, remembered with the text they were read from
+    /// so a pass over the window scans only the replies that are new or changed.
+    private var embeddedDecisions: [Int: (content: String, numbers: [Int])] = [:]
 
     private let measurer = TextKitBlockMeasurer()
     private let cache = BlockHeightCache()
@@ -262,10 +282,12 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     init(
         sessionID: String, store: TranscriptStore, apiClient: PaiApiClient, settings: SettingsStore,
         outbox: OutboxStore, requestFactory: PaiRequestFactory, searchState: TranscriptSearchState,
+        decisions: DecisionsStore? = nil,
         initialJumpMessageID: Int? = nil, jumpRequests: TranscriptJumpRequests,
         persistedReadPosition: PersistedReadPosition? = nil, onPullBackIntoComposer: @escaping () -> Void = {}
     ) {
         self.sessionID = sessionID
+        self.decisions = decisions
         self.store = store
         self.apiClient = apiClient
         self.settings = settings
@@ -292,6 +314,10 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         // captures the client rather than `self`, which is already being deallocated.
         let client = sseClient
         Task { @MainActor in client?.disconnect() }
+        if let decisions {
+            let sessionID = sessionID
+            Task { @MainActor in decisions.unwatch(sessionId: sessionID) }
+        }
         // This controller is recreated on every navigation into a session (`Route.session`'s own
         // doc comment), so `deinit` is exactly the moment the web's own per-session cleanup
         // effect flushes on — leaving these screens, not only quitting the app. `apiClient`,
@@ -368,6 +394,10 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         observeSearchState()
         observePendingBubbles()
         observeJumpRequests()
+        if let decisions {
+            Task { [sessionID] in await decisions.watch(sessionId: sessionID) }
+            observeDecisions()
+        }
         // The debounce below never elapses on its own once the app stops running frames — same
         // reasoning as the web's `visibilitychange`/`pagehide` flush, the closest UIKit
         // equivalent to a tab actually closing.
@@ -856,8 +886,9 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         // Sends with no entry of their own yet ride along at the tail as ordinary rows — see
         // `Message.pendingBubble(sessionId:index:text:)` for why they are synthesised messages
         // rather than a row kind of their own.
+        let serverMessages = TranscriptStore.displayMessages(store.messages[sessionID] ?? [])
         let displayMessages =
-            TranscriptStore.displayMessages(store.messages[sessionID] ?? [])
+            serverMessages
             + store.pendingBubbleTexts(sessionId: sessionID, excludingOutboxIds: excludedOutboxIds()).enumerated().map {
                 index, text in
                 Message.pendingBubble(sessionId: sessionID, index: index, text: text)
@@ -868,6 +899,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             sizeCategoryToken: traitCollection.preferredContentSizeCategory.rawValue)
         let metrics = Self.layoutMetrics(for: environment)
         let revealedByMessage = revealedCardsByMessage()
+        let decisionsByRow = rowDecisions(for: serverMessages)
         let calendar = Calendar.current
 
         var newRows: [TranscriptRow] = []
@@ -880,15 +912,18 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             let date = rowMemo.date(of: message)
             let separator = Self.timeSeparatorText(
                 date: date, previousDate: isFirstRow ? nil : previousDate, calendar: calendar)
+            let decisions = decisionsByRow[message.id] ?? RowDecisions.empty
             let cards = memoisedCards(
                 for: message, width: width, environment: environment, metrics: metrics,
-                revealedCards: revealedByMessage[message.id] ?? [], hasTimeSeparator: separator != nil)
+                revealedCards: revealedByMessage[message.id] ?? [], hasTimeSeparator: separator != nil,
+                decisions: decisions)
             guard
                 let height = TranscriptRowLayout.height(
                     of: cards, hasTimeSeparator: separator != nil, metrics: metrics)
             else { continue }
             newRows.append(
-                TranscriptRow(id: message.id, message: message, height: height, timeSeparator: separator))
+                TranscriptRow(
+                    id: message.id, message: message, height: height, timeSeparator: separator, decisions: decisions))
             // Only a row that carries a time updates the reference. A row without one — a message
             // still on its way — says nothing about when the conversation was, and letting it
             // clear this would stamp a full date on the next ordinary row.
@@ -896,7 +931,9 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             isFirstRow = false
         }
         if rowMemo.count > displayMessages.count + Self.rowMemoSlack {
-            rowMemo.retain(only: Set(displayMessages.map(\.id)))
+            let ids = Set(displayMessages.map(\.id))
+            rowMemo.retain(only: ids)
+            embeddedDecisions = embeddedDecisions.filter { ids.contains($0.key) }
         }
 
         #if DEBUG
@@ -948,14 +985,16 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// cell drawing one row measure by, so the two cannot disagree about a height.
     private func memoisedCards(
         for message: Message, width: Double, environment: MeasurementEnvironment, metrics: MessageLayoutMetrics,
-        revealedCards: Set<Int>, hasTimeSeparator: Bool
+        revealedCards: Set<Int>, hasTimeSeparator: Bool, decisions: RowDecisions
     ) -> [MeasuredCard] {
         let inputs = TranscriptRowMemo.Inputs(
-            width: width, environment: environment, revealedCards: revealedCards, hasTimeSeparator: hasTimeSeparator)
+            width: width, environment: environment, revealedCards: revealedCards, hasTimeSeparator: hasTimeSeparator,
+            decisions: decisions.displays, trailingDecisions: decisions.trailing)
         return rowMemo.cards(for: message, inputs: inputs) {
             TranscriptRowLayout.measure(
                 for: message, width: width, environment: environment, isRevealed: { revealedCards.contains($0) },
-                measurer: measurer, cache: cache, metrics: metrics, hasTimeSeparator: hasTimeSeparator)
+                measurer: measurer, cache: cache, metrics: metrics, hasTimeSeparator: hasTimeSeparator,
+                decisionDisplays: decisions.displays, trailingDecisions: decisions.trailing)
         }
     }
 
@@ -968,14 +1007,14 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// Recomputed rather than stored alongside the row: every block height behind it is already
     /// in `cache`, so this is an array walk, and computing it here means the cell can never draw
     /// from a plan the height was not taken from.
-    private func measuredCards(for message: Message, hasTimeSeparator: Bool) -> [MeasuredCard] {
+    private func measuredCards(for row: TranscriptRow) -> [MeasuredCard] {
         let width = measurementWidth()
         guard width > 0 else { return [] }
         let environment = currentEnvironment()
-        let revealedCards = Set(revealed.lazy.filter { $0.messageId == message.id }.map(\.cardIndex))
+        let revealedCards = Set(revealed.lazy.filter { $0.messageId == row.id }.map(\.cardIndex))
         return memoisedCards(
-            for: message, width: width, environment: environment, metrics: Self.layoutMetrics(for: environment),
-            revealedCards: revealedCards, hasTimeSeparator: hasTimeSeparator)
+            for: row.message, width: width, environment: environment, metrics: Self.layoutMetrics(for: environment),
+            revealedCards: revealedCards, hasTimeSeparator: row.timeSeparator != nil, decisions: row.decisions)
     }
 
     /// What one row's separator costs in a given version of the row list — `0` when that row is
@@ -1022,6 +1061,176 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             activityLineHeight: TextKitBlockMeasurer.codeLineHeight(for: environment),
             proseLineHeight: TextKitBlockMeasurer.proseLineHeight(for: environment),
             trailerLineHeight: TextKitBlockMeasurer.trailerLineHeight(for: environment))
+    }
+
+    // MARK: - Decisions inside replies
+
+    /// Re-measures the rows whenever the session's decisions, their picks or the open list change
+    /// — a card appears, resolves, or shows a pick. Same recursive re-registration as
+    /// `observePendingBubbles`.
+    private func observeDecisions() {
+        guard let decisions else { return }
+        withObservationTracking {
+            _ = decisions.bySession[sessionID]
+            _ = decisions.picks[sessionID]
+            _ = decisions.open
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.decisionsChanged()
+                self.observeDecisions()
+            }
+        }
+    }
+
+    /// A card changing height is a height change like any other: anchored on the row at the top
+    /// of the viewport, or kept on the bottom for a reader following the live edge, where an
+    /// unembedded decision appears under the turn that just ended.
+    private func decisionsChanged() {
+        recomputeRows(applying: edgeFollow.isPinned ? .stickToBottomIfPinned : .compensateFromTopVisibleRow)
+    }
+
+    private func inlineDecisionContext() -> InlineDecisionContext? {
+        guard let decisions else { return nil }
+        guard decisions.ownerMayDecide else { return InlineDecisionContext(mayDecide: false, listed: nil) }
+        return InlineDecisionContext(
+            mayDecide: true, listed: decisions.bySession[sessionID], picks: decisions.picks[sessionID] ?? [:],
+            pendingCount: decisions.pendingAnswers(sessionId: sessionID).count, cardStates: decisionCardStates)
+    }
+
+    /// What each loaded row's decisions show: the ones its reply embeds, and the open ones placed
+    /// under it because no loaded reply embeds them (`DecisionMarkers.placeUnembedded`).
+    private func rowDecisions(for messages: [Message]) -> [Int: RowDecisions] {
+        var embeddedByMessage: [Int: [Int]] = [:]
+        var embedded = Set<Int>()
+        for message in messages where message.type == .assistant {
+            guard let content = message.content else { continue }
+            let numbers: [Int]
+            if let known = embeddedDecisions[message.id], known.content == content {
+                numbers = known.numbers
+            } else {
+                numbers = DecisionMarkers.embeddedNumbers(in: content)
+                embeddedDecisions[message.id] = (content, numbers)
+            }
+            guard !numbers.isEmpty else { continue }
+            embeddedByMessage[message.id] = numbers
+            embedded.formUnion(numbers)
+        }
+
+        let context = inlineDecisionContext()
+        let display: (Int) -> InlineDecisionDisplay = { context?.display(for: $0) ?? .marker(number: $0) }
+        var result: [Int: RowDecisions] = [:]
+        for (id, numbers) in embeddedByMessage {
+            var row = RowDecisions()
+            for number in numbers { row.displays[number] = display(number) }
+            result[id] = row
+        }
+        guard let listed = context?.listed else { return result }
+        let placed = DecisionMarkers.placeUnembedded(
+            messages: messages, decisions: listed, embedded: embedded,
+            hasOlder: store.window(for: sessionID).hasOlder)
+        for (id, numbers) in placed {
+            var row = result[id] ?? RowDecisions()
+            row.trailing = numbers
+            for number in numbers { row.displays[number] = display(number) }
+            result[id] = row
+        }
+        return result
+    }
+
+    /// What the cards inside this transcript's replies do; `nil` for a guest, whose cards are the
+    /// marker text and do nothing.
+    private func inlineDecisionActions() -> InlineDecisionActions? {
+        guard let decisions, decisions.ownerMayDecide else { return nil }
+        return InlineDecisionActions(
+            pick: { [weak decisions] decision, option in decisions?.pick(option, for: decision) },
+            ownWords: { [weak self] decision in self?.askOwnWords(for: decision) },
+            dismiss: { [weak self] decision in self?.confirmDismiss(decision) },
+            send: { [weak self] number in self?.sendDecisions(fromCard: number) },
+            clearPicks: { [weak self] in
+                guard let self else { return }
+                self.decisions?.clearPicks(sessionId: self.sessionID)
+            })
+    }
+
+    /// The topmost controller this one can present over — a prompt raised while a sheet is up
+    /// goes on the sheet.
+    private func presenter() -> UIViewController {
+        var presenter: UIViewController = self
+        while let next = presenter.presentedViewController { presenter = next }
+        return presenter
+    }
+
+    /// Other…: the owner's own words, picked like any option once used. A prompt rather than a
+    /// field inside the card, so typing never changes the height of a row in the list.
+    private func askOwnWords(for decision: Decision) {
+        guard let decisions else { return }
+        let alert = UIAlertController(
+            title: "Your answer to D\(decision.number)", message: decision.title, preferredStyle: .alert)
+        let seed = DecisionListState.ownWordsSeed(
+            for: decision, picked: decisions.picked(sessionId: decision.sessionId, number: decision.number))
+        alert.addTextField { field in
+            field.text = seed
+            field.autocapitalizationType = .sentences
+            field.clearButtonMode = .whileEditing
+        }
+        let use = UIAlertAction(title: "Use", style: .default) { [weak alert] _ in
+            DecisionListState.useOwnWords(alert?.textFields?.first?.text ?? "", for: decision, store: decisions)
+        }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(use)
+        alert.preferredAction = use
+        presenter().present(alert, animated: true)
+    }
+
+    private func confirmDismiss(_ decision: Decision) {
+        let sheet = UIAlertController(
+            title: "Dismiss D\(decision.number)?",
+            message:
+                "Use this for a question you already answered in the conversation. The agent is not told anything.",
+            preferredStyle: .actionSheet)
+        sheet.addAction(
+            UIAlertAction(title: "Dismiss", style: .destructive) { [weak self] _ in
+                self?.runCardRequest(number: decision.number, fallback: "Could not dismiss this decision") { store in
+                    try await store.withdraw(decision)
+                }
+            })
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        sheet.popoverPresentationController?.sourceView = view
+        presenter().present(sheet, animated: true)
+    }
+
+    /// Send on one card sends every answer picked for the session, from this card, another one or
+    /// the pin, as one message.
+    private func sendDecisions(fromCard number: Int) {
+        guard let decisions else { return }
+        let answers = decisions.pendingAnswers(sessionId: sessionID)
+        guard !answers.isEmpty else { return }
+        runCardRequest(number: number, fallback: "Could not send the answers") { [sessionID] store in
+            try await store.answer(sessionId: sessionID, answers: answers)
+        }
+    }
+
+    /// Runs one card's request with that card showing it in flight, then its refusal, if any.
+    private func runCardRequest(
+        number: Int, fallback: String, _ request: @escaping @MainActor (DecisionsStore) async throws -> Void
+    ) {
+        guard let decisions, decisionCardStates[number]?.isSending != true else { return }
+        decisionCardStates[number] = InlineDecisionContext.CardState(isSending: true, errorMessage: nil)
+        decisionsChanged()
+        Task { @MainActor [weak self] in
+            var refusal: String?
+            do {
+                try await request(decisions)
+            } catch {
+                refusal = DecisionListState.message(for: error, fallback: fallback)
+            }
+            guard let self else { return }
+            self.decisionCardStates[number] = refusal.map {
+                InlineDecisionContext.CardState(isSending: false, errorMessage: $0)
+            }
+            self.decisionsChanged()
+        }
     }
 
     // MARK: - Search: find / locate / reveal / mark
@@ -1308,7 +1517,9 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                 cardIndex: hit.cardIndex, blockIndex: hit.blockIndex, for: rows[index].message, width: width,
                 environment: environment, isRevealed: revealResolver(forMessageId: hit.messageId),
                 measurer: measurer, cache: cache, metrics: metrics,
-                hasTimeSeparator: rows[index].timeSeparator != nil) ?? 0
+                hasTimeSeparator: rows[index].timeSeparator != nil,
+                decisionDisplays: rows[index].decisions.displays,
+                trailingDecisions: rows[index].decisions.trailing) ?? 0
         // A row can run to thousands of points and one block inside it can run to hundreds of
         // lines on its own — landing on the block's own top still leaves a hit on line 300 far
         // below the viewport. A code block (never wraps) adds its hit line's offset; an expanded
@@ -1900,12 +2111,13 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                     let measured = TranscriptRowLayout.height(
                         for: row.message, width: width, environment: environment,
                         isRevealed: revealResolver(forMessageId: row.id), measurer: measurer, cache: cache,
-                        metrics: metrics, hasTimeSeparator: row.timeSeparator != nil)
+                        metrics: metrics, hasTimeSeparator: row.timeSeparator != nil,
+                        decisionDisplays: row.decisions.displays, trailingDecisions: row.decisions.trailing)
                 else { return nil }
 
                 let content = TranscriptRowContent(
                     message: row.message,
-                    cards: measuredCards(for: row.message, hasTimeSeparator: row.timeSeparator != nil),
+                    cards: measuredCards(for: row),
                     metrics: metrics,
                     sessionID: sessionID,
                     apiClient: apiClient,
@@ -1997,7 +2209,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                 let highlights = self.searchHighlights(forMessageId: messageId)
                 TranscriptRowContent(
                     message: row.message,
-                    cards: self.measuredCards(for: row.message, hasTimeSeparator: row.timeSeparator != nil),
+                    cards: self.measuredCards(for: row),
                     metrics: Self.layoutMetrics(for: self.currentEnvironment()),
                     sessionID: self.sessionID,
                     apiClient: self.apiClient,
@@ -2012,7 +2224,8 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                     // "the two should not [visually] differ" (`MessageBubble.tsx`'s own comment) —
                     // and a kind search has no needle at all to paint via `highlights`, so this is
                     // the only ring a kind landing ever gets.
-                    isRinged: messageId == self.highlightedMessageId || messageId == self.searchState.currentMessageId
+                    isRinged: messageId == self.highlightedMessageId || messageId == self.searchState.currentMessageId,
+                    decisionActions: self.inlineDecisionActions()
                 )
                 // Faded, at the same 0.6 the web uses, so a message still on its way is
                 // legible but visibly not yet part of the conversation. Opacity only — it
@@ -2048,6 +2261,9 @@ struct TranscriptCollectionView: UIViewControllerRepresentable {
     let outbox: OutboxStore
     let requestFactory: PaiRequestFactory
     let searchState: TranscriptSearchState
+    /// The session's decisions, drawn where its replies embed them; `nil` draws every marker line
+    /// as text.
+    var decisions: DecisionsStore? = nil
     /// Where to jump once the transcript is open. `nil` for an ordinary open.
     var initialJumpMessageID: Int? = nil
     /// Reaches this screen for a push notification's jump while it is already on top — see
@@ -2066,7 +2282,8 @@ struct TranscriptCollectionView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> TranscriptCollectionViewController {
         TranscriptCollectionViewController(
             sessionID: sessionID, store: store, apiClient: apiClient, settings: settings, outbox: outbox,
-            requestFactory: requestFactory, searchState: searchState, initialJumpMessageID: initialJumpMessageID,
+            requestFactory: requestFactory, searchState: searchState, decisions: decisions,
+            initialJumpMessageID: initialJumpMessageID,
             jumpRequests: jumpRequests, persistedReadPosition: persistedReadPosition,
             onPullBackIntoComposer: onPullBackIntoComposer
         )

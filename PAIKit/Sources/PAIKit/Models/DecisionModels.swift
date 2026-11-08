@@ -37,6 +37,9 @@ public struct Decision: Codable, Sendable, Hashable, Identifiable {
     public let sessionId: String
     /// The session's title when the cross-session listing joined it.
     public let sessionTitle: String?
+    /// The scheduled task the session belongs to, when the cross-session listing joined it.
+    public let taskId: String?
+    public let taskName: String?
     public let number: Int
     /// What a yes sets in motion.
     public let title: String
@@ -59,13 +62,16 @@ public struct Decision: Codable, Sendable, Hashable, Identifiable {
         case id, number, title, context, recommendation, options, blocks, state, answer
         case sessionId = "session_id"
         case sessionTitle = "session_title"
+        case taskId = "task_id"
+        case taskName = "task_name"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case resolvedAt = "resolved_at"
     }
 
     public init(
-        id: String, sessionId: String, sessionTitle: String? = nil, number: Int, title: String,
+        id: String, sessionId: String, sessionTitle: String? = nil, taskId: String? = nil, taskName: String? = nil,
+        number: Int, title: String,
         context: String = "", recommendation: String, options: [String] = ["yes", "no"], blocks: Bool = false,
         state: DecisionState = .open, answer: String? = nil, createdAt: String = "", updatedAt: String = "",
         resolvedAt: String? = nil
@@ -73,6 +79,8 @@ public struct Decision: Codable, Sendable, Hashable, Identifiable {
         self.id = id
         self.sessionId = sessionId
         self.sessionTitle = sessionTitle
+        self.taskId = taskId
+        self.taskName = taskName
         self.number = number
         self.title = title
         self.context = context
@@ -99,6 +107,18 @@ public struct OpenDecisionsResponse: Codable, Sendable, Equatable {
 
     public init(decisions: [Decision]) {
         self.decisions = decisions
+    }
+}
+
+/// `GET /api/session/{id}/decisions?state=`: one session's decisions by number.
+public struct SessionDecisionsResponse: Codable, Sendable, Equatable {
+    public let decisions: [Decision]
+    /// The line a hook shows the session's agent each turn; `nil` when none is open.
+    public let reminder: String?
+
+    public init(decisions: [Decision], reminder: String? = nil) {
+        self.decisions = decisions
+        self.reminder = reminder
     }
 }
 

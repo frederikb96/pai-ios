@@ -103,6 +103,10 @@ public struct TranscriptCardPlan: Equatable, Sendable {
         /// full, untouched content, marker lines included; see
         /// ``MessageRouting/extractFilePaths(_:)``.
         case assistantBubble(text: String, filePaths: [String])
+        /// The decisions placed under an assistant message that has no prose of its own to carry
+        /// them (``TranscriptRowPlan/cards(for:isRevealed:trailingDecisions:)``): nothing but its
+        /// ``TranscriptCardPlan/decisionSlots``.
+        case decisionCards
         case agentMessage(sender: String, body: String)
         /// `args` is nil when nothing but attachments followed the name; `attachmentPaths` are the
         /// files that rode at the end of the arguments.
@@ -139,10 +143,14 @@ public struct TranscriptCardPlan: Equatable, Sendable {
     /// server's own search over the raw stored content cannot find. Anything put here has to be
     /// measured exactly as it is drawn, so shorten it here rather than in the view.
     public let header: String?
+    /// Where a reply's decisions are drawn between and after its ``blocks``: one per `{{D<n>}}`
+    /// line (``DecisionMarkers``), whose line is not among the blocks, then the decisions placed
+    /// under this message because no reply embeds them. Empty for every other card.
+    public let decisionSlots: [DecisionSlot]
 
     public init(
         kind: Kind, register: Register, tone: Tone = .normal, preview: Preview, isRevealed: Bool,
-        blocks: [MarkdownBlock], header: String? = nil
+        blocks: [MarkdownBlock], header: String? = nil, decisionSlots: [DecisionSlot] = []
     ) {
         self.kind = kind
         self.register = register
@@ -151,6 +159,7 @@ public struct TranscriptCardPlan: Equatable, Sendable {
         self.isRevealed = isRevealed
         self.blocks = blocks
         self.header = header
+        self.decisionSlots = decisionSlots
     }
 
     /// Whether an activity row reserves its label line, which it does whether or not there is a
@@ -172,7 +181,14 @@ public enum TranscriptRowPlan {
     /// key. An assistant turn's thought, its tool calls and its reply are separately openable for
     /// the same reason they are separate rows on the web: opening one to read a result should not
     /// unfold the thought above it. The caller binds the message id.
-    public static func cards(for message: Message, isRevealed: (Int) -> Bool) -> [TranscriptCardPlan] {
+    ///
+    /// `trailingDecisions` are the open decisions drawn under this assistant message because no
+    /// reply embeds them (``DecisionMarkers/placeUnembedded(messages:decisions:embedded:hasOlder:)``).
+    /// They are appended after everything else, so a caller that passes none (the search index)
+    /// plans the same cards and blocks at every index it can reach.
+    public static func cards(
+        for message: Message, isRevealed: (Int) -> Bool, trailingDecisions: [Int] = []
+    ) -> [TranscriptCardPlan] {
         switch MessageRouting.route(for: message) {
         case .system:
             return [
@@ -287,13 +303,15 @@ public enum TranscriptRowPlan {
             ]
 
         case .assistant:
-            return assistantCards(for: message, isRevealed: isRevealed)
+            return assistantCards(for: message, isRevealed: isRevealed, trailingDecisions: trailingDecisions)
         }
     }
 
     // MARK: - Assistant turns
 
-    private static func assistantCards(for message: Message, isRevealed: (Int) -> Bool) -> [TranscriptCardPlan] {
+    private static func assistantCards(
+        for message: Message, isRevealed: (Int) -> Bool, trailingDecisions: [Int]
+    ) -> [TranscriptCardPlan] {
         var cards: [TranscriptCardPlan] = []
 
         if let thinking = message.thinking, !thinking.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -329,17 +347,42 @@ public enum TranscriptRowPlan {
             cards.append(toolCallCard(call, index: index, isRevealed: isRevealed))
         }
 
+        let trailing = trailingDecisions.map { DecisionSlot(position: 0, number: $0) }
         if let content = message.content, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let (blocks, embedded) = replyBlocks(content)
+            let slots = embedded + trailing.map { DecisionSlot(position: blocks.count, number: $0.number) }
             cards.append(
                 TranscriptCardPlan(
                     kind: .assistantBubble(text: content, filePaths: MessageRouting.extractFilePaths(content)),
                     register: .prose,
                     preview: .full(totalLines: lineCount(content)),
                     isRevealed: true,
-                    blocks: MarkdownParser.parse(content)))
+                    blocks: blocks,
+                    decisionSlots: slots))
+        } else if !trailing.isEmpty {
+            cards.append(
+                TranscriptCardPlan(
+                    kind: .decisionCards, register: .prose, preview: .full(totalLines: 0), isRevealed: true,
+                    blocks: [], decisionSlots: trailing))
         }
 
         return cards
+    }
+
+    /// A reply's markdown blocks, and where its `{{D<n>}}` lines stood among them. The text between
+    /// two markers is parsed on its own, as the web renders it, so a marker written directly under
+    /// a paragraph line still splits it there.
+    private static func replyBlocks(_ content: String) -> (blocks: [MarkdownBlock], slots: [DecisionSlot]) {
+        guard content.contains("{{D") else { return (MarkdownParser.parse(content), []) }
+        var blocks: [MarkdownBlock] = []
+        var slots: [DecisionSlot] = []
+        for segment in DecisionMarkers.split(content) {
+            switch segment {
+            case .markdown(let text): blocks += MarkdownParser.parse(text)
+            case .decision(let number): slots.append(DecisionSlot(position: blocks.count, number: number))
+            }
+        }
+        return (blocks, slots)
     }
 
     /// A tool call's body, bounded by whichever budget its own shape earns — a diff gets more room

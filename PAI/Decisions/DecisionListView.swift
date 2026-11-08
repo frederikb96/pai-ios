@@ -5,7 +5,9 @@ import SwiftUI
 /// the recommendation — that opens to its context and the answers it offers. A tap picks an
 /// answer without sending it; Send turns every pick into one message to the session, which marks
 /// them answered. Shared by the pin above a transcript and the Decisions app. Swift port of
-/// `DecisionList.tsx`; what is picked and sent is `DecisionListState`.
+/// `DecisionList.tsx`. The picks are the session's (`DecisionsStore.picks`), shared with the cards
+/// inside its replies, so Send here sends what was picked there too; what this list holds for
+/// itself is `DecisionListState`.
 struct DecisionListView: View {
     @Environment(AppEnvironment.self) private var environment
     @State private var state = DecisionListState()
@@ -16,6 +18,8 @@ struct DecisionListView: View {
     /// Past this height the list scrolls inside itself; `nil` lays it out at its natural height.
     /// Both layouts read the one `state`, so a pick survives the list growing past the bound.
     var maxHeight: CGFloat?
+
+    private var store: DecisionsStore? { environment.connection?.decisions }
 
     var body: some View {
         Group {
@@ -33,7 +37,7 @@ struct DecisionListView: View {
             presenting: dismissing
         ) { decision in
             Button("Dismiss", role: .destructive) {
-                guard let store = environment.connection?.decisions else { return }
+                guard let store else { return }
                 Task { await state.withdraw(decision, store: store) }
             }
         } message: { _ in
@@ -59,7 +63,7 @@ struct DecisionListView: View {
     @ViewBuilder
     private func line(_ decision: Decision) -> some View {
         let isOpen = state.expanded.contains(decision.number)
-        let choice = state.picked[decision.number]
+        let choice = store?.picked(sessionId: sessionId, number: decision.number)
         VStack(alignment: .leading, spacing: 8) {
             Button {
                 state.toggleExpanded(decision.number)
@@ -102,10 +106,11 @@ struct DecisionListView: View {
                     optionButton(
                         option + (decision.isRecommended(option) ? " (recommended)" : ""),
                         selected: choice == option
-                    ) { state.pick(decision.number, option) }
+                    ) { store?.pick(option, for: decision) }
                 }
                 optionButton("Other…", selected: state.writing == decision.number, dashed: true) {
-                    state.toggleWriting(for: decision)
+                    guard let store else { return }
+                    state.toggleWriting(for: decision, store: store)
                 }
                 optionButton("Dismiss", selected: false, muted: true) { dismissing = decision }
                     .accessibilityIdentifier("decision-dismiss-\(decision.number)")
@@ -120,9 +125,12 @@ struct DecisionListView: View {
                 .lineLimit(1...4)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("decision-own-words")
-            Button("Use") { state.commitOwnWords() }
-                .buttonStyle(.borderedProminent)
-                .disabled(!state.canUseOwnWords)
+            Button("Use") {
+                guard let store else { return }
+                state.commitOwnWords(for: decision, store: store)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!state.canUseOwnWords)
         }
     }
 
@@ -167,14 +175,14 @@ struct DecisionListView: View {
 
     @ViewBuilder
     private var footer: some View {
-        let pending = state.pendingAnswers(for: decisions)
+        let pending = store?.pendingAnswers(sessionId: sessionId) ?? []
         if !pending.isEmpty || decisions.count > 1 || state.errorMessage != nil {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     if !pending.isEmpty {
                         Button {
-                            guard let store = environment.connection?.decisions else { return }
-                            Task { await state.send(sessionId: sessionId, decisions: decisions, store: store) }
+                            guard let store else { return }
+                            Task { await state.send(sessionId: sessionId, store: store) }
                         } label: {
                             Text(
                                 state.isSending
@@ -183,10 +191,10 @@ struct DecisionListView: View {
                         .buttonStyle(.borderedProminent)
                         .disabled(state.isSending)
                         .accessibilityIdentifier("decision-send")
-                        Button("Clear") { state.clearPicks() }
+                        Button("Clear") { store?.clearPicks(sessionId: sessionId) }
                             .disabled(state.isSending)
                     } else if decisions.count > 1 {
-                        Button("All as recommended") { state.pickAllRecommended(decisions) }
+                        Button("All as recommended") { store?.pickAllRecommended(decisions) }
                             .accessibilityIdentifier("decision-all-recommended")
                     }
                 }
