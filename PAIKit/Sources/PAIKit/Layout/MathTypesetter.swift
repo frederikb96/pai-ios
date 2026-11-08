@@ -55,7 +55,7 @@
 
         /// What an inline formula SwiftMath cannot parse shows instead: its source, in the inline
         /// code font.
-        public static func inlineFallback(_ latex: String) -> String {
+        public nonisolated static func inlineFallback(_ latex: String) -> String {
             "$\(latex)$"
         }
 
