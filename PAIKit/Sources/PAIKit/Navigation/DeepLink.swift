@@ -155,8 +155,8 @@ extension DeepLink {
     /// opening Safari.
     ///
     /// `/session/<id>` (with the web's `?m=<message id>` jump, or `?n=<notification id>` for a
-    /// notification whose anchor resolves on read) and `/apps/notes/<id>`, including the
-    /// note's `/preview` subpaths. Anything else is no link: the domain's association file claims
+    /// notification whose anchor resolves on read), `/apps/notes/<id>`, including the
+    /// note's `/preview` subpaths, and `/apps/browser[/<name>]`. Anything else is no link: the domain's association file claims
     /// paths this parser does not know, and those open the app where it already is.
     ///
     /// The host is not checked. iOS delivers a browsing activity only for a domain the app's
@@ -184,6 +184,13 @@ extension DeepLink {
             let messageID = value("m").flatMap(Int.init).flatMap { $0 > 0 ? $0 : nil }
             return .session(id: sessionID, messageID: messageID)
         case "apps":
+            if segments.count >= 2, segments[1] == "browser" {
+                switch BrowserLink.parse(percentEncodedPath: components.percentEncodedPath) {
+                case .list?: return .browser(name: nil)
+                case .session(let name)?: return .browser(name: name)
+                case nil: return nil
+                }
+            }
             guard segments.count >= 3, segments[1] == "notes", let noteID = id(at: 2) else { return nil }
             guard segments.count == 3 || segments[3] == "preview" else { return nil }
             return .note(id: noteID)

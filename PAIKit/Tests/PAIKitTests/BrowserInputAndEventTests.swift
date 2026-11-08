@@ -132,6 +132,15 @@ final class BrowserLinkTests: XCTestCase {
         XCTAssertNil(parse("https://pai.example.com/apps/notes/abc"))
     }
 
+    func testAUniversalLinkOpensTheSameScreens() {
+        XCTAssertEqual(
+            DeepLink.from(webURL: URL(string: "https://pai.example.com/apps/browser/shop")!), .browser(name: "shop"))
+        XCTAssertEqual(DeepLink.from(webURL: URL(string: "https://pai.example.com/apps/browser")!), .browser(name: nil))
+        XCTAssertNil(DeepLink.from(webURL: URL(string: "https://pai.example.com/apps/browser/-bad")!))
+        XCTAssertEqual(
+            DeepLink.from(webURL: URL(string: "https://pai.example.com/apps/notes/n1")!), .note(id: "n1"))
+    }
+
     func testTheCustomSchemeOpensTheSameScreens() {
         XCTAssertEqual(DeepLink.from(url: URL(string: "pai://browser/shop")!), .browser(name: "shop"))
         XCTAssertEqual(DeepLink.from(url: URL(string: "pai://browser")!), .browser(name: nil))
