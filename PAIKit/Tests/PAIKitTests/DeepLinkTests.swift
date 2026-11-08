@@ -158,7 +158,7 @@ final class DeepLinkTests: XCTestCase {
     /// The association file claims paths owned by features this app does not have; those must
     /// leave the app where it is rather than open some other screen.
     func testAnUnknownWebPathIsNoLink() {
-        XCTAssertNil(DeepLink.from(webURL: URL(string: "https://pai.example/apps/browser/b1")!))
+        XCTAssertNil(DeepLink.from(webURL: URL(string: "https://pai.example/apps/scheduler/b1")!))
         XCTAssertNil(DeepLink.from(webURL: URL(string: "https://pai.example/apps/notes/n1/delete")!))
         XCTAssertNil(DeepLink.from(webURL: URL(string: "https://pai.example/session/s1/extra")!))
         XCTAssertNil(DeepLink.from(webURL: URL(string: "https://pai.example/")!))
