@@ -11,8 +11,10 @@ import Foundation
 /// - Display: `$$ … $$` or `\[ … \]` making up whole lines, on one line or across several, outside
 ///   a fenced code block. A blank line inside ends the search: TeX does not allow one either.
 /// - Inline: `$ … $`, `\( … \)` and `$$ … $$` within a line. A `$` opens only before a non-space
-///   and closes only after a non-space when no digit follows it, so `$5 and $10` stays text.
-///   `\$` is an escaped dollar. A backtick code span is skipped whole.
+///   and closes only after a non-space when no digit follows it, so `$5 and $10` stays text. The
+///   first unescaped `$` after an opener decides: when it cannot close, the opener is a price, so
+///   `$20 and $30, and $E=mc^2$` keeps both prices and finds one formula. `\$` is an escaped
+///   dollar. A backtick code span is skipped whole.
 struct MarkdownMath: Sendable {
 
     enum Kind: Sendable {
@@ -235,8 +237,6 @@ struct MarkdownMath: Sendable {
     /// to the end of the line per opener.
     private struct NextIndices {
         let characters: [Character]
-        /// The next `$` at or after a position that may close an inline formula.
-        private var dollarCloser: [Int?]
         private var backtick: [Int?]
         private var doubleDollarStart: [Int?]
         private var parenCloseStart: [Int?]
@@ -244,7 +244,6 @@ struct MarkdownMath: Sendable {
         init(_ characters: [Character]) {
             self.characters = characters
             let count = characters.count
-            dollarCloser = Array(repeating: nil, count: count + 1)
             backtick = Array(repeating: nil, count: count + 1)
             doubleDollarStart = Array(repeating: nil, count: count + 1)
             parenCloseStart = Array(repeating: nil, count: count + 1)
@@ -252,32 +251,34 @@ struct MarkdownMath: Sendable {
             while index >= 0 {
                 let character = characters[index]
                 let following: Character? = index + 1 < count ? characters[index + 1] : nil
-                dollarCloser[index] = dollarCloser[index + 1]
                 backtick[index] = character == "`" ? index : backtick[index + 1]
                 doubleDollarStart[index] =
                     character == "$" && following == "$" ? index : doubleDollarStart[index + 1]
                 parenCloseStart[index] =
                     character == "\\" && following == ")" ? index : parenCloseStart[index + 1]
-                if character == "$", index > 0 {
-                    let before = characters[index - 1]
-                    if !before.isWhitespace, before != "\\", !(following?.isNumber ?? false) {
-                        dollarCloser[index] = index
-                    }
-                }
                 index -= 1
             }
         }
 
         /// The `$` closing one opened at `opening`, under the rules that keep a price a price: the
-        /// opening one is followed by a non-space, the closing one follows a non-space, is not
-        /// escaped and is not followed by a digit; a backtick in between ends the search.
+        /// opening one is followed by a non-space, and the first `$` after it — skipping escaped
+        /// characters and whole code spans — closes it only when it follows a non-space and no
+        /// digit follows it. That `$` failing makes the opener a price.
         func closingDollar(opening: Int) -> Int? {
             let first = opening + 1
-            guard first < characters.count, !characters[first].isWhitespace,
-                let close = dollarCloser[first + 1]
-            else { return nil }
-            if let tick = backtick[first], tick < close { return nil }
-            return close
+            guard first < characters.count, !characters[first].isWhitespace else { return nil }
+            var index = first
+            while index < characters.count {
+                switch characters[index] {
+                case "\\": index += 2
+                case "`": index = codeSpanEnd(at: index)
+                case "$":
+                    let following: Character? = index + 1 < characters.count ? characters[index + 1] : nil
+                    return !characters[index - 1].isWhitespace && !(following?.isNumber ?? false) ? index : nil
+                default: index += 1
+                }
+            }
+            return nil
         }
 
         func doubleDollar(after start: Int) -> Int? {

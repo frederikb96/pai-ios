@@ -155,7 +155,7 @@ extension DeepLink {
     /// opening Safari.
     ///
     /// `/session/<id>` (with the web's `?m=<message id>` jump, or `?n=<notification id>` for a
-    /// notification whose anchor resolves on read), `/apps/notes/<id>`, including the
+    /// notification whose anchor resolves on read), `/apps/notes` (the list), `/apps/notes/<id>`, including the
     /// note's `/preview` subpaths, and `/apps/browser[/<name>]`. Anything else is no link: the domain's association file claims
     /// paths this parser does not know, and those open the app where it already is.
     ///
@@ -191,6 +191,7 @@ extension DeepLink {
                 case nil: return nil
                 }
             }
+            if segments.count == 2, segments[1] == "notes" { return .notesList }
             guard segments.count >= 3, segments[1] == "notes", let noteID = id(at: 2) else { return nil }
             guard segments.count == 3 || segments[3] == "preview" else { return nil }
             return .note(id: noteID)

@@ -27,6 +27,30 @@ final class MarkdownMathTests: XCTestCase {
         XCTAssertEqual(blocks.plainText, source)
     }
 
+    /// The first `$` after an opener decides: a price before a real formula on one line stays a
+    /// price, and does not borrow the formula's closing `$`.
+    func testPricesBeforeAFormulaStayText() {
+        let source = "It costs $20 and $30, and $E=mc^2$ holds."
+        XCTAssertEqual(formulas(in: MarkdownParser.parse(source)), ["inline:E=mc^2"])
+        let blocks = MarkdownParser.parse(source)
+        guard case .paragraph(let text) = blocks.first else { return XCTFail("expected a paragraph") }
+        XCTAssertEqual(
+            text.runs.filter { !$0.style.contains(.math) }.map(\.text).joined(),
+            "It costs $20 and $30, and  holds.")
+    }
+
+    /// A `$` inside a code span is no closer, and a closer after a code span still is.
+    func testACodeSpanBetweenPriceAndFormulaIsSkipped() {
+        XCTAssertEqual(
+            formulas(in: MarkdownParser.parse("It costs $20, run `$HOME` and $x$.")), ["inline:x"])
+        XCTAssertEqual(formulas(in: MarkdownParser.parse("Both $a `b` c$ here.")), ["inline:a `b` c"])
+    }
+
+    /// An escaped `$` is skipped on the way to the closer.
+    func testAnEscapedDollarDoesNotCloseAFormula() {
+        XCTAssertEqual(formulas(in: MarkdownParser.parse(#"Pay $x \$ y$ now."#)), [#"inline:x \$ y"#])
+    }
+
     /// The reason formulas are taken out before markdown parses: escapes, emphasis characters and
     /// line breaks in LaTeX would otherwise reach the typesetter rewritten.
     func testFormulasReachTheTypesetterAsWritten() {
