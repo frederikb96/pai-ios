@@ -47,7 +47,8 @@ extension PaiFixtures {
               "anchor": {"message_id": 9003},
               "alert": null,
               "task_id": null,
-              "task_name": null
+              "task_name": null,
+              "run_slug": null
             },
             {
               "id": "n1a2b3c4-0000-4c1a-8f30-2b7e5c918d05",
@@ -61,7 +62,8 @@ extension PaiFixtures {
               "anchor": null,
               "alert": null,
               "task_id": "5c0d8e21-7a64-4f0b-9d0e-1b2c3d4e5f60",
-              "task_name": "Nightly backup"
+              "task_name": "Nightly backup",
+              "run_slug": "Nightlybackup"
             },
             {
               "id": "n1a2b3c4-0000-4c1a-8f30-2b7e5c918d02",
@@ -78,7 +80,8 @@ extension PaiFixtures {
                 "source": "health", "transition": "raised", "active": true
               },
               "task_id": null,
-              "task_name": null
+              "task_name": null,
+              "run_slug": null
             },
             {
               "id": "n1a2b3c4-0000-4c1a-8f30-2b7e5c918d06",
@@ -92,7 +95,8 @@ extension PaiFixtures {
               "anchor": null,
               "alert": null,
               "task_id": "5c0d8e21-7a64-4f0b-9d0e-1b2c3d4e5f61",
-              "task_name": "Grocery sync"
+              "task_name": "Grocery sync",
+              "run_slug": null
             },
             {
               "id": "n1a2b3c4-0000-4c1a-8f30-2b7e5c918d03",
@@ -106,7 +110,8 @@ extension PaiFixtures {
               "anchor": null,
               "alert": null,
               "task_id": null,
-              "task_name": null
+              "task_name": null,
+              "run_slug": null
             },
             {
               "id": "n1a2b3c4-0000-4c1a-8f30-2b7e5c918d04",
@@ -123,7 +128,8 @@ extension PaiFixtures {
                 "transition": "cleared", "active": false
               },
               "task_id": null,
-              "task_name": null
+              "task_name": null,
+              "run_slug": null
             }
           ]
         }
@@ -145,7 +151,8 @@ extension PaiFixtures {
           "anchor": {"message_id": 9003},
           "alert": null,
           "task_id": null,
-          "task_name": null
+          "task_name": null,
+          "run_slug": null
         }
         """#
 

@@ -52,10 +52,10 @@ struct NotificationRowView: View {
     private var bodyText: some View {
         if showsFullBody {
             if notification.kind == .agent {
-                MarkdownContentView(blocks: MarkdownParser.parse(notification.body))
+                MarkdownContentView(blocks: MarkdownParser.parse(notification.listBody))
                     .foregroundStyle(PaiPalette.Semantic.textSecondary)
             } else {
-                Text(notification.body)
+                Text(notification.listBody)
                     .font(PaiTypography.body.font)
                     .foregroundStyle(PaiPalette.Semantic.textSecondary)
             }
@@ -86,7 +86,7 @@ struct NotificationRowView: View {
     /// The clamped lines read as text, not as markdown source: an agent's body is markdown, and
     /// its first lines would otherwise be asterisks and hashes.
     private var bodyPreview: String {
-        notification.kind == .agent ? MarkdownParser.parse(notification.body).plainText : notification.body
+        notification.kind == .agent ? MarkdownParser.parse(notification.listBody).plainText : notification.listBody
     }
 
     private var unreadDot: some View {
@@ -101,7 +101,7 @@ struct NotificationRowView: View {
         HStack(spacing: 6) {
             Image(systemName: kindIconName)
                 .foregroundStyle(kindIconColor)
-            Text(notification.title)
+            Text(notification.listTitle)
                 .font(notification.isUnread ? PaiTypography.body.font.weight(.medium) : PaiTypography.body.font)
                 .foregroundStyle(PaiPalette.Semantic.textPrimary)
                 .lineLimit(1)
