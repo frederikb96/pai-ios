@@ -29,6 +29,10 @@ final class AppEnvironment {
         }
     }
 
+    /// The configured backend's host: what decides whether a tapped https link points into this
+    /// backend's own web UI.
+    var backendHost: String? { URL(string: backendURL)?.host }
+
     private let defaults: UserDefaults
     private let tokens: KeychainTokenStore
     /// "On path satisfied, attempt immediately" for the outbox — the same rule

@@ -27,6 +27,8 @@ public enum DeepLink: Equatable, Sendable, Hashable {
     /// that failed to resolve. ``routes`` still answers something for this case (the centre) so
     /// the type stays total, but nothing in the app is expected to call it for `.notification`.
     case notification(id: String)
+    /// The agent's browser sessions; `name` is one session's live view, `nil` the list.
+    case browser(name: String?)
 
     /// The routes this link lands on. Whole paths rather than single routes: a deep link arrives
     /// knowing nothing about what the app was showing, so it replaces the stack, and a note with
@@ -39,6 +41,8 @@ public enum DeepLink: Equatable, Sendable, Hashable {
         case .createSession: return [.createSession]
         case .quickActions: return [.quickActions]
         case .notification: return [.notifications]
+        case .browser(let name?): return [.browserList, .browser(name: name)]
+        case .browser(nil): return [.browserList]
         }
     }
 
@@ -52,7 +56,7 @@ public enum DeepLink: Equatable, Sendable, Hashable {
     public var dismissesOverlays: Bool {
         switch self {
         case .quickActions: return true
-        case .session, .note, .notesList, .createSession, .notification: return false
+        case .session, .note, .notesList, .createSession, .notification, .browser: return false
         }
     }
 }
@@ -100,8 +104,8 @@ extension DeepLink {
     /// The custom URL scheme, for a shortcut or a widget that opens the app by URL rather than
     /// through an App Intent.
     ///
-    /// `pai://session/<id>`, `pai://note/<id>`, `pai://notes`, `pai://createsession` and
-    /// `pai://quickactions`. Rejects
+    /// `pai://session/<id>`, `pai://note/<id>`, `pai://notes`, `pai://createsession`,
+    /// `pai://quickactions`, `pai://browser` and `pai://browser/<name>`. Rejects
     /// anything else rather than guessing, including a well-formed URL with an unknown host — a
     /// link the app does not understand must not silently open some other screen.
     public static func from(url: URL) -> DeepLink? {
@@ -137,6 +141,11 @@ extension DeepLink {
         case "quickactions":
             guard segments.count == 1 else { return nil }
             return .quickActions
+        case "browser":
+            guard segments.count <= 2 else { return nil }
+            guard segments.count == 2 else { return .browser(name: nil) }
+            let name = segments[1].removingPercentEncoding ?? segments[1]
+            return BrowserLink.isValidName(name) ? .browser(name: name) : nil
         default:
             return nil
         }
@@ -195,6 +204,8 @@ extension DeepLink {
         case .createSession: return URL(string: "pai://createsession")
         case .quickActions: return URL(string: "pai://quickactions")
         case .notification(let id): return URL(string: "pai://notification/\(Self.escape(id))")
+        case .browser(let name?): return URL(string: "pai://browser/\(Self.escape(name))")
+        case .browser(nil): return URL(string: "pai://browser")
         }
     }
 

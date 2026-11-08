@@ -122,6 +122,12 @@ public enum Route: Hashable, Sendable {
     /// Every open decision across the owner's sessions — reached from Apps' "Decisions" row.
     /// Carries no identity concern of its own.
     case decisions
+    /// The agent's live browser sessions — reached from Apps' "Browser" row. Carries no identity
+    /// concern of its own, the same reason `.canteen` does not.
+    case browserList
+    /// One agent browser session, live — reached from the list and from the link the agent drops
+    /// in chat. The name is the session's identity; nothing else about it is worth carrying.
+    case browser(name: String)
 
     /// Ignores `session`'s `messageID` and `notePreview`'s `heading` — see those cases. Everything else is a plain
     /// per-case comparison, same as the synthesized version this replaces.
@@ -150,6 +156,8 @@ public enum Route: Hashable, Sendable {
         case (.canteen, .canteen): return true
         case (.usage, .usage): return true
         case (.decisions, .decisions): return true
+        case (.browserList, .browserList): return true
+        case (.browser(let a), .browser(let b)): return a == b
         default: return false
         }
     }
@@ -214,6 +222,11 @@ public enum Route: Hashable, Sendable {
             hasher.combine(22)
         case .decisions:
             hasher.combine(23)
+        case .browserList:
+            hasher.combine(24)
+        case .browser(let name):
+            hasher.combine(25)
+            hasher.combine(name)
         }
     }
 }
@@ -455,7 +468,8 @@ public final class Router {
             case .terminal(let sessionID): return sessionID
             case .settings, .createSession, .subagents, .notes, .note, .noteContainers, .notePreview,
                 .notifications, .recordings, .arcSpec, .apps, .arcSpecList, .arcReport, .arcOverview,
-                .schedulerList, .schedulerTask, .quickActions, .computerCall, .canteen, .usage, .decisions:
+                .schedulerList, .schedulerTask, .quickActions, .computerCall, .canteen, .usage, .decisions,
+                .browserList, .browser:
                 continue
             }
         }
@@ -470,7 +484,8 @@ public final class Router {
             case .note(let id), .notePreview(let id, _): return id
             case .session, .terminal, .settings, .createSession, .subagents, .notes, .noteContainers,
                 .notifications, .recordings, .arcSpec, .apps, .arcSpecList, .arcReport, .arcOverview,
-                .schedulerList, .schedulerTask, .quickActions, .computerCall, .canteen, .usage, .decisions:
+                .schedulerList, .schedulerTask, .quickActions, .computerCall, .canteen, .usage, .decisions,
+                .browserList, .browser:
                 continue
             }
         }

@@ -356,6 +356,13 @@ struct RootView: View {
             UsageView()
         case .decisions:
             DecisionsView()
+        case .browserList:
+            BrowserListScreen()
+        case .browser(let name):
+            // Keyed on the session, like `.session`: a link to another session replaces this
+            // destination in place, and the stream and zoom belong to one session each.
+            BrowserLiveScreen(name: name)
+                .id(name)
         }
     }
 

@@ -1,7 +1,8 @@
 import PAIKit
 import SwiftUI
 
-/// Asks before leaving the app for an `http`/`https` link — a touchscreen tap can land on a link
+/// Opens a link into the backend's own Browser app as its native screen (see ``BrowserLink``),
+/// and asks before leaving the app for any other `http`/`https` link — a touchscreen tap can land on a link
 /// by accident where a mouse click rarely does, so an https link gets the same confirmation
 /// style a note-to-note wikilink already has in ``NoteBodyView``, rather than opening immediately.
 ///
@@ -21,6 +22,17 @@ struct ConfirmedLinkOpening: ViewModifier {
             .environment(
                 \.openURL,
                 OpenURLAction { url in
+                    if let link = BrowserLink.parse(url, backendHost: AppEnvironment.shared.backendHost),
+                        AppEnvironment.shared.router.gate == .ready
+                    {
+                        // The agent's handover link opens the live view in the app, not Safari.
+                        // Surfaced rather than pushed: a link tapped twice must not stack two.
+                        switch link {
+                        case .list: AppEnvironment.shared.router.surface(.browserList)
+                        case .session(let name): AppEnvironment.shared.router.surface(.browser(name: name))
+                        }
+                        return .handled
+                    }
                     if let onNoteLink, let target = NoteLinkTarget.parse(url) {
                         if target.id.isEmpty {
                             onNoteLink(target)

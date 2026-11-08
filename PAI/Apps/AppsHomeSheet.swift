@@ -59,6 +59,10 @@ struct AppsHomeSheet: View {
                         }
                     }
                     .accessibilityIdentifier("apps-open-decisions")
+                    Button(action: openBrowser) {
+                        Label("Browser", systemImage: "globe")
+                    }
+                    .accessibilityIdentifier("apps-open-browser")
                 }
             }
             .listStyle(.plain)
@@ -106,6 +110,11 @@ struct AppsHomeSheet: View {
 
     private func openDecisions() {
         environment.router.push(.decisions)
+        dismiss()
+    }
+
+    private func openBrowser() {
+        environment.router.push(.browserList)
         dismiss()
     }
 
