@@ -155,6 +155,14 @@ final class DeepLinkTests: XCTestCase {
             .notification(id: "n9"))
     }
 
+    /// The association file claims the bare notes page, which is the list.
+    func testTheNotesPageWithoutAnIDOpensTheList() {
+        XCTAssertEqual(
+            DeepLink.from(webURL: URL(string: "https://pai.example/apps/notes")!), .notesList)
+        XCTAssertEqual(
+            DeepLink.from(webURL: URL(string: "https://pai.example/apps/notes/")!), .notesList)
+    }
+
     /// The association file claims paths owned by features this app does not have; those must
     /// leave the app where it is rather than open some other screen.
     func testAnUnknownWebPathIsNoLink() {
