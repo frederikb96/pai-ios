@@ -125,8 +125,10 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
         let spoken = height("Hello")!
         let spokenWithFile = height("Hello\npai-file: /tmp/a.txt")!
         let blockHeight = spoken - 20 - 28 - 6
-        XCTAssertEqual(spokenWithFile, 20 + blockHeight + 6 + 28 + 6 + 22, "text, chip, file chip, three children")
-        XCTAssertEqual(markerOnly, 20 + blockHeight + 6 + 22, "no chip, the marker line is still text")
+        XCTAssertEqual(
+            spokenWithFile, 20 + blockHeight + metrics.blockSpacing + 22 + 6 + 28,
+            "text and file chip in one stack, the Listen chip under it")
+        XCTAssertEqual(markerOnly, 20 + 22, "no Listen chip, and the marker line is not text")
     }
 
     /// An image a reply's marker names is drawn inline, so its row reserves the image's box rather
@@ -509,25 +511,70 @@ final class TranscriptViewRowLayoutTests: XCTestCase {
 
     // MARK: - Assistant file markers
 
-    /// Mirrors the user-bubble attachment tests just above: a `pai-file:` marker becomes its own
-    /// fixed-height chip (an image its fixed-height box) below the reply, gapped the same way — but unlike a user attachment, the
-    /// marker LINE stays in the rendered text too, since the message is never rewritten for this
-    /// (`MessageRouting.extractFilePaths`), so the measured content includes it.
-    func testAssistantFileMarkersAddChipHeightsAndGapsBelowTheUnmodifiedProse() {
-        let messageContent = "\(proseSensitiveText)\n\npai-file: /tmp/one.png\npai-file: /tmp/two.zip"
-        let msg = message(type: .assistant, content: messageContent, timestamp: nil)
+    /// A `pai-file:` line is cut out of the text and its file drawn where the line stood, in the
+    /// one content stack: a thumbnail box for an image, a chip for any other file, one block
+    /// spacing between every two items. The Listen chip is the only thing under the stack.
+    func testAFileMarkerBetweenTwoParagraphsTakesItsBoxInTheContentStack() throws {
+        let image = "Before.\n\npai-file: /tmp/one.png\n\nAfter."
+        let file = "Before.\n\npai-file: /tmp/two.zip\n\nAfter."
         let measurer = StubBlockMeasurer()
         let cache = BlockHeightCache()
+        let paragraph = measuredContentHeight(
+            MarkdownParser.parse("Before."), atWidth: 400 - 38, measurer: measurer, cache: cache)
+        let after = measuredContentHeight(
+            MarkdownParser.parse("After."), atWidth: 400 - 38, measurer: measurer, cache: cache)
 
+        func measured(_ content: String) throws -> MeasuredCard {
+            try XCTUnwrap(
+                TranscriptRowLayout.measure(
+                    for: message(type: .assistant, content: content, timestamp: nil), width: width,
+                    environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache,
+                    metrics: metrics
+                ).first)
+        }
+        let withImage = try measured(image)
+        let withChip = try measured(file)
+
+        XCTAssertEqual(withImage.items, [.block(0), .file("/tmp/one.png"), .block(1)])
+        XCTAssertEqual(withImage.contentHeight, paragraph + 160 + after + 2 * metrics.blockSpacing, accuracy: 0.001)
+        XCTAssertEqual(withChip.contentHeight, paragraph + 22 + after + 2 * metrics.blockSpacing, accuracy: 0.001)
+        // 20: the prose row's own padding. 28 and 6: the Listen chip and its gap above.
+        XCTAssertEqual(withImage.height, 20 + withImage.contentHeight + 28 + 6, accuracy: 0.001)
+    }
+
+    /// A reply that is only a picture line draws the picture and nothing else; its row is exactly
+    /// the box and the Listen chip is absent because there is nothing to read.
+    func testAReplyThatIsOnlyAFileMarkerIsTheFileBox() {
+        let msg = message(type: .assistant, content: "pai-file: /tmp/one.png", timestamp: nil)
         let actual = TranscriptRowLayout.height(
-            for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: measurer, cache: cache,
-            metrics: metrics)
+            for: msg, width: width, environment: environment, isRevealed: revealAll, measurer: StubBlockMeasurer(),
+            cache: BlockHeightCache(), metrics: metrics)
+        XCTAssertEqual(actual, 20 + 160)
+    }
 
-        let content = measuredContentHeight(
-            MarkdownParser.parse(messageContent), atWidth: 400 - 38, measurer: measurer, cache: cache)
-        // 20: the prose row's own padding. 240 for the image's box, 22 for the zip's chip, 28 for
-        // the Listen chip. 18: three 6pt gaps.
-        XCTAssertEqual(actual, 20 + content + 240 + 22 + 28 + 18)
+    /// A reply without a marker line measures and plans as it did before files had places.
+    func testAReplyWithoutAFileMarkerHasNoSlotsAndNoItems() throws {
+        let card = try XCTUnwrap(
+            TranscriptRowLayout.measure(
+                for: message(type: .assistant, content: proseSensitiveText, timestamp: nil), width: width,
+                environment: environment, isRevealed: revealAll, measurer: StubBlockMeasurer(),
+                cache: BlockHeightCache(), metrics: metrics
+            ).first)
+        XCTAssertEqual(card.plan.slots, [])
+        XCTAssertEqual(card.items, [])
+    }
+
+    /// A decision card and a file keep the order their lines had.
+    func testADecisionLineAndAFileLineKeepTheirOrder() throws {
+        let content = "Intro\n{{D1}}\npai-file: /tmp/one.png\n{{D2}}"
+        let card = try XCTUnwrap(
+            TranscriptRowLayout.measure(
+                for: message(type: .assistant, content: content, timestamp: nil), width: width,
+                environment: environment, isRevealed: revealAll, measurer: StubBlockMeasurer(),
+                cache: BlockHeightCache(), metrics: metrics,
+                decisionDisplays: [1: .marker(number: 1), 2: .marker(number: 2)]
+            ).first)
+        XCTAssertEqual(card.items, [.block(0), .decision(0), .file("/tmp/one.png"), .decision(1)])
     }
 
     // MARK: - Bubbles a person is behind

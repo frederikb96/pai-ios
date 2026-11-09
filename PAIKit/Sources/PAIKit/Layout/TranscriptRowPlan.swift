@@ -99,10 +99,10 @@ public struct TranscriptCardPlan: Equatable, Sendable {
         /// (`subtype: "resent"`) — the user's own bubble, subdued, with a small label above it saying
         /// why it is there.
         case resentUserBubble(text: String, attachmentPaths: [String])
-        /// `filePaths` is every `pai-file:` marker in `text` — `text` itself is the message's
-        /// full, untouched content, marker lines included; see
-        /// ``MessageRouting/extractFilePaths(_:)``.
-        case assistantBubble(text: String, filePaths: [String])
+        /// `text` is the message's full, untouched content, marker lines included; the card's
+        /// ``TranscriptCardPlan/blocks`` leave the `pai-file:` lines out
+        /// (``TranscriptCardPlan/slots``).
+        case assistantBubble(text: String)
         /// The decisions placed under an assistant message that has no prose of its own to carry
         /// them (``TranscriptRowPlan/cards(for:isRevealed:trailingDecisions:)``): nothing but its
         /// ``TranscriptCardPlan/decisionSlots``.
@@ -143,14 +143,20 @@ public struct TranscriptCardPlan: Equatable, Sendable {
     /// server's own search over the raw stored content cannot find. Anything put here has to be
     /// measured exactly as it is drawn, so shorten it here rather than in the view.
     public let header: String?
-    /// Where a reply's decisions are drawn between and after its ``blocks``: one per `{{D<n>}}`
-    /// line (``DecisionMarkers``), whose line is not among the blocks, then the decisions placed
-    /// under this message because no reply embeds them. Empty for every other card.
-    public let decisionSlots: [DecisionSlot]
+    /// What a reply draws between and after its ``blocks``, in the order it is drawn: one per
+    /// `{{D<n>}}` line (``DecisionMarkers``) and per `pai-file:` line (``FileMarkers``), whose lines
+    /// are not among the blocks, then the decisions placed under this message because no reply
+    /// embeds them. Empty for every other card.
+    public let slots: [ReplySlot]
+
+    /// The decision places among ``slots``, in order.
+    public var decisionSlots: [DecisionSlot] {
+        slots.compactMap { if case .decision(let slot) = $0 { slot } else { nil } }
+    }
 
     public init(
         kind: Kind, register: Register, tone: Tone = .normal, preview: Preview, isRevealed: Bool,
-        blocks: [MarkdownBlock], header: String? = nil, decisionSlots: [DecisionSlot] = []
+        blocks: [MarkdownBlock], header: String? = nil, slots: [ReplySlot] = []
     ) {
         self.kind = kind
         self.register = register
@@ -159,7 +165,7 @@ public struct TranscriptCardPlan: Equatable, Sendable {
         self.isRevealed = isRevealed
         self.blocks = blocks
         self.header = header
-        self.decisionSlots = decisionSlots
+        self.slots = slots
     }
 
     /// Whether an activity row reserves its label line, which it does whether or not there is a
@@ -167,6 +173,32 @@ public struct TranscriptCardPlan: Equatable, Sendable {
     public var drawsLabelLine: Bool {
         if case .bashEditDiffNote = kind { return false }
         return true
+    }
+}
+
+/// A place in a reply where something is drawn between its markdown blocks.
+public enum ReplySlot: Hashable, Sendable {
+    case decision(DecisionSlot)
+    /// The file a `pai-file:` line names.
+    case file(FileSlot)
+
+    /// How many of the card's blocks come before it.
+    public var position: Int {
+        switch self {
+        case .decision(let slot): slot.position
+        case .file(let slot): slot.position
+        }
+    }
+}
+
+/// Where a reply's prose card draws one `pai-file:` file: after `position` of its markdown blocks.
+public struct FileSlot: Hashable, Sendable {
+    public let position: Int
+    public let path: String
+
+    public init(position: Int, path: String) {
+        self.position = position
+        self.path = path
     }
 }
 
@@ -347,39 +379,48 @@ public enum TranscriptRowPlan {
             cards.append(toolCallCard(call, index: index, isRevealed: isRevealed))
         }
 
-        let trailing = trailingDecisions.map { DecisionSlot(position: 0, number: $0) }
+        let trailing = trailingDecisions.map { ReplySlot.decision(DecisionSlot(position: 0, number: $0)) }
         if let content = message.content, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let (blocks, embedded) = replyBlocks(content)
-            let slots = embedded + trailing.map { DecisionSlot(position: blocks.count, number: $0.number) }
+            let slots =
+                embedded
+                + trailingDecisions.map { ReplySlot.decision(DecisionSlot(position: blocks.count, number: $0)) }
             cards.append(
                 TranscriptCardPlan(
-                    kind: .assistantBubble(text: content, filePaths: MessageRouting.extractFilePaths(content)),
+                    kind: .assistantBubble(text: content),
                     register: .prose,
                     preview: .full(totalLines: lineCount(content)),
                     isRevealed: true,
                     blocks: blocks,
-                    decisionSlots: slots))
+                    slots: slots))
         } else if !trailing.isEmpty {
             cards.append(
                 TranscriptCardPlan(
                     kind: .decisionCards, register: .prose, preview: .full(totalLines: 0), isRevealed: true,
-                    blocks: [], decisionSlots: trailing))
+                    blocks: [], slots: trailing))
         }
 
         return cards
     }
 
-    /// A reply's markdown blocks, and where its `{{D<n>}}` lines stood among them. The text between
-    /// two markers is parsed on its own, as the web renders it, so a marker written directly under
-    /// a paragraph line still splits it there.
-    private static func replyBlocks(_ content: String) -> (blocks: [MarkdownBlock], slots: [DecisionSlot]) {
-        guard content.contains("{{D") else { return (MarkdownParser.parse(content), []) }
+    /// A reply's markdown blocks, and where its `pai-file:` and `{{D<n>}}` lines stood among them.
+    /// The text between two markers is parsed on its own, as the web renders it, so a marker
+    /// written directly under a paragraph line still splits it there.
+    private static func replyBlocks(_ content: String) -> (blocks: [MarkdownBlock], slots: [ReplySlot]) {
         var blocks: [MarkdownBlock] = []
-        var slots: [DecisionSlot] = []
-        for segment in DecisionMarkers.split(content) {
-            switch segment {
-            case .markdown(let text): blocks += MarkdownParser.parse(text)
-            case .decision(let number): slots.append(DecisionSlot(position: blocks.count, number: number))
+        var slots: [ReplySlot] = []
+        for fileSegment in FileMarkers.split(content) {
+            switch fileSegment {
+            case .file(let path):
+                slots.append(.file(FileSlot(position: blocks.count, path: path)))
+            case .markdown(let text):
+                for segment in DecisionMarkers.split(text) {
+                    switch segment {
+                    case .markdown(let text): blocks += MarkdownParser.parse(text)
+                    case .decision(let number):
+                        slots.append(.decision(DecisionSlot(position: blocks.count, number: number)))
+                    }
+                }
             }
         }
         return (blocks, slots)
