@@ -310,6 +310,11 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
     /// distinguishing a watcher that found nothing from one that died months ago.
     public let lastSuccessAtMs: Int?
     public let nextFireAtMs: Int?
+    /// Pending `wake_later` wakes: each fires the task outside its own schedule, enabled or not.
+    /// `nil` from a backend that predates the field.
+    public let pendingWakeCount: Int?
+    /// The soonest of those wakes; `nil` with none.
+    public let nextWakeAtMs: Int?
     public let createdAtMs: Int
     public let updatedAtMs: Int
     /// The same shape the run-history list gives one run — computed at read time from
@@ -336,7 +341,7 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         stopped: Bool,
         stoppedReason: String?, lastFireAtMs: Int?, lastSuccessAtMs: Int?, nextFireAtMs: Int?,
         createdAtMs: Int, updatedAtMs: Int, lastRun: TaskRun? = nil, rerunPendingAtMs: Int? = nil,
-        runAt: String? = nil
+        runAt: String? = nil, pendingWakeCount: Int? = nil, nextWakeAtMs: Int? = nil
     ) {
         self.id = id
         self.name = name
@@ -383,6 +388,8 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         self.updatedAtMs = updatedAtMs
         self.lastRun = lastRun
         self.rerunPendingAtMs = rerunPendingAtMs
+        self.pendingWakeCount = pendingWakeCount
+        self.nextWakeAtMs = nextWakeAtMs
     }
 
     enum CodingKeys: String, CodingKey {
@@ -422,6 +429,74 @@ public struct ScheduledTask: Codable, Sendable, Equatable, Identifiable {
         case lastRun = "last_run"
         case rerunPendingAtMs = "rerun_pending_at_ms"
         case runAt = "run_at"
+        case pendingWakeCount = "pending_wake_count"
+        case nextWakeAtMs = "next_wake_at_ms"
+    }
+}
+
+/// `GET /api/inbox-wakes` — a session's registration to be woken by the mail an inbox receives.
+/// Instants are ISO-8601 with an offset (read them with ``IsoTimestamp``).
+public struct InboxWake: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let sessionId: String
+    /// The session's title, else the start of its first message; `nil` for neither.
+    public let sessionTitle: String?
+    public let inbox: String
+    /// Case-insensitive regular expressions searched in the mail's subject and sender; no sender
+    /// pattern matches every sender.
+    public let subjectPattern: String
+    public let senderPattern: String?
+    public let prompt: String
+    public let debounceMinutes: Int
+    /// Mail that reached the inbox after the registration's cursor and matches, not yet delivered.
+    public let pendingCount: Int
+    /// When that mail goes out; `nil` with none waiting.
+    public let dueAt: String?
+    public let deliveredThrough: String
+    public let lastWokenAt: String?
+    public let createdAt: String
+
+    public init(
+        id: String, sessionId: String, sessionTitle: String?, inbox: String, subjectPattern: String,
+        senderPattern: String?, prompt: String, debounceMinutes: Int, pendingCount: Int, dueAt: String?,
+        deliveredThrough: String, lastWokenAt: String?, createdAt: String
+    ) {
+        self.id = id
+        self.sessionId = sessionId
+        self.sessionTitle = sessionTitle
+        self.inbox = inbox
+        self.subjectPattern = subjectPattern
+        self.senderPattern = senderPattern
+        self.prompt = prompt
+        self.debounceMinutes = debounceMinutes
+        self.pendingCount = pendingCount
+        self.dueAt = dueAt
+        self.deliveredThrough = deliveredThrough
+        self.lastWokenAt = lastWokenAt
+        self.createdAt = createdAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, inbox, prompt
+        case sessionId = "session_id"
+        case sessionTitle = "session_title"
+        case subjectPattern = "subject_pattern"
+        case senderPattern = "sender_pattern"
+        case debounceMinutes = "debounce_minutes"
+        case pendingCount = "pending_count"
+        case dueAt = "due_at"
+        case deliveredThrough = "delivered_through"
+        case lastWokenAt = "last_woken_at"
+        case createdAt = "created_at"
+    }
+}
+
+/// `GET /api/inbox-wakes`.
+public struct InboxWakeListResponse: Codable, Sendable, Equatable {
+    public let wakes: [InboxWake]
+
+    public init(wakes: [InboxWake]) {
+        self.wakes = wakes
     }
 }
 
@@ -503,6 +578,11 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
     public let lastFireAtMs: Int?
     public let lastSuccessAtMs: Int?
     public let nextFireAtMs: Int?
+    /// Pending `wake_later` wakes: each fires the task outside its own schedule, enabled or not.
+    /// `nil` from a backend that predates the field.
+    public let pendingWakeCount: Int?
+    /// The soonest of those wakes; `nil` with none.
+    public let nextWakeAtMs: Int?
     public let createdAtMs: Int
     public let updatedAtMs: Int
     public let gateSource: String?
@@ -528,7 +608,8 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         stopped: Bool,
         stoppedReason: String?, lastFireAtMs: Int?, lastSuccessAtMs: Int?, nextFireAtMs: Int?,
         createdAtMs: Int, updatedAtMs: Int, gateSource: String?, lastRun: TaskRun? = nil,
-        rerunPendingAtMs: Int? = nil, runAt: String? = nil
+        rerunPendingAtMs: Int? = nil, runAt: String? = nil,
+        pendingWakeCount: Int? = nil, nextWakeAtMs: Int? = nil
     ) {
         self.id = id
         self.name = name
@@ -576,6 +657,8 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         self.gateSource = gateSource
         self.lastRun = lastRun
         self.rerunPendingAtMs = rerunPendingAtMs
+        self.pendingWakeCount = pendingWakeCount
+        self.nextWakeAtMs = nextWakeAtMs
     }
 
     enum CodingKeys: String, CodingKey {
@@ -616,6 +699,8 @@ public struct ScheduledTaskDetail: Codable, Sendable, Equatable, Identifiable {
         case lastRun = "last_run"
         case rerunPendingAtMs = "rerun_pending_at_ms"
         case runAt = "run_at"
+        case pendingWakeCount = "pending_wake_count"
+        case nextWakeAtMs = "next_wake_at_ms"
     }
 }
 

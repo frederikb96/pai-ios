@@ -54,4 +54,38 @@ public enum SchedulerTaskDisplay {
         }
         return nowMs - lastSuccessAtMs > sinceCreated * staleMultiple
     }
+
+    /// A pending `wake_later` wake fires the task outside its schedule, so it is shown beside the
+    /// task's own rhythm: `wake 2026-11-12 09:00`, with `(+1)` per further pending wake. `nil` with
+    /// none. Swift port of `TaskTable.tsx`'s `WakeMark`.
+    public static func wakeLabel(_ task: ScheduledTask) -> String? {
+        guard let count = task.pendingWakeCount, count > 0, let next = task.nextWakeAtMs else { return nil }
+        let more = count > 1 ? " (+\(count - 1))" : ""
+        return "wake " + SchedulerRunDisplay.formatBerlin(ms: next) + more
+    }
+
+    /// A debounce in minutes the way a person says it: `45 min`, `2 h`, `1 d 6 h`.
+    public static func debounceLabel(minutes: Int) -> String {
+        if minutes < 60 { return "\(minutes) min" }
+        let hours = minutes / 60
+        let rest = minutes % 60
+        if hours < 24 { return rest == 0 ? "\(hours) h" : "\(hours) h \(rest) min" }
+        let days = hours / 24
+        return hours % 24 == 0 ? "\(days) d" : "\(days) d \(hours % 24) h"
+    }
+
+    /// What a mailbox wake-up is waiting for: `nothing waiting`, or the mail and when it goes out.
+    public static func wakeWaitingLabel(_ wake: InboxWake) -> String {
+        guard wake.pendingCount > 0, let due = wake.dueAt, let date = IsoTimestamp.date(from: due) else {
+            return "nothing waiting"
+        }
+        let when = SchedulerRunDisplay.formatBerlin(ms: Int(date.timeIntervalSince1970 * 1000))
+        return "\(wake.pendingCount) mail\(wake.pendingCount == 1 ? "" : "s") waiting, goes out \(when)"
+    }
+
+    /// When the registration last woke its session, or `never woken`.
+    public static func wakeLastWokenLabel(_ wake: InboxWake) -> String {
+        guard let raw = wake.lastWokenAt, let date = IsoTimestamp.date(from: raw) else { return "never woken" }
+        return "last woke " + SchedulerRunDisplay.formatBerlin(ms: Int(date.timeIntervalSince1970 * 1000))
+    }
 }

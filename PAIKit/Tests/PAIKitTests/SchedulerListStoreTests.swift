@@ -37,4 +37,28 @@ final class SchedulerListStoreTests: XCTestCase {
         XCTAssertEqual(store.errorMessage, "could not reach the server")
         XCTAssertTrue(store.tasks.isEmpty)
     }
+
+    private func wake(id: String) -> InboxWake {
+        InboxWake(
+            id: id, sessionId: "s-\(id)", sessionTitle: "Session \(id)", inbox: "github",
+            subjectPattern: "Issue", senderPattern: nil, prompt: "Look", debounceMinutes: 30,
+            pendingCount: 0, dueAt: nil, deliveredThrough: "2026-11-09T08:00:00+00:00",
+            lastWokenAt: nil, createdAt: "2026-11-08T08:00:00+00:00")
+    }
+
+    func testRemovingAWakeDropsItOnlyWhenTheServerRemovedIt() async {
+        let api = FakeSchedulerListApi()
+        await api.setWakes([wake(id: "w1"), wake(id: "w2")])
+        let store = SchedulerListStore(api: api)
+        await store.loadWakes()
+
+        await store.removeWake(id: "w1")
+        XCTAssertEqual(store.wakes.map(\.id), ["w2"])
+
+        // A refusal keeps the registration and says so.
+        await api.setDeleteResult(.failure(.detail("No inbox wake w2", statusCode: 404)))
+        await store.removeWake(id: "w2")
+        XCTAssertEqual(store.wakeErrorMessage, "No inbox wake w2")
+        XCTAssertEqual(store.wakes.map(\.id), ["w2"])
+    }
 }

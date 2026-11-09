@@ -281,6 +281,7 @@
             ) { PaiFixtures.data(PaiFixtures.notificationDetail) },
             exact("GET", "/api/status-message") { PaiFixtures.statusMessage },
             exact("GET", "/api/scheduler/tasks") { PaiFixtures.schedulerTasks },
+            exact("GET", "/api/inbox-wakes") { PaiFixtures.inboxWakes },
             exact("GET", "/api/decisions") { PaiFixtures.openDecisions },
             sessionScoped("GET", suffix: "/decisions") { PaiFixtures.sessionDecisions },
             exact("GET", "/api/canteen/entries") { PaiFixtures.canteenEntries },
