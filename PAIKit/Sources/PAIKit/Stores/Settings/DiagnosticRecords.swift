@@ -24,6 +24,9 @@ public enum RecordingEndReason: String, Codable, Sendable, CaseIterable {
     /// `RecordingReconciliation.metadata(for:)`, for a take a startup pass found on disk with no
     /// matching `RecordingMeta`. Lets the row read as recovered rather than an ordinary take.
     case crashed
+    /// The person threw the take away with the cancel control: kept, never transcribed on its
+    /// own, and transcribed from the recordings list when asked.
+    case cancelled
 }
 
 /// The device the recording was captured on, as far as it could be told at the time — port of

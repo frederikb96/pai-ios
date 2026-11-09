@@ -904,7 +904,7 @@ final class PaiApiClientTests: XCTestCase {
     // MARK: - secret pregrant
 
     func testArmSecretPregrantPutsPassphraseAndTtlInTheBodyOnly() async throws {
-        stubJSON(#"{"armed":true,"ttl_seconds":3600,"discard_at":"2026-10-01T00:00:00+00:00"}"#)
+        stubJSON(#"{"armed":true,"ttl_seconds":3600,"discard_at":"2026-10-01T00:00:00+00:00","session_ids":[]}"#)
         let client = try makeClient()
         let status = try await client.armSecretPregrant(passphrase: "pw", ttlSeconds: 3600)
 
@@ -920,12 +920,31 @@ final class PaiApiClientTests: XCTestCase {
     }
 
     func testAnUnarmedPregrantDecodesItsNulls() async throws {
-        stubJSON(#"{"armed":false,"ttl_seconds":null,"discard_at":null}"#)
+        stubJSON(#"{"armed":false,"ttl_seconds":null,"discard_at":null,"session_ids":[]}"#)
         let client = try makeClient()
         let status = try await client.cancelSecretPregrant()
 
         XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.httpMethod, "DELETE")
+        XCTAssertNil(PaiStubURLProtocol.capturedRequest?.url?.query)
         XCTAssertEqual(status, SecretPregrantStatus(armed: false, ttlSeconds: nil, discardAt: nil))
+    }
+
+    func testACancelNamingASessionTakesBackThatSessionsWaitingGrant() async throws {
+        stubJSON(#"{"armed":false,"ttl_seconds":null,"discard_at":null,"session_ids":["s2"]}"#)
+        let client = try makeClient()
+        let status = try await client.cancelSecretPregrant(sessionId: "s1")
+
+        XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.url?.query, "session_id=s1")
+        XCTAssertEqual(status.sessionIds, ["s2"])
+    }
+
+    func testAGrantGivenToAStartingSessionIsPendingNotGranted() async throws {
+        stubJSON(#"{"pending":true,"expires_at":null,"names":[]}"#)
+        let client = try makeClient()
+        let result = try await client.grantSecretAccess(
+            sessionId: "s1", passphrase: "x", ttlSeconds: 60, scope: .all)
+
+        XCTAssertEqual(result, .pending)
     }
 
     // MARK: - declineSecretPrompt

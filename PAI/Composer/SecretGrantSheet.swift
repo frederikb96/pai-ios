@@ -45,6 +45,9 @@ struct SecretGrantSheet: View {
     /// What the grant actually covered — `.all` covers everything, `.requested` only what was
     /// asked for, so this can differ from `requestedAccess`'s own list.
     @State private var grantedNames: [String] = []
+    /// The backend took the grant for a session that was still starting and holds it until the
+    /// session is up (`SecretGrantResult.pending`).
+    @State private var grantHeld = false
     @FocusState private var passphraseFocused: Bool
 
     /// 60...604800 is the contract's own bound; these are the presets worth offering rather than
@@ -68,6 +71,10 @@ struct SecretGrantSheet: View {
     /// list is a legitimate answer meaning nothing is outstanding, same as `.notGrantable` and
     /// `.fetchFailed`. Drives `Decline`/`Grant`'s presence in the toolbar together, so the two stay
     /// in lockstep without restating the same case match twice.
+    /// A session that has not come up has no conversation to grant: the backend holds a grant of
+    /// everything and applies it once the session is up, so nothing is asked of it first.
+    private var waitsForStart: Bool { session?.state == .starting }
+
     private var isPromptPending: Bool {
         if case let .names(names, _) = requestedAccess { return !names.isEmpty }
         return false
@@ -76,7 +83,9 @@ struct SecretGrantSheet: View {
     var body: some View {
         NavigationStack {
             Group {
-                if let grantedUntil {
+                if grantHeld {
+                    heldView
+                } else if let grantedUntil {
                     grantedView(untilRaw: grantedUntil)
                 } else {
                     form
@@ -85,7 +94,7 @@ struct SecretGrantSheet: View {
             .navigationTitle("Grant secret access")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                if grantedUntil == nil {
+                if grantedUntil == nil, !grantHeld {
                     ToolbarItem(placement: .cancellationAction) {
                         // `Decline` only while something is actually outstanding — the same
                         // predicate that gates `Grant` below — since telling a session "no" when
@@ -134,6 +143,10 @@ struct SecretGrantSheet: View {
     }
 
     private func loadRequestedAccess() async {
+        if waitsForStart {
+            requestedAccess = .names([], vault4: [])
+            return
+        }
         guard let client = environment.connection?.apiClient else {
             requestedAccess = .fetchFailed("Not connected.")
             return
@@ -272,6 +285,23 @@ struct SecretGrantSheet: View {
         }
     }
 
+    private var heldView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "clock.badge.checkmark")
+                .font(.system(size: 40))
+                .foregroundStyle(PaiPalette.green500)
+            Text("Grant held")
+                .font(PaiTypography.bodyEmphasized.font)
+                .foregroundStyle(PaiPalette.Semantic.textPrimary)
+            Text("Everything except vault 4 is granted as soon as the session is ready. Cancel it from the composer.")
+                .font(PaiTypography.caption.font)
+                .foregroundStyle(PaiPalette.Semantic.textMuted)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("secret-grant-held")
+    }
+
     private func grantedView(untilRaw raw: String) -> some View {
         VStack(spacing: 12) {
             Image(systemName: "checkmark.circle.fill")
@@ -309,6 +339,9 @@ struct SecretGrantSheet: View {
                 passphrase = ""
                 grantedNames = names
                 grantedUntil = expiresAt
+            case .pending:
+                passphrase = ""
+                grantHeld = true
             case .wrongPassphrase:
                 errorMessage = "Wrong passphrase."
             case .sessionUnavailable:
@@ -363,6 +396,10 @@ struct SecretGrantSheet: View {
     /// `listsNames: false` leaves the names out of the sentence, for the caller that draws them as
     /// chips under it.
     private func footerText(names: [String], listsNames: Bool = true) -> String {
+        if waitsForStart {
+            return "\(target)'s Claude conversation is still starting. "
+                + "\"Grant all\" unlocks everything except vault 4 for it once it is up, for the duration below."
+        }
         guard !names.isEmpty else {
             return "\(target)'s Claude conversation hasn't asked for a gated secret. "
                 + "\"Grant all\" unlocks everything except vault 4 for it, for the duration below."

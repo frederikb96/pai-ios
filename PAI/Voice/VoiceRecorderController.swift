@@ -90,6 +90,8 @@ final class VoiceRecorderController {
     var isWithholding: Bool { voiceSession.isWithholding }
     /// Set for the whole of `stop()`, tail included.
     private var isStopRequested = false
+    /// The stop in flight is a cancel (`cancel()`): no wait for the server, nothing owed.
+    private var isCancelRequested = false
     /// Stop waiting asked for during the stop tail, before the uplink itself is finishing: the
     /// gate still closes with the seal, but nothing waits for the receipt.
     private var stopWaitingRequestedDuringTail = false
@@ -460,6 +462,7 @@ final class VoiceRecorderController {
     /// a dead socket, leaving, a held send, a batch take — leaves it owed, and the server's result
     /// is fetched once it exists (`runBackfillLoop`).
     private func finishLiveText() {
+        let cancelled = voiceSession.result.endedBy == .cancelled
         chunkConsumerTask?.cancel()
         chunkConsumerTask = nil
         chunkContinuation?.finish()
@@ -475,7 +478,8 @@ final class VoiceRecorderController {
             var folded = Self.foldAckedRange(
                 into: base, acknowledged: voiceSession.acknowledgedRanges, capturedUpTo: sealedLength,
                 liveText: voiceSession.committedLiveText)
-            let complete = isCleanlyComplete(takeId: takeId, ledger: folded)
+            // A cancelled take is abandoned on the server: nothing is owed and nothing will come.
+            let complete = cancelled || isCleanlyComplete(takeId: takeId, ledger: folded)
             if complete { folded = folded.markingDelivered() }
             if var server = folded.serverTake {
                 server.capturedSamples = sealedLength
@@ -1209,6 +1213,18 @@ final class VoiceRecorderController {
         settingsStore.removeRecording(id: meta.id)
     }
 
+    /// Throws the running take away: the same stop, except the server is told the take is
+    /// abandoned and nothing is waited for or owed. The recording is kept in Past Recordings
+    /// marked cancelled, never transcribed on its own, so a slip is recovered by tapping it; a
+    /// live take's words so far stay in the draft. Does nothing unless a take is recording.
+    func cancel() async {
+        guard isCapturing, voiceSession.state == .recording, !isStopRequested else { return }
+        isCancelRequested = true
+        defer { isCancelRequested = false }
+        AppVoiceDiagnosticsLog.shared.log(.info, .mode, "take cancelled")
+        await stop()
+    }
+
     /// Stops the take and persists the recording (audio + metadata).
     ///
     /// The stop sequence every client shares: capture keeps running for a short tail after the
@@ -1232,7 +1248,9 @@ final class VoiceRecorderController {
         endCaptureWatchdog()
         await drainCapturedChunks()
         let finishStarted = Date()
-        await voiceSession.stop(reason: .user, waitForReceipt: !stopWaitingRequestedDuringTail)
+        await voiceSession.stop(
+            reason: isCancelRequested ? .cancelled : .user,
+            waitForReceipt: !stopWaitingRequestedDuringTail && !isCancelRequested)
         let ended = voiceSession.lastTakeDone?.ended ?? voiceSession.lastTakeState?.wireValue ?? "none"
         let waitMs = Int(Date().timeIntervalSince(finishStarted) * 1000)
         AppVoiceDiagnosticsLog.shared.log(.info, .gate, "take finished ended=\(ended) wait_ms=\(waitMs)")
@@ -1664,7 +1682,7 @@ final class VoiceRecorderController {
             endedBy: result.endedBy,
             transcript: transcript,
             transcriptSource: transcript == nil ? nil : .live,
-            transcriptComplete: sttMode == .batch ? nil : !owed,
+            transcriptComplete: result.endedBy == .cancelled ? false : (sttMode == .batch ? nil : !owed),
             levels: LevelStats(
                 peak: peakAmplitude, rms: averageLevel, clippedSamples: 0, totalSamples: sent?.sampleCount ?? 0
             ),

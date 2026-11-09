@@ -615,6 +615,8 @@ struct CreateSessionView: View {
                                 voiceController: voiceController, sttMode: settings.alternateRecordingMode)
                         }
                     },
+                    onCancelRecording: isRecordingHere(voiceController) && voiceController.state == .recording
+                        ? { Task { await voiceController.cancel() } } : nil,
                     onPastRecordings: { showingRecordingsSheet = true },
                     onPastMessages: { showingSentMessagesSheet = true },
                     onTakePhoto: { showingCamera = true },
