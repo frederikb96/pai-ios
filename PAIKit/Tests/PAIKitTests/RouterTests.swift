@@ -127,6 +127,39 @@ final class RouterTests: XCTestCase {
         XCTAssertEqual(Route.pathAfterLeavingSubagents(from: old, to: new), new)
     }
 
+    // MARK: - Open parent from a sub-agent
+
+    func testOpeningTheParentLeavesTheSubagentScreensInsteadOfStackingOnThem() {
+        let router = Router(gate: .ready)
+        router.push(.subagents(parentID: "a"))
+        router.push(.session(id: "sub1"))
+
+        router.openParent(id: "a", leaving: "sub1")
+
+        XCTAssertEqual(router.path, [.session(id: "a")])
+    }
+
+    func testOpeningTheParentFromASubagentReachedDirectlyKeepsWhatWasUnderneath() {
+        let router = Router(gate: .ready)
+        router.push(.notifications)
+        router.push(.session(id: "sub1"))
+
+        router.openParent(id: "a", leaving: "sub1")
+
+        XCTAssertEqual(router.path, [.notifications, .session(id: "a")])
+    }
+
+    func testOpeningAParentAlreadyOnThePathBringsItBackToTheTop() {
+        let router = Router(gate: .ready)
+        router.push(.session(id: "a"))
+        router.push(.subagents(parentID: "a"))
+        router.push(.session(id: "sub1"))
+
+        router.openParent(id: "a", leaving: "sub1")
+
+        XCTAssertEqual(router.path, [.session(id: "a")])
+    }
+
     func testRoutesToTheSameSessionAreEqualSoTheStackDoesNotGrowOnRepeatedTaps() {
         // NavigationStack dedupes nothing itself; equality is what lets a caller check.
         XCTAssertEqual(Route.session(id: "abc"), Route.session(id: "abc"))

@@ -128,7 +128,7 @@ struct SubagentBar: View {
             Spacer(minLength: 0)
             if let parentSessionId = session.parentSessionId {
                 Button("Open parent conversation") {
-                    environment.router.push(.session(id: parentSessionId))
+                    environment.router.openParent(id: parentSessionId, leaving: session.id)
                 }
                 .font(PaiTypography.caption.font)
                 .frame(minHeight: 36)

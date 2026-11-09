@@ -5,6 +5,28 @@ import Foundation
 /// one actor per protocol, scriptable results, and a call log a test can read back.
 
 actor FakeSchedulerListApi: SchedulerListApiClient {
+    var wakes: [InboxWake] = []
+    var deleteResult: Result<Void, PaiError> = .success(())
+    private(set) var deletedWakeIds: [String] = []
+
+    func setWakes(_ wakes: [InboxWake]) {
+        self.wakes = wakes
+    }
+
+    func setDeleteResult(_ result: Result<Void, PaiError>) {
+        deleteResult = result
+    }
+
+    func listInboxWakes() async throws -> InboxWakeListResponse {
+        InboxWakeListResponse(wakes: wakes)
+    }
+
+    func deleteInboxWake(id: String) async throws {
+        deletedWakeIds.append(id)
+        try deleteResult.get()
+        wakes.removeAll { $0.id == id }
+    }
+
     var result: Result<SchedulerTaskListResponse, PaiError> = .success(
         SchedulerTaskListResponse(tasks: [], nextOffset: nil))
 

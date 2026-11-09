@@ -1025,6 +1025,14 @@ public struct PaiApiClient: Sendable {
         return try await send(path: "/api/scheduler/tasks", query: query)
     }
 
+    public func listInboxWakes() async throws -> InboxWakeListResponse {
+        try await send(path: "/api/inbox-wakes")
+    }
+
+    public func deleteInboxWake(id: String) async throws {
+        try await sendDiscardingResponse(path: "/api/inbox-wakes/\(id)", method: "DELETE")
+    }
+
     public func getSchedulerTask(taskId: String) async throws -> ScheduledTaskDetail {
         try await send(path: "/api/scheduler/tasks/\(taskId)")
     }

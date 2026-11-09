@@ -6,6 +6,29 @@ import Foundation
 /// at its last run, and a task fired only by hand.
 extension PaiFixtures {
 
+    /// `GET /api/inbox-wakes`.
+    public static let inboxWakes = #"""
+        {
+          "wakes": [
+            {
+              "id": "b7d1c3a4-52a1-4c8e-8a39-0f4d6e7a9b10",
+              "session_id": "9a0e2f67-3c41-4f5a-b1c2-7d8e9f0a1b2c",
+              "session_title": "Mayastor nexus issue",
+              "inbox": "github",
+              "subject_pattern": "\\[openebs/mayastor\\].*\\(Issue #2087\\)",
+              "sender_pattern": null,
+              "prompt": "Read the reply and propose an answer.",
+              "debounce_minutes": 30,
+              "pending_count": 1,
+              "due_at": "2026-10-10T14:03:00+00:00",
+              "delivered_through": "2026-10-10T12:00:00+00:00",
+              "last_woken_at": null,
+              "created_at": "2026-10-09T08:00:00+00:00"
+            }
+          ]
+        }
+        """#
+
     /// `GET /api/scheduler/tasks`.
     public static let schedulerTasks = #"""
         {

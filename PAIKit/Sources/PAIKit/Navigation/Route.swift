@@ -523,6 +523,23 @@ public final class Router {
         return false
     }
 
+    /// Open a sub-agent's parent conversation from the sub-agent's own screen ("Open parent
+    /// conversation"). Whatever sub-agent screens the path holds — the sub-agent list, the
+    /// sub-agent's transcript, anything pushed on it — are left, so the parent is not stacked on
+    /// top of the screens that belong to its sub-agents, and Back from it goes where the list
+    /// the reader started from is. A parent already on the path is brought back to the top.
+    public func openParent(id parentID: String, leaving subagentID: String) {
+        if let index = path.lastIndex(of: .session(id: parentID)) {
+            path.removeSubrange(path.index(after: index)...)
+            return
+        }
+        if let index = path.firstIndex(where: { $0 == .subagents(parentID: parentID) || $0 == .session(id: subagentID) }
+        ) {
+            path.removeSubrange(index...)
+        }
+        path.append(.session(id: parentID))
+    }
+
     /// Send the user back to token entry, keeping the backend URL.
     ///
     /// Clears the path as well as the gate: leaving a transcript underneath means it reappears
