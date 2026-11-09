@@ -47,27 +47,29 @@ final class TranscriptViewRowPlanTests: XCTestCase {
         XCTAssertEqual(first.name, "Bash")
         guard case .toolCall(let second) = cards[2].kind else { return XCTFail("expected the Read call third") }
         XCTAssertEqual(second.name, "Read")
-        guard case .assistantBubble(let text, let filePaths) = cards[3].kind else {
+        guard case .assistantBubble(let text) = cards[3].kind else {
             return XCTFail("expected the reply last")
         }
         XCTAssertEqual(text, "Done.")
-        XCTAssertEqual(filePaths, [])
+        XCTAssertEqual(cards[3].slots, [])
     }
 
-    /// The marker line is never stripped from `text` — `filePaths` is purely additive, so
-    /// a `pai-file:` chip renders below the message, not in place of it.
-    func testAssistantBubbleCarriesFilePathsAlongsideTheUnmodifiedText() {
-        let content = "Here's the screenshot.\n\npai-file: /tmp/shot.png"
+    /// `text` stays the message's untouched content, but the marker line is not among the blocks:
+    /// it is a slot after the paragraph that precedes it, so the file is drawn where the line stood.
+    func testAssistantBubbleCutsAFileMarkerOutOfItsBlocksIntoASlot() {
+        let content = "Here's the screenshot.\n\npai-file: /tmp/shot.png\n\nThat is all."
         let msg = message(type: .assistant, content: content)
 
         let cards = TranscriptRowPlan.cards(for: msg, isRevealed: revealAll)
 
         XCTAssertEqual(cards.count, 1)
-        guard case .assistantBubble(let text, let filePaths) = cards[0].kind else {
+        guard case .assistantBubble(let text) = cards[0].kind else {
             return XCTFail("expected an assistant bubble, got \(cards[0].kind)")
         }
         XCTAssertEqual(text, content)
-        XCTAssertEqual(filePaths, ["/tmp/shot.png"])
+        XCTAssertEqual(
+            cards[0].blocks, MarkdownParser.parse("Here's the screenshot.") + MarkdownParser.parse("That is all."))
+        XCTAssertEqual(cards[0].slots, [.file(FileSlot(position: 1, path: "/tmp/shot.png"))])
     }
 
     /// A tool call and its result never arrive on the same `Message` — they are two separate rows

@@ -202,27 +202,34 @@ final class TranscriptMessageRoutingTests: XCTestCase {
 
     // MARK: - File markers
 
-    func testFileMarkerPathIsFoundAndTheMarkerLineIsNeverRemoved() {
-        let content = "Here's the screenshot.\n\npai-file: /home/frederik/.tmp/shot.png"
-        XCTAssertEqual(MessageRouting.extractFilePaths(content), ["/home/frederik/.tmp/shot.png"])
+    func testAFileMarkerLineIsCutOutAndItsPathKept() {
+        let content = "Here's the screenshot.\n\npai-file: /home/frederik/.tmp/shot.png\nBye"
+        XCTAssertEqual(
+            FileMarkers.split(content),
+            [.markdown("Here's the screenshot.\n"), .file("/home/frederik/.tmp/shot.png"), .markdown("Bye")])
     }
 
-    func testMultipleMarkersAreFoundInOrderAndDeduplicated() {
-        let content = "pai-file: /tmp/a.png\npai-file: /tmp/b.png\npai-file: /tmp/a.png"
-        XCTAssertEqual(MessageRouting.extractFilePaths(content), ["/tmp/a.png", "/tmp/b.png"])
+    /// A path named twice is drawn twice: every marker line is a place in the reply.
+    func testEveryMarkerLineIsASegmentInOrder() {
+        XCTAssertEqual(
+            FileMarkers.split("pai-file: /tmp/a.png\npai-file: /tmp/b.png\npai-file: /tmp/a.png"),
+            [.file("/tmp/a.png"), .file("/tmp/b.png"), .file("/tmp/a.png")])
     }
 
-    /// The grammar requires the path to start right at `/` with no leading whitespace before the
-    /// first real character — a line that merely mentions the marker text mid-sentence, or one
-    /// whose path is not absolute, must not match.
-    func testALineThatIsNotAWellFormedMarkerIsIgnored() {
-        XCTAssertEqual(MessageRouting.extractFilePaths("I sent a pai-file: earlier"), [])
-        XCTAssertEqual(MessageRouting.extractFilePaths("pai-file: relative/path.png"), [])
-        XCTAssertEqual(MessageRouting.extractFilePaths("pai-file: "), [])
+    /// The grammar requires the path to start right at `/` with no whitespace before its first real
+    /// character, and the marker at the start of the line; text that merely mentions it, a relative
+    /// path, and a marker shown inside a code fence are all text.
+    func testALineThatIsNotAWellFormedMarkerOutsideAFenceStaysText() {
+        for text in [
+            "I sent a pai-file: earlier", "pai-file: relative/path.png", "pai-file: ", "pai-file:  /tmp/a.png",
+            " pai-file: /tmp/a.png", "```\npai-file: /tmp/a.png\n```",
+        ] {
+            XCTAssertEqual(FileMarkers.split(text), [.markdown(text)], text)
+        }
     }
 
-    func testNoMarkerAtAllReturnsAnEmptyList() {
-        XCTAssertEqual(MessageRouting.extractFilePaths("just an ordinary reply"), [])
+    func testTrailingWhitespaceIsNotPartOfThePath() {
+        XCTAssertEqual(FileMarkers.split("pai-file: /tmp/a b.png  "), [.file("/tmp/a b.png")])
     }
 
     // MARK: - Tool families

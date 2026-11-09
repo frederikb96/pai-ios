@@ -278,18 +278,19 @@ struct TranscriptCardKindView: View {
                     highlights: highlightsByBlockIndex[0] ?? [])
             }
 
-        case .assistantBubble(let text, let filePaths):
+        case .assistantBubble(let text):
             ProseRowView {
                 AssistantProseView(
-                    blocks: card.plan.blocks, filePaths: filePaths, sessionID: sessionID, apiClient: apiClient,
+                    blocks: card.plan.blocks, sessionID: sessionID, apiClient: apiClient,
                     messageID: messageID, replyText: text, highlights: highlightsByBlockIndex,
-                    decisions: card.decisions, decisionActions: decisionActions)
+                    items: card.items, decisions: card.decisions, decisionActions: decisionActions)
             }
 
         case .decisionCards:
             ProseRowView {
-                ProseWithDecisionsView(
-                    blocks: [], decisions: card.decisions, highlights: [:], actions: decisionActions)
+                ProseWithSlotsView(
+                    blocks: [], items: card.items, decisions: card.decisions, highlights: [:],
+                    sessionID: sessionID, apiClient: apiClient, actions: decisionActions)
             }
 
         case .agentMessage(let sender, _):
@@ -1051,17 +1052,14 @@ struct ResentBubbleView: View {
 /// a number that moves here and not there is a row drawn taller than the cell it was given.
 struct AssistantProseView: View {
     let blocks: [MarkdownBlock]
-    /// Every `pai-file:` marker path in this reply — the message itself is never rewritten to
-    /// remove the marker line, so `blocks` already renders it as ordinary text; the images and
-    /// chips are purely an addition below it (see `MessageRouting.extractFilePaths`).
-    let filePaths: [String]
     let sessionID: String
     let apiClient: PaiApiClient
     /// The reply's message and full text, for the Listen chip under it.
     let messageID: Int
     let replyText: String
     var highlights: [Int: [TranscriptHighlightSpan]] = [:]
-    /// The decisions drawn among `blocks` (`TranscriptCardPlan.decisionSlots`), measured.
+    /// What is drawn among `blocks` (`MeasuredCard.items`): decisions and `pai-file:` files.
+    var items: [MeasuredItem] = []
     var decisions: [MeasuredDecision] = []
     var decisionActions: InlineDecisionActions? = nil
 
@@ -1071,31 +1069,20 @@ struct AssistantProseView: View {
         // leaves. Anything added here narrows what the text wraps at without narrowing what was
         // measured, which is a row drawn taller than the cell it was given.
         //
-        // The shape mirrors `UserBubbleView`: content first, one fixed-height image box or chip
-        // per marker after it, the same spacing constant — a number that moves in one and not the
-        // other is the same disagreement from the other side.
+        // The content (text, decision cards, files) is one stack and the Listen chip the only
+        // child under it, the spacing constant `TranscriptRowLayout` reserves between them.
         VStack(alignment: .leading, spacing: TranscriptRowMetrics.attachmentChipSpacing) {
-            if decisions.isEmpty {
+            if items.isEmpty {
                 MarkdownContentView(blocks: blocks, highlights: highlights)
             } else {
-                ProseWithDecisionsView(
-                    blocks: blocks, decisions: decisions, highlights: highlights, actions: decisionActions)
+                ProseWithSlotsView(
+                    blocks: blocks, items: items, decisions: decisions, highlights: highlights,
+                    sessionID: sessionID, apiClient: apiClient, actions: decisionActions)
             }
             // Its height is `TranscriptRowMetrics.listenChipHeight`, in the row's measured height
             // exactly when the reply has something to read aloud (`PlaybackModel.hasSpeech`).
             if PlaybackModel.hasSpeech(replyText) {
                 ListenChip(sessionId: sessionID, messageId: messageID, content: replyText)
-            }
-            // An agent-offered file, never the reader's own: an image drawn in its fixed box, any
-            // other file a chip that confirms before anything is fetched (see
-            // `SessionAttachmentChipView`). The split is `TranscriptRowMetrics.fileMarkerHeight`'s.
-            ForEach(filePaths, id: \.self) { path in
-                if isImageAttachmentPath(path) {
-                    SessionInlineImageView(sessionID: sessionID, apiClient: apiClient, path: path)
-                } else {
-                    SessionAttachmentChipView(
-                        sessionID: sessionID, apiClient: apiClient, path: path, requiresConfirmation: true)
-                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1103,43 +1090,38 @@ struct AssistantProseView: View {
     }
 }
 
-/// A reply's blocks with its decisions drawn between and after them, in one stack with the
-/// markdown view's own block spacing between every two items — the stack
-/// `TranscriptRowLayout` measured. A decision that draws nothing is left out of the stack, so it
-/// adds no gap either. A block is drawn as a markdown view of its own, which lays it out exactly as
-/// it would inside the reply's single one.
-struct ProseWithDecisionsView: View {
+/// A reply's blocks with its decision cards and `pai-file:` files drawn between and after them, in
+/// the one stack `TranscriptRowLayout` measured, in the order it recorded (`items`), with the
+/// markdown view's own block spacing between every two items. A decision that draws nothing is not
+/// among the items, so it adds no gap either. A block is drawn as a markdown view of its own, which
+/// lays it out exactly as it would inside the reply's single one.
+struct ProseWithSlotsView: View {
     let blocks: [MarkdownBlock]
+    let items: [MeasuredItem]
     let decisions: [MeasuredDecision]
     let highlights: [Int: [TranscriptHighlightSpan]]
+    let sessionID: String
+    let apiClient: PaiApiClient
     let actions: InlineDecisionActions?
-
-    private enum Item: Hashable {
-        case block(Int)
-        case decision(Int)
-    }
-
-    private var items: [Item] {
-        var items: [Item] = []
-        var next = 0
-        for index in 0...blocks.count {
-            while next < decisions.count, decisions[next].slot.position == index {
-                if decisions[next].measured.height > 0 { items.append(.decision(next)) }
-                next += 1
-            }
-            if index < blocks.count { items.append(.block(index)) }
-        }
-        return items
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: TranscriptContentMetrics.blockSpacing) {
-            ForEach(items, id: \.self) { item in
+            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 switch item {
                 case .block(let index):
                     MarkdownContentView(blocks: [blocks[index]], highlights: highlights[index].map { [0: $0] } ?? [:])
                 case .decision(let index):
                     InlineDecisionCardView(decision: decisions[index], actions: actions)
+                case .file(let path):
+                    // An agent-offered file, never the reader's own: an image as a thumbnail, any
+                    // other file a chip that confirms before anything is fetched. The split is
+                    // `TranscriptRowMetrics.fileMarkerHeight`'s.
+                    if isImageAttachmentPath(path) {
+                        SessionInlineImageView(sessionID: sessionID, apiClient: apiClient, path: path)
+                    } else {
+                        SessionAttachmentChipView(
+                            sessionID: sessionID, apiClient: apiClient, path: path, requiresConfirmation: true)
+                    }
                 }
             }
         }

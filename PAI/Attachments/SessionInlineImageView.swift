@@ -2,8 +2,9 @@ import PAIKit
 import SwiftUI
 import UIKit
 
-/// An image a reply's `pai-file:` line names, drawn under the reply instead of a chip; a tap opens
-/// it in ``FilePreviewViewer``. Fetched through the same attachment route as the chip.
+/// An image a reply's `pai-file:` line names, drawn as a thumbnail where the line stood instead of
+/// a chip; a tap opens it in ``FilePreviewViewer``, which holds download and copy. Fetched through
+/// the same attachment route as the chip.
 ///
 /// Always exactly ``TranscriptRowMetrics/inlineImageHeight`` tall, in every state: the row's height
 /// is precomputed before the image is fetched, so the picture is fitted into a box whose size

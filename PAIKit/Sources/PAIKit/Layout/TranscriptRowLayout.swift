@@ -52,12 +52,12 @@ public enum TranscriptRowMetrics {
     public static let meRowPadding: Double = 6
     /// One attachment chip under a user bubble.
     public static let attachmentChipHeight: Double = 22
-    /// The box an image a reply's `pai-file:` line names is drawn in, inline under the reply.
-    /// Fixed whatever the image's shape, which is only known once it is fetched: the image is
+    /// The thumbnail box an image a reply's `pai-file:` line names is drawn in, where the line
+    /// stood. Fixed whatever the image's shape, which is only known once it is fetched: the image is
     /// fitted inside it, so a picture arriving late never changes the row's height.
-    public static let inlineImageHeight: Double = 240
-    /// The height one `pai-file:` path takes under a reply: an image's box, or any other file's
-    /// chip. The view draws the same split through `isImageAttachmentPath`.
+    public static let inlineImageHeight: Double = 160
+    /// The height one `pai-file:` path takes in a reply: an image's box, or any other file's chip.
+    /// The view draws the same split through `isImageAttachmentPath`.
     public static func fileMarkerHeight(_ path: String) -> Double {
         isImageAttachmentPath(path) ? inlineImageHeight : attachmentChipHeight
     }
@@ -149,10 +149,15 @@ public struct MeasuredCard: Sendable, Equatable {
     /// One per ``TranscriptCardPlan/decisionSlots`` entry, in the same order: what the slot draws
     /// and how tall each part of it is.
     public let decisions: [MeasuredDecision]
+    /// What the content draws, top to bottom, when the card has slots — the order
+    /// ``TranscriptRowLayout`` stacked it in, so the view cannot stack it differently. Empty for a
+    /// card without slots, which draws its blocks as one markdown view.
+    public let items: [MeasuredItem]
 
     public init(
         plan: TranscriptCardPlan, offset: Double, height: Double, contentHeight: Double, isTruncated: Bool,
-        blockOffsets: [Double], headerHeight: Double = 0, decisions: [MeasuredDecision] = []
+        blockOffsets: [Double], headerHeight: Double = 0, decisions: [MeasuredDecision] = [],
+        items: [MeasuredItem] = []
     ) {
         self.plan = plan
         self.offset = offset
@@ -162,7 +167,18 @@ public struct MeasuredCard: Sendable, Equatable {
         self.blockOffsets = blockOffsets
         self.headerHeight = headerHeight
         self.decisions = decisions
+        self.items = items
     }
+}
+
+/// One thing a prose card with slots draws, in drawing order.
+public enum MeasuredItem: Hashable, Sendable {
+    /// The card's block at this index.
+    case block(Int)
+    /// The entry of ``MeasuredCard/decisions`` at this index, which takes room.
+    case decision(Int)
+    /// The file a `pai-file:` line named, drawn at ``TranscriptRowMetrics/fileMarkerHeight(_:)``.
+    case file(String)
 }
 
 /// One decision a prose card draws among its blocks, measured.
@@ -249,56 +265,69 @@ public enum TranscriptRowLayout {
                 MeasuredCard(
                     plan: card, offset: cursor, height: height, contentHeight: clamped,
                     isTruncated: isTruncated, blockOffsets: content.blockOffsets,
-                    headerHeight: headerHeight, decisions: content.decisions))
+                    headerHeight: headerHeight, decisions: content.decisions, items: content.items))
             cursor += height
         }
         return measured
     }
 
-    /// A card's content: its blocks, and the decisions placed among them, stacked with the one
-    /// block spacing between every two drawn items, as the drawing view's stack does. A decision
-    /// draws what `displays` names for its number, its marker text when it names none
+    /// A card's content: its blocks, and the decisions and files placed among them, stacked with
+    /// the one block spacing between every two drawn items, as the drawing view's stack does. A
+    /// decision draws what `displays` names for its number, its marker text when it names none
     /// (``InlineDecisionContext/display(for:)`` resolves them), and one that draws nothing
-    /// (``InlineDecisionDisplay/loading``) takes neither room nor a gap.
+    /// (``InlineDecisionDisplay/loading``) takes neither room nor a gap. A file takes the height
+    /// of ``TranscriptRowMetrics/fileMarkerHeight(_:)`` in every state.
     private static func composeContent(
         of card: TranscriptCardPlan, width: Double, environment: MeasurementEnvironment,
         metrics: MessageLayoutMetrics, measurer: some BlockMeasuring, cache: BlockHeightCache,
         displays: [Int: InlineDecisionDisplay]
-    ) -> (totalHeight: Double, blockOffsets: [Double], decisions: [MeasuredDecision]) {
-        guard !card.decisionSlots.isEmpty else {
+    ) -> (totalHeight: Double, blockOffsets: [Double], decisions: [MeasuredDecision], items: [MeasuredItem]) {
+        guard !card.slots.isEmpty else {
             let content = MessageContentLayoutComposer.layout(
                 of: card.blocks, width: width, environment: environment, metrics: metrics, measurer: measurer,
                 cache: cache)
-            return (content.totalHeight, content.blocks.map(\.offset), [])
+            return (content.totalHeight, content.blocks.map(\.offset), [], [])
         }
 
         var cursor: Double = 0
         var hasItem = false
         var blockOffsets: [Double] = []
         var decisions: [MeasuredDecision] = []
-        var slots = card.decisionSlots[...]
+        var items: [MeasuredItem] = []
+        var slots = card.slots[...]
         for position in 0...card.blocks.count {
             while let slot = slots.first, slot.position == position {
                 slots = slots.dropFirst()
-                let display = displays[slot.number] ?? .marker(number: slot.number)
-                let size = InlineDecisionLayout.measure(
-                    display, width: width, environment: environment, metrics: metrics, measurer: measurer,
-                    cache: cache)
-                if size.height > 0 {
+                switch slot {
+                case .decision(let decisionSlot):
+                    let display = displays[decisionSlot.number] ?? .marker(number: decisionSlot.number)
+                    let size = InlineDecisionLayout.measure(
+                        display, width: width, environment: environment, metrics: metrics, measurer: measurer,
+                        cache: cache)
+                    if size.height > 0 {
+                        if hasItem { cursor += metrics.blockSpacing }
+                        hasItem = true
+                        items.append(.decision(decisions.count))
+                    }
+                    decisions.append(
+                        MeasuredDecision(slot: decisionSlot, display: display, measured: size, offset: cursor))
+                    cursor += size.height
+                case .file(let fileSlot):
                     if hasItem { cursor += metrics.blockSpacing }
                     hasItem = true
+                    items.append(.file(fileSlot.path))
+                    cursor += TranscriptRowMetrics.fileMarkerHeight(fileSlot.path)
                 }
-                decisions.append(MeasuredDecision(slot: slot, display: display, measured: size, offset: cursor))
-                cursor += size.height
             }
             guard position < card.blocks.count else { break }
             if hasItem { cursor += metrics.blockSpacing }
             hasItem = true
             blockOffsets.append(cursor)
+            items.append(.block(position))
             cursor += cache.height(
                 of: card.blocks[position], width: width, environment: environment, measurer: measurer)
         }
-        return (cursor, blockOffsets, decisions)
+        return (cursor, blockOffsets, decisions, items)
     }
 
     /// The height one time separator occupies above the row that carries it — one line of the same
@@ -488,15 +517,14 @@ public enum TranscriptRowLayout {
 
         case .prose:
             switch card.kind {
-            case .assistantBubble(let text, let filePaths):
+            case .assistantBubble(let text):
+                // The content (blocks, decisions, files) is one stack; the Listen chip, when there
+                // is something to read aloud, is the only child under it.
                 let hasText = !text.isEmpty
                 let listenable = PlaybackModel.hasSpeech(text)
-                let chips =
-                    filePaths.map(TranscriptRowMetrics.fileMarkerHeight).reduce(0, +)
-                    + (listenable ? TranscriptRowMetrics.listenChipHeight : 0)
-                let childCount = (hasText ? 1 : 0) + filePaths.count + (listenable ? 1 : 0)
-                let gaps = childCount > 1 ? Double(childCount - 1) * TranscriptRowMetrics.attachmentChipSpacing : 0
-                return TranscriptRowMetrics.proseRowPadding * 2 + (hasText ? content : 0) + chips + gaps
+                let chip = listenable ? TranscriptRowMetrics.listenChipHeight : 0
+                let gap = hasText && listenable ? TranscriptRowMetrics.attachmentChipSpacing : 0
+                return TranscriptRowMetrics.proseRowPadding * 2 + (hasText ? content : 0) + chip + gap
             default:
                 return TranscriptRowMetrics.proseRowPadding * 2 + content
             }
