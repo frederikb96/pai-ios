@@ -273,6 +273,12 @@ private struct RecordingRow: View {
                         .font(PaiTypography.caption.font)
                         .foregroundStyle(PaiPalette.Semantic.warningText)
                 }
+                if meta.endedBy == .cancelled {
+                    Text("Cancelled")
+                        .font(PaiTypography.caption.font)
+                        .foregroundStyle(PaiPalette.Semantic.warningText)
+                        .accessibilityIdentifier("recording-cancelled")
+                }
                 if let nameLine {
                     Text(nameLine)
                         .font(PaiTypography.caption.font)
@@ -333,6 +339,7 @@ private struct RecordingRow: View {
             return meta.transcript?.isEmpty ?? true ? "Transcribing on the server…" : "Finishing on the server…"
         }
         if meta.transcript?.isEmpty ?? true {
+            if meta.endedBy == .cancelled { return "Not transcribed · tap to transcribe" }
             return meta.mode == .offline && meta.transcriptComplete != false
                 ? "Transcribing once online…" : "No transcript · tap to transcribe"
         }

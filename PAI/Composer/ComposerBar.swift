@@ -49,6 +49,10 @@ struct ComposerBar: View {
     @State private var showingFilePicker = false
     @State private var showingTemporaryNote = false
     @State private var secretGrantTarget: SecretGrantTarget?
+    /// A grant given while this session was still starting waits on the backend until it is up.
+    @State private var grantWaiting = false
+    /// Bumped when the grant sheet closes, which restarts the read of whether one now waits.
+    @State private var grantWatchNonce = 0
     /// The `SecretPrompt.at` this screen has already shown and closed — set on every dismissal of
     /// `secretGrantTarget`'s sheet, whatever ended it (Decline, Grant, Cancel, or a swipe down), so
     /// the same still-outstanding prompt does not pop back up on the next unrelated re-render, and
@@ -138,9 +142,67 @@ struct ComposerBar: View {
         ) {
             PlaybackSheet(sessionId: sessionID)
         }
-        .sheet(item: $secretGrantTarget, onDismiss: { dismissedSecretPromptAt = currentSecretPrompt?.at }) { _ in
+        .task(id: "\(sessionID)#\(grantWatchNonce)") {
+            // Read on appearing and after the sheet closes, then again every few seconds only for
+            // as long as a grant waits, so the chip goes once the session took it.
+            await refreshGrantWaiting()
+            while !Task.isCancelled, grantWaiting {
+                try? await Task.sleep(for: .seconds(5))
+                await refreshGrantWaiting()
+            }
+        }
+        .sheet(
+            item: $secretGrantTarget,
+            onDismiss: {
+                dismissedSecretPromptAt = currentSecretPrompt?.at
+                grantWatchNonce += 1
+            }
+        ) { _ in
             SecretGrantSheet(sessionID: sessionID, session: currentSession, prompt: currentSecretPrompt)
         }
+    }
+
+    private func refreshGrantWaiting() async {
+        guard let client = environment.connection?.apiClient, let status = try? await client.getSecretPregrant()
+        else { return }
+        grantWaiting = status.sessionIds.contains(sessionID)
+    }
+
+    private func cancelWaitingGrant() {
+        Task {
+            guard let client = environment.connection?.apiClient,
+                let status = try? await client.cancelSecretPregrant(sessionId: sessionID)
+            else { return }
+            grantWaiting = status.sessionIds.contains(sessionID)
+        }
+    }
+
+    /// Shown for as long as the backend holds a grant for this session while it comes up; the ✕
+    /// takes it back.
+    private var waitingGrantChip: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "key")
+            Text("Secrets granted once this session is ready")
+            Button {
+                cancelWaitingGrant()
+            } label: {
+                Image(systemName: "xmark")
+                    .padding(4)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Cancel secret grant")
+            .accessibilityIdentifier("waiting-grant-chip-cancel")
+        }
+        .font(PaiTypography.captionEmphasized.font)
+        .foregroundStyle(PaiPalette.Semantic.textSecondary)
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .padding(.vertical, 4)
+        .background(PaiPalette.Semantic.raisedSurface, in: Capsule())
+        .overlay(Capsule().strokeBorder(PaiPalette.Semantic.borderDefault, lineWidth: 1))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("waiting-grant-chip")
     }
 
     /// Pops the same sheet the plus menu opens, unprompted, whenever this session is carrying a
@@ -176,6 +238,8 @@ struct ComposerBar: View {
             }
 
             PlaybackBar(sessionId: sessionID)
+
+            if grantWaiting { waitingGrantChip }
 
             // Only for this session's own take — the recorder is shared, and a level meter
             // running above a composer that is not recording is a claim about the wrong screen.
@@ -263,6 +327,8 @@ struct ComposerBar: View {
                                 sttMode: settings.alternateRecordingMode)
                         }
                     },
+                    onCancelRecording: isRecordingHere(voiceController) && voiceController.state == .recording
+                        ? { Task { await voiceController.cancel() } } : nil,
                     onPastRecordings: { showingRecordingsSheet = true },
                     onPastMessages: { showingSentMessagesSheet = true },
                     onTakePhoto: { showingCamera = true },

@@ -49,6 +49,9 @@ struct ComposerActionMenu: View {
     /// press is unreliable; `nil` while the microphone cannot start a take.
     var alternateRecordingMode: VoiceSttMode? = nil
     var onDictateAlternate: () -> Void = {}
+    /// Throws the running take away; `nil` unless this composer's own take is recording, which is
+    /// what hides the entry otherwise.
+    var onCancelRecording: (() -> Void)? = nil
     var onPastRecordings: () -> Void
     var onPastMessages: () -> Void
     var onTakePhoto: () -> Void
@@ -144,6 +147,14 @@ struct ComposerActionMenu: View {
                     Label("Dictate (\(alternateRecordingMode.wireValue))", systemImage: "mic.fill")
                 }
                 .accessibilityIdentifier("composer-menu-dictate-alternate")
+            }
+            if let onCancelRecording {
+                Button(role: .destructive) {
+                    onCancelRecording()
+                } label: {
+                    Label("Cancel recording", systemImage: "mic.slash")
+                }
+                .accessibilityIdentifier("composer-menu-cancel-recording")
             }
             Button {
                 onPastMessages()

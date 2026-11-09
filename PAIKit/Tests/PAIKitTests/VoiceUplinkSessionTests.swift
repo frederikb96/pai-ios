@@ -452,6 +452,35 @@ final class VoiceUplinkSessionTests: XCTestCase {
         XCTAssertEqual(closes.first?.2, 4)
     }
 
+    /// A cancelled stop tells the server the take is abandoned and leaves at once: nothing here
+    /// waits for a `take_done`, since no words are wanted from it any more.
+    func testACancelledStopAbandonsTheTakeWithoutWaitingForTheReceipt() async {
+        let transport = FakeVoiceSocketTransport()
+        let session = makeSession(transport: transport)
+        let startTask = Task { await session.start(draftKey: "session-1", takeId: "take-1") }
+        await transport.enqueue(
+            .control(
+                .ready(
+                    resumeToken: "r1", busOwner: .transcription, resumed: false, sessionId: nil, silenceAllowed: false))
+        )
+        await waitUntil { await transport.sentFrames.count >= 2 }
+        await session.ingestAudioChunk(pcm16le: [1, 2, 3, 4], at: 0)
+
+        await session.stop(reason: .cancelled)
+        _ = await startTask.value
+
+        XCTAssertEqual(session.state, .idle)
+        XCTAssertEqual(session.result.endedBy, .cancelled)
+        let frames = await transport.sentFrames
+        let closes = frames.compactMap { frame -> (String, String?)? in
+            guard case let .gate(false, reason, takeId, _, _) = frame else { return nil }
+            return (reason, takeId)
+        }
+        XCTAssertEqual(closes.map(\.0), ["abandon"])
+        XCTAssertEqual(closes.first?.1, "take-1")
+        XCTAssertTrue(frames.contains { if case .bye = $0 { true } else { false } })
+    }
+
     /// A dictation opts into server-owned takes on its hello. Without the cap the server keeps
     /// the old semantics — nothing stored, nothing resolved — so this take's audio would be acked
     /// and lost to every upload, poll and held send built on the take.

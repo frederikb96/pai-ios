@@ -1361,16 +1361,21 @@ public struct SecretPregrantStatus: Codable, Sendable, Equatable {
     public let ttlSeconds: Int?
     /// When an unused armed grant is dropped; `nil` when nothing is armed.
     public let discardAt: String?
+    /// Sessions a grant is waiting on to come up, then applies to — given while they were still
+    /// starting.
+    public let sessionIds: [String]
 
     enum CodingKeys: String, CodingKey {
         case armed
         case ttlSeconds = "ttl_seconds"
         case discardAt = "discard_at"
+        case sessionIds = "session_ids"
     }
 
-    public init(armed: Bool, ttlSeconds: Int?, discardAt: String?) {
+    public init(armed: Bool, ttlSeconds: Int?, discardAt: String?, sessionIds: [String] = []) {
         self.armed = armed
         self.ttlSeconds = ttlSeconds
         self.discardAt = discardAt
+        self.sessionIds = sessionIds
     }
 }

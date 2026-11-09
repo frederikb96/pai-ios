@@ -655,7 +655,9 @@ public final class VoiceUplinkSession {
     /// passes, the socket dies, or ``stopWaiting()`` is called, whichever comes first. Exits
     /// without waiting when there was no live connection in the first place: the seal then goes
     /// over REST, which is the caller's. `waitForReceipt: false` closes the gate and leaves at
-    /// once — the person already said they are not waiting.
+    /// once — the person already said they are not waiting. A `.cancelled` stop closes the gate as
+    /// an abandon and never waits: the server skips the stop commit and the batch pass, which
+    /// exist to rescue words somebody still wants.
     public func stop(reason: RecordingEndReason = .user, waitForReceipt: Bool = true) async {
         guard state != .idle else { return }
         await stopInternal(reason: reason, waitForReceipt: waitForReceipt)
@@ -683,10 +685,10 @@ public final class VoiceUplinkSession {
             }
             try? await transport.send(
                 .gate(
-                    open: false, reason: "button", takeId: currentTakeId,
+                    open: false, reason: reason == .cancelled ? "abandon" : "button", takeId: currentTakeId,
                     capturedSamples: currentTakeId == nil ? nil : capturedUpTo,
                     withheld: currentTakeId == nil ? nil : withheldRanges))
-            if let takeId = currentTakeId, waitForReceipt {
+            if let takeId = currentTakeId, waitForReceipt, reason != .cancelled {
                 await self.waitForReceipt(takeId: takeId)
             }
         }

@@ -148,6 +148,10 @@ public enum SecretGrantResult: Sendable, Equatable {
     /// `names` is what the grant actually covered — every gated name under `.all`, only the
     /// requested ones under `.requested`.
     case granted(expiresAt: String, names: [String])
+    /// 200 with `pending` — the session was still starting, so the backend holds the grant in
+    /// memory and applies it once the session is up (`SecretPregrantStatus.sessionIds` lists the
+    /// session until then). Only a grant of everything can wait.
+    case pending
     /// 422 — the passphrase itself was wrong.
     case wrongPassphrase
     /// 409, detail other than "nothing requested" — this session has no running conversation to
@@ -1313,11 +1317,13 @@ public struct PaiApiClient: Sendable {
             }
         }
         struct Response: Decodable {
-            let expiresAt: String
+            let expiresAt: String?
             let names: [String]
+            let pending: Bool?
             enum CodingKeys: String, CodingKey {
                 case expiresAt = "expires_at"
                 case names
+                case pending
             }
         }
         let (status, data) = try await sendPassingThrough(
@@ -1340,7 +1346,11 @@ public struct PaiApiClient: Sendable {
         default:
             do {
                 let decoded = try JSONDecoder().decode(Response.self, from: data)
-                return .granted(expiresAt: decoded.expiresAt, names: decoded.names)
+                if decoded.pending == true { return .pending }
+                guard let expiresAt = decoded.expiresAt else {
+                    throw PaiError.decoding("secret grant answered without an expiry")
+                }
+                return .granted(expiresAt: expiresAt, names: decoded.names)
             } catch {
                 throw PaiError.decoding("\(error)")
             }
@@ -1369,9 +1379,13 @@ public struct PaiApiClient: Sendable {
             body: try Self.jsonBody(Body(passphrase: passphrase, ttlSeconds: ttlSeconds)))
     }
 
-    /// `DELETE /api/secret-pregrant` — takes an armed grant back before any session used it.
-    public func cancelSecretPregrant() async throws -> SecretPregrantStatus {
-        try await send(path: "/api/secret-pregrant", method: "DELETE", body: nil, contentType: nil)
+    /// `DELETE /api/secret-pregrant` — takes an armed grant back before any session used it, or,
+    /// with `sessionId`, the grant still waiting for that session to come up.
+    public func cancelSecretPregrant(sessionId: String? = nil) async throws -> SecretPregrantStatus {
+        try await send(
+            path: "/api/secret-pregrant", method: "DELETE",
+            query: sessionId.map { [URLQueryItem(name: "session_id", value: $0)] } ?? [],
+            body: nil, contentType: nil)
     }
 
     /// `POST /api/session/{id}/secret-prompt/decline` — turns down the gated-secret prompt this
