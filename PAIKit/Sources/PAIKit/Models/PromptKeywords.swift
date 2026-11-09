@@ -5,7 +5,7 @@ import Foundation
 /// finds them, so a word listed here is one the client treats as asked for.
 ///
 /// A keyword is a whole word in any case (ASCII letters, digits and `_` make a word, as in the
-/// client's JavaScript). Nothing counts when the text starts with `/`; a word inside a quoted or
+/// client's JavaScript), also among a slash command's arguments; a word inside a quoted or
 /// bracketed span (`"…"`, `'…'`, backticks, `[…]`, `{…}`, `(…)`, `<tag>…</tag>`) is quoted rather
 /// than asked for; and one glued to a path or a hyphenated term is not a word of its own. The
 /// web composer (`utils/promptKeywords.ts`) answers the same; the case table in
@@ -43,7 +43,6 @@ public enum PromptKeywords {
     /// Every keyword occurrence in the text that Claude Code would act on, in order.
     public static func find(in text: String) -> [Match] {
         let units = Array(text.utf16)
-        guard units.first != slash else { return [] }
         let spans = quotedSpans(in: units)
         var found: [Match] = []
         var index = 0

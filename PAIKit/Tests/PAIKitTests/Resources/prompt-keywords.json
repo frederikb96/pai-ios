@@ -26,9 +26,9 @@
       "expect": []
     },
     {
-      "case": "a text that starts with a slash is a command, never a keyword carrier",
-      "text": "/dummy ultrathink",
-      "expect": []
+      "case": "a keyword among a slash command's arguments still counts",
+      "text": "/all /pai ultrathink",
+      "expect": [{ "word": "ultrathink", "start": 10, "end": 20 }]
     },
     {
       "case": "a slash or backslash before or after, a hyphen either side, or a question mark after, makes it a path or a term",

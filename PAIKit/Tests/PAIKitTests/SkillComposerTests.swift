@@ -40,6 +40,7 @@ final class SkillComposerTests: XCTestCase {
         XCTAssertEqual(
             SkillComposer.keywordWords(text: "ultrathink about it, ULTRATHINK", liveTake: false), ["ultrathink"])
         XCTAssertEqual(SkillComposer.keywordWords(text: "ultrathink about it", liveTake: true), [])
+        XCTAssertEqual(SkillComposer.keywordWords(text: "/all /pai ultrathink", liveTake: false), ["ultrathink"])
         XCTAssertEqual(SkillComposer.keywordWords(text: "ultra think about it", liveTake: false), [])
     }
 
