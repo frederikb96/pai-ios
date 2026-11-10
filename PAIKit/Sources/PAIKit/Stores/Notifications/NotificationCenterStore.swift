@@ -35,7 +35,8 @@ public enum NotificationFilter: String, CaseIterable, Sendable, Equatable {
 /// conforms structurally; the conformance is declared here, next to the protocol it satisfies.
 public protocol NotificationCenterApiClient: Sendable {
     func getNotifications(
-        limit: Int?, beforeId: String?, kind: PaiNotificationKind?, source: NotificationSource
+        limit: Int?, beforeId: String?, kind: PaiNotificationKind?, source: NotificationSource,
+        unreadOnly: Bool
     ) async throws -> NotificationsResponse
     func getNotification(id: String) async throws -> PaiNotification
     func getNotificationsSummary() async throws -> NotificationSummary
@@ -69,6 +70,9 @@ public final class NotificationCenterStore {
     public private(set) var loadError: String?
     public private(set) var filter: NotificationFilter = .all
     public private(set) var source: NotificationSource = .any
+    /// Whether the feed keeps only unread rows. A row marked read while this is on stays in place
+    /// until the next load, so a list never shifts under a thumb mid-swipe or a tap in flight.
+    public private(set) var unreadOnly = false
 
     /// A row's id, if a push or an in-app tap asked the screen to focus it the moment it opens —
     /// consumed by the screen (marking it read and, for an alert, expanding it), then cleared.
@@ -89,7 +93,7 @@ public final class NotificationCenterStore {
         loadError = nil
         do {
             let response = try await api.getNotifications(
-                limit: Self.pageLimit, beforeId: nil, kind: filter.kind, source: source)
+                limit: Self.pageLimit, beforeId: nil, kind: filter.kind, source: source, unreadOnly: unreadOnly)
             rows = response.notifications
             unread = response.unread
             hasMoreRows = response.hasMore
@@ -110,13 +114,19 @@ public final class NotificationCenterStore {
         await loadInitialNotifications()
     }
 
+    public func setUnreadOnly(_ unreadOnly: Bool) async {
+        guard unreadOnly != self.unreadOnly else { return }
+        self.unreadOnly = unreadOnly
+        await loadInitialNotifications()
+    }
+
     public func loadMoreRows() async {
         guard hasMoreRows, !isLoadingMoreRows, let lastID = rows.last?.id else { return }
         isLoadingMoreRows = true
         defer { isLoadingMoreRows = false }
         do {
             let response = try await api.getNotifications(
-                limit: Self.pageLimit, beforeId: lastID, kind: filter.kind, source: source)
+                limit: Self.pageLimit, beforeId: lastID, kind: filter.kind, source: source, unreadOnly: unreadOnly)
             rows.append(contentsOf: response.notifications)
             unread = response.unread
             hasMoreRows = response.hasMore

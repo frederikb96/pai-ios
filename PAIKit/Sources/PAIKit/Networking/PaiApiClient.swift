@@ -1854,13 +1854,14 @@ public struct PaiApiClient: Sendable {
     /// arrive while paging).
     public func getNotifications(
         limit: Int? = nil, beforeId: String? = nil, kind: PaiNotificationKind? = nil,
-        source: NotificationSource = .any
+        source: NotificationSource = .any, unreadOnly: Bool = false
     ) async throws -> NotificationsResponse {
         var query: [URLQueryItem] = []
         if let limit { query.append(URLQueryItem(name: "limit", value: String(limit))) }
         if let beforeId { query.append(URLQueryItem(name: "before_id", value: beforeId)) }
         if let kind { query.append(URLQueryItem(name: "kind", value: kind.rawValue)) }
         if let scheduled = source.queryValue { query.append(URLQueryItem(name: "scheduled", value: scheduled)) }
+        if unreadOnly { query.append(URLQueryItem(name: "unread", value: "only")) }
         return try await send(path: "/api/notifications", query: query)
     }
 
