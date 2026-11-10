@@ -66,7 +66,7 @@ struct SessionDetailView: View {
                     TranscriptCollectionView(
                         sessionID: sessionID, store: transcript, apiClient: connection.apiClient, settings: settings,
                         outbox: outbox, requestFactory: connection.requestFactory, searchState: searchState,
-                        decisions: connection.decisions,
+                        decisions: connection.decisions, drafts: drafts,
                         initialJumpMessageID: initialJumpMessageID, jumpRequests: connection.transcriptJumps,
                         persistedReadPosition: currentSession.map {
                             PersistedReadPosition(

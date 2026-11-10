@@ -3,18 +3,23 @@ import SwiftUI
 
 /// One session's open decisions, each a single line — its number, what a yes sets in motion and
 /// the recommendation — that opens to its context and the answers it offers. A tap picks an
-/// answer without sending it; Send turns every pick into one message to the session, which marks
-/// them answered. Shared by the pin above a transcript and the Decisions app. Swift port of
-/// `DecisionList.tsx`. The picks are the session's (`DecisionsStore.picks`), shared with the cards
-/// inside its replies, so Send here sends what was picked there too; what this list holds for
-/// itself is `DecisionListState`.
+/// answer without sending it. Under a transcript the bar below adds every pick to the message in
+/// the composer, to be sent with whatever else the owner writes or records, and the server marks a
+/// decision answered when a message carries its line; the Decisions app has no composer, so there
+/// (`sendDirectly`) Send turns the picks into one message of their own. Shared by the pin above a
+/// transcript and the Decisions app. Swift port of `DecisionList.tsx`. The picks are the
+/// session's (`DecisionsStore.picks`), shared with the cards inside its replies, so the bar here
+/// takes what was picked there too; what this list holds for itself is `DecisionListState`.
 struct DecisionListView: View {
     @Environment(AppEnvironment.self) private var environment
     @State private var state = DecisionListState()
     @State private var dismissing: Decision?
+    @FocusState private var focusedOwnWords: Int?
 
     let sessionId: String
     let decisions: [Decision]
+    /// Send the answers as a message of their own, where no composer is shown.
+    var sendDirectly = false
     /// Past this height the list scrolls inside itself; `nil` lays it out at its natural height.
     /// Both layouts read the one `state`, so a pick survives the list growing past the bound.
     var maxHeight: CGFloat?
@@ -97,6 +102,7 @@ struct DecisionListView: View {
 
     @ViewBuilder
     private func details(_ decision: Decision, choice: String?) -> some View {
+        let otherChosen = store.map { state.isOtherChosen(decision, store: $0) } ?? false
         VStack(alignment: .leading, spacing: 10) {
             if !decision.context.isEmpty {
                 MarkdownContentView(blocks: MarkdownParser.parse(decision.context))
@@ -106,32 +112,43 @@ struct DecisionListView: View {
                     optionButton(
                         option + (decision.isRecommended(option) ? " (recommended)" : ""),
                         selected: choice == option
-                    ) { store?.pick(option, for: decision) }
+                    ) {
+                        guard let store else { return }
+                        state.choose(option, for: decision, store: store)
+                    }
                 }
-                optionButton("Other…", selected: state.writing == decision.number, dashed: true) {
+                optionButton("Other…", selected: otherChosen, dashed: true) {
                     guard let store else { return }
-                    state.toggleWriting(for: decision, store: store)
+                    state.toggleOther(decision, store: store)
+                    if state.writing.contains(decision.number) { focusedOwnWords = decision.number }
                 }
                 optionButton("Dismiss", selected: false, muted: true) { dismissing = decision }
                     .accessibilityIdentifier("decision-dismiss-\(decision.number)")
             }
-            if state.writing == decision.number { ownWordsField(decision) }
+            if otherChosen { ownWordsField(decision) }
         }
     }
 
-    private func ownWordsField(_ decision: Decision) -> some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            TextField("Your answer to D\(decision.number)", text: $state.ownWords, axis: .vertical)
-                .lineLimit(1...4)
-                .textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier("decision-own-words")
-            Button("Use") {
+    private func ownWordsBinding(_ decision: Decision) -> Binding<String> {
+        Binding(
+            get: {
+                guard let store else { return "" }
+                return state.ownWordsText(for: decision, store: store)
+            },
+            set: { text in
                 guard let store else { return }
-                state.commitOwnWords(for: decision, store: store)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!state.canUseOwnWords)
-        }
+                state.setOwnWords(text, for: decision, store: store)
+            })
+    }
+
+    /// Other… is an answer like the options, so what is typed is the pick as it stands: there is
+    /// nothing to confirm.
+    private func ownWordsField(_ decision: Decision) -> some View {
+        TextField("Your answer to D\(decision.number)", text: ownWordsBinding(decision), axis: .vertical)
+            .lineLimit(1...4)
+            .textFieldStyle(.roundedBorder)
+            .focused($focusedOwnWords, equals: decision.number)
+            .accessibilityIdentifier("decision-own-words")
     }
 
     /// `muted` is the quieter look of an action that sends nothing (Dismiss): same outlined shape as
@@ -173,6 +190,12 @@ struct DecisionListView: View {
             .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(tone.border))
     }
 
+    private func barLabel(pendingCount: Int) -> String {
+        let noun = pendingCount == 1 ? "answer" : "\(pendingCount) answers"
+        if sendDirectly { return state.isSending ? "Sending…" : "Send \(noun)" }
+        return "Add \(noun) to message"
+    }
+
     @ViewBuilder
     private var footer: some View {
         let pending = store?.pendingAnswers(sessionId: sessionId) ?? []
@@ -182,15 +205,17 @@ struct DecisionListView: View {
                     if !pending.isEmpty {
                         Button {
                             guard let store else { return }
-                            Task { await state.send(sessionId: sessionId, store: store) }
+                            if sendDirectly {
+                                Task { await state.send(sessionId: sessionId, store: store) }
+                            } else if let drafts = environment.connection?.drafts {
+                                store.addPicksToMessage(sessionId: sessionId, drafts: drafts)
+                            }
                         } label: {
-                            Text(
-                                state.isSending
-                                    ? "Sending…" : pending.count == 1 ? "Send answer" : "Send \(pending.count) answers")
+                            Text(barLabel(pendingCount: pending.count))
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(state.isSending)
-                        .accessibilityIdentifier("decision-send")
+                        .accessibilityIdentifier(sendDirectly ? "decision-send" : "decision-add-to-message")
                         Button("Clear") { store?.clearPicks(sessionId: sessionId) }
                             .disabled(state.isSending)
                     } else if decisions.count > 1 {

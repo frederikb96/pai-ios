@@ -540,7 +540,8 @@ final class VoiceRecorderController {
     private var lastWrittenTakeText: [String: String] = [:]
 
     /// Live assembly's own append-or-heal rule: on this take's first write **in this process**,
-    /// appends after `preVoiceText`; every write after that heals the previous insertion in place.
+    /// appends after `preVoiceText` (and after anything put at the draft's end since, such as a
+    /// decision's answer line); every write after that heals the previous insertion in place.
     /// Never used for backfill (`healBackfilledTakeText(takeId:draftKey:newText:)`), which cannot
     /// assume an empty `lastWrittenTakeText` means "nothing is there yet" — a crash-recovered take
     /// can hold live-written text from a process that no longer exists, and appending blindly
@@ -549,7 +550,8 @@ final class VoiceRecorderController {
         guard !newText.isEmpty, heldClientMessageIds[takeId] == nil else { return }
         let prefixed = "\(VoiceRecordingResult.sttPrefix)\(newText)"
         guard let previous = lastWrittenTakeText[takeId], !previous.isEmpty else {
-            let combined = preVoiceText.isEmpty ? prefixed : "\(preVoiceText) \(prefixed)"
+            let combined = DraftHeal.firstLiveWrite(
+                preVoiceText: preVoiceText, currentDraftText: drafts.draft(for: draftKey).text, takeText: prefixed)
             drafts.setDraftText(key: draftKey, text: combined)
             lastWrittenTakeText[takeId] = prefixed
             return

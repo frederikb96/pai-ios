@@ -115,6 +115,8 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     /// The session's decisions, drawn where its replies embed them — the store the pin above the
     /// transcript reads, so a pick in either is the same pick. `nil` draws every marker as text.
     private let decisions: DecisionsStore?
+    /// Where the answers picked in this transcript's cards are added to the message being written.
+    private let drafts: DraftStore?
     /// Each inline card's own Send or Dismiss in flight and its last refusal, by decision number.
     private var decisionCardStates: [Int: InlineDecisionContext.CardState] = [:]
     /// The decision numbers each loaded reply embeds, remembered with the text they were read from
@@ -284,12 +286,13 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
     init(
         sessionID: String, store: TranscriptStore, apiClient: PaiApiClient, settings: SettingsStore,
         outbox: OutboxStore, requestFactory: PaiRequestFactory, searchState: TranscriptSearchState,
-        decisions: DecisionsStore? = nil,
+        decisions: DecisionsStore? = nil, drafts: DraftStore? = nil,
         initialJumpMessageID: Int? = nil, jumpRequests: TranscriptJumpRequests,
         persistedReadPosition: PersistedReadPosition? = nil, onPullBackIntoComposer: @escaping () -> Void = {}
     ) {
         self.sessionID = sessionID
         self.decisions = decisions
+        self.drafts = drafts
         self.store = store
         self.apiClient = apiClient
         self.settings = settings
@@ -1155,7 +1158,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
             pick: { [weak decisions] decision, option in decisions?.pick(option, for: decision) },
             ownWords: { [weak self] decision in self?.askOwnWords(for: decision) },
             dismiss: { [weak self] decision in self?.confirmDismiss(decision) },
-            send: { [weak self] number in self?.sendDecisions(fromCard: number) },
+            addToMessage: { [weak self] in self?.addDecisionsToMessage() },
             clearPicks: { [weak self] in
                 guard let self else { return }
                 self.decisions?.clearPicks(sessionId: self.sessionID)
@@ -1171,25 +1174,32 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         return presenter
     }
 
-    /// Other…: the owner's own words, picked like any option once used. A prompt rather than a
-    /// field inside the card, so typing never changes the height of a row in the list.
+    /// Other…: the owner's own words, picked like any option once confirmed. A prompt rather than
+    /// a field inside the card, so typing never changes the height of a row in the list. Where
+    /// the own words are already the pick it starts from them, and Remove takes them back, as
+    /// choosing a selected Other… does elsewhere.
     private func askOwnWords(for decision: Decision) {
         guard let decisions else { return }
+        let current = decisions.ownWordsPick(for: decision)
         let alert = UIAlertController(
             title: "Your answer to D\(decision.number)", message: decision.title, preferredStyle: .alert)
-        let seed = DecisionListState.ownWordsSeed(
-            for: decision, picked: decisions.picked(sessionId: decision.sessionId, number: decision.number))
         alert.addTextField { field in
-            field.text = seed
+            field.text = current
             field.autocapitalizationType = .sentences
             field.clearButtonMode = .whileEditing
         }
-        let use = UIAlertAction(title: "Use", style: .default) { [weak alert] _ in
+        let done = UIAlertAction(title: "Done", style: .default) { [weak alert] _ in
             DecisionListState.useOwnWords(alert?.textFields?.first?.text ?? "", for: decision, store: decisions)
         }
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(use)
-        alert.preferredAction = use
+        if current != nil {
+            alert.addAction(
+                UIAlertAction(title: "Remove", style: .destructive) { _ in
+                    decisions.setPick("", for: decision)
+                })
+        }
+        alert.addAction(done)
+        alert.preferredAction = done
         presenter().present(alert, animated: true)
     }
 
@@ -1210,15 +1220,11 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
         presenter().present(sheet, animated: true)
     }
 
-    /// Send on one card sends every answer picked for the session, from this card, another one or
-    /// the pin, as one message.
-    private func sendDecisions(fromCard number: Int) {
-        guard let decisions else { return }
-        let answers = decisions.pendingAnswers(sessionId: sessionID)
-        guard !answers.isEmpty else { return }
-        runCardRequest(number: number, fallback: "Could not send the answers") { [sessionID] store in
-            try await store.answer(sessionId: sessionID, answers: answers)
-        }
+    /// Add to message on one card takes every answer picked for the session, from this card,
+    /// another one or the pin, into the composer's draft; the composer is focused for the rest.
+    private func addDecisionsToMessage() {
+        guard let decisions, let drafts else { return }
+        decisions.addPicksToMessage(sessionId: sessionID, drafts: drafts)
     }
 
     /// Runs one card's request with that card showing it in flight, then its refusal, if any.
@@ -2274,6 +2280,8 @@ struct TranscriptCollectionView: UIViewControllerRepresentable {
     /// The session's decisions, drawn where its replies embed them; `nil` draws every marker line
     /// as text.
     var decisions: DecisionsStore? = nil
+    /// The drafts the answers picked in those cards are added to.
+    var drafts: DraftStore? = nil
     /// Where to jump once the transcript is open. `nil` for an ordinary open.
     var initialJumpMessageID: Int? = nil
     /// Reaches this screen for a push notification's jump while it is already on top — see
@@ -2292,7 +2300,7 @@ struct TranscriptCollectionView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> TranscriptCollectionViewController {
         TranscriptCollectionViewController(
             sessionID: sessionID, store: store, apiClient: apiClient, settings: settings, outbox: outbox,
-            requestFactory: requestFactory, searchState: searchState, decisions: decisions,
+            requestFactory: requestFactory, searchState: searchState, decisions: decisions, drafts: drafts,
             initialJumpMessageID: initialJumpMessageID,
             jumpRequests: jumpRequests, persistedReadPosition: persistedReadPosition,
             onPullBackIntoComposer: onPullBackIntoComposer

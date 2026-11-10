@@ -19,7 +19,7 @@ public enum InlineDecisionDisplay: Hashable, Sendable {
     /// The session's decisions are not read yet. Draws nothing and takes no room, so a marker
     /// never flashes up as text before its card replaces it.
     case loading
-    /// The card the pin opens to: title, recommendation, context, the answers, and Send.
+    /// The card the pin opens to: title, recommendation, context, the answers, and the bar that adds them to the message.
     case open(InlineOpenDecision)
     /// One line: the title and the answer, or `nil` for a decision that was withdrawn. A tap
     /// opens it as ``reopened(_:)``.
@@ -34,10 +34,10 @@ public struct InlineOpenDecision: Hashable, Sendable {
     public let decision: Decision
     /// The answer picked for it, from whichever surface.
     public let picked: String?
-    /// How many of the session's picks a Send here would send; the Send bar shows when any.
+    /// How many of the session's picks the bar here would add to the message; the bar shows when any.
     public let pendingCount: Int
     public let isSending: Bool
-    /// What this card's last Send or Dismiss attempt was refused with.
+    /// What this card's last Dismiss attempt was refused with.
     public let errorMessage: String?
 
     public init(decision: Decision, picked: String?, pendingCount: Int, isSending: Bool, errorMessage: String?) {

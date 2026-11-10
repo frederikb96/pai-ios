@@ -30,4 +30,17 @@ public enum DraftHeal {
         result.replaceSubrange(range, with: healedText)
         return .replaced(result)
     }
+
+    /// A live take's first words go after what the composer held when the take began
+    /// (`preVoiceText`), joined by a space. Text added to the draft since, which only ever lands
+    /// at its end (answers to decisions put in by their buttons), is kept: the words follow it on
+    /// a line of their own instead of overwriting it with the stale start. Anything else leaves
+    /// the start as the base, as before.
+    public static func firstLiveWrite(preVoiceText: String, currentDraftText: String, takeText: String) -> String {
+        if currentDraftText.count > preVoiceText.count, currentDraftText.hasPrefix(preVoiceText) {
+            let kept = currentDraftText.trimmingCharacters(in: .whitespacesAndNewlines)
+            return "\(kept)\n\(takeText)"
+        }
+        return preVoiceText.isEmpty ? takeText : "\(preVoiceText) \(takeText)"
+    }
 }

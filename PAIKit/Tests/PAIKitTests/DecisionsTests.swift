@@ -36,6 +36,7 @@ final class DecisionsTests: XCTestCase {
         var answerError: Error?
         var heldFirstRead: CheckedContinuation<OpenDecisionsResponse, Error>?
         var holdFirstRead = false
+        var failNextRead = false
         let firstReadStarted: AsyncStream<Void>
         private let startedSignal: AsyncStream<Void>.Continuation
 
@@ -47,11 +48,15 @@ final class DecisionsTests: XCTestCase {
         var answers: [[DecisionAnswer]] { lock.withLock { _answers } }
 
         func getOpenDecisions() async throws -> OpenDecisionsResponse {
-            let hold = lock.withLock { () -> Bool in
+            let (hold, fail) = lock.withLock { () -> (Bool, Bool) in
                 _requests.append("read")
-                defer { holdFirstRead = false }
-                return holdFirstRead
+                defer {
+                    holdFirstRead = false
+                    failNextRead = false
+                }
+                return (holdFirstRead, failNextRead)
             }
+            if fail { throw PaiError.http(statusCode: 503, reason: "unavailable") }
             if hold {
                 return try await withCheckedThrowingContinuation { continuation in
                     heldFirstRead = continuation
@@ -84,6 +89,23 @@ final class DecisionsTests: XCTestCase {
             lock.withLock { _requests.append("withdraw") }
             return Decision(id: "x", sessionId: sessionId, number: number, title: "t", recommendation: "r")
         }
+    }
+
+    private struct QuietDraftsApi: DraftsFetching {
+        func getDrafts() async throws -> [Draft] { [] }
+        func putDraft(
+            key: String, text: String, deviceId: String?, sessionType: String?, workingDir: String?, model: String?,
+            thinking: String?
+        ) async throws -> DraftWriteResult {
+            DraftWriteResult(key: key, version: 1, previousText: nil)
+        }
+        func deleteDraft(key: String) async throws -> PaiDraftDeleteResult {
+            PaiDraftDeleteResult(key: key, version: 1, previousText: nil)
+        }
+        func addDraftAttachment(key: String, file: PaiFileUpload, id: String) async throws -> DraftAttachment {
+            throw PaiError.transport("not used")
+        }
+        func removeDraftAttachment(key: String, attachmentId: String) async throws {}
     }
 
     private func makeStore(_ api: FakeApi, owner: Bool = true) -> DecisionsStore {
@@ -315,6 +337,127 @@ final class DecisionsTests: XCTestCase {
         let store = makeStore(FakeApi())
         store.pick("yes", for: decision(3))
         store.pick("yes", for: decision(3))
+        XCTAssertNil(store.picked(sessionId: "s1", number: 3))
+    }
+
+    // MARK: - A read that was overtaken by one that failed
+
+    /// A newer read that fails (or is cancelled with the view that asked for it) says nothing
+    /// about the older one still in the air, which succeeded: its list is the freshest there is.
+    func testAnOlderReadStillLandsWhenTheNewerOneFailed() async {
+        let api = FakeApi()
+        api.holdFirstRead = true
+        let store = makeStore(api)
+
+        let older = Task { await store.refresh() }
+        for await _ in api.firstReadStarted { break }
+        api.failNextRead = true
+        await store.refresh()
+        XCTAssertEqual(store.open.map(\.number), [])
+
+        api.heldFirstRead?.resume(returning: OpenDecisionsResponse(decisions: [decision(4)]))
+        await older.value
+        XCTAssertEqual(store.open.map(\.number), [4])
+    }
+
+    // MARK: - Answers added to the message
+
+    /// The line is what the server finds the answer by, so the composer gets exactly that, after
+    /// what is already written, and nothing is sent.
+    func testAddingPicksPutsOneLineEachAfterTheDraftAndSendsNothing() async {
+        let api = FakeApi()
+        api.reads = [
+            OpenDecisionsResponse(decisions: [decision(1, title: "Merge the migration."), decision(2, title: "Rename")])
+        ]
+        let store = makeStore(api)
+        await store.refresh()
+        let drafts = DraftStore(api: QuietDraftsApi())
+        drafts.setDraftText(key: "s1", text: "Some thoughts first.  \n")
+        store.pick("yes", for: decision(1, title: "Merge the migration."))
+        store.setPick("no,\n  later ", for: decision(2, title: "Rename"))
+        let focusBefore = drafts.composerFocusNonce
+
+        let added = store.addPicksToMessage(sessionId: "s1", drafts: drafts)
+
+        XCTAssertTrue(added)
+        XCTAssertEqual(
+            drafts.draft(for: "s1").text,
+            "Some thoughts first.\nD1 (Merge the migration): yes\nD2 (Rename): no, later")
+        XCTAssertEqual(api.answers, [])
+        XCTAssertNil(store.picks["s1"], "the picks left with the lines")
+        XCTAssertEqual(drafts.composerFocusNonce, focusBefore + 1)
+    }
+
+    func testAddingToAnEmptyDraftStartsWithoutABlankLineAndNothingPickedAddsNothing() async {
+        let api = FakeApi()
+        api.reads = [OpenDecisionsResponse(decisions: [decision(1), decision(2)])]
+        let store = makeStore(api)
+        await store.refresh()
+        let drafts = DraftStore(api: QuietDraftsApi())
+        let focusBefore = drafts.composerFocusNonce
+
+        XCTAssertFalse(store.addPicksToMessage(sessionId: "s1", drafts: drafts))
+        XCTAssertEqual(drafts.draft(for: "s1").text, "")
+        XCTAssertEqual(drafts.composerFocusNonce, focusBefore)
+
+        store.pick("yes", for: decision(1))
+        store.addPicksToMessage(sessionId: "s1", drafts: drafts)
+        store.pick("no", for: decision(2))
+        store.addPicksToMessage(sessionId: "s1", drafts: drafts)
+        XCTAssertEqual(drafts.draft(for: "s1").text, "D1 (Ship it): yes\nD2 (Ship it): no")
+    }
+
+    // MARK: - Other… as an answer
+
+    func testOtherReplacesTheOptionPickedBeforeAndIsTheTextAsItIsTyped() async {
+        let store = makeStore(FakeApi())
+        let state = DecisionListState()
+        let d = decision(3)
+        state.choose("yes", for: d, store: store)
+
+        state.toggleOther(d, store: store)
+        XCTAssertTrue(state.isOtherChosen(d, store: store))
+        XCTAssertNil(store.picked(sessionId: "s1", number: 3), "an empty text is no pick, and the option is gone")
+
+        state.setOwnWords("later ", for: d, store: store)
+        XCTAssertEqual(store.picked(sessionId: "s1", number: 3), "later")
+        XCTAssertEqual(state.ownWordsText(for: d, store: store), "later ", "the field keeps what was typed")
+
+        state.setOwnWords("", for: d, store: store)
+        XCTAssertNil(store.picked(sessionId: "s1", number: 3))
+        XCTAssertTrue(state.isOtherChosen(d, store: store), "still chosen, with nothing written yet")
+    }
+
+    func testChoosingAnOptionClosesOtherAndChoosingOtherAgainDeselectsIt() async {
+        let store = makeStore(FakeApi())
+        let state = DecisionListState()
+        let d = decision(3)
+        state.toggleOther(d, store: store)
+        state.setOwnWords("not before Friday", for: d, store: store)
+
+        state.choose("no", for: d, store: store)
+        XCTAssertFalse(state.isOtherChosen(d, store: store))
+        XCTAssertEqual(store.picked(sessionId: "s1", number: 3), "no")
+
+        state.toggleOther(d, store: store)
+        XCTAssertEqual(store.picked(sessionId: "s1", number: 3), "not before Friday", "the text is kept")
+        state.toggleOther(d, store: store)
+        XCTAssertFalse(state.isOtherChosen(d, store: store))
+        XCTAssertNil(store.picked(sessionId: "s1", number: 3))
+    }
+
+    /// The prompt in a transcript row confirms with empty words: that clears own words picked
+    /// before, but an option the owner picked is not his own words and stays.
+    func testEmptyWordsFromThePromptClearOwnWordsAndLeaveAnOptionPick() async {
+        let store = makeStore(FakeApi())
+        let d = decision(3)
+        store.pick("yes", for: d)
+        DecisionListState.useOwnWords("  ", for: d, store: store)
+        XCTAssertEqual(store.picked(sessionId: "s1", number: 3), "yes")
+
+        DecisionListState.useOwnWords("later", for: d, store: store)
+        XCTAssertEqual(store.ownWordsPick(for: d), "later")
+        DecisionListState.useOwnWords("", for: d, store: store)
         XCTAssertNil(store.picked(sessionId: "s1", number: 3))
     }
 }

@@ -54,7 +54,7 @@ struct DecisionsView: View {
                             }
                             .buttonStyle(.plain)
                             Divider()
-                            DecisionListView(sessionId: group.sessionId, decisions: group.decisions)
+                            DecisionListView(sessionId: group.sessionId, decisions: group.decisions, sendDirectly: true)
                         }
                         .background(BannerTone.accent.background, in: RoundedRectangle(cornerRadius: 12))
                         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(BannerTone.accent.border))
