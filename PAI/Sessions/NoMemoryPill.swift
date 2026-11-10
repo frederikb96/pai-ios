@@ -4,7 +4,8 @@ import SwiftUI
 /// The "No memory" mark on a session row, the session header and the new-session screen.
 struct NoMemoryPill: View {
     var body: some View {
-        Text(NoMemoryCopy.toggleLabel)
+        Label(NoMemoryCopy.toggleLabel, systemImage: "eye.slash")
+            .labelStyle(.titleAndIcon)
             .font(PaiTypography.captionEmphasized.font)
             .padding(.horizontal, 6)
             .padding(.vertical, 1)

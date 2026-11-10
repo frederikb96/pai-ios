@@ -204,8 +204,12 @@ private struct RootActionsList: View {
                 // this always shows and resolves on tap — the same "just ask, then say so if
                 // there is nothing" shape the list's own swipe action and the transcript's edge
                 // swipe both already use for this exact question.
-                Button(action: onOpenSpec) {
-                    Label("Spec", systemImage: "shippingbox")
+                // Binding a no-memory session to a spec would carry its content somewhere that
+                // outlives it.
+                if !session.isNoMemory {
+                    Button(action: onOpenSpec) {
+                        Label("Spec", systemImage: "shippingbox")
+                    }
                 }
 
                 if let conversationId = session.claudeSessionId {
@@ -293,10 +297,13 @@ private struct RootActionsList: View {
                         }
                     }
 
-                    Button(role: .destructive) {
-                        confirmingDelete = true
-                    } label: {
-                        Label("Delete session", systemImage: "trash")
+                    // An open no-memory session is ended through Close & delete only.
+                    if !(session.isNoMemory && session.state != nil && session.state != .closed) {
+                        Button(role: .destructive) {
+                            confirmingDelete = true
+                        } label: {
+                            Label("Delete session", systemImage: "trash")
+                        }
                     }
                 }
             } else {
