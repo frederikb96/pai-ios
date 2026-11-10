@@ -7,20 +7,21 @@ import SwiftUI
 struct InlineDecisionActions {
     /// Pick an answer without sending it, or take back the one already picked.
     let pick: @MainActor (Decision, String) -> Void
-    /// Ask for the owner's own words, then pick them.
+    /// Ask for the owner's own words in a prompt, then pick them; where they are already the pick,
+    /// the prompt starts from them and can take them back.
     let ownWords: @MainActor (Decision) -> Void
     /// Withdraw one answered in the conversation, after a confirmation.
     let dismiss: @MainActor (Decision) -> Void
-    /// Send every answer picked for the session; the number is the card whose Send was tapped.
-    let send: @MainActor (Int) -> Void
+    /// Add every answer picked for the session to the composer's message.
+    let addToMessage: @MainActor () -> Void
     let clearPicks: @MainActor () -> Void
     /// Open a resolved decision's full card again, or close it back to its line.
     let toggleReopened: @MainActor (Int) -> Void
 }
 
 /// One decision where a reply embeds it, or where an unembedded one is placed: while open, the
-/// card the pin opens to (title, recommendation, context, its answers, Other…, Dismiss, Send),
-/// answered through the session's shared picks; once resolved, one line with its answer or that
+/// card the pin opens to (title, recommendation, context, its answers, Other…, Dismiss, Add to
+/// message), answered through the session's shared picks; once resolved, one line with its answer or that
 /// it was withdrawn, which a tap opens to the read-only card and closes again; for a guest or a
 /// number the session never had, the marker text. Swift port of the web's `InlineDecision.tsx`.
 ///
@@ -320,12 +321,10 @@ private struct OpenDecisionCard: View {
     }
 
     private var sendBar: some View {
-        let label =
-            open.isSending
-            ? "Sending…" : open.pendingCount == 1 ? "Send answer" : "Send \(open.pendingCount) answers"
+        let label = open.pendingCount == 1 ? "Add answer to message" : "Add \(open.pendingCount) answers to message"
         return HStack(spacing: 8) {
             Button {
-                actions?.send(decision.number)
+                actions?.addToMessage()
             } label: {
                 Text(label)
                     .font(PaiTypography.markdownBody.font)
@@ -337,7 +336,7 @@ private struct OpenDecisionCard: View {
             }
             .buttonStyle(.plain)
             .disabled(open.isSending || actions == nil)
-            .accessibilityIdentifier("inline-decision-\(decision.number)-send")
+            .accessibilityIdentifier("inline-decision-\(decision.number)-add-to-message")
             Button {
                 actions?.clearPicks()
             } label: {

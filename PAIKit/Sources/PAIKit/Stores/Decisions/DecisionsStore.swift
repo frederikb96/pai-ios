@@ -24,7 +24,7 @@ public struct DecisionPick: Equatable, Sendable {
 }
 
 /// Every open decision across the owner's sessions, every decision of each session a transcript
-/// shows, and the answers picked and not yet sent. Swift port of `stores/decisions.ts`. App-wide:
+/// shows, and the answers picked and not yet sent or added to a message. Swift port of `stores/decisions.ts`. App-wide:
 /// the pin above a transcript, the cards inside its replies, the Decisions app and the Apps row's
 /// count all read it, refreshed on the notification stream's `decisions` event, on every stream
 /// (re)connect and when a decision view appears.
@@ -45,8 +45,13 @@ public final class DecisionsStore {
 
     private let api: DecisionsApiClient
     private let isOwner: @MainActor () -> Bool
+    /// Reads are numbered as they start; a response applies only when it is newer than the last
+    /// one applied. Judging by "newest started" instead would let a newer read that failed or was
+    /// cancelled void an older one that succeeded, leaving the list as it was.
     private var refreshSequence = 0
+    private var appliedRefresh = 0
     private var sessionSequences: [String: Int] = [:]
+    private var appliedSession: [String: Int] = [:]
     /// How many shown transcripts watch each session.
     private var watchers: [String: Int] = [:]
 
@@ -89,8 +94,9 @@ public final class DecisionsStore {
         guard isOwner() else { return }
         refreshSequence += 1
         let sequence = refreshSequence
-        if let response = try? await api.getOpenDecisions(), sequence == refreshSequence {
+        if let response = try? await api.getOpenDecisions(), sequence > appliedRefresh {
             // A slower, older read must not overwrite a newer one.
+            appliedRefresh = sequence
             open = response.decisions
         }
         for sessionId in watchers.keys.sorted() {
@@ -115,8 +121,9 @@ public final class DecisionsStore {
         let sequence = (sessionSequences[sessionId] ?? 0) + 1
         sessionSequences[sessionId] = sequence
         guard let response = try? await api.getSessionDecisions(sessionId: sessionId),
-            sessionSequences[sessionId] == sequence
+            sequence > (appliedSession[sessionId] ?? 0)
         else { return }
+        appliedSession[sessionId] = sequence
         bySession[sessionId] = response.decisions
     }
 
@@ -131,6 +138,23 @@ public final class DecisionsStore {
             session[decision.number] = DecisionPick(text: text, updatedAt: decision.updatedAt)
         }
         picks[decision.sessionId] = session
+    }
+
+    /// Makes `text` the picked answer, replacing any other, or removes the pick when it is empty:
+    /// the owner's own words, kept as they are typed.
+    public func setPick(_ text: String, for decision: Decision) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var session = picks[decision.sessionId] ?? [:]
+        session[decision.number] = trimmed.isEmpty ? nil : DecisionPick(text: trimmed, updatedAt: decision.updatedAt)
+        picks[decision.sessionId] = session.isEmpty ? nil : session
+    }
+
+    /// The pick for `decision` when it is none of the offered options, i.e. the owner's own words.
+    public func ownWordsPick(for decision: Decision) -> String? {
+        guard let picked = picked(sessionId: decision.sessionId, number: decision.number),
+            !decision.options.contains(picked)
+        else { return nil }
+        return picked
     }
 
     /// Picks each decision's recommendation, replacing any pick for the same decisions.
@@ -169,9 +193,33 @@ public final class DecisionsStore {
         return answers.sorted { $0.number < $1.number }
     }
 
+    // MARK: - Adding to the composer
+
+    /// Puts every pending pick of the session into its composer draft as an answer line, after
+    /// what the draft holds, drops those picks and asks the composer for focus. Nothing is sent:
+    /// the owner sends the draft with whatever else he writes or records, and the server marks a
+    /// decision answered when a message carries its line (``DecisionAnswerLine``). Returns whether
+    /// anything was added.
+    @discardableResult
+    public func addPicksToMessage(sessionId: String, drafts: DraftStore) -> Bool {
+        let known = bySession[sessionId] ?? open.filter { $0.sessionId == sessionId }
+        var lines: [String] = []
+        for answer in pendingAnswers(sessionId: sessionId) {
+            guard let decision = known.first(where: { $0.number == answer.number }) else { continue }
+            lines.append(DecisionAnswerLine.line(for: decision, answer: answer.answer))
+        }
+        guard !lines.isEmpty else { return false }
+        drafts.setDraftText(
+            key: sessionId, text: DecisionAnswerLine.appending(lines, toDraft: drafts.draft(for: sessionId).text))
+        clearPicks(sessionId: sessionId)
+        drafts.requestComposerFocus()
+        return true
+    }
+
     // MARK: - Sending
 
-    /// Sends the answers of one session as one message. On success they leave `open` at once, the
+    /// Sends the answers of one session as one message of their own, for the Decisions app, which
+    /// has no composer to put them in. On success they leave `open` at once, the
     /// session's listing takes the answered rows the server returned, and their picks are dropped;
     /// a refusal (409: one was answered, withdrawn or changed meanwhile, nothing was sent) rethrows
     /// and the lists are re-read.

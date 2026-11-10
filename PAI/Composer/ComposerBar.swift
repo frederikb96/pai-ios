@@ -298,7 +298,8 @@ struct ComposerBar: View {
                     onPasteImages: { images in stagePastedImages(images, voiceController: voiceController) },
                     skillNames: skillNames,
                     skillSuggestionsPaused: liveTakeOwnsBox(voiceController),
-                    onCaretChange: { composerCaret = $0 }
+                    onCaretChange: { composerCaret = $0 },
+                    focusRequest: draftStore.composerFocusNonce
                 )
                 .frame(height: textHeight)
                 .background(PaiPalette.Semantic.raisedSurface)

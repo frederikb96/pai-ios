@@ -36,6 +36,10 @@ struct ComposerTextEditor: UIViewRepresentable {
     /// The caret as the reader last placed it (`nil` for a selection), so the mentions row can
     /// leave out the token the keyboard bar is completing.
     var onCaretChange: (Int?) -> Void = { _ in }
+    /// A caller that wants the keyboard up bumps this (`DraftStore.composerFocusNonce`): each
+    /// change focuses the field with the caret at the end of the text. The value the field is
+    /// created with asks for nothing.
+    var focusRequest = 0
 
     func makeUIView(context: Context) -> UITextView {
         let textView = PasteAwareTextView()
@@ -68,6 +72,15 @@ struct ComposerTextEditor: UIViewRepresentable {
             coordinator.refreshSuggestions(in: uiView)
         }
         (uiView as? PasteAwareTextView)?.onPasteImages = { images in onPasteImages(images) }
+        if coordinator.focusRequest != focusRequest {
+            coordinator.focusRequest = focusRequest
+            DispatchQueue.main.async {
+                uiView.becomeFirstResponder()
+                let end = NSRange(location: (uiView.text as NSString).length, length: 0)
+                uiView.selectedRange = end
+                uiView.scrollRangeToVisible(end)
+            }
+        }
         context.coordinator.applyPlaceholder(to: uiView, placeholder: placeholder, isEmpty: text.isEmpty)
         recalculateHeight(uiView)
         if scrollToTailOnNextUpdate {
@@ -99,6 +112,7 @@ struct ComposerTextEditor: UIViewRepresentable {
 
         var skillNames: [String] = []
         var suggestionsPaused = false
+        var focusRequest: Int
         private var isWritingProgrammatically = false
         private var keyboardBar: UIToolbar?
         private var dismissItem: UIBarButtonItem?
@@ -106,6 +120,7 @@ struct ComposerTextEditor: UIViewRepresentable {
 
         init(_ parent: ComposerTextEditor) {
             self.parent = parent
+            focusRequest = parent.focusRequest
         }
 
         func textViewDidChange(_ textView: UITextView) {
