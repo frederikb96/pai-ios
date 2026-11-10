@@ -38,6 +38,7 @@ extension TranscriptStore {
             secretGrantable: event.secretGrantable, secretPrompt: event.secretPrompt,
             liveModel: event.liveModel, model: event.model, pendingModel: event.pendingModel,
             ultrafastModel: event.ultrafastModel, thinking: event.thinking, noMemory: event.noMemory,
+            closedUnexpectedly: event.closedUnexpectedly,
             transfer: SessionMoved.Mark(toSessionId: event.transferredToSessionId, at: event.transferredAt)
         )
     }

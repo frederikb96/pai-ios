@@ -94,6 +94,8 @@ public final class TranscriptStore {
         public let thinking: String?
         /// See `Session.noMemory`.
         public let noMemory: Bool?
+        /// See `Session.closedUnexpectedly`.
+        public let closedUnexpectedly: Bool?
         /// See `Session.transferredToSessionId`; always the event's own answer.
         public let transfer: SessionMoved.Mark
     }
