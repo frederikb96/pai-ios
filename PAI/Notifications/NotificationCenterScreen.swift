@@ -27,6 +27,19 @@ struct NotificationCenterScreen: View {
             .accessibilityIdentifier("notification-center")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Task { await store.setUnreadOnly(!store.unreadOnly) }
+                    } label: {
+                        Label(
+                            "Unread only",
+                            systemImage: store.unreadOnly
+                                ? "line.3.horizontal.decrease.circle.fill"
+                                : "line.3.horizontal.decrease.circle")
+                    }
+                    .accessibilityValue(store.unreadOnly ? "On" : "Off")
+                    .accessibilityIdentifier("notifications-unread-only")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button("Mark all read") {
                         Task { await store.markAllRead() }
                     }
@@ -130,8 +143,12 @@ struct NotificationCenterScreen: View {
         } else if store.rows.isEmpty {
             centeredRow {
                 ContentUnavailableView(
-                    "No notifications yet", systemImage: "bell",
-                    description: Text("Alerts and messages from your sessions will appear here."))
+                    store.unreadOnly ? "No unread notifications" : "No notifications yet",
+                    systemImage: store.unreadOnly ? "bell.slash" : "bell",
+                    description: Text(
+                        store.unreadOnly
+                            ? "Turn off the unread filter to see everything."
+                            : "Alerts and messages from your sessions will appear here."))
             }
         } else {
             ForEach(store.rows) { notification in

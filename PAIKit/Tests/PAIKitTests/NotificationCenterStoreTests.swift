@@ -17,8 +17,12 @@ private actor FakeNotificationCenterApi: NotificationCenterApiClient {
     /// heterogeneous batch (some read, some not, one failed) resolves each id independently.
     var getNotificationResultsById: [String: Result<PaiNotification, PaiError>] = [:]
 
+    /// Answers consumed one per call before `listResult` applies, for a test that pages.
+    var listPages: [NotificationsResponse] = []
+    func setListPages(_ pages: [NotificationsResponse]) { listPages = pages }
     private(set) var listCalls:
-        [(limit: Int?, beforeId: String?, kind: PaiNotificationKind?, source: NotificationSource)] = []
+        [(limit: Int?, beforeId: String?, kind: PaiNotificationKind?, source: NotificationSource, unreadOnly: Bool)] =
+            []
     private(set) var markReadCalls: [[String]] = []
     private(set) var markUnreadCalls: [[String]] = []
     private(set) var markAllReadCallCount = 0
@@ -36,9 +40,11 @@ private actor FakeNotificationCenterApi: NotificationCenterApiClient {
     func setClearAlertsResult(_ result: Result<Int, PaiError>) { clearAlertsResult = result }
 
     func getNotifications(
-        limit: Int?, beforeId: String?, kind: PaiNotificationKind?, source: NotificationSource
+        limit: Int?, beforeId: String?, kind: PaiNotificationKind?, source: NotificationSource,
+        unreadOnly: Bool
     ) async throws -> NotificationsResponse {
-        listCalls.append((limit, beforeId, kind, source))
+        listCalls.append((limit, beforeId, kind, source, unreadOnly))
+        if !listPages.isEmpty { return listPages.removeFirst() }
         switch listResult {
         case let .success(response): return response
         case let .failure(error): throw error
@@ -553,6 +559,50 @@ final class NotificationCenterStoreTests: XCTestCase {
         XCTAssertFalse(cleared)
         let calls = await api.clearAlertsCalls
         XCTAssertTrue(calls.isEmpty)
+    }
+
+    // MARK: unread-only filter
+
+    func testUnreadOnlyRequeriesWithTheParameterAndKeepsItAcrossPages() async {
+        let api = FakeNotificationCenterApi()
+        await api.setListPages([
+            NotificationsResponse(unread: 2, hasMore: true, notifications: [makeNotification(id: "2")]),
+            NotificationsResponse(unread: 2, hasMore: false, notifications: [makeNotification(id: "1")]),
+        ])
+        let store = NotificationCenterStore(api: api)
+
+        await store.setUnreadOnly(true)
+        await store.loadMoreRows()
+
+        let calls = await api.listCalls
+        XCTAssertEqual(calls.map(\.unreadOnly), [true, true])
+        XCTAssertEqual(calls.last?.beforeId, "2")
+        XCTAssertEqual(store.rows.map(\.id), ["2", "1"])
+    }
+
+    /// Reading a row while the filter is on leaves it where it is until the next load.
+    func testARowMarkedReadStaysUntilTheNextLoad() async {
+        let api = FakeNotificationCenterApi()
+        await api.setListResult(
+            .success(NotificationsResponse(unread: 1, hasMore: false, notifications: [makeNotification(id: "1")])))
+        let store = NotificationCenterStore(api: api)
+        await store.setUnreadOnly(true)
+
+        await store.markRead("1")
+
+        XCTAssertEqual(store.rows.map(\.id), ["1"])
+        XCTAssertEqual(store.unread, 0)
+    }
+
+    func testTurningUnreadOnlyOffReloadsWithoutIt() async {
+        let api = FakeNotificationCenterApi()
+        let store = NotificationCenterStore(api: api)
+        await store.setUnreadOnly(true)
+        await store.setUnreadOnly(false)
+        await store.setUnreadOnly(false)
+
+        let calls = await api.listCalls
+        XCTAssertEqual(calls.map(\.unreadOnly), [true, false])
     }
 
     /// What `PaiNotificationStreamClient`'s live events apply — a plain count set, with `rows`

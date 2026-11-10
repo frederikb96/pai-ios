@@ -51,6 +51,18 @@ final class QuietNotificationsTests: XCTestCase {
         XCTAssertNil(queryItems()["scheduled"])
     }
 
+    /// The backend answers 400 to any value but `only`, so off sends no parameter.
+    func testUnreadOnlyIsSentAsTheBackendsUnreadParameter() async throws {
+        stubEmptyFeed()
+        let api = try client()
+
+        _ = try await api.getNotifications(limit: 50, unreadOnly: true)
+        XCTAssertEqual(queryItems()["unread"], "only")
+
+        _ = try await api.getNotifications(limit: 50)
+        XCTAssertNil(queryItems()["unread"])
+    }
+
     func testRowsDecodeTheirTaskAndOlderRowsDecodeWithout() throws {
         let page = try JSONDecoder().decode(
             NotificationsResponse.self, from: PaiFixtures.notificationsPage(kind: nil, scheduled: nil))
