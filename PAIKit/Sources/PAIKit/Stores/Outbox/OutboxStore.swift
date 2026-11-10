@@ -8,7 +8,7 @@ public protocol OutboxSending: Sendable {
         sessionId: String?, message: String, clientMessageId: String, files: [PaiFileUpload],
         draftAttachmentIds: [String], supersededUploadIds: [String], sessionType: String?, workingDir: String?,
         agent: String?, model: String?,
-        thinking: String?, clientMode: String?, heldTake: HeldTake?
+        thinking: String?, clientMode: String?, heldTake: HeldTake?, noMemory: Bool?
     ) async throws -> PostMessageResponse
 }
 
@@ -20,7 +20,7 @@ public protocol OutboxKeyedSending: OutboxSending {
     func postMessage(
         sessionId: String?, message: String, clientMessageId: String, files: [PaiFileUpload],
         draftAttachmentIds: [String], supersededUploadIds: [String], sessionType: String?, workingDir: String?,
-        agent: String?, model: String?, thinking: String?, clientMode: String?, heldTake: HeldTake?,
+        agent: String?, model: String?, thinking: String?, clientMode: String?, heldTake: HeldTake?, noMemory: Bool?,
         mailVerdictKey: String?
     ) async throws -> PostMessageResponse
 }
@@ -376,7 +376,7 @@ public final class OutboxStore {
                     supersededUploadIds: entry.supersededUploadIds ?? [], sessionType: entry.target.sessionType,
                     workingDir: entry.target.workingDir, agent: entry.target.agent, model: entry.target.model,
                     thinking: entry.target.thinking, clientMode: entry.clientMode, heldTake: entry.heldTake,
-                    mailVerdictKey: mailVerdictKey()
+                    noMemory: entry.noMemory, mailVerdictKey: mailVerdictKey()
                 )
             } else {
                 response = try await api.postMessage(
@@ -384,7 +384,8 @@ public final class OutboxStore {
                     files: files, draftAttachmentIds: entry.draftAttachmentIds,
                     supersededUploadIds: entry.supersededUploadIds ?? [], sessionType: entry.target.sessionType,
                     workingDir: entry.target.workingDir, agent: entry.target.agent, model: entry.target.model,
-                    thinking: entry.target.thinking, clientMode: entry.clientMode, heldTake: entry.heldTake
+                    thinking: entry.target.thinking, clientMode: entry.clientMode, heldTake: entry.heldTake,
+                    noMemory: entry.noMemory
                 )
             }
             guard let current = entries.firstIndex(where: { $0.id == entry.id }) else { return }

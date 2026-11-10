@@ -210,6 +210,14 @@ public final class DraftStore {
         scheduleFlush(DraftKey.newSession)
     }
 
+    /// Independent of the model and thinking choices: switching either leaves it alone.
+    public func selectNoMemory(_ on: Bool) {
+        var entry = draft(for: DraftKey.newSession)
+        entry.noMemory = on
+        drafts[DraftKey.newSession] = entry
+        scheduleFlush(DraftKey.newSession)
+    }
+
     // MARK: - Attachments
 
     /// Uploads a staged file onto this draft immediately — not debounced like `setDraftText`,
@@ -370,7 +378,8 @@ public final class DraftStore {
         do {
             let result = try await api.putDraft(
                 key: key, text: entry.text, deviceId: deviceId, sessionType: entry.sessionType,
-                workingDir: entry.workingDir, model: entry.model, thinking: entry.thinking
+                workingDir: entry.workingDir, model: entry.model, thinking: entry.thinking,
+                noMemory: entry.noMemory
             )
             guard var current = drafts[key] else { return }
             current.knownVersion = result.version
@@ -441,6 +450,7 @@ public final class DraftStore {
                 entry.workingDir = row.workingDir
                 entry.model = row.model
                 entry.thinking = row.thinking
+                entry.noMemory = row.noMemory
                 entry.knownVersion = row.version
                 changed = true
             }

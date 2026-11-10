@@ -153,6 +153,7 @@ private struct RootActionsList: View {
     @State private var copiedConversationId = false
     @State private var copiedLink = false
     @State private var confirmingDelete = false
+    @State private var confirmingCloseAndDelete = false
 
     var body: some View {
         List {
@@ -187,8 +188,10 @@ private struct RootActionsList: View {
                 // supervisor to watch either. Matches the web's identical guard. Open,
                 // read-only, whether or not one is attached yet — `SupervisionView` itself
                 // decides between an attach offer and a read-only view once it has asked.
+                // A supervisor's own transcript would carry a no-memory session's content into memory.
                 if !(session.kind.map(sessionKindsWithoutProcess.contains) ?? false),
-                    !(session.kind.map(sessionKindsPodResident.contains) ?? false)
+                    !(session.kind.map(sessionKindsPodResident.contains) ?? false),
+                    !session.isNoMemory
                 {
                     Button {
                         path.append(.supervision)
@@ -257,7 +260,26 @@ private struct RootActionsList: View {
                         }
                     }
 
-                    if session.state != nil, session.state != .closed {
+                    if SessionCompactAndClose.isAvailable(for: session) {
+                        Button {
+                            // Fires and dismisses at once, like Close: the compaction runs on the
+                            // backend and the row reads closed when it is done.
+                            actions.compactAndCloseInBackground(toasts: toasts)
+                            onClose()
+                        } label: {
+                            Label("Compact & close", systemImage: "arrow.down.right.and.arrow.up.left")
+                        }
+                        .accessibilityIdentifier("session-actions-compact-and-close")
+                    }
+
+                    if session.state != nil, session.state != .closed, session.isNoMemory {
+                        Button(role: .destructive) {
+                            confirmingCloseAndDelete = true
+                        } label: {
+                            Label("Close & delete", systemImage: "power")
+                        }
+                        .accessibilityIdentifier("session-actions-close-and-delete")
+                    } else if session.state != nil, session.state != .closed {
                         Button {
                             // Fires and dismisses at once — the round trip to the agent can take
                             // several seconds, and waiting for it here would hold the sheet open
@@ -282,6 +304,18 @@ private struct RootActionsList: View {
             }
         }
         .accessibilityIdentifier("session-actions-list")
+        .confirmationDialog(
+            SessionCompactAndClose.closeAndDeleteTitle, isPresented: $confirmingCloseAndDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Close & delete", role: .destructive) {
+                actions.closeInBackground(toasts: toasts)
+                onClose()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(SessionCompactAndClose.closeAndDeleteMessage)
+        }
         // No undo past this point — the confirm step is the only safety net there is, matching
         // the web's `DeleteConfirmDialog` wording exactly.
         .confirmationDialog(

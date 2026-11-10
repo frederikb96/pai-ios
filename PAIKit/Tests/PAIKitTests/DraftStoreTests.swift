@@ -156,7 +156,7 @@ private final class FakeDraftsFetching: DraftsFetching, @unchecked Sendable {
 
     func putDraft(
         key: String, text: String, deviceId: String?, sessionType: String?, workingDir: String?, model: String?,
-        thinking: String?
+        thinking: String?, noMemory: Bool?
     ) async throws -> DraftWriteResult {
         record("putDraft:start:\(key)")
         if let putGate {
@@ -276,6 +276,25 @@ final class DraftStoreTests: XCTestCase {
         XCTAssertEqual(store.draft(for: DraftKey.newSession).model, "claude-haiku-5-5")
         store.selectSessionType("mailverdict")
         XCTAssertNil(store.draft(for: DraftKey.newSession).model)
+    }
+
+    /// The no-memory switch is its own launch choice: picking or changing a model leaves it alone,
+    /// and another device's choice arrives with the row like the model does.
+    func testTheNoMemorySwitchSurvivesAModelChoiceAndComesFromTheServer() async {
+        let fake = FakeDraftsFetching()
+        let store = DraftStore(api: fake, scheduler: InstantDraftScheduler())
+        store.selectNoMemory(true)
+        store.selectModel("opus")
+        XCTAssertEqual(store.draft(for: DraftKey.newSession).noMemory, true)
+
+        let other = DraftStore(api: fake, scheduler: InstantDraftScheduler())
+        fake.remoteDrafts = [
+            Draft(
+                key: DraftKey.newSession, text: "", sessionType: "home", workingDir: nil, noMemory: true,
+                updatedAt: nil, version: 3)
+        ]
+        await other.syncFromServer()
+        XCTAssertEqual(other.draft(for: DraftKey.newSession).noMemory, true)
     }
 
     func testSettingTextDoesNotClobberAnAlreadyChosenSessionType() async {

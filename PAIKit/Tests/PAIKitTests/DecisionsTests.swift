@@ -95,7 +95,7 @@ final class DecisionsTests: XCTestCase {
         func getDrafts() async throws -> [Draft] { [] }
         func putDraft(
             key: String, text: String, deviceId: String?, sessionType: String?, workingDir: String?, model: String?,
-            thinking: String?
+            thinking: String?, noMemory: Bool?
         ) async throws -> DraftWriteResult {
             DraftWriteResult(key: key, version: 1, previousText: nil)
         }

@@ -248,7 +248,8 @@ struct SessionDetailView: View {
                 activityCounts: newValue.activityCounts,
                 secretGrantable: newValue.secretGrantable, secretPrompt: newValue.secretPrompt,
                 liveModel: newValue.liveModel, model: newValue.model, pendingModel: newValue.pendingModel,
-                transfer: newValue.transfer, ultrafastModel: newValue.ultrafastModel, thinking: newValue.thinking
+                transfer: newValue.transfer, ultrafastModel: newValue.ultrafastModel, thinking: newValue.thinking,
+                noMemory: newValue.noMemory
             )
         }
         .task {
@@ -353,6 +354,7 @@ struct SessionDetailView: View {
             if showLabel, let label = SessionListDomain.statusStripLabel(for: session, isWorking: isWorking(session)) {
                 Text(label).fixedSize(horizontal: true, vertical: false)
             }
+            if session.isNoMemory { NoMemoryPill() }
 
             Spacer(minLength: 8)
 

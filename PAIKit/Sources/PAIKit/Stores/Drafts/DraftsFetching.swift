@@ -11,7 +11,7 @@ public protocol DraftsFetching: Sendable {
     func getDrafts() async throws -> [Draft]
     func putDraft(
         key: String, text: String, deviceId: String?, sessionType: String?, workingDir: String?, model: String?,
-        thinking: String?
+        thinking: String?, noMemory: Bool?
     ) async throws -> DraftWriteResult
     func deleteDraft(key: String) async throws -> PaiDraftDeleteResult
     func addDraftAttachment(key: String, file: PaiFileUpload, id: String) async throws -> DraftAttachment

@@ -23,7 +23,7 @@ final class MailVerdictKeyTests: XCTestCase {
         _ = try await client.postMessage(
             sessionId: nil, message: "hi", clientMessageId: "c1", files: [], draftAttachmentIds: [],
             supersededUploadIds: [], sessionType: "mailverdict", workingDir: nil, agent: nil, model: nil,
-            thinking: nil, clientMode: nil, heldTake: nil, mailVerdictKey: "device-key")
+            thinking: nil, clientMode: nil, heldTake: nil, noMemory: nil, mailVerdictKey: "device-key")
         XCTAssertEqual(
             PaiStubURLProtocol.capturedRequest?.value(forHTTPHeaderField: PaiApiClient.mailVerdictKeyHeader),
             "device-key")
@@ -90,7 +90,7 @@ private final class KeyRecordingSender: OutboxKeyedSending, @unchecked Sendable 
     func postMessage(
         sessionId: String?, message: String, clientMessageId: String, files: [PaiFileUpload],
         draftAttachmentIds: [String], supersededUploadIds: [String], sessionType: String?, workingDir: String?,
-        agent: String?, model: String?, thinking: String?, clientMode: String?, heldTake: HeldTake?
+        agent: String?, model: String?, thinking: String?, clientMode: String?, heldTake: HeldTake?, noMemory: Bool?
     ) async throws -> PostMessageResponse {
         record(message, nil)
         return PostMessageResponse(sessionId: sessionId ?? "new", messageId: 1)
@@ -99,7 +99,7 @@ private final class KeyRecordingSender: OutboxKeyedSending, @unchecked Sendable 
     func postMessage(
         sessionId: String?, message: String, clientMessageId: String, files: [PaiFileUpload],
         draftAttachmentIds: [String], supersededUploadIds: [String], sessionType: String?, workingDir: String?,
-        agent: String?, model: String?, thinking: String?, clientMode: String?, heldTake: HeldTake?,
+        agent: String?, model: String?, thinking: String?, clientMode: String?, heldTake: HeldTake?, noMemory: Bool?,
         mailVerdictKey: String?
     ) async throws -> PostMessageResponse {
         record(message, mailVerdictKey)

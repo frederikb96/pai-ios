@@ -25,6 +25,10 @@ public struct DraftEntry: Equatable, Sendable, Codable {
     /// A `claude --effort` level for the next session — only meaningful alongside `model` above.
     /// `nil` lets Claude Code pick the plan's own default.
     public var thinking: String?
+    /// Whether the next session is a no-memory one — only meaningful on ``DraftKey/newSession``,
+    /// independent of the model choice. Optional so an entry persisted before the field existed
+    /// still decodes; `nil` reads as off.
+    public var noMemory: Bool?
     /// `version` of the server row this entry was last reconciled with — `nil` for a key never
     /// yet written or adopted. The only field ``DraftStore/syncFromServer()`` orders by: a row
     /// whose `version` is not strictly greater than this is never adopted, however different its
@@ -44,13 +48,15 @@ public struct DraftEntry: Equatable, Sendable, Codable {
 
     public init(
         text: String, sessionType: String?, workingDir: String?, model: String? = nil, thinking: String? = nil,
-        knownVersion: Int? = nil, previousText: String? = nil, attachments: [DraftAttachment] = []
+        noMemory: Bool? = nil, knownVersion: Int? = nil, previousText: String? = nil,
+        attachments: [DraftAttachment] = []
     ) {
         self.text = text
         self.sessionType = sessionType
         self.workingDir = workingDir
         self.model = model
         self.thinking = thinking
+        self.noMemory = noMemory
         self.knownVersion = knownVersion
         self.previousText = previousText
         self.attachments = attachments

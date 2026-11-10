@@ -12,7 +12,9 @@ struct BrowserLiveScreen: View {
 
     @State private var store: BrowserViewStore?
     @State private var typed = ""
+    @State private var address = ""
     @FocusState private var isTyping: Bool
+    @FocusState private var isAddressing: Bool
 
     private static let keys: [(label: String, key: String)] = [
         ("Enter", "Enter"), ("Tab", "Tab"), ("Esc", "Escape"),
@@ -40,7 +42,6 @@ struct BrowserLiveScreen: View {
             }
         }
         .navigationTitle(store?.session?.displayTitle ?? name)
-        .navigationSubtitle(store?.session?.url ?? "")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("browser-screen")
         // Identified by whether identity is known: the stream is never opened before the account
@@ -62,6 +63,7 @@ struct BrowserLiveScreen: View {
 
     private func content(_ store: BrowserViewStore) -> some View {
         VStack(spacing: 0) {
+            addressBar(store)
             if let handoff = store.session?.handoff { handoffBanner(handoff, store: store) }
             if case .finished(let message) = store.handback {
                 Text(message)
@@ -100,6 +102,29 @@ struct BrowserLiveScreen: View {
                 .accessibilityLabel("Reload")
             }
         }
+    }
+
+    /// Shows the page's address and opens whatever is typed over it on Return, like the web's bar.
+    /// The page's own navigation refreshes it unless the field is being edited.
+    private func addressBar(_ store: BrowserViewStore) -> some View {
+        TextField("Address", text: $address)
+            .textFieldStyle(.roundedBorder)
+            .keyboardType(.URL)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .submitLabel(.go)
+            .focused($isAddressing)
+            .onSubmit {
+                store.goto(address)
+                isAddressing = false
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .onAppear { address = store.session?.url ?? "" }
+            .onChange(of: store.session?.url) { _, url in
+                if !isAddressing { address = url ?? "" }
+            }
+            .accessibilityIdentifier("browser-address-field")
     }
 
     private func handoffBanner(_ handoff: BrowserHandoff, store: BrowserViewStore) -> some View {

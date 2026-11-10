@@ -257,6 +257,10 @@ actor FakeCreateSessionApi: CreateSessionApiClient {
         SessionModelsResponse(models: [], fastDefaultModel: "sonnet", fastDefaultThinking: "low")
     )
 
+    func setSessionModelsResult(_ result: Result<SessionModelsResponse, PaiError>) {
+        sessionModelsResult = result
+    }
+
     func getSessionTypes() async throws -> [SessionType] {
         switch sessionTypesResult {
         case let .success(types): return types
@@ -278,7 +282,7 @@ actor FakeOutboxSending: OutboxSending {
     private(set) var postMessageCalls:
         [(
             sessionId: String?, message: String, clientMessageId: String, sessionType: String?, workingDir: String?,
-            agent: String?, model: String?, thinking: String?
+            agent: String?, model: String?, thinking: String?, noMemory: Bool?
         )] = []
     var postMessageResult: Result<PostMessageResponse, PaiError> = .success(
         PostMessageResponse(sessionId: "new-session-id", messageId: 1)
@@ -288,12 +292,12 @@ actor FakeOutboxSending: OutboxSending {
         sessionId: String?, message: String, clientMessageId: String, files: [PaiFileUpload],
         draftAttachmentIds: [String], supersededUploadIds: [String], sessionType: String?, workingDir: String?,
         agent: String?, model: String?,
-        thinking: String?, clientMode: String?, heldTake: HeldTake?
+        thinking: String?, clientMode: String?, heldTake: HeldTake?, noMemory: Bool?
     ) async throws -> PostMessageResponse {
         postMessageCalls.append(
             (
                 sessionId: sessionId, message: message, clientMessageId: clientMessageId, sessionType: sessionType,
-                workingDir: workingDir, agent: agent, model: model, thinking: thinking
+                workingDir: workingDir, agent: agent, model: model, thinking: thinking, noMemory: noMemory
             )
         )
         switch postMessageResult {
@@ -354,6 +358,10 @@ actor FakeSessionActionsApi: SessionActionsApiClient {
     private(set) var setIdleTimeoutCalls: [(sessionId: String, minutes: Int?)] = []
     private(set) var exportCalls: [(sessionId: String, since: String?)] = []
     private(set) var transferCalls: [(sessionId: String, toAgent: String, force: Bool)] = []
+    private(set) var compactAndCloseCalls: [String] = []
+    var compactAndCloseError: PaiError?
+
+    func setCompactAndCloseError(_ error: PaiError?) { compactAndCloseError = error }
 
     var sessionResult: Result<Session, PaiError> = .success(SessionFixture.make())
     var exportResult: Result<PaiExportResult, PaiError> = .success(
@@ -372,6 +380,11 @@ actor FakeSessionActionsApi: SessionActionsApiClient {
     func setIdleTimeout(sessionId: String, minutes: Int?) async throws -> Session {
         setIdleTimeoutCalls.append((sessionId, minutes))
         return try unwrap(sessionResult)
+    }
+
+    func compactAndCloseSession(sessionId: String) async throws {
+        compactAndCloseCalls.append(sessionId)
+        if let compactAndCloseError { throw compactAndCloseError }
     }
 
     func exportSession(sessionId: String, since: String?) async throws -> PaiExportResult {
@@ -428,7 +441,8 @@ enum SessionFixture {
         secretGrantable: Bool? = nil,
         liveModel: String? = nil,
         model: String? = nil,
-        pendingModel: String? = nil
+        pendingModel: String? = nil,
+        noMemory: Bool? = nil
     ) -> Session {
         Session(
             id: id,
@@ -468,7 +482,8 @@ enum SessionFixture {
             pendingModel: pendingModel,
             taskId: taskId,
             activityCounts: activityCounts,
-            secretGrantable: secretGrantable
+            secretGrantable: secretGrantable,
+            noMemory: noMemory
         )
     }
 }

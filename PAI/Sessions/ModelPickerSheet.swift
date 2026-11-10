@@ -16,6 +16,9 @@ struct ModelPickerSheet: View {
     let createSession: CreateSessionStore
     let onSelectModel: (String?) -> Void
     let onSelectThinking: (String?) -> Void
+    let onSelectNoMemory: (Bool) -> Void
+
+    @State private var showingNoMemoryInfo = false
 
     var body: some View {
         NavigationStack {
@@ -53,6 +56,25 @@ struct ModelPickerSheet: View {
                             .foregroundStyle(PaiPalette.Semantic.textMuted)
                     }
                 }
+
+                // Independent of the model choice above, so it sits apart at the bottom.
+                Section {
+                    HStack {
+                        Toggle(
+                            NoMemoryCopy.toggleLabel,
+                            isOn: Binding(get: { createSession.noMemory }, set: onSelectNoMemory)
+                        )
+                        .accessibilityIdentifier("model-picker-no-memory")
+                        Button {
+                            showingNoMemoryInfo = true
+                        } label: {
+                            Image(systemName: "info.circle")
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("About no memory")
+                        .accessibilityIdentifier("model-picker-no-memory-info")
+                    }
+                }
             }
             .navigationTitle("Model")
             .navigationBarTitleDisplayMode(.inline)
@@ -62,6 +84,7 @@ struct ModelPickerSheet: View {
                         .accessibilityIdentifier("model-picker-done")
                 }
             }
+            .sheet(isPresented: $showingNoMemoryInfo) { NoMemoryInfoSheet() }
         }
     }
 

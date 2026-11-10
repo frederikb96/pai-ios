@@ -119,6 +119,14 @@ public final class BrowserViewStore {
         queue?.push(input)
     }
 
+    /// Opens an address in the page. The agent's side adds `https://` to a bare host and refuses
+    /// anything but http(s), so only blank input is dropped here.
+    public func goto(_ address: String) {
+        let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        send(.nav(.goto, url: trimmed))
+    }
+
     /// The text field's contents into whatever the page has focused, optionally followed by Enter.
     public func sendTyped(_ text: String, thenEnter: Bool) {
         if !text.isEmpty { send(.text(text)) }
