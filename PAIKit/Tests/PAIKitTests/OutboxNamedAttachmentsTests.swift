@@ -14,7 +14,7 @@ private final class ServedDraftsApi: DraftsFetching, @unchecked Sendable {
     func getDrafts() async throws -> [Draft] { rows }
     func putDraft(
         key: String, text: String, deviceId: String?, sessionType: String?, workingDir: String?, model: String?,
-        thinking: String?
+        thinking: String?, noMemory: Bool?
     ) async throws -> DraftWriteResult {
         DraftWriteResult(key: key, version: 1, previousText: nil)
     }
@@ -49,7 +49,7 @@ private final class GatedSender: OutboxSending, @unchecked Sendable {
         sessionId: String?, message: String, clientMessageId: String, files: [PaiFileUpload],
         draftAttachmentIds: [String], supersededUploadIds: [String], sessionType: String?, workingDir: String?,
         agent: String?, model: String?,
-        thinking: String?, clientMode: String?, heldTake: HeldTake?
+        thinking: String?, clientMode: String?, heldTake: HeldTake?, noMemory: Bool?
     ) async throws -> PostMessageResponse {
         lock.withLock { _superseded.append(supersededUploadIds) }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in

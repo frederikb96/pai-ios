@@ -586,13 +586,14 @@ public struct PaiApiClient: Sendable {
         model: String? = nil,
         thinking: String? = nil,
         clientMode: String? = nil,
-        heldTake: HeldTake? = nil
+        heldTake: HeldTake? = nil,
+        noMemory: Bool? = nil
     ) async throws -> PostMessageResponse {
         try await postMessage(
             sessionId: sessionId, message: message, clientMessageId: clientMessageId, files: files,
             draftAttachmentIds: draftAttachmentIds, supersededUploadIds: supersededUploadIds,
             sessionType: sessionType, workingDir: workingDir, agent: agent, model: model, thinking: thinking,
-            clientMode: clientMode, heldTake: heldTake, mailVerdictKey: nil)
+            clientMode: clientMode, heldTake: heldTake, noMemory: noMemory, mailVerdictKey: nil)
     }
 
     /// ``postMessage(sessionId:message:clientMessageId:files:draftAttachmentIds:supersededUploadIds:sessionType:workingDir:agent:model:thinking:clientMode:heldTake:)``
@@ -613,6 +614,7 @@ public struct PaiApiClient: Sendable {
         thinking: String?,
         clientMode: String?,
         heldTake: HeldTake?,
+        noMemory: Bool?,
         mailVerdictKey: String?
     ) async throws -> PostMessageResponse {
         let boundary = "PAIKit-\(UUID().uuidString)"
@@ -639,6 +641,9 @@ public struct PaiApiClient: Sendable {
         // Fixed at creation — ignored server-side once `sessionId` names an existing one.
         if let model { Self.appendFormField(&body, boundary: boundary, name: "model", value: model) }
         if let thinking { Self.appendFormField(&body, boundary: boundary, name: "thinking", value: thinking) }
+        // Fixed at creation like the model; only a `true` is sent, so an ordinary create is
+        // byte-identical to one from a build that predates the field.
+        if noMemory == true { Self.appendFormField(&body, boundary: boundary, name: "no_memory", value: "true") }
         // How the message was dictated — the session is told when it is being listened to through
         // a speech engine rather than read, so it can answer in a shape that survives being
         // spoken aloud.
@@ -752,6 +757,13 @@ public struct PaiApiClient: Sendable {
 
     public func closeSession(sessionId: String) async throws -> CloseResponse {
         try await send(path: "/api/session/\(sessionId)/close", method: "POST", body: nil, contentType: nil)
+    }
+
+    /// Answers at once (202) and compacts, then closes, in the background; the row reads `closed`
+    /// once the backend has done both, through the status stream.
+    public func compactAndCloseSession(sessionId: String) async throws {
+        try await sendDiscardingResponse(
+            path: "/api/session/\(sessionId)/compact-and-close", method: "POST", body: nil, contentType: nil)
     }
 
     /// The backend holds a transfer request open while it relays the files and waits for the target
@@ -885,7 +897,8 @@ public struct PaiApiClient: Sendable {
         sessionType: String? = nil,
         workingDir: String? = nil,
         model: String? = nil,
-        thinking: String? = nil
+        thinking: String? = nil,
+        noMemory: Bool? = nil
     ) async throws -> DraftWriteResult {
         struct Body: Encodable {
             let text: String
@@ -894,8 +907,10 @@ public struct PaiApiClient: Sendable {
             let workingDir: String?
             let model: String?
             let thinking: String?
+            let noMemory: Bool?
             enum CodingKeys: String, CodingKey {
                 case text, thinking
+                case noMemory = "no_memory"
                 case deviceId = "device_id"
                 case sessionType = "session_type"
                 case workingDir = "working_dir"
@@ -908,7 +923,7 @@ public struct PaiApiClient: Sendable {
             body: try Self.jsonBody(
                 Body(
                     text: text, deviceId: deviceId, sessionType: sessionType, workingDir: workingDir, model: model,
-                    thinking: thinking))
+                    thinking: thinking, noMemory: noMemory))
         )
     }
 

@@ -114,6 +114,10 @@ public struct OutboxEntry: Codable, Sendable, Equatable, Identifiable {
     /// transcribing. Fixed when the entry is made and sent unchanged on every retry, so the
     /// server composes the message from the same `before`/`after` however often it is resent.
     public var heldTake: HeldTake?
+    /// A new session created with no memory: nothing of it reaches PAI memory and it is deleted on
+    /// close. Meaningful for a ``OutboxTarget/newSession`` entry only; optional so an entry
+    /// persisted without it still decodes.
+    public var noMemory: Bool?
     public var state: OutboxEntryState
     public var attempts: Int
     public var lastError: String?
@@ -127,7 +131,8 @@ public struct OutboxEntry: Codable, Sendable, Equatable, Identifiable {
         clientMessageId: String = UUID().uuidString, target: OutboxTarget, text: String,
         draftAttachmentIds: [String] = [], inlineFiles: [OutboxInlineFile] = [],
         supersededUploadIds: [String]? = nil, clientMode: String? = nil,
-        heldTake: HeldTake? = nil, state: OutboxEntryState = .queued, attempts: Int = 0, lastError: String? = nil,
+        heldTake: HeldTake? = nil, noMemory: Bool? = nil, state: OutboxEntryState = .queued, attempts: Int = 0,
+        lastError: String? = nil,
         createdAt: Date = Date(),
         result: OutboxResult? = nil
     ) {
@@ -139,6 +144,7 @@ public struct OutboxEntry: Codable, Sendable, Equatable, Identifiable {
         self.supersededUploadIds = supersededUploadIds
         self.clientMode = clientMode
         self.heldTake = heldTake
+        self.noMemory = noMemory
         self.state = state
         self.attempts = attempts
         self.lastError = lastError

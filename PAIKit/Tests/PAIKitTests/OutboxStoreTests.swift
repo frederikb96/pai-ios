@@ -71,7 +71,7 @@ private final class FakeOutboxApi: OutboxSending, @unchecked Sendable {
         sessionId: String?, message: String, clientMessageId: String, files: [PaiFileUpload],
         draftAttachmentIds: [String], supersededUploadIds: [String], sessionType: String?, workingDir: String?,
         agent: String?, model: String?,
-        thinking: String?, clientMode: String?, heldTake: HeldTake?
+        thinking: String?, clientMode: String?, heldTake: HeldTake?, noMemory: Bool?
     ) async throws -> PostMessageResponse {
         recordHeldTake(heldTake)
         record(

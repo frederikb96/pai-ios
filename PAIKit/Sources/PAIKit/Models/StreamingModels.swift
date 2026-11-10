@@ -89,6 +89,8 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
     public let ultrafastModel: String?
     /// See `Session.thinking`.
     public let thinking: String?
+    /// See `Session.noMemory`.
+    public let noMemory: Bool?
     /// See `Session.transferredToSessionId`.
     public let transferredToSessionId: String?
     /// See `Session.transferredAt`.
@@ -119,6 +121,7 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
         case pendingModel = "pending_model"
         case ultrafastModel = "ultrafast_model"
         case thinking
+        case noMemory = "no_memory"
         case transferredToSessionId = "transferred_to_session_id"
         case transferredAt = "transferred_at"
         case queuedTexts = "queued_texts"
@@ -140,6 +143,7 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
         pendingModel: String? = nil,
         ultrafastModel: String? = nil,
         thinking: String? = nil,
+        noMemory: Bool? = nil,
         transferredToSessionId: String? = nil,
         transferredAt: String? = nil,
         queued: Int?,
@@ -160,6 +164,7 @@ public struct SseStatusEvent: Codable, Sendable, Equatable {
         self.pendingModel = pendingModel
         self.ultrafastModel = ultrafastModel
         self.thinking = thinking
+        self.noMemory = noMemory
         self.transferredToSessionId = transferredToSessionId
         self.transferredAt = transferredAt
         self.queued = queued

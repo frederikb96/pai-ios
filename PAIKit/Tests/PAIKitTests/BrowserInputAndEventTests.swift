@@ -148,3 +148,29 @@ final class BrowserLinkTests: XCTestCase {
         XCTAssertNil(DeepLink.from(url: URL(string: "pai://browser/-bad")!))
     }
 }
+
+private actor RecordingBrowserApi: BrowserApiClient {
+    private(set) var inputs: [BrowserInput] = []
+    func listBrowserSessions() async throws -> [BrowserSession] { [] }
+    func sendBrowserInput(name: String, input: BrowserInput) async throws { inputs.append(input) }
+    func handBackBrowserSession(name: String, result: BrowserHandbackResult, note: String?) async throws
+        -> BrowserHandbackAnswer
+    { throw PaiError.transport("not used") }
+}
+
+@MainActor
+final class BrowserAddressTests: XCTestCase {
+    func testAnAddressIsSentAsAGotoAndBlankInputIsDropped() async throws {
+        let api = RecordingBrowserApi()
+        let factory = try PaiRequestFactory(baseURL: "https://pai.example.com", tokenProvider: { "jwt" })
+        let store = BrowserViewStore(name: "b1", api: api, requestFactory: factory)
+
+        store.goto("   ")
+        store.goto("  example.com/path ")
+
+        for _ in 0..<200 where await api.inputs.isEmpty { try await Task.sleep(nanoseconds: 10_000_000) }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let inputs = await api.inputs
+        XCTAssertEqual(inputs, [.nav(.goto, url: "example.com/path")])
+    }
+}

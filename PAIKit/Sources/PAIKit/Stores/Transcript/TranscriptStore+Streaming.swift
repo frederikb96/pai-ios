@@ -37,7 +37,7 @@ extension TranscriptStore {
             displayState: event.displayState, activityCounts: event.activityCounts,
             secretGrantable: event.secretGrantable, secretPrompt: event.secretPrompt,
             liveModel: event.liveModel, model: event.model, pendingModel: event.pendingModel,
-            ultrafastModel: event.ultrafastModel, thinking: event.thinking,
+            ultrafastModel: event.ultrafastModel, thinking: event.thinking, noMemory: event.noMemory,
             transfer: SessionMoved.Mark(toSessionId: event.transferredToSessionId, at: event.transferredAt)
         )
     }

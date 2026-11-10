@@ -23,7 +23,7 @@ private struct SilentDraftsApi: DraftsFetching {
     func getDrafts() async throws -> [Draft] { [] }
     func putDraft(
         key: String, text: String, deviceId: String?, sessionType: String?, workingDir: String?, model: String?,
-        thinking: String?
+        thinking: String?, noMemory: Bool?
     ) async throws -> DraftWriteResult {
         DraftWriteResult(key: key, version: 1, previousText: nil)
     }
@@ -70,7 +70,7 @@ private final class ScriptedApi: OutboxSending, OutboxWithdrawing, @unchecked Se
         sessionId: String?, message: String, clientMessageId: String, files: [PaiFileUpload],
         draftAttachmentIds: [String], supersededUploadIds: [String], sessionType: String?, workingDir: String?,
         agent: String?, model: String?,
-        thinking: String?, clientMode: String?, heldTake: HeldTake?
+        thinking: String?, clientMode: String?, heldTake: HeldTake?, noMemory: Bool?
     ) async throws -> PostMessageResponse {
         let (gate, fails) = lock.withLock { () -> (Rendezvous?, Bool) in
             _postedIds.append(clientMessageId)

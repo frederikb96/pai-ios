@@ -14,6 +14,7 @@ public enum SessionTransfer {
             && !(session.kind.map(sessionKindsWithoutProcess.contains) ?? false)
             && !(session.kind.map(sessionKindsPodResident.contains) ?? false)
             && session.claudeSessionId != nil
+            && !session.isNoMemory
             && session.transferredToSessionId == nil
     }
 

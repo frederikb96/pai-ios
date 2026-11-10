@@ -143,9 +143,13 @@ struct CreateSessionView: View {
             if resumed != nil {
                 store.selectModel(persisted.model)
                 store.selectThinking(persisted.thinking)
+                store.selectNoMemory(persisted.noMemory == true)
                 startsCallOnSend = resumed?.startsCall ?? false
             } else {
                 drafts.selectModel(nil)
+                // Like the model, a creation starts ordinary: a switch left on would silently
+                // delete the next session on close.
+                if persisted.noMemory == true { drafts.selectNoMemory(false) }
             }
             // The point of this screen is the text field — true whether it was reached by tapping
             // "+" or by a home-screen shortcut built to land here ready to type. The camera quick
@@ -279,6 +283,14 @@ struct CreateSessionView: View {
                     onSelectThinking: { id in
                         createSession.selectThinking(id)
                         drafts.selectThinking(id)
+                    },
+                    onSelectNoMemory: { on in
+                        createSession.selectNoMemory(on)
+                        drafts.selectNoMemory(on)
+                        // Turning it on drops a chosen Hermes model; the draft follows.
+                        if on, createSession.selectedModel == nil, drafts.draft(for: DraftKey.newSession).model != nil {
+                            drafts.selectModel(nil)
+                        }
                     }
                 )
             }
@@ -462,22 +474,25 @@ struct CreateSessionView: View {
             createSession.resolvedModel.map { createSession.modelLabel($0) }
             ?? "Default"
         let thinkingLabel = createSession.resolvedThinking.map { CreateSessionStore.effortLevelLabels[$0] ?? $0 }
-        return Button {
-            isPresentingModelPicker = true
-        } label: {
-            HStack(spacing: 6) {
-                Text(thinkingLabel.map { "\(modelLabel) · \($0)" } ?? modelLabel)
-                    .font(PaiTypography.captionEmphasized.font)
-                Image(systemName: "chevron.down")
-                    .font(.caption2)
+        return HStack(spacing: 8) {
+            Button {
+                isPresentingModelPicker = true
+            } label: {
+                HStack(spacing: 6) {
+                    Text(thinkingLabel.map { "\(modelLabel) · \($0)" } ?? modelLabel)
+                        .font(PaiTypography.captionEmphasized.font)
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(PaiPalette.Semantic.raisedSurface, in: Capsule())
+                .foregroundStyle(PaiPalette.Semantic.textPrimary)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(PaiPalette.Semantic.raisedSurface, in: Capsule())
-            .foregroundStyle(PaiPalette.Semantic.textPrimary)
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("create-session-model-button")
+            if createSession.noMemory { NoMemoryPill() }
         }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("create-session-model-button")
     }
 
     private func workingDirRow(_ dir: String, _ createSession: CreateSessionStore) -> some View {

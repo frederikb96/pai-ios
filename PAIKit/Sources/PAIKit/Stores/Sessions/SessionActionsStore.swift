@@ -8,6 +8,7 @@ public protocol SessionActionsApiClient: Sendable {
     func setIdleTimeout(sessionId: String, minutes: Int?) async throws -> Session
     func exportSession(sessionId: String, since: String?) async throws -> PaiExportResult
     func transferSession(sessionId: String, toAgent: String, force: Bool) async throws -> TransferResponse
+    func compactAndCloseSession(sessionId: String) async throws
 }
 
 extension PaiApiClient: SessionActionsApiClient {}
@@ -126,6 +127,28 @@ public final class SessionActionsStore {
                     self.closeInBackground(toasts: toasts)
                 }
             )
+        }
+    }
+
+    /// Asks the backend to compact the conversation and then close it. The request answers at
+    /// once and the work takes as long as the compaction does, so — like ``closeInBackground`` —
+    /// nothing waits here: the row reads `closed` when the status stream says so, and a refusal
+    /// is a toast with Retry.
+    public func compactAndCloseInBackground(toasts: ToastCenter) {
+        let sessionId = sessionId
+        Task { [weak self, weak toasts, api] in
+            do {
+                try await api.compactAndCloseSession(sessionId: sessionId)
+            } catch {
+                guard let self, let toasts else { return }
+                toasts.show(
+                    (error as? PaiError)?.userMessage ?? "Could not compact and close the session", kind: .error,
+                    action: ToastMessage.Action(label: "Retry") { [weak self, weak toasts] in
+                        guard let self, let toasts else { return }
+                        self.compactAndCloseInBackground(toasts: toasts)
+                    }
+                )
+            }
         }
     }
 

@@ -70,6 +70,9 @@ public struct Draft: Codable, Sendable, Equatable, Identifiable {
     /// The `claude --effort` level this draft's session will launch with — same "new" draft-only
     /// scoping as `model` above. `nil` lets Claude Code pick the plan's own default.
     public let thinking: String?
+    /// The no-memory choice of the next session — same "new" draft-only scoping as `model`
+    /// above. `nil` from a backend that predates the field, read as off.
+    public let noMemory: Bool?
     public let updatedAt: String?
     /// Server-assigned, `+1` on every write to the row, including a clear. The only field a
     /// client may order by.
@@ -87,6 +90,7 @@ public struct Draft: Codable, Sendable, Equatable, Identifiable {
         case sessionType = "session_type"
         case workingDir = "working_dir"
         case model, thinking
+        case noMemory = "no_memory"
         case updatedAt = "updated_at"
         case version
         case deviceId = "device_id"
@@ -96,7 +100,7 @@ public struct Draft: Codable, Sendable, Equatable, Identifiable {
 
     public init(
         key: String, text: String, sessionType: String?, workingDir: String?, model: String? = nil,
-        thinking: String? = nil, updatedAt: String?, version: Int = 0, deviceId: String? = nil,
+        thinking: String? = nil, noMemory: Bool? = nil, updatedAt: String?, version: Int = 0, deviceId: String? = nil,
         previousText: String? = nil, attachments: [DraftAttachment] = []
     ) {
         self.key = key
@@ -105,6 +109,7 @@ public struct Draft: Codable, Sendable, Equatable, Identifiable {
         self.workingDir = workingDir
         self.model = model
         self.thinking = thinking
+        self.noMemory = noMemory
         self.updatedAt = updatedAt
         self.version = version
         self.deviceId = deviceId

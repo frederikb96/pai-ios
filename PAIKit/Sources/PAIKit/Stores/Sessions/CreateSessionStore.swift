@@ -98,6 +98,10 @@ public final class CreateSessionStore {
     /// A `claude --effort` level — only meaningful alongside `selectedModel`. `nil` lets Claude
     /// Code pick the plan's own default.
     public private(set) var selectedThinking: String?
+    /// Whether the next session is a no-memory one: nothing of it reaches PAI memory and it is
+    /// deleted when it closes. Independent of the model and thinking choices, and fixed at
+    /// creation. Never offered together with a Hermes model, whose history PAI cannot delete.
+    public private(set) var noMemory = false
     /// Every `claude --model` alias and the `claude --effort` levels it supports — the model
     /// picker's own data, fetched once by `start()` so it never hand-mirrors
     /// `config.SESSION_MODEL_EFFORT_LEVELS`.
@@ -170,7 +174,8 @@ public final class CreateSessionStore {
     /// start them, the Hermes entries.
     public var pickerModels: [SessionModelInfo] {
         guard isApiSessionSelected else {
-            let hermesCapable = selectedSessionTypeId.map(Self.hermesCapableSessionTypeIds.contains) ?? false
+            let hermesCapable =
+                !noMemory && (selectedSessionTypeId.map(Self.hermesCapableSessionTypeIds.contains) ?? false)
             return sessionModels.filter { hermesCapable || !$0.isHermes }
         }
         return (apiCatalog?.models ?? []).map { SessionModelInfo(id: $0.id, effortLevels: $0.effortLevels) }
@@ -233,6 +238,7 @@ public final class CreateSessionStore {
         selectedMachine = MachineStore.defaultMachineSlug
         selectedSessionTypeId = nil
         workingDir = nil
+        noMemory = false
     }
 
     /// Loads the legacy global session-type list and applies the initial preselection. Call once
@@ -302,6 +308,15 @@ public final class CreateSessionStore {
         selectedThinking = id
     }
 
+    /// Turning it on drops a chosen Hermes model, since the combination is refused.
+    public func selectNoMemory(_ on: Bool) {
+        noMemory = on
+        if on, isHermesModelSelected {
+            selectedModel = nil
+            selectedThinking = nil
+        }
+    }
+
     /// A chosen directory is what makes a session custom, so the two always move together.
     /// `nil` (Cancel, or an explicit Clear) drops back to no type, which immediately re-admits
     /// the preselect rule to choose `fast`/the first type again.
@@ -357,7 +372,7 @@ public final class CreateSessionStore {
                     model: keepsChoice ? selectedModel : nil,
                     thinking: keepsChoice ? selectedThinking : nil),
                 text: message, draftAttachmentIds: draftAttachmentIds, inlineFiles: inlineFiles,
-                supersededUploadIds: supersededUploadIds, heldTake: heldTake
+                supersededUploadIds: supersededUploadIds, heldTake: heldTake, noMemory: noMemory ? true : nil
             ),
             inlineFileData: inlineFileData)
         drafts?.setDraftText(key: DraftKey.newSession, text: "")

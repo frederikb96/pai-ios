@@ -467,6 +467,7 @@ struct SessionRow: View {
                 }
 
                 HStack(spacing: 6) {
+                    if row.session.isNoMemory { NoMemoryPill() }
                     if let movedPill {
                         Text(movedPill)
                             .font(PaiTypography.captionEmphasized.font)
