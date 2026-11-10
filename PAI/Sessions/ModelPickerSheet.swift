@@ -26,7 +26,9 @@ struct ModelPickerSheet: View {
                 Section("Model") {
                     modelRow(id: nil, label: "Default")
                     ForEach(createSession.pickerModels) { model in
-                        modelRow(id: model.id, label: createSession.modelLabel(model.id))
+                        modelRow(
+                            id: model.id, label: createSession.modelLabel(model.id),
+                            isDisabled: createSession.isModelDisabled(model))
                     }
                 }
 
@@ -101,7 +103,7 @@ struct ModelPickerSheet: View {
         return "Fast sessions run \(model) at \(thinking) thinking unless you choose otherwise here."
     }
 
-    private func modelRow(id: String?, label: String) -> some View {
+    private func modelRow(id: String?, label: String, isDisabled: Bool = false) -> some View {
         let isSelected = createSession.resolvedModel == id
         return Button {
             onSelectModel(id)
@@ -114,6 +116,7 @@ struct ModelPickerSheet: View {
                 }
             }
         }
+        .disabled(isDisabled)
         .accessibilityIdentifier("model-picker-model-\(id ?? "default")")
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }

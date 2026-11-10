@@ -112,7 +112,7 @@ final class NoMemoryTests: XCTestCase {
         XCTAssertNil(secondCalls.first?.noMemory)
     }
 
-    func testTurningItOnDropsAHermesModelAndHidesHermesEntries() async {
+    func testTurningItOnDropsAHermesModelAndDisablesHermesEntries() async {
         let api = FakeCreateSessionApi()
         await api.setSessionModelsResult(
             .success(
@@ -130,7 +130,10 @@ final class NoMemoryTests: XCTestCase {
         store.selectNoMemory(true)
 
         XCTAssertNil(store.selectedModel)
-        XCTAssertFalse(store.pickerModels.contains { $0.isHermes })
+        let hermes = store.pickerModels.filter(\.isHermes)
+        XCTAssertFalse(hermes.isEmpty, "Hermes entries stay listed")
+        XCTAssertTrue(hermes.allSatisfy(store.isModelDisabled))
+        XCTAssertFalse(store.pickerModels.filter { !$0.isHermes }.contains(where: store.isModelDisabled))
     }
 
     func testAFreshVisitStartsWithTheSwitchOff() async {
@@ -186,7 +189,13 @@ final class NoMemoryTests: XCTestCase {
         }
         let calls = await actionsApi.compactAndCloseCalls
         XCTAssertEqual(calls, ["s1"])
-        XCTAssertTrue(toasts.toasts.isEmpty)
+        deadline = ContinuousClock().now + .seconds(5)
+        while toasts.toasts.isEmpty, ContinuousClock().now < deadline {
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        XCTAssertEqual(toasts.toasts.first?.text, SessionCompactAndClose.compactingToast)
+        XCTAssertEqual(toasts.toasts.first?.kind, .info)
+        if let id = toasts.toasts.first?.id { toasts.dismiss(id) }
 
         await actionsApi.setCompactAndCloseError(.transport("down"))
         store.compactAndCloseInBackground(toasts: toasts)

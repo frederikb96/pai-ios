@@ -174,12 +174,15 @@ public final class CreateSessionStore {
     /// start them, the Hermes entries.
     public var pickerModels: [SessionModelInfo] {
         guard isApiSessionSelected else {
-            let hermesCapable =
-                !noMemory && (selectedSessionTypeId.map(Self.hermesCapableSessionTypeIds.contains) ?? false)
+            let hermesCapable = selectedSessionTypeId.map(Self.hermesCapableSessionTypeIds.contains) ?? false
             return sessionModels.filter { hermesCapable || !$0.isHermes }
         }
         return (apiCatalog?.models ?? []).map { SessionModelInfo(id: $0.id, effortLevels: $0.effortLevels) }
     }
+    /// A Hermes entry stays listed while no memory is on but cannot be chosen: its history lives in
+    /// Hermes, out of reach of the delete.
+    public func isModelDisabled(_ model: SessionModelInfo) -> Bool { noMemory && model.isHermes }
+
     public func modelLabel(_ id: String) -> String {
         if isApiSessionSelected { return UltraFastModelInfo.label(for: id) }
         let served = sessionModels.first { $0.id == id }?.label

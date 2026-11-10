@@ -18,7 +18,8 @@ public enum SessionCompactAndClose {
 
     public static let closeAndDeleteTitle = "Close & delete?"
     public static let closeAndDeleteMessage =
-        "This is a no-memory session. Closing it deletes the conversation for good, and it cannot be resumed."
+        "This is a no-memory session: closing it deletes the whole conversation, and it cannot be resumed."
+    public static let compactingToast = "Compacting, then closing…"
 }
 
 /// The no-memory switch's own wording, shown by the model picker's info sheet.
@@ -26,10 +27,8 @@ public enum NoMemoryCopy {
     public static let toggleLabel = "No memory"
     public static let infoTitle = "No memory"
     public static let infoParagraphs = [
-        "A no-memory session leaves nothing behind in PAI. It gets no project or phase, no summaries are written, no memories are extracted from it and it is not named after what you talk about.",
-        "While it is open you see the conversation as usual. When you close it, the conversation is deleted from PAI and from the machine it ran on, and it cannot be resumed afterwards.",
-        "The session is also told not to write PAI memory, notes, skills or Claude's own auto memory, and not to read PAI memory. That part is an instruction, not a lock.",
-        "Backups that already ran, and notifications already on your phone, keep what they had.",
+        "A no-memory session reads no PAI memory and sits in no project or phase. Nothing in it is summarised, and the whole conversation is deleted once it is closed."
     ]
-    public static let hermesNote = "Not available with a Hermes model."
+    /// The composer's text for an ended no-memory session, which cannot be resumed.
+    public static let endedComposerText = "This no-memory session has ended and is being deleted."
 }

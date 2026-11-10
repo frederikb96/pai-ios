@@ -46,6 +46,13 @@ struct NonDrivableComposerBar: View {
                     }
                 }
 
+            case .noMemory:
+                // Deleted once closed, so there is nothing to resume.
+                Text(NoMemoryCopy.endedComposerText)
+                    .font(PaiTypography.body.font)
+                    .foregroundStyle(PaiPalette.Semantic.textMuted)
+                    .accessibilityIdentifier("no-memory-ended-text")
+
             case .machineOffline(let machineName):
                 Text("\(machineName) is offline — this session can be resumed once it is back.")
                     .font(PaiTypography.body.font)
@@ -97,6 +104,7 @@ struct NonDrivableComposerBar: View {
         case subagent
         case supervisor
         case computer
+        case noMemory
         case machineOffline(String)
         case collideConfirm
         case plainResume
@@ -110,6 +118,7 @@ struct NonDrivableComposerBar: View {
         if session.kind == .subagent { return .subagent }
         if session.kind == .supervisor { return .supervisor }
         if session.kind == .computer { return .computer }
+        if session.isNoMemory { return .noMemory }
         let machineSlug = session.agent ?? MachineStore.defaultMachineSlug
         let podAnswers = session.kind.map(sessionKindsPodResident.contains) ?? false
         if !podAnswers, let machine = machines.allMachines.first(where: { $0.slug == machineSlug }), !machine.online {

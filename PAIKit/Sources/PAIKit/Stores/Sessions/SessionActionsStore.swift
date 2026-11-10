@@ -139,6 +139,7 @@ public final class SessionActionsStore {
         Task { [weak self, weak toasts, api] in
             do {
                 try await api.compactAndCloseSession(sessionId: sessionId)
+                toasts?.show(SessionCompactAndClose.compactingToast, kind: .info)
             } catch {
                 guard let self, let toasts else { return }
                 toasts.show(
