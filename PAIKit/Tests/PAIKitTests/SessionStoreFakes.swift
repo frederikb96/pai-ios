@@ -442,7 +442,8 @@ enum SessionFixture {
         liveModel: String? = nil,
         model: String? = nil,
         pendingModel: String? = nil,
-        noMemory: Bool? = nil
+        noMemory: Bool? = nil,
+        closedUnexpectedly: Bool? = nil
     ) -> Session {
         Session(
             id: id,
@@ -483,7 +484,8 @@ enum SessionFixture {
             taskId: taskId,
             activityCounts: activityCounts,
             secretGrantable: secretGrantable,
-            noMemory: noMemory
+            noMemory: noMemory,
+            closedUnexpectedly: closedUnexpectedly
         )
     }
 }

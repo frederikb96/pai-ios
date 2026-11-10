@@ -118,7 +118,8 @@ struct NonDrivableComposerBar: View {
         if session.kind == .subagent { return .subagent }
         if session.kind == .supervisor { return .supervisor }
         if session.kind == .computer { return .computer }
-        if session.isNoMemory { return .noMemory }
+        // A crash keeps a grace period in which the ordinary Resume below still works.
+        if session.isNoMemory, !session.wasClosedUnexpectedly { return .noMemory }
         let machineSlug = session.agent ?? MachineStore.defaultMachineSlug
         let podAnswers = session.kind.map(sessionKindsPodResident.contains) ?? false
         if !podAnswers, let machine = machines.allMachines.first(where: { $0.slug == machineSlug }), !machine.online {

@@ -364,14 +364,15 @@ public final class SessionListStore {
         displayState: DisplayState?, activityCounts: ActivityCounts?, secretGrantable: Bool?,
         secretPrompt: SecretPrompt?, liveModel: String?, model: String?, pendingModel: String?,
         transfer: SessionMoved.Mark? = nil, ultrafastModel: String? = nil, thinking: String? = nil,
-        noMemory: Bool? = nil
+        noMemory: Bool? = nil, closedUnexpectedly: Bool? = nil
     ) {
         if let index = syncedSessions.firstIndex(where: { $0.id == sessionId }) {
             syncedSessions[index] = syncedSessions[index].withLiveStatus(
                 state: state, blocker: blocker, turnState: turnState, displayState: displayState,
                 activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
                 liveModel: liveModel, model: model, pendingModel: pendingModel, transfer: transfer,
-                ultrafastModel: ultrafastModel, thinking: thinking, noMemory: noMemory
+                ultrafastModel: ultrafastModel, thinking: thinking, noMemory: noMemory,
+                closedUnexpectedly: closedUnexpectedly
             )
         }
         if let index = serverFilteredResults.firstIndex(where: { $0.session.id == sessionId }) {
@@ -379,7 +380,8 @@ public final class SessionListStore {
                 state: state, blocker: blocker, turnState: turnState, displayState: displayState,
                 activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
                 liveModel: liveModel, model: model, pendingModel: pendingModel, transfer: transfer,
-                ultrafastModel: ultrafastModel, thinking: thinking, noMemory: noMemory
+                ultrafastModel: ultrafastModel, thinking: thinking, noMemory: noMemory,
+                closedUnexpectedly: closedUnexpectedly
             )
             serverFilteredResults[index] = SessionSearchResult(
                 session: updated, score: serverFilteredResults[index].score, tier: serverFilteredResults[index].tier

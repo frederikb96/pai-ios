@@ -33,6 +33,28 @@ final class NoMemoryTests: XCTestCase {
         XCTAssertTrue(row.isNoMemory)
     }
 
+    func testClosedUnexpectedlyRidesTheStatusEventAndSurvivesEveryCopy() async throws {
+        let json = #"{"status":"active","state":"closed","blocker":null,"closed_unexpectedly":true}"#
+        let event = try JSONDecoder().decode(SseStatusEvent.self, from: Data(json.utf8))
+        let transcript = TranscriptStore()
+        transcript.applySseStatus(sessionId: "s1", event: event)
+        XCTAssertEqual(transcript.liveStatus["s1"]?.closedUnexpectedly, true)
+
+        let live = SessionFixture.make(state: .ready, noMemory: true).withLiveStatus(
+            state: .closed, blocker: nil, turnState: nil, displayState: nil, activityCounts: nil,
+            secretGrantable: nil, secretPrompt: nil, liveModel: nil, model: nil, pendingModel: nil,
+            noMemory: nil, closedUnexpectedly: true)
+        XCTAssertTrue(live.wasClosedUnexpectedly)
+        XCTAssertTrue(live.withPinnedAt(nil).wasClosedUnexpectedly)
+        XCTAssertTrue(live.withLastActivityAt(nil).wasClosedUnexpectedly)
+        let resumed = live.withLiveStatus(
+            state: .ready, blocker: nil, turnState: nil, displayState: nil, activityCounts: nil,
+            secretGrantable: nil, secretPrompt: nil, liveModel: nil, model: nil, pendingModel: nil,
+            closedUnexpectedly: false)
+        XCTAssertFalse(resumed.wasClosedUnexpectedly)
+        XCTAssertFalse(SessionFixture.make().wasClosedUnexpectedly)
+    }
+
     func testALiveStatusWithoutTheFlagKeepsTheRowsOwn() async {
         let row = SessionFixture.make(noMemory: true).withLiveStatus(
             state: .ready, blocker: nil, turnState: nil, displayState: nil, activityCounts: nil,

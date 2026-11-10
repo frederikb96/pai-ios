@@ -249,7 +249,7 @@ struct SessionDetailView: View {
                 secretGrantable: newValue.secretGrantable, secretPrompt: newValue.secretPrompt,
                 liveModel: newValue.liveModel, model: newValue.model, pendingModel: newValue.pendingModel,
                 transfer: newValue.transfer, ultrafastModel: newValue.ultrafastModel, thinking: newValue.thinking,
-                noMemory: newValue.noMemory
+                noMemory: newValue.noMemory, closedUnexpectedly: newValue.closedUnexpectedly
             )
         }
         .task {

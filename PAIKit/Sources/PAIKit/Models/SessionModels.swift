@@ -474,6 +474,11 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
     public let noMemory: Bool?
     /// ``noMemory`` with the absent case read as an ordinary session.
     public var isNoMemory: Bool { noMemory ?? false }
+    /// The conversation ended without anyone closing it (a crash, `/exit`, a VM that went down) and
+    /// has not been resumed since. A no-memory session in this state keeps a grace period in
+    /// which Resume still works. `nil` from a backend that predates the field, read as `false`.
+    public let closedUnexpectedly: Bool?
+    public var wasClosedUnexpectedly: Bool { closedUnexpectedly ?? false }
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -525,6 +530,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         case transferredAt = "transferred_at"
         case namespace
         case noMemory = "no_memory"
+        case closedUnexpectedly = "closed_unexpectedly"
     }
 
     public init(
@@ -581,7 +587,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         transferredToSessionId: String? = nil,
         transferredAt: String? = nil,
         namespace: String? = nil,
-        noMemory: Bool? = nil
+        noMemory: Bool? = nil,
+        closedUnexpectedly: Bool? = nil
     ) {
         self.id = id
         self.sessionType = sessionType
@@ -637,6 +644,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         self.transferredAt = transferredAt
         self.namespace = namespace
         self.noMemory = noMemory
+        self.closedUnexpectedly = closedUnexpectedly
     }
 
     /// A copy with the session-level fields of a live SSE `status` event applied — the same
@@ -656,7 +664,8 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
         state: SessionState?, blocker: Blocker?, turnState: TurnState?, displayState: DisplayState?,
         activityCounts: ActivityCounts?, secretGrantable: Bool?, secretPrompt: SecretPrompt?,
         liveModel: String?, model: String?, pendingModel: String?, transfer: SessionMoved.Mark? = nil,
-        ultrafastModel: String? = nil, thinking: String? = nil, noMemory: Bool? = nil
+        ultrafastModel: String? = nil, thinking: String? = nil, noMemory: Bool? = nil,
+        closedUnexpectedly: Bool? = nil
     ) -> Session {
         // A supplied mark replaces both fields, nil members included; without one they carry over.
         let movedTo = transfer == nil ? transferredToSessionId : transfer?.toSessionId
@@ -683,7 +692,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             taskId: taskId,
             activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
             transferredToSessionId: movedTo, transferredAt: movedAt, namespace: namespace,
-            noMemory: noMemory ?? self.noMemory
+            noMemory: noMemory ?? self.noMemory, closedUnexpectedly: closedUnexpectedly ?? self.closedUnexpectedly
         )
     }
 
@@ -713,7 +722,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             taskId: taskId,
             activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
             transferredToSessionId: transferredToSessionId, transferredAt: transferredAt,
-            namespace: namespace, noMemory: noMemory
+            namespace: namespace, noMemory: noMemory, closedUnexpectedly: closedUnexpectedly
         )
     }
 
@@ -742,7 +751,7 @@ public struct Session: Codable, Sendable, Equatable, Identifiable {
             taskId: taskId,
             activityCounts: activityCounts, secretGrantable: secretGrantable, secretPrompt: secretPrompt,
             transferredToSessionId: transferredToSessionId, transferredAt: transferredAt,
-            namespace: namespace, noMemory: noMemory
+            namespace: namespace, noMemory: noMemory, closedUnexpectedly: closedUnexpectedly
         )
     }
 }
