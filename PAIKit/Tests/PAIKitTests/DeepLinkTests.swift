@@ -7,6 +7,19 @@ import XCTest
 /// arrive wrong, because the shapes that arrive right are the ones nobody ever debugs.
 final class DeepLinkTests: XCTestCase {
 
+    // MARK: Links tapped inside the app
+
+    func testAnInAppLinkToTheBackendOpensItsScreen() {
+        let url = URL(string: "https://pai.example.com/apps/notes/n1")!
+        XCTAssertEqual(DeepLink.from(inAppURL: url, backendHost: "PAI.example.com"), .note(id: "n1"))
+    }
+
+    /// Another site with the same path shape is an external link, not a screen of this app.
+    func testAnInAppLinkToAnotherHostIsNotALink() {
+        let url = URL(string: "https://elsewhere.example.com/session/abc")!
+        XCTAssertNil(DeepLink.from(inAppURL: url, backendHost: "pai.example.com"))
+    }
+
     // MARK: Payloads
 
     func testReadsASessionFromAPushPayload() {

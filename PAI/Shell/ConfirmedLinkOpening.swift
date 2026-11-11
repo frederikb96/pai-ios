@@ -49,6 +49,12 @@ struct ConfirmedLinkOpening: ViewModifier {
                         }
                         return .handled
                     }
+                    // Any other page of the app's own backend (a session, a note from a
+                    // transcript) opens here, through the inbox a link from another app uses.
+                    if let link = DeepLink.from(inAppURL: url, backendHost: AppEnvironment.shared.backendHost) {
+                        DeepLinkInbox.shared.receive(link)
+                        return .handled
+                    }
                     guard url.scheme == "http" || url.scheme == "https" else { return .systemAction }
                     pendingExternalURL = url
                     return .handled
