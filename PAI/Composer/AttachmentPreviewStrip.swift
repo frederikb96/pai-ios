@@ -224,9 +224,12 @@ private struct RemoteAttachmentChip: View {
                             .font(PaiTypography.caption.font)
                             .lineLimit(1)
                             .truncationMode(.middle)
-                        Text(formatFileSize(attachment.size))
-                            .font(PaiTypography.caption.font)
-                            .foregroundStyle(PaiPalette.Semantic.textMuted)
+                        // 0 is "unknown" (a row the server moved back onto the draft), not an empty file.
+                        if attachment.size > 0 {
+                            Text(formatFileSize(attachment.size))
+                                .font(PaiTypography.caption.font)
+                                .foregroundStyle(PaiPalette.Semantic.textMuted)
+                        }
                     }
                 }
                 .padding(8)
