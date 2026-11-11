@@ -19,8 +19,19 @@ private actor Rendezvous {
     }
 }
 
-private struct SilentDraftsApi: DraftsFetching {
-    func getDrafts() async throws -> [Draft] { [] }
+/// A drafts API whose poll answers what a test scripts and which remembers the rows removed.
+private final class RecordingDraftsApi: DraftsFetching, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _rows: [Draft] = []
+    private var _removed: [String] = []
+
+    var rows: [Draft] {
+        get { lock.withLock { _rows } }
+        set { lock.withLock { _rows = newValue } }
+    }
+    var removed: [String] { lock.withLock { _removed } }
+
+    func getDrafts() async throws -> [Draft] { rows }
     func putDraft(
         key: String, text: String, deviceId: String?, sessionType: String?, workingDir: String?, model: String?,
         thinking: String?, noMemory: Bool?
@@ -33,7 +44,9 @@ private struct SilentDraftsApi: DraftsFetching {
     func addDraftAttachment(key: String, file: PaiFileUpload, id: String) async throws -> DraftAttachment {
         throw PaiError.transport("not used")
     }
-    func removeDraftAttachment(key: String, attachmentId: String) async throws {}
+    func removeDraftAttachment(key: String, attachmentId: String) async throws {
+        lock.withLock { _removed.append(attachmentId) }
+    }
 }
 
 /// A sender whose POSTs a test releases one by one, and whose withdraw answers are scripted — so
@@ -118,6 +131,15 @@ final class OutboxUndoSendTests: XCTestCase {
         let outbox: OutboxStore
         let drafts: DraftStore
         let api: ScriptedApi
+        let draftsApi: RecordingDraftsApi
+        let returned: ReturnedFilesLog
+    }
+
+    /// What the composer's file staging was handed back.
+    @MainActor
+    private final class ReturnedFilesLog {
+        var batches: [OutboxReturnedFiles] = []
+        var names: [String] { batches.flatMap(\.files).map(\.filename) }
     }
 
     /// The real handover is installed, so what a refused POST does to the composer is the
@@ -125,16 +147,29 @@ final class OutboxUndoSendTests: XCTestCase {
     private func makeHarness() -> Harness {
         let api = ScriptedApi()
         let outbox = OutboxStore(api: api, storage: OutboxInMemoryStorage())
-        let drafts = DraftStore(api: SilentDraftsApi())
+        let draftsApi = RecordingDraftsApi()
+        let drafts = DraftStore(api: draftsApi)
+        let returned = ReturnedFilesLog()
         outbox.installHandover(
             drafts: drafts, sessions: SessionListStore(api: FakeSessionListApi()), handoff: NewSessionHandoff())
-        return Harness(outbox: outbox, drafts: drafts, api: api)
+        outbox.onFilesReturned = { returned.batches.append($0) }
+        return Harness(outbox: outbox, drafts: drafts, api: api, draftsApi: draftsApi, returned: returned)
     }
 
     private func entry(_ text: String, createdAt: TimeInterval) -> OutboxEntry {
         OutboxEntry(
             target: .session(sessionId: "s1"), text: text, createdAt: Date(timeIntervalSince1970: createdAt))
     }
+
+    /// An entry whose one file travels inline, with the draft upload it stands in for.
+    private func entryWithFile(_ text: String, file: String, createdAt: TimeInterval) -> OutboxEntry {
+        OutboxEntry(
+            target: .session(sessionId: "s1"), text: text,
+            inlineFiles: [OutboxInlineFile(localId: "local-\(file)", filename: file, mimeType: "text/plain")],
+            supersededUploadIds: ["upload-\(file)"], createdAt: Date(timeIntervalSince1970: createdAt))
+    }
+
+    private func fileData(_ file: String) -> [String: Data] { ["local-\(file)": Data(file.utf8)] }
 
     // MARK: - What leaves, what stays
 
@@ -335,5 +370,135 @@ final class OutboxUndoSendTests: XCTestCase {
         XCTAssertEqual(summary, UndoSendSummary())
         XCTAssertEqual(summary.toast(announceNothing: true), "Nothing to undo")
         XCTAssertNil(summary.toast(announceNothing: false))
+    }
+
+    // MARK: - The files of a message that comes back
+
+    func testAFileOnlyMessageThatNeverLeftComesBackWithItsBytesAndCountsAsRestored() async {
+        let h = makeHarness()
+        let head = entry("head, in the air", createdAt: 1)
+        h.api.hold(head.id)
+        h.outbox.enqueue(head)
+        await waitUntil { h.api.postedIds == [head.id] }
+        h.outbox.enqueue(entryWithFile("", file: "notes.txt", createdAt: 2), inlineFileData: fileData("notes.txt"))
+        h.api.withdrawAnswer = answer(withdrawnClientIds: [head.id])
+
+        let summary = await h.outbox.undoSend(sessionId: "s1", drafts: h.drafts)
+
+        XCTAssertEqual(h.returned.batches.count, 1)
+        XCTAssertEqual(h.returned.batches.first?.key, "s1")
+        XCTAssertEqual(h.returned.batches.first?.files.first?.data, Data("notes.txt".utf8))
+        XCTAssertEqual(h.returned.batches.first?.supersededUploadIds, ["upload-notes.txt"])
+        XCTAssertEqual(summary.restored, 2, "messages, not texts")
+        await h.api.release(head.id, answer: .failure(.transport("cleanup")))
+    }
+
+    func testAMessageTheServerTombstonedGetsItsInlineFilesBack() async {
+        let h = makeHarness()
+        let inTheAir = entryWithFile("never arrived", file: "a.txt", createdAt: 1)
+        h.api.hold(inTheAir.id)
+        h.outbox.enqueue(inTheAir, inlineFileData: fileData("a.txt"))
+        await waitUntil { h.api.postedIds == [inTheAir.id] }
+        // No row: the server holds no message by this id and only noted that it must refuse it.
+        h.api.withdrawAnswer = answer(withdrawnClientIds: [inTheAir.id])
+
+        let summary = await h.outbox.undoSend(sessionId: "s1", drafts: h.drafts)
+
+        XCTAssertEqual(h.returned.names, ["a.txt"])
+        XCTAssertEqual(summary.restored, 1)
+        await h.api.release(inTheAir.id, answer: .failure(.transport("cleanup")))
+    }
+
+    func testARowTheServerWithdrewTakesItsFilesBackOntoTheDraftSoNothingIsStagedAgain() async {
+        let h = makeHarness()
+        let arrived = entryWithFile("arrived", file: "b.txt", createdAt: 1)
+        h.api.hold(arrived.id)
+        h.outbox.enqueue(arrived, inlineFileData: fileData("b.txt"))
+        await waitUntil { h.api.postedIds == [arrived.id] }
+        h.api.withdrawAnswer = answer(
+            withdrawn: [WithdrawnSend(id: 42, text: "arrived", clientMessageId: arrived.id)],
+            withdrawnClientIds: [arrived.id])
+
+        let summary = await h.outbox.undoSend(sessionId: "s1", drafts: h.drafts)
+
+        XCTAssertTrue(h.returned.batches.isEmpty, "the server holds the file; staging it again would show it twice")
+        XCTAssertEqual(summary.restored, 1)
+        await h.api.release(arrived.id, answer: .failure(.transport("cleanup")))
+    }
+
+    func testRowsTheServerMovedBackOntoTheDraftShowInTheComposerWithoutWaitingForThePoll() async {
+        let h = makeHarness()
+        let arrived = entry("arrived", createdAt: 1)
+        h.api.hold(arrived.id)
+        h.outbox.enqueue(arrived)
+        await waitUntil { h.api.postedIds == [arrived.id] }
+        h.api.withdrawAnswer = answer(
+            withdrawn: [WithdrawnSend(id: 42, text: "arrived", clientMessageId: arrived.id)],
+            withdrawnClientIds: [arrived.id])
+        h.draftsApi.rows = [
+            Draft(
+                key: "s1", text: "arrived", sessionType: nil, workingDir: nil, updatedAt: nil, version: 5,
+                attachments: [
+                    DraftAttachment(
+                        id: "fresh-id", filename: "photo.png", path: "/p", size: 0, contentType: nil,
+                        state: "stored", createdAt: "")
+                ])
+        ]
+
+        await h.outbox.undoSend(sessionId: "s1", drafts: h.drafts)
+
+        XCTAssertEqual(h.drafts.draft(for: "s1").attachments.map(\.filename), ["photo.png"])
+        await h.api.release(arrived.id, answer: .failure(.transport("cleanup")))
+    }
+
+    func testARefusalGivesTheFilesBackOnlyWhenItPutsTheTextBack() async {
+        for textInDraft in [false, true] {
+            let h = makeHarness()
+            let sent = entryWithFile("refused", file: "c.txt", createdAt: 1)
+            h.api.hold(sent.id)
+            h.outbox.enqueue(sent, inlineFileData: fileData("c.txt"))
+            await waitUntil { h.api.postedIds == [sent.id] }
+
+            await h.api.release(
+                sent.id,
+                answer: .success(
+                    PostMessageResponse(
+                        sessionId: "s1", messageId: 9, duplicate: true, withdrawn: true, textInDraft: textInDraft)))
+            await waitUntil { h.outbox.entries.isEmpty }
+
+            XCTAssertEqual(h.returned.names, textInDraft ? [] : ["c.txt"], "textInDraft: \(textInDraft)")
+        }
+    }
+
+    func testPuttingAFailedSendBackReturnsItsTextAndItsInlineFiles() async {
+        let h = makeHarness()
+        let failing = entryWithFile("too big", file: "d.txt", createdAt: 1)
+        h.api.hold(failing.id)
+        h.outbox.enqueue(failing, inlineFileData: fileData("d.txt"))
+        await waitUntil { h.api.postedIds == [failing.id] }
+        await h.api.release(failing.id, answer: .failure(.http(statusCode: 413, reason: "too large")))
+        await waitUntil { h.outbox.entries.first?.state == .failed }
+        XCTAssertEqual(h.outbox.entries.first?.state, .failed, "the setup: a permanent failure")
+
+        h.outbox.putBackInComposer(id: failing.id, drafts: h.drafts)
+
+        XCTAssertTrue(h.outbox.entries.isEmpty)
+        XCTAssertEqual(h.drafts.draft(for: "s1").text, "too big")
+        XCTAssertEqual(h.returned.names, ["d.txt"])
+    }
+
+    func testStagingReturnedFilesAgainRemovesTheDraftRowsTheirUploadsMayHaveBecome() async {
+        let h = makeHarness()
+        let returned = OutboxReturnedFiles(
+            key: "s1",
+            files: [OutboxReturnedFile(localId: "l", filename: "e.txt", mimeType: "text/plain", data: Data())],
+            supersededUploadIds: ["u1", "u2"])
+        var staged: [String] = []
+
+        returned.restage(into: h.drafts) { key, files in staged = files.map { "\(key):\($0.filename)" } }
+        await waitUntil { h.draftsApi.removed.count == 2 }
+
+        XCTAssertEqual(staged, ["s1:e.txt"])
+        XCTAssertEqual(h.draftsApi.removed, ["u1", "u2"])
     }
 }

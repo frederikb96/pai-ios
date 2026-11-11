@@ -299,6 +299,14 @@ final class AppEnvironment {
         draftStore.serverAttachmentsObserved = { [weak staging] key, ids, requestedAt in
             staging?.dropVanishedUploads(for: key, serverIds: ids, requestedAt: requestedAt)
         }
+        // A message taken back out of the queue gives the files it was carrying inline back to the
+        // composer; staging them again uploads them onto the draft like any other pick.
+        outbox.onFilesReturned = { [weak staging, weak draftStore] returned in
+            guard let staging, let draftStore else { return }
+            returned.restage(into: draftStore) { key, files in
+                staging.stage(files.map(StagedAttachment.init(returned:)), for: key, via: draftStore)
+            }
+        }
 
         let notesBrowse = NotesBrowseStore(api: client, storage: defaults)
         let me = MeStore(api: client)

@@ -105,12 +105,9 @@ private struct OutboxEntryBubbleView: View {
     }
 
     /// Mirrors the web's own `putBackInComposer`: the destroyed text goes back in front of
-    /// whatever is already there, and the entry is gone either way — there is nothing left to
-    /// retry once its words are back in the user's own hands.
+    /// whatever is already there, its files are staged again, and the entry is gone either way —
+    /// there is nothing left to retry once its words are back in the user's own hands.
     private func putBackInComposer() {
-        let key = entry.draftKey
-        let current = drafts.draft(for: key).text
-        drafts.setDraftText(key: key, text: current.isEmpty ? entry.text : "\(entry.text)\n\n\(current)")
-        outbox.discard(id: entry.id)
+        outbox.putBackInComposer(id: entry.id, drafts: drafts)
     }
 }
