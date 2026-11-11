@@ -45,6 +45,10 @@ struct NoteEditorScreen: View {
     /// with the caret after its placeholder name on that first focus, and an ordinary tap to fix
     /// a typo later never moves the caret out from under the reader.
     @State private var placesCaretAtEndOnFocus = false
+    /// True from the moment this screen consumed the creation signal until Return leaves the
+    /// title once: that Return carries the caret into the body, as creating a note on the web
+    /// does. A note opened any other way keeps Return's plain "done".
+    @State private var continuesIntoBodyOnReturn = false
     /// The title row's own height — fixed rather than left to the wrapped `UITextField`'s
     /// default sizing, which this screen used to lean on only by accident: as a toolbar item, the
     /// system always constrained it to the bar's own compact height regardless of what it
@@ -105,6 +109,7 @@ struct NoteEditorScreen: View {
             if NoteCreationFocus.shared.consume(id: noteID) {
                 isTitleFocused = true
                 placesCaretAtEndOnFocus = true
+                continuesIntoBodyOnReturn = true
                 // A note that did not exist a moment ago has nothing to read, so the stored
                 // reading preference is the wrong answer for it whatever it says: landing in
                 // preview shows an empty page with no visible way to type into it. Creating is
@@ -187,7 +192,8 @@ struct NoteEditorScreen: View {
                     body: body, nameToId: buildNameToId(notes.notes),
                     containerId: notes.detail(for: noteID)?.containerId,
                     selfName: selfName, jump: jump, highlight: highlight,
-                    onToggleTask: { notes.toggleTask(id: noteID, renderedBody: body, mark: $0) })
+                    onToggleTask: { notes.toggleTask(id: noteID, renderedBody: body, mark: $0) },
+                    onTagTap: showNotes(taggedWith:))
             } else {
                 NoteEditorSurface(
                     noteID: noteID, text: { [notes, noteID] in notes.body(for: noteID) ?? "" },
@@ -219,7 +225,8 @@ struct NoteEditorScreen: View {
                 isTitleFocused = true
                 placesCaretAtEndOnFocus = false
             },
-            onCommit: { Task { await commitTitle() } }
+            onCommit: { Task { await commitTitle() } },
+            onReturn: continueIntoBody
         )
         .frame(maxWidth: .infinity, minHeight: titleRowHeight, maxHeight: titleRowHeight, alignment: .leading)
         .padding(.horizontal, 16)
@@ -329,6 +336,22 @@ struct NoteEditorScreen: View {
         highlight = target.query
         jumpToken += 1
         jump = NoteJumpRequest(token: jumpToken, characterOffset: target.characterOffset)
+    }
+
+    /// Return in the title of a note that was just created: the caret goes to the start of the
+    /// body, through the same request an outline jump uses.
+    private func continueIntoBody() {
+        guard continuesIntoBodyOnReturn else { return }
+        continuesIntoBodyOnReturn = false
+        jumpToken += 1
+        jump = NoteJumpRequest(token: jumpToken, characterOffset: 0)
+    }
+
+    /// A tag tapped in the rendered note: back to the list, narrowed to that tag. The list takes
+    /// the request when it is on screen again (``NotesBrowseStore/requestedTag``).
+    private func showNotes(taggedWith tag: String) {
+        browse.requestTagFilter(tag)
+        environment.router.surface(.notes)
     }
 
     /// Pushed rather than replaced: following a link from inside a note is navigation within the

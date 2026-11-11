@@ -38,6 +38,11 @@ public final class NotesBrowseStore {
     /// over its stored preference whenever the address actually names a mode.
     public private(set) var previewMode: Bool
 
+    /// A tag the list is asked to narrow itself to, set by a tag tapped in a note and taken by the
+    /// list when it appears. One-shot and in memory only: the list owns its own selection and a
+    /// request must not outlive the tap that made it.
+    public private(set) var requestedTag: String?
+
     private let api: NotesBrowseApiClient
     private let storage: SettingsKeyValueStore
 
@@ -59,6 +64,20 @@ public final class NotesBrowseStore {
     public func setPreviewMode(_ preview: Bool) {
         previewMode = preview
         storage.setValue(preview, forKey: Keys.previewMode)
+    }
+
+    /// Asks the list to show only the notes carrying `tag`. Folded to the key the list matches
+    /// tags by (``noteHasAllTags(_:selected:)``), since a note may spell the tag differently from
+    /// the notes that make up the vocabulary.
+    public func requestTagFilter(_ tag: String) {
+        requestedTag = tag.lowercased()
+    }
+
+    /// The requested tag key, once: the list calls this when it sees one and replaces its tag
+    /// selection with it.
+    public func takeRequestedTag() -> String? {
+        defer { requestedTag = nil }
+        return requestedTag
     }
 
     public func searchSemantic(q: String, window: TimeBounds?) async throws -> [NoteSemanticHit] {

@@ -34,6 +34,9 @@ struct NoteTitleField: UIViewRepresentable {
     let onFocus: () -> Void
     /// Fired once editing ends, whichever way it ended — Return, or tapping elsewhere.
     let onCommit: () -> Void
+    /// Fired when Return is pressed, just before editing ends — the one way out of the field that
+    /// is a request to carry on writing rather than a tap elsewhere.
+    var onReturn: () -> Void = {}
 
     func makeUIView(context: Context) -> UITextField {
         let field = UITextField()
@@ -104,6 +107,7 @@ struct NoteTitleField: UIViewRepresentable {
         }
 
         func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            parent.onReturn()
             textField.resignFirstResponder()
             return true
         }

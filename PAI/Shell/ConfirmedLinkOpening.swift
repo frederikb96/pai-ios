@@ -6,6 +6,8 @@ import SwiftUI
 /// by accident where a mouse click rarely does, so an https link gets the same confirmation
 /// style a note-to-note wikilink already has in ``NoteBodyView``, rather than opening immediately.
 ///
+/// `onTagLink` receives a note's drawn `#tag` (``NoteInlineTags``) when it is tapped.
+///
 /// `onNoteLink` lets a caller keep its own handling for an in-app note deep link — confirmed here
 /// too, with its own wording, before the closure runs. A link to a heading of the page it is read
 /// on (`NoteLinkTarget.id` empty) is a scroll, not a navigation, so it runs the closure at once.
@@ -13,6 +15,7 @@ import SwiftUI
 /// not `http`/`https`.
 struct ConfirmedLinkOpening: ViewModifier {
     var onNoteLink: ((NoteLinkTarget) -> Void)?
+    var onTagLink: ((String) -> Void)?
 
     @State private var pendingNoteLink: NoteLinkTarget?
     @State private var pendingExternalURL: URL?
@@ -31,6 +34,11 @@ struct ConfirmedLinkOpening: ViewModifier {
                         case .list: AppEnvironment.shared.router.surface(.browserList)
                         case .session(let name): AppEnvironment.shared.router.surface(.browser(name: name))
                         }
+                        return .handled
+                    }
+                    // A drawn note tag never leaves the app: it filters the list or does nothing.
+                    if let tag = NoteInlineTags.tag(from: url) {
+                        onTagLink?(tag)
                         return .handled
                     }
                     if let onNoteLink, let target = NoteLinkTarget.parse(url) {
@@ -74,7 +82,9 @@ struct ConfirmedLinkOpening: ViewModifier {
 
 extension View {
     /// See ``ConfirmedLinkOpening``.
-    func confirmingExternalLinks(onNoteLink: ((NoteLinkTarget) -> Void)? = nil) -> some View {
-        modifier(ConfirmedLinkOpening(onNoteLink: onNoteLink))
+    func confirmingExternalLinks(
+        onNoteLink: ((NoteLinkTarget) -> Void)? = nil, onTagLink: ((String) -> Void)? = nil
+    ) -> some View {
+        modifier(ConfirmedLinkOpening(onNoteLink: onNoteLink, onTagLink: onTagLink))
     }
 }
