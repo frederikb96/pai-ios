@@ -12,9 +12,13 @@ import SwiftUI
 /// itself — the toolbar's leading action becomes `Decline`, which tells the waiting session no,
 /// rather than a plain `Cancel`, which tells nobody anything.
 ///
+/// Grant and Grant all close the sheet at once and hand the request to `SecretGrantRunStore`,
+/// which reports success as a toast; a failure brings this sheet back with the reason
+/// (`ComposerBar` re-presents it, this view shows `failures`).
+///
 /// 🚨 The passphrase lives only in `passphrase` below — never Keychain, `UserDefaults`, a draft,
-/// or a log line — and is cleared the moment a grant succeeds and again on dismiss, so nothing
-/// outlives the sheet that collected it.
+/// or a log line — and is cleared the moment it is handed to the request and again on dismiss, so
+/// nothing outlives the sheet that collected it.
 struct SecretGrantSheet: View {
     let sessionID: String
     /// The session being granted access, for the sheet's own header — `nil` only in the gap
@@ -30,6 +34,8 @@ struct SecretGrantSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppEnvironment.self) private var environment
     @Environment(MachineStore.self) private var machines
+    @Environment(SecretGrantRunStore.self) private var grantRuns
+    @Environment(ToastCenter.self) private var toasts
 
     @State private var passphrase = ""
     @State private var ttlSeconds = Self.durationChoices[2].seconds
@@ -39,15 +45,6 @@ struct SecretGrantSheet: View {
     /// conversation actually asked for. Drives which grant action is on offer, not just what the
     /// footer says.
     @State private var requestedAccess: RequestedAccessState = .loading
-    /// The raw `expires_at` ISO string once granted — `nil` is "still filling in the form", not
-    /// "not yet known", since this sheet never shows a prior grant.
-    @State private var grantedUntil: String?
-    /// What the grant actually covered — `.all` covers everything, `.requested` only what was
-    /// asked for, so this can differ from `requestedAccess`'s own list.
-    @State private var grantedNames: [String] = []
-    /// The backend took the grant for a session that was still starting and holds it until the
-    /// session is up (`SecretGrantResult.pending`).
-    @State private var grantHeld = false
     @FocusState private var passphraseFocused: Bool
 
     /// 60...604800 is the contract's own bound; these are the presets worth offering rather than
@@ -75,6 +72,9 @@ struct SecretGrantSheet: View {
     /// everything and applies it once the session is up, so nothing is asked of it first.
     private var waitsForStart: Bool { session?.state == .starting }
 
+    /// A grant for this session is still running from an earlier submit of this sheet.
+    private var isGranting: Bool { grantRuns.inFlight.contains(sessionID) }
+
     private var isPromptPending: Bool {
         if case let .names(names, _) = requestedAccess { return !names.isEmpty }
         return false
@@ -82,19 +82,10 @@ struct SecretGrantSheet: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                if grantHeld {
-                    heldView
-                } else if let grantedUntil {
-                    grantedView(untilRaw: grantedUntil)
-                } else {
-                    form
-                }
-            }
-            .navigationTitle("Grant secret access")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if grantedUntil == nil, !grantHeld {
+            form
+                .navigationTitle("Grant secret access")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         // `Decline` only while something is actually outstanding — the same
                         // predicate that gates `Grant` below — since telling a session "no" when
@@ -111,16 +102,11 @@ struct SecretGrantSheet: View {
                     // and Return both grant everything instead.
                     if isPromptPending {
                         ToolbarItem(placement: .confirmationAction) {
-                            Button("Grant") { Task { await submit(scope: .requested) } }
-                                .disabled(passphrase.isEmpty || isSubmitting)
+                            Button("Grant") { submit(scope: .requested) }
+                                .disabled(passphrase.isEmpty || isSubmitting || isGranting)
                         }
                     }
-                } else {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") { dismiss() }
-                    }
                 }
-            }
         }
         .task {
             // Independent of each other — the fetch does not need the passphrase field focused,
@@ -128,6 +114,9 @@ struct SecretGrantSheet: View {
             async let requests: Void = loadRequestedAccess()
             async let focus: Void = focusPassphraseAfterTransition()
             _ = await (requests, focus)
+        }
+        .onChange(of: grantRuns.failures[sessionID], initial: true) { _, _ in
+            if let message = grantRuns.takeFailure(sessionId: sessionID) { errorMessage = message }
         }
         .onDisappear { passphrase = "" }
         .accessibilityIdentifier("secret-grant-sheet")
@@ -192,7 +181,7 @@ struct SecretGrantSheet: View {
                 }
             }
 
-            if isSubmitting {
+            if isSubmitting || isGranting {
                 spinnerSection
             }
         }
@@ -210,7 +199,7 @@ struct SecretGrantSheet: View {
                 .submitLabel(.go)
                 // Return grants what was asked for, or everything when nothing was — the same
                 // answer the web's Enter gives.
-                .onSubmit { Task { await submit(scope: names.isEmpty ? .all : .requested) } }
+                .onSubmit { submit(scope: names.isEmpty ? .all : .requested) }
                 .accessibilityIdentifier("secret-grant-passphrase")
         } footer: {
             footer(names: names, vault4: vault4)
@@ -260,7 +249,7 @@ struct SecretGrantSheet: View {
     private var grantAllSection: some View {
         Section {
             Button {
-                Task { await submit(scope: .all) }
+                submit(scope: .all)
             } label: {
                 HStack {
                     Spacer()
@@ -268,7 +257,7 @@ struct SecretGrantSheet: View {
                     Spacer()
                 }
             }
-            .disabled(passphrase.isEmpty || isSubmitting)
+            .disabled(passphrase.isEmpty || isSubmitting || isGranting)
             .accessibilityIdentifier("secret-grant-all")
         } footer: {
             Text("Grants everything in the gated store except vault 4, rather than only what was asked for.")
@@ -285,85 +274,14 @@ struct SecretGrantSheet: View {
         }
     }
 
-    private var heldView: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "clock.badge.checkmark")
-                .font(.system(size: 40))
-                .foregroundStyle(PaiPalette.green500)
-            Text("Grant held")
-                .font(PaiTypography.bodyEmphasized.font)
-                .foregroundStyle(PaiPalette.Semantic.textPrimary)
-            Text("Everything except vault 4 is granted as soon as the session is ready. Cancel it from the composer.")
-                .font(PaiTypography.caption.font)
-                .foregroundStyle(PaiPalette.Semantic.textMuted)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityIdentifier("secret-grant-held")
-    }
-
-    private func grantedView(untilRaw raw: String) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 40))
-                .foregroundStyle(PaiPalette.green500)
-            Text("Access granted")
-                .font(PaiTypography.bodyEmphasized.font)
-                .foregroundStyle(PaiPalette.Semantic.textPrimary)
-            if !grantedNames.isEmpty {
-                Text(grantedNames.joined(separator: ", "))
-                    .font(PaiTypography.caption.font)
-                    .foregroundStyle(PaiPalette.Semantic.textMuted)
-                    .multilineTextAlignment(.center)
-            }
-            Text("Until \(formatted(raw))")
-                .font(PaiTypography.caption.font)
-                .foregroundStyle(PaiPalette.Semantic.textMuted)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityIdentifier("secret-grant-success")
-    }
-
-    private func submit(scope: SecretGrantScope) async {
-        guard let client = environment.connection?.apiClient, !passphrase.isEmpty else { return }
-        isSubmitting = true
-        errorMessage = nil
-        defer { isSubmitting = false }
-        do {
-            let result = try await client.grantSecretAccess(
-                sessionId: sessionID, passphrase: passphrase, ttlSeconds: ttlSeconds, scope: scope)
-            switch result {
-            case let .granted(expiresAt, names):
-                // Cleared here rather than only on dismiss — a granted passphrase has done its
-                // job and has no reason to sit in memory while the confirmation is on screen.
-                passphrase = ""
-                grantedNames = names
-                grantedUntil = expiresAt
-            case .pending:
-                passphrase = ""
-                grantHeld = true
-            case .wrongPassphrase:
-                errorMessage = "Wrong passphrase."
-            case .sessionUnavailable:
-                errorMessage = "This session isn't running right now — nothing to grant access to."
-            case .nothingRequested:
-                // A race: `requestedAccess` said there was something outstanding and there no
-                // longer is, by the time this reached the server — re-fetch so the sheet reflects
-                // it instead of offering the same stale list again.
-                errorMessage = "Nothing to grant anymore — the agent isn't waiting on a gated secret."
-                await loadRequestedAccess()
-            case let .notAuthorized(message):
-                errorMessage = message
-            case let .rateLimited(message):
-                errorMessage = message
-            case let .invalidRequest(message):
-                errorMessage = message
-            case .timedOut:
-                errorMessage = "The agent didn't answer in time. Try again."
-            }
-        } catch {
-            errorMessage = (error as? PaiError)?.userMessage ?? "Could not grant access"
-        }
+    /// Hands the passphrase to the background request and closes; the outcome arrives as a toast
+    /// or as this sheet coming back with the reason.
+    private func submit(scope: SecretGrantScope) {
+        guard !passphrase.isEmpty, !isGranting else { return }
+        grantRuns.start(
+            sessionId: sessionID, passphrase: passphrase, ttlSeconds: ttlSeconds, scope: scope, toasts: toasts)
+        passphrase = ""
+        dismiss()
     }
 
     /// Tells the waiting session no. Dismisses on success (`.declined` and `.alreadyAnswered`
@@ -413,14 +331,6 @@ struct SecretGrantSheet: View {
             text += " It asked because: \(reason)."
         }
         return text
-    }
-
-    /// Mirrors `SecretField.formatted(_:)` — the backend's six-fractional-digit ISO timestamp
-    /// needs `IsoTimestamp`, and the raw string is shown if parsing fails rather than hiding the
-    /// expiry entirely.
-    private func formatted(_ raw: String) -> String {
-        guard let date = IsoTimestamp.date(from: raw) else { return raw }
-        return date.formatted(date: .abbreviated, time: .shortened)
     }
 }
 

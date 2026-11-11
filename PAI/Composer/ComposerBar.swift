@@ -31,6 +31,7 @@ struct ComposerBar: View {
     @Environment(StagedAttachmentStore.self) private var staging
     @Environment(OutboxStore.self) private var outbox
     @Environment(ToastCenter.self) private var toasts
+    @Environment(SecretGrantRunStore.self) private var grantRuns
     @Environment(\.scenePhase) private var scenePhase
 
     let sessionID: String
@@ -118,11 +119,14 @@ struct ComposerBar: View {
             }
         }
         .onDisappear {
+            grantRuns.composerDisappeared(sessionId: sessionID)
             guard let draftStore else { return }
             Task { await draftStore.flush(key: sessionID) }
         }
         .onAppear {
+            grantRuns.composerAppeared(sessionId: sessionID)
             presentSecretPromptIfNeeded()
+            presentGrantFailureIfNeeded()
             // A session created by one of the launcher's call tiles: the first turn was just
             // spoken and sent, and the point of the tile was never touching the phone again — so
             // the call opens here, straight inside this session, from the screen the send landed
@@ -135,6 +139,7 @@ struct ComposerBar: View {
             }
         }
         .onChange(of: currentSecretPrompt) { _, _ in presentSecretPromptIfNeeded() }
+        .onChange(of: grantRuns.failures[sessionID]) { _, _ in presentGrantFailureIfNeeded() }
         .sheet(
             isPresented: Binding(
                 get: { PlaybackController.shared.store.sheetOpen },
@@ -156,6 +161,9 @@ struct ComposerBar: View {
             onDismiss: {
                 dismissedSecretPromptAt = currentSecretPrompt?.at
                 grantWatchNonce += 1
+                // A grant that failed while this sheet was still closing could not present
+                // itself then.
+                presentGrantFailureIfNeeded()
             }
         ) { _ in
             SecretGrantSheet(sessionID: sessionID, session: currentSession, prompt: currentSecretPrompt)
@@ -212,6 +220,13 @@ struct ComposerBar: View {
     private func presentSecretPromptIfNeeded() {
         guard let currentSecretPrompt, currentSecretPrompt.at != dismissedSecretPromptAt else { return }
         secretGrantTarget = SecretGrantTarget(promptAt: currentSecretPrompt.at)
+    }
+
+    /// Brings the grant sheet back when a grant for this session failed in the background; the
+    /// sheet shows the reason itself.
+    private func presentGrantFailureIfNeeded() {
+        guard grantRuns.failures[sessionID] != nil, secretGrantTarget == nil else { return }
+        secretGrantTarget = SecretGrantTarget(promptAt: currentSecretPrompt?.at)
     }
 
     // MARK: - Drivable composer

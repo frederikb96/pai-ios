@@ -119,6 +119,9 @@ final class AppEnvironment {
         /// The open decisions of every session — app-wide because the pin above any transcript and
         /// the Decisions app read the same list.
         let decisions: DecisionsStore
+        /// Grants running after their sheet closed; app-wide because a request outlives the sheet
+        /// and the session screen that started it.
+        let secretGrants: SecretGrantRunStore
     }
 
     private static let backendURLKey = "backendURL"
@@ -310,6 +313,11 @@ final class AppEnvironment {
 
         let notesBrowse = NotesBrowseStore(api: client, storage: defaults)
         let me = MeStore(api: client)
+        let secretGrants = SecretGrantRunStore { sessionId, passphrase, ttlSeconds, scope in
+            try await client.grantSecretAccess(
+                sessionId: sessionId, passphrase: passphrase, ttlSeconds: ttlSeconds, scope: scope)
+        }
+        secretGrants.openSession = { [weak self] id in self?.router.push(.session(id: id)) }
         connection = Connection(
             requestFactory: factory,
             apiClient: client,
@@ -338,7 +346,8 @@ final class AppEnvironment {
             wakeWordSamples: wakeWordSamples,
             notifications: NotificationCenterStore(api: client),
             transcriptJumps: TranscriptJumpRequests(),
-            decisions: DecisionsStore(api: client, isOwner: { [weak me] in me?.isOwner ?? false })
+            decisions: DecisionsStore(api: client, isOwner: { [weak me] in me?.isOwner ?? false }),
+            secretGrants: secretGrants
         )
         PlaybackController.shared.configure(
             api: client, transcript: transcript, sessions: sessions, toasts: toasts,
