@@ -151,6 +151,15 @@ extension DeepLink {
         }
     }
 
+    /// A link tapped inside the app that points at the app's own backend. iOS never hands a
+    /// universal link back to the app that opened it, so without this a session or note link in
+    /// a transcript or a note leaves for Safari while the same link from another app lands here.
+    /// Unlike ``from(webURL:)`` the host is checked: here no entitlement has decided the domain.
+    public static func from(inAppURL url: URL, backendHost: String?) -> DeepLink? {
+        guard let backendHost, url.host?.lowercased() == backendHost.lowercased() else { return nil }
+        return from(webURL: url)
+    }
+
     /// A universal link: a web UI page tapped in another app, which iOS hands over instead of
     /// opening Safari.
     ///
