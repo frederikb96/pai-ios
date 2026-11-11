@@ -61,6 +61,16 @@ struct StagedAttachment: Identifiable, Equatable {
     }
 }
 
+extension StagedAttachment {
+    /// A file handed back by the outbox, as the composer stages it again.
+    init(returned: OutboxReturnedFile) {
+        self.init(
+            filename: returned.filename, mimeType: returned.mimeType, data: returned.data,
+            previewImage: returned.mimeType.hasPrefix("image/") ? UIImage(data: returned.data) : nil,
+            originalSize: returned.data.count)
+    }
+}
+
 /// A staged attachment built from ``AttachmentImageFit``, the same fitting a shared file gets.
 enum AttachmentCompression {
 

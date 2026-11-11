@@ -67,6 +67,53 @@ public struct UndoSendSummary: Equatable, Sendable {
     }
 }
 
+/// One file of a message that never reached the server, with the bytes it was to travel with.
+public struct OutboxReturnedFile: Sendable, Equatable {
+    public let localId: String
+    public let filename: String
+    public let mimeType: String
+    public let data: Data
+
+    public init(localId: String, filename: String, mimeType: String, data: Data) {
+        self.localId = localId
+        self.filename = filename
+        self.mimeType = mimeType
+        self.data = data
+    }
+}
+
+/// The files of a message that left the queue unsent, on their way back to the composer they
+/// were taken from. Only files that were to travel inline: a row already uploaded onto the draft
+/// is still there and comes back when the send's claim on it is released.
+public struct OutboxReturnedFiles: Sendable, Equatable {
+    public let key: String
+    public let files: [OutboxReturnedFile]
+    /// The draft rows the uploads of these files may have become. Once the files are staged again
+    /// those rows would show them a second time.
+    public let supersededUploadIds: [String]
+
+    public init(key: String, files: [OutboxReturnedFile], supersededUploadIds: [String]) {
+        self.key = key
+        self.files = files
+        self.supersededUploadIds = supersededUploadIds
+    }
+
+    /// Removes the superseded rows from the draft, then lets `stage` take the files back.
+    @MainActor
+    public func restage(
+        into drafts: DraftStore, stage: @MainActor (_ key: String, _ files: [OutboxReturnedFile]) -> Void
+    ) {
+        let key = key
+        let superseded = supersededUploadIds
+        if !superseded.isEmpty {
+            Task {
+                for id in superseded { await drafts.removeAttachment(key: key, attachmentId: id) }
+            }
+        }
+        stage(key, files)
+    }
+}
+
 /// A durable, exactly-once send queue. Swift port of the web's own `stores/outbox.ts` design:
 /// persisted before the composer that produced it is ever cleared, one FIFO worker per target
 /// (a session, or the not-yet-created "new" session), retried with backoff, and resumed on
@@ -107,12 +154,16 @@ public final class OutboxStore {
     /// Called when the server REFUSED an entry because it was pulled back (Escape-undo, here or
     /// on another device) before it could be delivered — the entry is already gone from
     /// ``entries``. The `Bool` is whether the server's own draft already holds the text; when it
-    /// does not, the handler owns putting the text back.
+    /// does not, the handler owns putting the text back (the files go through ``onFilesReturned``).
     public var onRefused: (@MainActor (OutboxEntry, Bool) -> Void)?
     /// Entries an ``undoSend`` has asked the server about and not heard back on — the worker
     /// leaves them alone meanwhile, so no further request carrying one is issued while its fate
     /// is being decided.
     private var withdrawing: Set<String> = []
+    /// Called with the inline files of a message that goes back to the composer unsent. Whoever
+    /// holds the composer's file staging stages them again; without a handler they are lost with
+    /// the entry, so the app installs one next to ``installHandover(drafts:sessions:handoff:)``.
+    public var onFilesReturned: (@MainActor (OutboxReturnedFiles) -> Void)?
 
     /// One loop per ``OutboxTarget/workerKey`` — FIFO within a target, matching the server
     /// outbox's own per-target ordering. `nil` once a worker finds nothing left to do; a fresh
@@ -208,6 +259,29 @@ public final class OutboxStore {
         drafts.setDraftText(key: key, text: current.isEmpty ? pulled : "\(pulled)\n\n\(current)")
     }
 
+    /// Hands the entry's inline files back before ``discard(id:)`` deletes their bytes.
+    private func returnFiles(of entry: OutboxEntry) {
+        let files = entry.inlineFiles.compactMap { file -> OutboxReturnedFile? in
+            guard let data = storage.readInlineFile(localId: file.localId) else { return nil }
+            return OutboxReturnedFile(
+                localId: file.localId, filename: file.filename, mimeType: file.mimeType, data: data)
+        }
+        guard !files.isEmpty else { return }
+        onFilesReturned?(
+            OutboxReturnedFiles(
+                key: entry.draftKey, files: files, supersededUploadIds: entry.supersededUploadIds ?? []))
+    }
+
+    /// "Put back in composer" on a failed send: its text goes in front of what is typed, its inline
+    /// files are staged again, and the entry is gone.
+    public func putBackInComposer(id: String, drafts: DraftStore) {
+        guard let entry = entries.first(where: { $0.id == id }) else { return }
+        Self.putBack([entry.text], into: drafts, key: entry.draftKey)
+        returnFiles(of: entry)
+        discard(id: id)
+        if !entry.namedAttachmentIds.isEmpty { Task { await drafts.syncFromServer() } }
+    }
+
     /// Whether a request carrying this entry may have reached the server: one is in the air
     /// (`.sending`, which a restart turns back into `.queued` and sends again at once), or an
     /// earlier one failed without an answer (`attempts`). The only entries that cannot are those
@@ -238,7 +312,10 @@ public final class OutboxStore {
         // Dropped before anything is awaited, so no worker can issue a request for one of these
         // in between.
         let neverLeftTexts = neverLeft.map(\.text)
-        for entry in neverLeft { discard(id: entry.id) }
+        for entry in neverLeft {
+            returnFiles(of: entry)
+            discard(id: entry.id)
+        }
         for entry in mayBeOnServer { withdrawing.insert(entry.id) }
 
         var summary = UndoSendSummary()
@@ -264,6 +341,9 @@ public final class OutboxStore {
             restoredIds.contains($0.id) && !rowIds.contains($0.id) && present.contains($0.id)
         }
         let deliveredHere = mayBeOnServer.filter { deliveredIds.contains($0.id) }
+        // A tombstoned entry never arrived, so its files are still this device's; a row the server
+        // withdrew took its files back onto the draft with its text.
+        for entry in tombstoned { returnFiles(of: entry) }
         for entry in mayBeOnServer where restoredIds.contains(entry.id) || deliveredIds.contains(entry.id) {
             discard(id: entry.id)
         }
@@ -271,9 +351,13 @@ public final class OutboxStore {
         let pulledBack = (serverRows.map(\.text) + tombstoned.map(\.text) + neverLeftTexts).filter { !$0.isEmpty }
         Self.putBack(pulledBack, into: drafts, key: sessionId)
 
-        summary.restored = pulledBack.count
+        // Messages, not texts: one carrying only a file came back too.
+        summary.restored = serverRows.count + tombstoned.count + neverLeft.count
         summary.delivered = max(deliveredHere.count, response?.alreadyDelivered.count ?? 0)
         summary.undecided = response?.unresolved.count ?? 0
+        // Files the server moved back onto the draft, and uploaded rows this send no longer claims,
+        // show up with the next poll; asking now is what makes Undo send show them at once.
+        if summary.restored > 0 { await drafts.syncFromServer() }
         // Entries left in place (request failed, or undecided) still owe their delivery.
         ensureWorker(for: OutboxTarget.session(sessionId: sessionId).workerKey)
         return summary
@@ -394,6 +478,7 @@ public final class OutboxStore {
                 // undo already took the entry there is nothing left to do (the guard above);
                 // otherwise this one is the only thing that knows to put the text back.
                 let refused = entries[current]
+                if !response.textInDraft { returnFiles(of: refused) }
                 discard(id: refused.id)
                 onRefused?(refused, response.textInDraft)
                 return
