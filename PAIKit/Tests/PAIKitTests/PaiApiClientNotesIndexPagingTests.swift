@@ -17,13 +17,17 @@ final class NotesPagingStubURLProtocol: URLProtocol {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var _total = 0
     nonisolated(unsafe) private static var _pageSize = 0
+    nonisolated(unsafe) private static var _overlap = 0
     nonisolated(unsafe) private static var _requestedOffsets: [Int] = []
 
-    static func configure(total: Int, pageSize: Int) {
+    /// `overlap` makes every page after the first start that many rows early, the way a reorder
+    /// between two requests repeats the rows at a page boundary.
+    static func configure(total: Int, pageSize: Int, overlap: Int = 0) {
         lock.lock()
         defer { lock.unlock() }
         _total = total
         _pageSize = pageSize
+        _overlap = overlap
         _requestedOffsets = []
     }
 
@@ -52,11 +56,12 @@ final class NotesPagingStubURLProtocol: URLProtocol {
         Self._requestedOffsets.append(offset)
         let total = Self._total
         let pageSize = Self._pageSize
+        let start = offset > 0 ? max(0, offset - Self._overlap) : 0
         Self.lock.unlock()
 
-        let count = max(0, min(pageSize, min(limit, total - offset)))
+        let count = max(0, min(pageSize, min(limit, total - start)))
         let rows = (0..<count).map { index -> String in
-            let n = offset + index
+            let n = start + index
             return """
                 {"id": "n\(n)", "name": "Note \(n)", "summary": null, "tags": [],
                  "favourite": false, "updated_at_ms": \(1_700_000_000_000 - n),
@@ -116,5 +121,20 @@ final class PaiApiClientNotesIndexPagingTests: XCTestCase {
 
         XCTAssertEqual(notes.count, 200)
         XCTAssertEqual(NotesPagingStubURLProtocol.requestedOffsets, [0, 100, 200])
+    }
+
+    /// Each page is its own request, so a note that moves across a page boundary between two of
+    /// them comes back on both. The list keys its rows by id, and one id on two rows is what the
+    /// list renders as a duplicate.
+    func testAnIdReturnedByTwoPagesIsListedOnce() async throws {
+        NotesPagingStubURLProtocol.configure(total: 1200, pageSize: 500, overlap: 3)
+        let notes = try await makeClient().getNotes(limit: 500)
+
+        XCTAssertEqual(NotesPagingStubURLProtocol.requestedOffsets, [0, 500, 1000], "the pages did overlap")
+        XCTAssertEqual(notes.count, 1200)
+        XCTAssertEqual(Set(notes.map(\.id)).count, notes.count)
+        // First copy wins: the order is the first page's, then what only the later pages added.
+        XCTAssertEqual(notes.prefix(3).map(\.id), ["n0", "n1", "n2"])
+        XCTAssertEqual(notes.last?.id, "n1199")
     }
 }

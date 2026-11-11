@@ -30,6 +30,9 @@ struct NoteBodyView: View {
     let selfName: String?
     /// Ticks a task box. `nil` where the page is read-only; the boxes then stay plain glyphs.
     let onToggleTask: ((NoteTaskMark) -> Void)?
+    /// Runs with a tag tapped in the text, as written and without its `#`. The tag is drawn
+    /// either way; without this it does nothing when tapped.
+    let onTagTap: ((String) -> Void)?
 
     @Environment(AppEnvironment.self) private var environment
     @Environment(NotesStore.self) private var notes
@@ -49,7 +52,7 @@ struct NoteBodyView: View {
     init(
         body: String, nameToId: [String: String], containerId: String?,
         selfName: String? = nil, jump: NoteJumpRequest? = nil, highlight: String? = nil,
-        onToggleTask: ((NoteTaskMark) -> Void)? = nil
+        onToggleTask: ((NoteTaskMark) -> Void)? = nil, onTagTap: ((String) -> Void)? = nil
     ) {
         self.noteBody = body
         self.nameToId = nameToId
@@ -58,6 +61,7 @@ struct NoteBodyView: View {
         self.jump = jump
         self.highlight = highlight
         self.onToggleTask = onToggleTask
+        self.onTagTap = onTagTap
     }
 
     var body: some View {
@@ -106,7 +110,8 @@ struct NoteBodyView: View {
             // read while previewing, and following it should land on the same rendered page
             // rather than dropping into the target note's editor. A link to a heading of this very
             // page scrolls instead.
-            .confirmingExternalLinks(onNoteLink: { follow($0, document: document, proxy: proxy) })
+            .confirmingExternalLinks(
+                onNoteLink: { follow($0, document: document, proxy: proxy) }, onTagLink: onTagTap)
         }
         .background(PaiPalette.Notes.background)
         // Reloads whenever the container changes (a different note opened in place) or is nil
@@ -275,7 +280,8 @@ struct NotePreviewBlockView: View {
     /// A paragraph's or heading's text, with any attachment in it drawn where it stands: an image
     /// on a row of its own, a chip flowing with the words around it.
     @ViewBuilder
-    private func inlineContent(_ text: InlineText, style: PaiTypography.Style, baseColor: Color) -> some View {
+    private func inlineContent(_ source: InlineText, style: PaiTypography.Style, baseColor: Color) -> some View {
+        let text = NoteInlineTags.tagged(source)
         if let lines = NotePreviewInline.lines(
             of: text, attachments: attachments,
             drawsAsBlock: { $0.mode == .embed && isImageAttachmentPath($0.target) })
@@ -399,7 +405,12 @@ struct NotePreviewBlockView: View {
             if run.style.contains(.italic) { intent.insert(.emphasized) }
             if !intent.isEmpty { attributed[range].inlinePresentationIntent = intent }
             if run.style.contains(.strikethrough) { attributed[range].strikethroughStyle = .single }
-            if let destination = run.destination {
+            if run.style.contains(.noteTag) {
+                // A chip's tinted ground, not an underline: a tag is a label, not an address.
+                attributed[range].foregroundColor = PaiPalette.Notes.accent
+                attributed[range].backgroundColor = PaiPalette.Notes.accent.opacity(0.15)
+                if let url = run.destination.flatMap({ URL(string: $0) }) { attributed[range].link = url }
+            } else if let destination = run.destination {
                 attributed[range].foregroundColor = PaiPalette.Notes.accent
                 attributed[range].underlineStyle = .single
                 // A destination that fails to parse is left as plain styled text — a broken link

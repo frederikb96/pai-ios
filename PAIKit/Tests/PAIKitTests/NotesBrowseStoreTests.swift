@@ -76,4 +76,19 @@ final class NotesBrowseStoreTests: XCTestCase {
             // Any error propagating is the point — the screen decides how to phrase it.
         }
     }
+
+    /// A tag tapped in a note is spelled as the note wrote it, while the list narrows by the
+    /// case-folded key; the request must select the notes the list's own tag filter would.
+    func testARequestedTagSelectsNotesTheListFilterMatchesAndIsTakenOnce() async {
+        let store = NotesBrowseStore(api: FakeNotesBrowseApi(), storage: SettingsInMemoryKeyValueStore())
+        let tagged = NoteSummary(
+            id: "a", name: "A", summary: nil, containerId: nil, favourite: false, tags: ["report"],
+            updatedAtMs: 0, pendingDelete: false)
+
+        store.requestTagFilter("Report")
+        let key = store.takeRequestedTag()
+
+        XCTAssertEqual(key.map { noteHasAllTags(tagged, selected: [$0]) }, true)
+        XCTAssertNil(store.takeRequestedTag())
+    }
 }

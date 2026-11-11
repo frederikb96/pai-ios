@@ -43,6 +43,11 @@ extension PaiApiClient {
     /// rule), so a short page ends the walk. `pageCap` is a runaway guard, not a corpus limit:
     /// reaching it means the route stopped shortening its pages, which is a server bug rather
     /// than a vault this large.
+    ///
+    /// A note appears once however the pages overlap: the pages are separate requests, so a note
+    /// edited between two of them can move across the boundary and be returned by both, and the
+    /// list that shows the result needs one row per id. The first copy wins, which is the one
+    /// from the earlier (newer) request.
     public func getNotes(
         containerId: String? = nil,
         favourite: Bool? = nil,
@@ -51,11 +56,12 @@ extension PaiApiClient {
     ) async throws -> [NoteSummary] {
         let pageCap = 40
         var all: [NoteSummary] = []
+        var seen: Set<String> = []
         var nextOffset = offset
         for _ in 0..<pageCap {
             let page = try await getNotesPage(
                 containerId: containerId, favourite: favourite, limit: limit, offset: nextOffset)
-            all.append(contentsOf: page)
+            all.append(contentsOf: page.filter { seen.insert($0.id).inserted })
             guard page.count == limit else { break }
             nextOffset += limit
         }

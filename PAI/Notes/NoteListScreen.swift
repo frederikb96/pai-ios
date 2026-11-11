@@ -82,6 +82,11 @@ struct NoteListScreen: View {
             // `modeChanged` clears the previous mode's results, so switching never leaves them
             // on screen under the new mode's prompt.
             .onChange(of: mode) { _, _ in modeChanged() }
+            // A tag tapped in a note narrows the list to it, replacing any selection; `initial`
+            // covers a list built after the request was made (the notes route was not on the stack).
+            .onChange(of: browse.requestedTag, initial: true) { _, _ in
+                if let key = browse.takeRequestedTag() { selectedTags = [key] }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
@@ -195,7 +200,11 @@ struct NoteListScreen: View {
                     NoteBodyView(
                         body: notes.detail(for: target.value)?.body ?? "",
                         nameToId: buildNameToId(notes.notes), containerId: notes.detail(for: target.value)?.containerId,
-                        selfName: notes.summary(for: target.value)?.name
+                        selfName: notes.summary(for: target.value)?.name,
+                        onTagTap: { tag in
+                            browse.requestTagFilter(tag)
+                            previewTargetId = nil
+                        }
                     )
                     .navigationTitle(
                         notes.summary(for: target.value)?.name.isEmpty == false

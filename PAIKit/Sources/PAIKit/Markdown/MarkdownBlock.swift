@@ -139,6 +139,9 @@ public struct InlineStyle: OptionSet, Hashable, Sendable {
     public static let code = InlineStyle(rawValue: 1 << 3)
     /// The run's text is a formula's LaTeX, drawn as the formula (``MarkdownMath``).
     public static let math = InlineStyle(rawValue: 1 << 4)
+    /// A note's inline `#tag`, drawn as a chip (``NoteInlineTags``). Only the note read view
+    /// produces it.
+    public static let noteTag = InlineStyle(rawValue: 1 << 6)
     /// A display formula on its way from the parse to a block of its own; no parsed block carries
     /// it, since `MarkdownParser` makes it a ``MarkdownBlock/math(_:)`` or demotes it to ``math``.
     static let displayMath = InlineStyle(rawValue: 1 << 5)
