@@ -56,10 +56,22 @@ private struct ToastRow: View {
         .padding(.vertical, 12)
         .background(backgroundColor, in: RoundedRectangle(cornerRadius: 12))
         .shadow(radius: 8, y: 2)
-        .accessibilityIdentifier("toast-\(toast.kind == .error ? "error" : "info")")
+        .accessibilityIdentifier("toast-\(identifierSuffix)")
     }
 
     private var backgroundColor: Color {
-        toast.kind == .error ? PaiPalette.red600 : PaiPalette.surface800
+        switch toast.kind {
+        case .error: PaiPalette.red600
+        case .success: PaiPalette.green600
+        case .info: PaiPalette.surface800
+        }
+    }
+
+    private var identifierSuffix: String {
+        switch toast.kind {
+        case .error: "error"
+        case .success: "success"
+        case .info: "info"
+        }
     }
 }

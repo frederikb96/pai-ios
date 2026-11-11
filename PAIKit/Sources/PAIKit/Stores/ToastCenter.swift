@@ -12,7 +12,7 @@ public struct ToastMessage: Sendable, Identifiable {
     public let action: Action?
 
     public enum Kind: Sendable, Equatable {
-        case info, error
+        case info, error, success
     }
 
     public struct Action: Sendable {
