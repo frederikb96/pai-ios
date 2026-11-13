@@ -2,7 +2,9 @@ import Foundation
 import PAIKit
 import Security
 
-/// Where the backend JWT lives.
+/// Where the backend credential lives: the token set of a Zitadel sign-in, or a pasted token
+/// (a machine token, or the way in when signing in is not possible). One at a time; writing either
+/// removes the other.
 ///
 /// The Keychain is the only place on the device holding a secret: the speech-to-text key and the
 /// SMTP password are write-only server secrets, posted once and never readable back, so the app
@@ -10,7 +12,7 @@ import Security
 ///
 /// Not in `PAIKit` because `Security` is Apple-only, and one unguarded import there would drag the
 /// whole test suite onto a metered runner.
-struct KeychainTokenStore {
+struct KeychainTokenStore: OidcTokenSetStore {
 
     #if DEBUG
         /// Fixture mode's token, held in memory because the Keychain is not always available.
@@ -32,13 +34,14 @@ struct KeychainTokenStore {
     #endif
 
     private let service: String
-    private let account = "backend-jwt"
+    private let pastedAccount = "backend-jwt"
+    private let signInAccount = "oidc-token-set"
 
     init(service: String = Bundle.main.bundleIdentifier ?? "com.frederikberg.pai") {
         self.service = service
     }
 
-    private var baseQuery: [String: Any] {
+    private func baseQuery(account: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -49,6 +52,7 @@ struct KeychainTokenStore {
         ]
     }
 
+    /// The bearer every request carries, whichever way the app is signed in.
     func read() -> String? {
         #if DEBUG
             if PaiFixtureLaunch.isEnabled() {
@@ -57,38 +61,21 @@ struct KeychainTokenStore {
                 if let token = Self.fixtureToken { return token }
             }
         #endif
-        var query = baseQuery
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-            let data = item as? Data,
-            let token = String(data: data, encoding: .utf8),
-            !token.isEmpty
-        else {
-            return nil
+        if let tokens = readTokenSet() { return tokens.accessToken }
+        return readItem(account: pastedAccount).flatMap { String(data: $0, encoding: .utf8) }.flatMap {
+            $0.isEmpty ? nil : $0
         }
-        return token
     }
 
-    /// Writing `nil` removes the item.
-    ///
-    /// Delete-then-add rather than `SecItemUpdate`: an update against a missing item fails, and
-    /// branching on which case applies is a second code path for no benefit.
+    /// A pasted token. Writing `nil` signs out, removing a sign-in's token set as well.
     @discardableResult
     func write(_ token: String?) -> Bool {
-        SecItemDelete(baseQuery as CFDictionary)
-
-        guard let token, !token.isEmpty else { return true }
-
-        var query = baseQuery
-        query[kSecValueData as String] = Data(token.utf8)
-        // Survives a relaunch and works while the phone is locked but has been unlocked once,
-        // which is what a background refresh needs.
-        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-
-        let status = SecItemAdd(query as CFDictionary, nil)
+        deleteItem(account: signInAccount)
+        guard let token, !token.isEmpty else {
+            deleteItem(account: pastedAccount)
+            return true
+        }
+        let status = writeItem(account: pastedAccount, data: Data(token.utf8))
         #if DEBUG
             Self.lastWriteStatus = status
             if status != errSecSuccess, PaiFixtureLaunch.isEnabled() {
@@ -99,6 +86,44 @@ struct KeychainTokenStore {
             }
         #endif
         return status == errSecSuccess
+    }
+
+    func readTokenSet() -> OidcTokenSet? {
+        readItem(account: signInAccount).flatMap { try? JSONDecoder().decode(OidcTokenSet.self, from: $0) }
+    }
+
+    /// A sign-in's tokens, first or renewed. Replaces a pasted token.
+    @discardableResult
+    func writeTokenSet(_ tokens: OidcTokenSet) -> Bool {
+        guard let data = try? JSONEncoder().encode(tokens) else { return false }
+        deleteItem(account: pastedAccount)
+        return writeItem(account: signInAccount, data: data) == errSecSuccess
+    }
+
+    private func readItem(account: String) -> Data? {
+        var query = baseQuery(account: account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess else { return nil }
+        return item as? Data
+    }
+
+    /// Delete-then-add rather than `SecItemUpdate`: an update against a missing item fails, and
+    /// branching on which case applies is a second code path for no benefit.
+    private func writeItem(account: String, data: Data) -> OSStatus {
+        deleteItem(account: account)
+        var query = baseQuery(account: account)
+        query[kSecValueData as String] = data
+        // Survives a relaunch and works while the phone is locked but has been unlocked once,
+        // which is what a background refresh needs.
+        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        return SecItemAdd(query as CFDictionary, nil)
+    }
+
+    private func deleteItem(account: String) {
+        SecItemDelete(baseQuery(account: account) as CFDictionary)
     }
 }
 

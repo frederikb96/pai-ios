@@ -38,6 +38,20 @@ views are thin, and anything a unit test could catch lives in the package.
 | `Tooling/` | checks that catch macOS-only compile errors without a Mac; `sim/` is the simulator lane the `Mac` workflow runs, usable on any Mac |
 | `fastlane/` | build, sign, upload — the same lanes locally and in CI |
 
+## Signing in
+
+The backend sits behind Zitadel. "Sign in" runs the authorization-code flow with PKCE in the system
+browser sheet (`WebAuthenticationSession`, the shared browser session, so a login already made in
+Safari is reused) against a native, public Zitadel application, and comes back through
+`pai://oauth/callback`. The token set lands in the Keychain. When the backend refuses the access
+token — a 401, or the proxy's plain-text 403 — the app refreshes it once, however many requests were
+refused together, sends the request again, and signs out only when the refresh itself is refused.
+`PAIKit/Sources/PAIKit/Auth/` holds the flow, the token endpoint and the renewal; the Keychain store
+and the screen are in `PAI/Shell/`.
+
+Advanced on the same screen takes a pasted access token instead: a machine token, or the way in
+when signing in is not possible. A pasted token is not renewed.
+
 ## The share extension
 
 `PAIShare/` is a second target: PAI in the system share sheet. A shared photo, PDF, text file, selected text or link goes through the same `POST /api/drafts/{key}/attachments` a composer's upload uses, onto an existing session's draft or the new-session draft, and waits there until a message is sent from it. The view holds only what needs an Apple framework; `ShareStore` in `PAIKit` holds the rest. The app copies its sign-in into a Keychain item in a shared access group, which the team wildcard in every provisioning profile already covers, so neither bundle id needs a capability or an App Group.
