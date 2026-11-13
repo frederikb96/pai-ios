@@ -24,13 +24,26 @@ public enum PaiError: Error, Equatable {
     /// Worth asking of the error rather than of a status code at each call site: every caller
     /// that has to remember to check is a caller that can forget, and forgetting means the app
     /// shows an empty screen instead of asking for a new token.
+    ///
+    /// A 401 is one. So is a 403 with no JSON `detail`: the ingress proxy answers an invalid
+    /// bearer with a plain-text 403, whereas pai-cloud's own 403 always carries `{"detail": …}`
+    /// and means the credential is fine but this person may not do this (`isRefusal`).
     public var isAuthenticationFailure: Bool {
         switch self {
-        case .detail(_, let statusCode), .http(let statusCode, _):
+        case .detail(_, let statusCode):
+            return statusCode == 401
+        case .http(let statusCode, _):
             return statusCode == 401 || statusCode == 403
         case .transport, .decoding:
             return false
         }
+    }
+
+    /// pai-cloud understood the request and said this person may not make it: a JSON 403. The
+    /// token stays, and the caller shows `userMessage`.
+    public var isRefusal: Bool {
+        if case .detail(_, let statusCode) = self { return statusCode == 403 }
+        return false
     }
 
     /// The server understood the request and refused it, so sending the same request again gets

@@ -37,7 +37,10 @@ struct SettingsScreen: View {
                 MailVerdictKeySection()
             }
 
-            NotificationsSection()
+            // Device push registration is the owner's route; a guest's phone has none to configure.
+            if environment.connection?.me.capabilities.canRegisterPush == true {
+                NotificationsSection()
+            }
 
             EmailNotificationsSection(store: settings.userSettings)
 

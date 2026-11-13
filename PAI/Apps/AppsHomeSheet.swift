@@ -2,7 +2,8 @@ import PAIKit
 import SwiftUI
 
 /// Where the top bar's "Apps" button leads — a small picker over Quick Actions, Arc, Notes, the
-/// Scheduler, the Canteen, Usage and (owner only) Decisions.
+/// Scheduler, the Canteen, Usage, Decisions and the Browser, each shown to those whose
+/// capabilities admit it.
 /// Mirrors the web's own `AppsFlyout`/`AppsHome` pairing (a modal listing every registered app),
 /// minus Memory and Notifications: PAI Cloud's Memory app is notes plus projects/phases/search,
 /// and this repo never built a separate Memory screen — the note index (`.notes`) is the one
@@ -12,6 +13,8 @@ import SwiftUI
 struct AppsHomeSheet: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.dismiss) private var dismiss
+
+    private var capabilities: Capabilities { environment.connection?.me.capabilities ?? .unknown }
 
     var body: some View {
         NavigationStack {
@@ -23,28 +26,37 @@ struct AppsHomeSheet: View {
                     Label("Quick Actions", systemImage: "square.grid.2x2")
                 }
                 .accessibilityIdentifier("apps-open-quick-actions")
-                Button(action: openArc) {
-                    Label("Arc", systemImage: "shippingbox")
+                // Each row follows the capability its routes need: a guest's request for an
+                // owner-only one would be refused.
+                if capabilities.canOpenArc {
+                    Button(action: openArc) {
+                        Label("Arc", systemImage: "shippingbox")
+                    }
+                    .accessibilityIdentifier("apps-open-arc")
                 }
-                .accessibilityIdentifier("apps-open-arc")
-                Button(action: openNotes) {
-                    Label("Notes", systemImage: "note.text")
+                if capabilities.canOpenNotes {
+                    Button(action: openNotes) {
+                        Label("Notes", systemImage: "note.text")
+                    }
+                    .accessibilityIdentifier("apps-open-notes")
                 }
-                .accessibilityIdentifier("apps-open-notes")
-                Button(action: openScheduler) {
-                    Label("Scheduler", systemImage: "clock.badge.checkmark")
+                if capabilities.canOpenScheduler {
+                    Button(action: openScheduler) {
+                        Label("Scheduler", systemImage: "clock.badge.checkmark")
+                    }
+                    .accessibilityIdentifier("apps-open-scheduler")
                 }
-                .accessibilityIdentifier("apps-open-scheduler")
-                Button(action: openCanteen) {
-                    Label("Canteen", systemImage: "fork.knife")
+                if capabilities.canOpenCanteen {
+                    Button(action: openCanteen) {
+                        Label("Canteen", systemImage: "fork.knife")
+                    }
+                    .accessibilityIdentifier("apps-open-canteen")
                 }
-                .accessibilityIdentifier("apps-open-canteen")
                 Button(action: openUsage) {
                     Label("Usage", systemImage: "gauge.with.dots.needle.33percent")
                 }
                 .accessibilityIdentifier("apps-open-usage")
-                // Owner only, like the routes behind it: a guest's request would be refused.
-                if environment.connection?.me.isOwner == true {
+                if capabilities.canOpenDecisions {
                     Button(action: openDecisions) {
                         Label {
                             HStack {
@@ -59,6 +71,8 @@ struct AppsHomeSheet: View {
                         }
                     }
                     .accessibilityIdentifier("apps-open-decisions")
+                }
+                if capabilities.canOpenBrowser {
                     Button(action: openBrowser) {
                         Label("Browser", systemImage: "globe")
                     }

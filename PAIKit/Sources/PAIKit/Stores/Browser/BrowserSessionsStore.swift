@@ -13,8 +13,7 @@ extension PaiApiClient: BrowserApiClient {}
 /// The Browser app's list: the agent's live browser sessions, those waiting on the owner first.
 /// Swift port of `SessionList` in `BrowserApp.tsx`.
 ///
-/// Owner only: the routes answer a guest 403, which the API client reads as a rejected credential
-/// and signs out, so a guest never sends a request.
+/// Owner only: the routes answer a guest 403, so a guest never sends a request.
 @MainActor
 @Observable
 public final class BrowserSessionsStore {
@@ -26,18 +25,18 @@ public final class BrowserSessionsStore {
     public private(set) var errorMessage: String?
 
     private let api: BrowserApiClient
-    private let isOwner: @MainActor () -> Bool
+    private let capabilities: @MainActor () -> Capabilities
 
-    public init(api: BrowserApiClient, isOwner: @escaping @MainActor () -> Bool) {
+    public init(api: BrowserApiClient, capabilities: @escaping @MainActor () -> Capabilities) {
         self.api = api
-        self.isOwner = isOwner
+        self.capabilities = capabilities
     }
 
-    public var ownerMayBrowse: Bool { isOwner() }
+    public var ownerMayBrowse: Bool { capabilities().canOpenBrowser }
 
     /// A failed read keeps the list it already has and shows the error beside it.
     public func load() async {
-        guard isOwner() else { return }
+        guard capabilities().canOpenBrowser else { return }
         do {
             sessions = Self.ordered(try await api.listBrowserSessions())
             errorMessage = nil

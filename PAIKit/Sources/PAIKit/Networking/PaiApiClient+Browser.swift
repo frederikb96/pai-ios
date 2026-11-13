@@ -11,8 +11,8 @@ extension PaiApiClient {
         return "/api/browser/sessions/\(name.addingPercentEncoding(withAllowedCharacters: allowed) ?? name)"
     }
 
-    /// Every live agent browser session. Owner only: the route answers a guest 403, which this
-    /// client reads as a rejected credential, so callers ask `isOwner` first.
+    /// Every live agent browser session. Owner only: the route answers a guest 403, so callers
+    /// ask `Capabilities.canOpenBrowser` first.
     public func listBrowserSessions() async throws -> [BrowserSession] {
         let response: BrowserSessionsResponse = try await send(path: "/api/browser/sessions")
         return response.sessions

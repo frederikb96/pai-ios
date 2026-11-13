@@ -153,7 +153,8 @@ final class AppEnvironment {
         return connect()
     }
 
-    /// Called when a request comes back 401 or 403.
+    /// Called when the server rejects the credential: a 401, or the proxy's plain-text 403. A JSON
+    /// 403 from pai-cloud is a refusal of one request and never reaches here.
     ///
     /// The token is cleared as well as the gate moved: leaving a rejected credential in the
     /// Keychain means the next launch tries it again and lands back here, which reads as the app
@@ -329,7 +330,10 @@ final class AppEnvironment {
             drafts: draftStore,
             me: me,
             toasts: toasts,
-            push: PushRegistrationStore(storage: defaults) { token, mutedChannels in
+            push: PushRegistrationStore(
+                storage: defaults,
+                isRegistrationAllowed: { [weak me] in me?.capabilities.canRegisterPush ?? false }
+            ) { token, mutedChannels in
                 try await client.registerDevice(token: token, mutedChannels: mutedChannels)
             },
             pushChannels: PushChannelsStore(api: client),
@@ -346,7 +350,7 @@ final class AppEnvironment {
             wakeWordSamples: wakeWordSamples,
             notifications: NotificationCenterStore(api: client),
             transcriptJumps: TranscriptJumpRequests(),
-            decisions: DecisionsStore(api: client, isOwner: { [weak me] in me?.isOwner ?? false }),
+            decisions: DecisionsStore(api: client, capabilities: { [weak me] in me?.capabilities ?? .unknown }),
             secretGrants: secretGrants
         )
         PlaybackController.shared.configure(
@@ -371,12 +375,16 @@ final class AppEnvironment {
         // Edits left on disk by the last run go out too; not awaited, since they need nothing
         // below and nothing below needs them.
         Task { [notes = connection.notes] in await notes.resumeSync() }
-        await connection.settings.refreshSecretPresence()
+        // Who is signed in comes first: every call below that only the owner may make waits on
+        // the answer, and a guest's request for one would be refused.
+        await connection.me.refresh()
+        if connection.me.capabilities.canReadSecrets {
+            await connection.settings.refreshSecretPresence()
+        }
         // The person's own settings (recording mode, e-mail switch, playback speed) are read once
         // per launch; the Settings screen reads them again when it opens.
         await connection.settings.userSettings.load()
         await connection.machines.refresh()
-        await connection.me.refresh()
         await connection.decisions.refresh()
         await connection.staging.loadPersisted()
         await connection.notifications.refreshSummary()

@@ -11,7 +11,7 @@ struct BrowserListScreen: View {
 
     var body: some View {
         Group {
-            if me?.isGuest == true {
+            if let capabilities = me?.capabilities, capabilities.isKnown, !capabilities.canOpenBrowser {
                 ContentUnavailableView(
                     "Owner Only", systemImage: "lock",
                     description: Text("Browser sessions can only be opened by the account owner."))
@@ -25,14 +25,14 @@ struct BrowserListScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("browser-list-screen")
         .task(id: me?.me != nil) {
-            guard let connection = environment.connection, connection.me.me != nil, !connection.me.isGuest else {
+            guard let connection = environment.connection, connection.me.capabilities.canOpenBrowser else {
                 return
             }
             let current =
                 store
                 ?? BrowserSessionsStore(
                     api: connection.apiClient,
-                    isOwner: { [weak identity = connection.me] in identity?.isOwner ?? false })
+                    capabilities: { [weak identity = connection.me] in identity?.capabilities ?? .unknown })
             store = current
             await current.keepFresh()
         }

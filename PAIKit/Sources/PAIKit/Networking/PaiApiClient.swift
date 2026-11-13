@@ -1234,7 +1234,7 @@ public struct PaiApiClient: Sendable {
     // MARK: Decisions
 
     /// `GET /api/decisions` — every open decision across the owner's sessions, newest first.
-    /// Owner-only: a guest's 403 would read as a rejected credential, so callers gate on the role.
+    /// Owner-only: a guest gets 403, so callers gate on `Capabilities.canOpenDecisions`.
     public func getOpenDecisions() async throws -> OpenDecisionsResponse {
         try await send(path: "/api/decisions")
     }
@@ -1310,9 +1310,8 @@ public struct PaiApiClient: Sendable {
     /// identity" — a real auth-shaped failure, but not one this client should sign the whole app
     /// out over: the bearer token is fine, it is just not the owner, and a JWT that answers every
     /// other endpoint should not be thrown away because of this one route's stricter check.
-    /// `PaiError.isAuthenticationFailure` cannot make that distinction (it treats every 403 as a
-    /// rejected token), so 403 stays in `sendPassingThrough`'s passthrough set — same reason as
-    /// before this endpoint's error shape changed, different outcome once it is there.
+    /// The route's 403 stays in `sendPassingThrough`'s passthrough set so the sheet gets an
+    /// outcome to show, not a thrown error.
     ///
     /// 🚨 409 is overloaded: `scope: .requested` against nothing outstanding answers 409 with
     /// `detail: "nothing requested"`, indistinguishable by status code alone from the older

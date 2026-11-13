@@ -39,9 +39,31 @@ final class PaiApiClientAuthFailureTests: XCTestCase {
         XCTAssertEqual(box.last?.userMessage, "token expired")
     }
 
-    func testA403AlsoNotifies() async {
+    /// pai-cloud's own 403 (JSON `detail`) is a refusal of one request, not a bad credential: a
+    /// guest asking for an owner route must stay signed in and see the reason.
+    func testAJson403DoesNotNotifyAndSurfacesItsReason() async {
         let box = FailureBox()
         let client = makeClient(status: 403, body: #"{"detail":"not an owner"}"#) { box.record($0) }
+        do {
+            _ = try await client.getSessions()
+            XCTFail("expected a refusal")
+        } catch {
+            XCTAssertEqual((error as? PaiError)?.userMessage, "not an owner")
+            XCTAssertEqual((error as? PaiError)?.isRefusal, true)
+        }
+        XCTAssertEqual(box.count, 0)
+    }
+
+    /// The ingress proxy's plain-text 403 for an invalid bearer is a rejected credential.
+    func testAPlainTextProxy403Notifies() async {
+        PaiStubURLProtocol.reset()
+        PaiStubURLProtocol.stub = PaiStubURLProtocol.Stub(
+            statusCode: 403, headers: ["Content-Type": "text/plain"], body: Data("Forbidden".utf8))
+        let box = FailureBox()
+        let factory = try! PaiRequestFactory(baseURL: "https://example.invalid", tokenProvider: { "stale" })
+        let client = PaiApiClient(
+            requestFactory: factory, urlSession: PaiStubURLProtocol.makeSession(),
+            onAuthenticationFailure: { box.record($0) })
         _ = try? await client.getSessions()
         XCTAssertEqual(box.count, 1)
     }

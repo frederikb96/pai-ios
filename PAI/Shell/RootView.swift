@@ -182,6 +182,8 @@ struct RootView: View {
                     // permission is still unanswered. Push would then go quiet with the app
                     // still reporting notifications as on, which is the worst way to fail.
                     await PushRegistrar.registerForRemoteNotificationsIfAuthorized(store: connection.push)
+                    // Whether this person's device may be registered depends on who they are.
+                    await connection.me.ensureKnown()
                     await connection.push.registerWithBackendIfNeeded()
                     // Where a silent read-sync push actually reaches app code —
                     // `PushRegistrar.application(_:didReceiveRemoteNotification:fetchCompletionHandler:)`

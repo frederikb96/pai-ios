@@ -687,10 +687,13 @@ final class PaiModelsTests: XCTestCase {
         XCTAssertEqual(me.namespaces, [NamespaceSummary(slug: "anja", displayName: "Anja")])
     }
 
-    /// Any role this build has never heard of still fails the decode rather than silently
-    /// degrading — a wrong guess about who is looking at the app is the costly direction.
-    func testMeResponseThrowsOnAnUnrecognizedRoleRatherThanGuessing() throws {
-        let json = Data(#"{"identity":"owner-demo","role":"admin","allowed_session_ids":[]}"#.utf8)
-        XCTAssertThrowsError(try JSONDecoder().decode(MeResponse.self, from: json))
+    /// A role this build has never heard of must not fail `/api/me`: that would sign the person
+    /// out of an app that can serve them. It decodes as `.unrecognized` and gets no owner rights.
+    func testMeResponseDecodesAnUnrecognizedRoleWithoutGuessing() throws {
+        let json = Data(#"{"identity":"x","role":"admin","allowed_session_ids":[]}"#.utf8)
+        let me = try JSONDecoder().decode(MeResponse.self, from: json)
+        XCTAssertEqual(me.role, .unrecognized("admin"))
+        XCTAssertFalse(Capabilities(me: me).canOpenNotes)
+        XCTAssertEqual(try JSONDecoder().decode(UserRole.self, from: JSONEncoder().encode(me.role)), me.role)
     }
 }

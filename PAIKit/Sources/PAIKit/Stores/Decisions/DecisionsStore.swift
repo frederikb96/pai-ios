@@ -29,8 +29,8 @@ public struct DecisionPick: Equatable, Sendable {
 /// count all read it, refreshed on the notification stream's `decisions` event, on every stream
 /// (re)connect and when a decision view appears.
 ///
-/// Owner only: the routes answer a guest 403, which the API client reads as a rejected credential
-/// and signs out, so every read asks `isOwner` first and a guest never sends one.
+/// Owner only: the routes answer a guest 403, so every read asks `capabilities` first and a guest
+/// never sends one.
 @MainActor
 @Observable
 public final class DecisionsStore {
@@ -44,7 +44,7 @@ public final class DecisionsStore {
     public private(set) var picks: [String: [Int: DecisionPick]] = [:]
 
     private let api: DecisionsApiClient
-    private let isOwner: @MainActor () -> Bool
+    private let capabilities: @MainActor () -> Capabilities
     /// Reads are numbered as they start; a response applies only when it is newer than the last
     /// one applied. Judging by "newest started" instead would let a newer read that failed or was
     /// cancelled void an older one that succeeded, leaving the list as it was.
@@ -55,14 +55,14 @@ public final class DecisionsStore {
     /// How many shown transcripts watch each session.
     private var watchers: [String: Int] = [:]
 
-    public init(api: DecisionsApiClient, isOwner: @escaping @MainActor () -> Bool) {
+    public init(api: DecisionsApiClient, capabilities: @escaping @MainActor () -> Capabilities) {
         self.api = api
-        self.isOwner = isOwner
+        self.capabilities = capabilities
     }
 
     /// Whether this account may see decisions at all; a guest's transcript shows a marker line as
     /// the text it is.
-    public var ownerMayDecide: Bool { isOwner() }
+    public var ownerMayDecide: Bool { capabilities().canOpenDecisions }
 
     /// One session's open decisions, by number.
     public func decisions(forSession sessionId: String) -> [Decision] {
@@ -91,7 +91,7 @@ public final class DecisionsStore {
     /// Best-effort: a failed read keeps what was shown until the next event or appearance. Re-reads
     /// every watched session's decisions too.
     public func refresh() async {
-        guard isOwner() else { return }
+        guard capabilities().canOpenDecisions else { return }
         refreshSequence += 1
         let sequence = refreshSequence
         if let response = try? await api.getOpenDecisions(), sequence > appliedRefresh {
@@ -117,7 +117,7 @@ public final class DecisionsStore {
     }
 
     private func loadSession(_ sessionId: String) async {
-        guard isOwner() else { return }
+        guard capabilities().canOpenDecisions else { return }
         let sequence = (sessionSequences[sessionId] ?? 0) + 1
         sessionSequences[sessionId] = sequence
         guard let response = try? await api.getSessionDecisions(sessionId: sessionId),

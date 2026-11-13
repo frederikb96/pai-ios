@@ -33,9 +33,12 @@ final class PushRegistrationStoreTests: XCTestCase {
 
     private func makeStore(
         storage: SettingsKeyValueStore = SettingsInMemoryKeyValueStore(),
-        recorder: Recorder
+        recorder: Recorder,
+        isRegistrationAllowed: @escaping @MainActor () -> Bool = { true }
     ) -> PushRegistrationStore {
-        PushRegistrationStore(storage: storage) { try await recorder.register($0, $1) }
+        PushRegistrationStore(storage: storage, isRegistrationAllowed: isRegistrationAllowed) {
+            try await recorder.register($0, $1)
+        }
     }
 
     func testAFreshInstallHasAskedForNothing() async {
@@ -63,6 +66,22 @@ final class PushRegistrationStoreTests: XCTestCase {
         await store.registerWithBackendIfNeeded()
 
         XCTAssertEqual(recorder.tokens, ["abc"], "an app opened daily must not post the same token daily")
+    }
+
+    /// A guest's device token must never reach the owner-only registration route, and must go out
+    /// once the person is allowed to register.
+    func testATokenIsNotSentWhileRegistrationIsNotAllowed() async {
+        let recorder = Recorder()
+        var allowed = false
+        let store = makeStore(recorder: recorder, isRegistrationAllowed: { allowed })
+        store.recordDeviceToken("abc")
+
+        await store.registerWithBackendIfNeeded()
+        XCTAssertEqual(recorder.tokens, [])
+
+        allowed = true
+        await store.registerWithBackendIfNeeded()
+        XCTAssertEqual(recorder.tokens, ["abc"])
     }
 
     /// Apple rotates a device token on restore and reinstall. A store keyed on "have I ever

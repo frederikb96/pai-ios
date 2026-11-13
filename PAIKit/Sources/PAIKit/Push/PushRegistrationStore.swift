@@ -27,13 +27,19 @@ public final class PushRegistrationStore {
     /// nothing wrong.
     private let registerToken: @Sendable (String, [String]) async throws -> DeviceRegistration
 
+    /// Whether the signed-in person's devices are registered at all; a guest's is not, because
+    /// the registration route is the owner's.
+    private let isRegistrationAllowed: @MainActor () -> Bool
+
     public private(set) var registration: PushRegistration
 
     public init(
         storage: SettingsKeyValueStore,
+        isRegistrationAllowed: @escaping @MainActor () -> Bool,
         registerToken: @escaping @Sendable (String, [String]) async throws -> DeviceRegistration
     ) {
         self.storage = storage
+        self.isRegistrationAllowed = isRegistrationAllowed
         self.registerToken = registerToken
         registration = storage.value(forKey: Keys.registration) ?? PushRegistration()
     }
@@ -73,7 +79,9 @@ public final class PushRegistrationStore {
     /// launch is soon enough for a device token, and a retry loop against a backend that is down
     /// is worse than waiting.
     public func registerWithBackendIfNeeded() async {
-        guard registration.needsBackendRegistration, let token = registration.deviceToken else { return }
+        guard isRegistrationAllowed(), registration.needsBackendRegistration,
+            let token = registration.deviceToken
+        else { return }
         let sent = registration.mutedChannels
         do {
             let result = try await registerToken(token, sent.sorted())

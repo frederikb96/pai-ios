@@ -592,13 +592,31 @@ public struct ClaudeLoginCodeResponse: Codable, Sendable, Equatable {
 
 // MARK: - Auth
 
-/// `owner` is the account holder; `guest` is a member of one or more namespaces and reaches only their
-/// sessions. Guests use the web UI only, so this app never acts on `.guest` beyond decoding it;
-/// an unknown role still fails the decode, since a wrong guess about who is looking is the
-/// costly direction.
-public enum UserRole: String, Codable, Sendable, Equatable {
-    case owner
-    case guest
+/// `owner` is the account holder; `guest` is a member of one or more namespaces and reaches only
+/// their sessions. A role this build has never heard of decodes as `.unrecognized` rather than
+/// failing `/api/me`, which would sign the person out of an app that could otherwise serve them;
+/// `Capabilities` gives such a role nothing beyond what every signed-in person may reach.
+public enum UserRole: Sendable, Hashable {
+    case owner, guest
+    case unrecognized(String)
+}
+
+extension UserRole: Codable {
+    private static let knownValues: [String: UserRole] = ["owner": .owner, "guest": .guest]
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = Self.knownValues[raw] ?? .unrecognized(raw)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .owner: try container.encode("owner")
+        case .guest: try container.encode("guest")
+        case let .unrecognized(raw): try container.encode(raw)
+        }
+    }
 }
 
 /// One namespace as its member sees it.
