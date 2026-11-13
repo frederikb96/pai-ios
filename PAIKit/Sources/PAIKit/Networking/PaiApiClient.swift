@@ -208,6 +208,7 @@ public struct PaiApiClient: Sendable {
     private let requestFactory: PaiRequestFactory
     private let urlSession: URLSession
     private let onAuthenticationFailure: (@Sendable (PaiError) -> Void)?
+    private let renewCredential: (@Sendable (String?) async -> CredentialRenewal)?
 
     /// `onAuthenticationFailure` is called whenever the server refuses the credential, before the
     /// error is thrown to the caller.
@@ -216,14 +217,21 @@ public struct PaiApiClient: Sendable {
     /// failure is genuinely not worth surfacing, so they discard the error — and an expired token
     /// then reads as an app with nothing in it and no way back. Noticing here means no caller has
     /// to remember, and a caller that swallows its error still cannot swallow this.
+    ///
+    /// `renewCredential`, when given, is asked first, with the token the refused request carried:
+    /// `renewed` sends the request once more with the new token, and only a refusal of that, or
+    /// `rejected`, reaches `onAuthenticationFailure`. `unavailable` throws a transport error and
+    /// keeps the credential, so an unreachable identity provider never signs anyone out.
     public init(
         requestFactory: PaiRequestFactory,
         urlSession: URLSession = .shared,
-        onAuthenticationFailure: (@Sendable (PaiError) -> Void)? = nil
+        onAuthenticationFailure: (@Sendable (PaiError) -> Void)? = nil,
+        renewCredential: (@Sendable (String?) async -> CredentialRenewal)? = nil
     ) {
         self.requestFactory = requestFactory
         self.urlSession = urlSession
         self.onAuthenticationFailure = onAuthenticationFailure
+        self.renewCredential = renewCredential
     }
 
     // MARK: Core request helpers
@@ -280,7 +288,7 @@ public struct PaiApiClient: Sendable {
         let request = try requestFactory.makeRequest(
             path: path, method: method, query: query, body: body, contentType: contentType
         )
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await perform(request)
         guard let http = response as? HTTPURLResponse else {
             throw PaiError.transport("Response was not HTTP")
         }
@@ -299,7 +307,18 @@ public struct PaiApiClient: Sendable {
             path: path, method: "GET", query: [], body: nil, contentType: nil
         )
         let session = urlSession
-        let (data, response): (Data?, URLResponse) = try await withCheckedThrowingContinuation { continuation in
+        let (data, response) = try await renewingCredential(request) { request in
+            try await Self.download(request, to: destination, session: session)
+        }
+        if let data { try checkStatus(response: response, data: data) }
+    }
+
+    /// The download itself: `nil` data when the body went to `destination`, the error body
+    /// otherwise.
+    private static func download(
+        _ request: URLRequest, to destination: URL, session: URLSession
+    ) async throws -> (Data?, URLResponse) {
+        try await withCheckedThrowingContinuation { continuation in
             // The system deletes the downloaded file as soon as this handler returns, so it is
             // moved (or, for an error body, read) inside it.
             session.downloadTask(with: request) { location, response, error in
@@ -324,7 +343,6 @@ public struct PaiApiClient: Sendable {
                 }
             }.resume()
         }
-        if let data { try checkStatus(response: response, data: data) }
     }
 
     private func sendRaw(
@@ -341,9 +359,40 @@ public struct PaiApiClient: Sendable {
         )
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         if let timeout { request.timeoutInterval = timeout }
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await perform(request)
         try checkStatus(response: response, data: data)
         return (data, response)
+    }
+
+    /// Every request goes out through here, so a refused credential is renewed and the request
+    /// sent again before any caller sees the refusal.
+    private func perform(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        let (data, response) = try await renewingCredential(request) { [urlSession] request in
+            let (data, response) = try await urlSession.data(for: request)
+            return (data, response)
+        }
+        return (data ?? Data(), response)
+    }
+
+    /// Sends `request`; when the answer refuses the credential and a renewal gets a new one, sends
+    /// it once more with that. Any other answer, the refusal included when renewal says
+    /// `rejected`, is handed back for `checkStatus` to judge.
+    private func renewingCredential(
+        _ request: URLRequest,
+        send: (URLRequest) async throws -> (Data?, URLResponse)
+    ) async throws -> (Data?, URLResponse) {
+        let first = try await send(request)
+        guard let renewCredential, let http = first.1 as? HTTPURLResponse,
+            PaiError.from(statusCode: http.statusCode, body: first.0 ?? Data()).isAuthenticationFailure
+        else { return first }
+        switch await renewCredential(PaiRequestFactory.bearerToken(of: request)) {
+        case .renewed:
+            return try await send(requestFactory.reauthorized(request))
+        case .rejected:
+            return first
+        case .unavailable(let reason):
+            throw PaiError.transport("Could not renew the sign-in: \(reason)")
+        }
     }
 
     private func checkStatus(response: URLResponse, data: Data) throws {
@@ -435,7 +484,7 @@ public struct PaiApiClient: Sendable {
         }
 
         let request = try requestFactory.makeRequest(path: "/api/sessions", query: query)
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await perform(request)
         try checkStatus(response: response, data: data)
         let sessions: [Session]
         do {
@@ -1472,7 +1521,7 @@ public struct PaiApiClient: Sendable {
     private func fetchPlaybackAudio(path: String, query: [URLQueryItem]) async throws -> (Data, HTTPURLResponse) {
         let request = try requestFactory.makeRequest(
             path: path, method: "GET", query: query, body: nil, contentType: nil)
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await perform(request)
         guard let http = response as? HTTPURLResponse else { throw PaiError.transport("Response was not HTTP") }
         guard http.statusCode == 200 else {
             if Self.playbackRefusalStatuses.contains(http.statusCode) {
@@ -1745,7 +1794,7 @@ public struct PaiApiClient: Sendable {
         var query: [URLQueryItem] = []
         if let since { query.append(URLQueryItem(name: "since", value: since)) }
         let request = try requestFactory.makeRequest(path: "/api/session/\(sessionId)/export", query: query)
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await perform(request)
         try checkStatus(response: response, data: data)
         let filename =
             (response as? HTTPURLResponse)
@@ -1776,7 +1825,7 @@ public struct PaiApiClient: Sendable {
             path: "/api/session/\(sessionId)/attachment",
             query: [URLQueryItem(name: "path", value: path)]
         )
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await perform(request)
         guard let http = response as? HTTPURLResponse else {
             throw PaiError.transport("Response was not HTTP")
         }

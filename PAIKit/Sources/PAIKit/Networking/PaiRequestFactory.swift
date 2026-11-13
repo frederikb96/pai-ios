@@ -79,12 +79,25 @@ public struct PaiRequestFactory: Sendable {
         request.httpMethod = method
         request.httpBody = body
 
-        if let token = tokenProvider(), !token.isEmpty {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
         if let contentType {
             request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
+        return reauthorized(request)
+    }
+
+    /// The request carrying the token as it is now, for sending again after the credential was
+    /// renewed.
+    public func reauthorized(_ request: URLRequest) -> URLRequest {
+        var request = request
+        let token = tokenProvider().flatMap { $0.isEmpty ? nil : $0 }
+        request.setValue(token.map { "Bearer \($0)" }, forHTTPHeaderField: "Authorization")
         return request
+    }
+
+    /// The bearer a request was sent with — what a renewal is asked to replace.
+    static func bearerToken(of request: URLRequest) -> String? {
+        guard let header = request.value(forHTTPHeaderField: "Authorization"), header.hasPrefix("Bearer ")
+        else { return nil }
+        return String(header.dropFirst("Bearer ".count))
     }
 }

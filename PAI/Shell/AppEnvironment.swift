@@ -124,8 +124,26 @@ final class AppEnvironment {
         let secretGrants: SecretGrantRunStore
     }
 
-    private static let backendURLKey = "backendURL"
-    static let defaultBackendURL = "https://pai.frederikberg.com"
+    nonisolated private static let backendURLKey = "backendURL"
+    nonisolated static let defaultBackendURL = "https://pai.frederikberg.com"
+
+    /// The Zitadel native application this app signs in as: a public client, PKCE instead of a
+    /// secret, so the client id is no secret either. The roles scope puts the person's project
+    /// roles into the access token.
+    nonisolated static let signInConfiguration = OidcConfiguration(
+        issuer: URL(string: "https://login.bergrunde.net")!,
+        clientId: "399443595255349553",
+        redirectURI: URL(string: "pai://oauth/callback")!,
+        scopes: ["openid", "profile", "email", "offline_access", "urn:zitadel:iam:org:projects:roles"]
+    )
+
+    /// The process's one renewer, shared by the connection and the clients App Intents build, so
+    /// two refusals from either side still make one refresh.
+    nonisolated static let credentialRenewer = CredentialRenewer(
+        store: KeychainTokenStore(),
+        client: OidcTokenClient(configuration: signInConfiguration),
+        onRenewed: { shareStoredCredentials() }
+    )
 
     /// The one environment of the process. A view that declares its own `@State` default would run
     /// the initializer — and with it `connect()`, which builds the stores and starts three network
@@ -145,7 +163,7 @@ final class AppEnvironment {
         }
     }
 
-    /// Store a token and bring the connection up. Returns false if the URL is unusable.
+    /// Store a pasted token and bring the connection up. Returns false if the URL is unusable.
     @discardableResult
     func signIn(backendURL url: String, token: String) -> Bool {
         backendURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -153,8 +171,18 @@ final class AppEnvironment {
         return connect()
     }
 
-    /// Called when the server rejects the credential: a 401, or the proxy's plain-text 403. A JSON
-    /// 403 from pai-cloud is a refusal of one request and never reaches here.
+    /// Store a finished Zitadel sign-in and bring the connection up. Returns false if the URL is
+    /// unusable or the Keychain refused the tokens.
+    @discardableResult
+    func signIn(backendURL url: String, signIn tokenSet: OidcTokenSet) -> Bool {
+        backendURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard tokens.writeTokenSet(tokenSet) else { return false }
+        return connect()
+    }
+
+    /// Called when the server rejects the credential — a 401, or the proxy's plain-text 403 — and
+    /// renewing it did not help. A JSON 403 from pai-cloud is a refusal of one request and never
+    /// reaches here.
     ///
     /// The token is cleared as well as the gate moved: leaving a rejected credential in the
     /// Keychain means the next launch tries it again and lands back here, which reads as the app
@@ -186,11 +214,19 @@ final class AppEnvironment {
     }
 
     /// Keeps the share extension's copy of the sign-in equal to the app's. Runs on every connect,
-    /// launch included, so an install signed in before the extension existed gets it too.
+    /// launch included, so an install signed in before the extension existed gets it too, and
+    /// after every renewal. The extension gets the access token only: renewing is the app's alone,
+    /// since a rotated refresh token used from two processes signs one of them out.
     private func shareCredentials() {
+        Self.shareStoredCredentials(defaults: defaults, tokens: tokens)
+    }
+
+    nonisolated private static func shareStoredCredentials(
+        defaults: UserDefaults = .standard, tokens: KeychainTokenStore = KeychainTokenStore()
+    ) {
         guard let store = SharedCredentialStore() else { return }
-        let credentials = tokens.read().map { SharedCredentials(backendURL: backendURL, token: $0) }
-        store.write(credentials)
+        let backendURL = defaults.string(forKey: backendURLKey) ?? defaultBackendURL
+        store.write(tokens.read().map { SharedCredentials(backendURL: backendURL, token: $0) })
     }
 
     @discardableResult
@@ -208,11 +244,15 @@ final class AppEnvironment {
         // Weak, and hopped to the main actor: the callback fires from whatever task made the
         // request, and a strong reference here would be a retain cycle through the client the
         // connection holds.
-        let client = PaiApiClient(requestFactory: factory) { [weak self] error in
-            Task { @MainActor [weak self] in
-                await self?.handleAuthenticationFailure(detail: error.userMessage)
-            }
-        }
+        let client = PaiApiClient(
+            requestFactory: factory,
+            onAuthenticationFailure: { [weak self] error in
+                Task { @MainActor [weak self] in
+                    await self?.handleAuthenticationFailure(detail: error.userMessage)
+                }
+            },
+            renewCredential: { await Self.credentialRenewer.renew(rejecting: $0) }
+        )
         // Built ahead of the literal rather than inside it: the recorder needs both of these, and
         // a struct literal cannot refer to fields it is still building.
         let settingsStore = SettingsStore(apiClient: client, storage: defaults)
@@ -444,6 +484,7 @@ final class AppEnvironment {
     ///
     /// No auth-failure callback: there is no screen to send anyone to, and clearing the token
     /// from a background invocation would sign the app out without the person ever seeing why.
+    /// A refused token is still renewed, through the same renewer the connection uses.
     static func standaloneClient(
         defaults: UserDefaults = .standard, tokens: KeychainTokenStore = KeychainTokenStore()
     ) -> PaiApiClient? {
@@ -451,7 +492,8 @@ final class AppEnvironment {
         let url = defaults.string(forKey: Self.backendURLKey) ?? Self.defaultBackendURL
         guard let factory = try? PaiRequestFactory(baseURL: url, tokenProvider: { tokens.read() })
         else { return nil }
-        return PaiApiClient(requestFactory: factory)
+        return PaiApiClient(
+            requestFactory: factory, renewCredential: { await credentialRenewer.renew(rejecting: $0) })
     }
 
     /// Keep the machine directory current for as long as the app is in front of the user.
