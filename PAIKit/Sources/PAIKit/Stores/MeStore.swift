@@ -8,10 +8,8 @@ public protocol MeApiClient: Sendable {
 
 extension PaiApiClient: MeApiClient {}
 
-/// Who is signed in, fetched once and held for the life of the connection — every session-action
-/// route is owner-only (`MeResponse.role`), and nothing in the app called `getMe()` before this, so a
-/// non-owner credential saw every action and got a 403 back for each one instead of never seeing
-/// it at all.
+/// Who is signed in, fetched once and held for the life of the connection. Owner-only screens and
+/// requests are gated on `capabilities` so a guest never sends the request a 403 would answer.
 @MainActor
 @Observable
 public final class MeStore {
@@ -19,6 +17,10 @@ public final class MeStore {
     public private(set) var loadError: String?
 
     private let api: MeApiClient
+    private var inFlight: Task<Void, Never>?
+
+    /// What the person signed in may reach; `Capabilities.unknown` until `refresh()` has answered.
+    public var capabilities: Capabilities { Capabilities(me: me) }
 
     public init(api: MeApiClient) {
         self.api = api
@@ -34,12 +36,29 @@ public final class MeStore {
     /// must not see them flicker away while the identity check lands.
     public var isGuest: Bool { me?.role == .guest }
 
+    /// Reads `/api/me`. A call made while another is in flight waits for that one instead of
+    /// sending a second request.
     public func refresh() async {
-        do {
-            me = try await api.getMe()
-            loadError = nil
-        } catch {
-            loadError = (error as? PaiError)?.userMessage ?? "Could not confirm who is signed in"
+        if let inFlight {
+            await inFlight.value
+            return
         }
+        let task = Task { @MainActor in
+            do {
+                me = try await api.getMe()
+                loadError = nil
+            } catch {
+                loadError = (error as? PaiError)?.userMessage ?? "Could not confirm who is signed in"
+            }
+        }
+        inFlight = task
+        await task.value
+        inFlight = nil
+    }
+
+    /// Returns once the identity is known, or once a read has failed; reads only when no answer
+    /// is held. What a caller that must not guess the role awaits.
+    public func ensureKnown() async {
+        if me == nil { await refresh() }
     }
 }

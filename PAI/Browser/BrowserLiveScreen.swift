@@ -26,7 +26,7 @@ struct BrowserLiveScreen: View {
 
     var body: some View {
         Group {
-            if me?.isGuest == true {
+            if let capabilities = me?.capabilities, capabilities.isKnown, !capabilities.canOpenBrowser {
                 ContentUnavailableView(
                     "Owner Only", systemImage: "lock",
                     description: Text("Browser sessions can only be opened by the account owner."))
@@ -45,13 +45,13 @@ struct BrowserLiveScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("browser-screen")
         // Identified by whether identity is known: the stream is never opened before the account
-        // is known to be the owner, since a guest's 403 would read as a rejected credential.
+        // is known to be allowed to open it, since a guest's request would be refused.
         .task(id: me?.me != nil) { await begin() }
         .onDisappear { store?.stop() }
     }
 
     private func begin() async {
-        guard let connection = environment.connection, connection.me.me != nil, !connection.me.isGuest else { return }
+        guard let connection = environment.connection, connection.me.capabilities.canOpenBrowser else { return }
         let current =
             store
             ?? BrowserViewStore(name: name, api: connection.apiClient, requestFactory: connection.requestFactory)

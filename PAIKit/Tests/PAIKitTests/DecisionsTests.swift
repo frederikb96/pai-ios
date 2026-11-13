@@ -109,7 +109,7 @@ final class DecisionsTests: XCTestCase {
     }
 
     private func makeStore(_ api: FakeApi, owner: Bool = true) -> DecisionsStore {
-        DecisionsStore(api: api, isOwner: { owner })
+        DecisionsStore(api: api, capabilities: { Capabilities(role: owner ? .owner : .guest) })
     }
 
     private func makeClient() throws -> PaiApiClient {
@@ -187,8 +187,7 @@ final class DecisionsTests: XCTestCase {
 
     // MARK: - Store
 
-    /// A guest's 403 reads as a rejected credential and signs the app out, so no request may
-    /// leave for one.
+    /// A guest's request would be refused, so none may leave for one.
     func testAGuestNeverSendsARequest() async {
         let api = FakeApi()
         let store = makeStore(api, owner: false)
