@@ -60,14 +60,15 @@ struct FilePreviewViewer: View {
         // instead of dismissing the screen.
         //
         // A sideways swipe at rest steps to the neighbouring picture when the target offers one;
-        // whichever axis the drag mostly follows decides between stepping and dismissing.
+        // whichever axis the drag mostly follows then decides between stepping and dismissing; a viewer with
+        // nothing to step dismisses on any downward drag past the threshold, as before.
         .gesture(
             DragGesture(minimumDistance: 40)
                 .onEnded { value in
                     guard allowsSwipeDismiss else { return }
                     let width = value.translation.width
                     let height = value.translation.height
-                    if abs(width) > abs(height) {
+                    if shown.step != nil && abs(width) > abs(height) {
                         if abs(width) > 80 { stepPicture(width > 0 ? .previous : .next) }
                     } else if height > 80 {
                         dismiss()

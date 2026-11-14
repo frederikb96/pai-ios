@@ -150,22 +150,23 @@ final class SchedulerRunAtTests: XCTestCase {
         XCTAssertNil(store.fields.maxDeferMinutes)
     }
 
-    func testLimitsTheUserTypedSurviveTheModeSwitch() async {
+    func testOnlyTheLimitsTheUserTypedSurviveTheModeSwitch() async {
+        let ordinary = TaskWriteFields.fresh(timezone: "UTC")
         let store = TaskEditorStore(taskId: nil, api: FakeTaskEditorApi(), timezone: "UTC")
         store.fields.sessionUsageGatePercent = 40
 
         store.setScheduleMode(.once)
 
         XCTAssertEqual(store.fields.sessionUsageGatePercent, 40)
+        XCTAssertEqual(store.fields.weeklyUsageGatePercent, 100)
+        XCTAssertEqual(store.fields.maxDeferMinutes, 0)
+
+        store.fields.sessionUsageGatePercent = 50
+        store.setScheduleMode(.cadence)
+
+        XCTAssertEqual(store.fields.sessionUsageGatePercent, 50)
+        XCTAssertEqual(store.fields.weeklyUsageGatePercent, ordinary.weeklyUsageGatePercent)
         XCTAssertNil(store.fields.maxDeferMinutes)
-
-        let other = TaskEditorStore(taskId: nil, api: FakeTaskEditorApi(), timezone: "UTC")
-        other.setScheduleMode(.once)
-        other.fields.weeklyUsageGatePercent = 55
-        other.setScheduleMode(.cadence)
-
-        XCTAssertEqual(other.fields.weeklyUsageGatePercent, 55)
-        XCTAssertEqual(other.fields.maxDeferMinutes, 0)
     }
 
     func testAnExistingTasksLimitsAreNeverRewrittenByTheModeSwitch() async throws {
