@@ -86,7 +86,7 @@ public final class TaskEditorStore {
         guard taskId == nil, wasOnce != (mode == .once) else { return }
         let (from, to) =
             wasOnce ? (UsageLimits.oneTime, UsageLimits.ordinary) : (UsageLimits.ordinary, UsageLimits.oneTime)
-        if UsageLimits(fields) == from { to.write(to: &fields) }
+        UsageLimits.swap(in: &fields, from: from, to: to)
     }
 
     /// The usage-limit fields of a task, which one-time and recurring tasks default differently.
@@ -117,12 +117,22 @@ public final class TaskEditorStore {
         /// does not hold it, and a defer cap of 0 minutes.
         static let oneTime = UsageLimits(sessionGatePercent: 100, weeklyGatePercent: 100, maxDeferMinutes: 0)
 
-        func write(to fields: inout TaskWriteFields) {
-            fields.sessionUsageGatePercent = sessionGatePercent
-            fields.weeklyUsageGatePercent = weeklyGatePercent
-            fields.sessionPaceGatePoints = sessionPaceGatePoints
-            fields.weeklyPaceGatePoints = weeklyPaceGatePoints
-            fields.maxDeferMinutes = maxDeferMinutes
+        /// Moves each field from one mode's default to the other's, leaving a field the user
+        /// changed as typed.
+        static func swap(in fields: inout TaskWriteFields, from: UsageLimits, to: UsageLimits) {
+            if fields.sessionUsageGatePercent == from.sessionGatePercent {
+                fields.sessionUsageGatePercent = to.sessionGatePercent
+            }
+            if fields.weeklyUsageGatePercent == from.weeklyGatePercent {
+                fields.weeklyUsageGatePercent = to.weeklyGatePercent
+            }
+            if fields.sessionPaceGatePoints == from.sessionPaceGatePoints {
+                fields.sessionPaceGatePoints = to.sessionPaceGatePoints
+            }
+            if fields.weeklyPaceGatePoints == from.weeklyPaceGatePoints {
+                fields.weeklyPaceGatePoints = to.weeklyPaceGatePoints
+            }
+            if fields.maxDeferMinutes == from.maxDeferMinutes { fields.maxDeferMinutes = to.maxDeferMinutes }
         }
     }
 
