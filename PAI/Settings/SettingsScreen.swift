@@ -34,7 +34,6 @@ struct SettingsScreen: View {
             // The memory pipeline's settings row, as on the web.
             if environment.connection?.me.isGuest != true {
                 SessionDefaultsSection(store: settings.sessionDefaults)
-                MailVerdictKeySection()
             }
 
             // Device push registration is the owner's route; a guest's phone has none to configure.

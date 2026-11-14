@@ -203,8 +203,7 @@ public enum SessionKind: Sendable, Hashable {
     /// `sessionKindsPodResident`.
     case ultrafast
     /// The MailVerdict assistant: pod-resident exactly like `.ultrafast` (typed into, no process, no
-    /// terminal, no secret grant), created with `session_type: "mailverdict"`. Every message
-    /// carries the device's MailVerdict key (``OutboxStore``); nothing else does.
+    /// terminal, no secret grant), created with `session_type: "mailverdict"`.
     case mailverdict
     case unrecognized(String)
 }

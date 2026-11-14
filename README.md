@@ -145,7 +145,7 @@ installed copy launching.
 
 After each upload the `distribute` job attaches the build to the internal group and to the external
 group named `Friends`, gives it its "What to Test" text and, for a build that has not been
-reviewed yet, submits it to Beta App Review (Apple reviews the first build of each version). The
+reviewed yet, submits it to Beta App Review once the review contact is set (Apple reviews the first build of each version). The
 external group and its public link, the beta description and the review contact and demo sign-in
 are set up once per app with the App Store Connect API. A build that cannot reach external testers
 fails the job rather than passing silently.
