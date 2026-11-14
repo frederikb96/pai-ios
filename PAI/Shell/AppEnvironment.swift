@@ -130,11 +130,16 @@ final class AppEnvironment {
     /// The Zitadel native application this app signs in as: a public client, PKCE instead of a
     /// secret, so the client id is no secret either. The roles scope puts the person's project
     /// roles into the access token.
+    /// The audience scope makes the access token valid at MailVerdict too: PAI Cloud forwards the
+    /// caller's own bearer there for the MailVerdict assistant.
     nonisolated static let signInConfiguration = OidcConfiguration(
         issuer: URL(string: "https://login.bergrunde.net")!,
         clientId: "399443595255349553",
         redirectURI: URL(string: "pai://oauth/callback")!,
-        scopes: ["openid", "profile", "email", "offline_access", "urn:zitadel:iam:org:projects:roles"]
+        scopes: [
+            "openid", "profile", "email", "offline_access", "urn:zitadel:iam:org:projects:roles",
+            "urn:zitadel:iam:org:project:id:398140807388856625:aud",
+        ]
     )
 
     /// The process's one renewer, shared by the connection and the clients App Intents build, so
