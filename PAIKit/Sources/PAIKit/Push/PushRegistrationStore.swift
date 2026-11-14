@@ -114,6 +114,14 @@ public final class PushRegistrationStore {
         await registerWithBackendIfNeeded()
     }
 
+    /// Forgets what the backend was told, so the next sign-in registers this device afresh for
+    /// whoever signs in. The token and the permission stay: they belong to the phone.
+    public func forgetBackendRegistration() {
+        registration.registeredToken = nil
+        registration.registeredMutedChannels = nil
+        persist()
+    }
+
     private func persist() {
         storage.setValue(registration, forKey: Keys.registration)
     }
