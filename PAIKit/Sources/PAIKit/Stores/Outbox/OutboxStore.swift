@@ -14,19 +14,6 @@ public protocol OutboxSending: Sendable {
 
 extension PaiApiClient: OutboxSending {}
 
-/// A sender that can attach the device's MailVerdict key. Asked for by cast, like
-/// ``OutboxWithdrawing``, so a double that only ever posts plain messages need not implement it.
-public protocol OutboxKeyedSending: OutboxSending {
-    func postMessage(
-        sessionId: String?, message: String, clientMessageId: String, files: [PaiFileUpload],
-        draftAttachmentIds: [String], supersededUploadIds: [String], sessionType: String?, workingDir: String?,
-        agent: String?, model: String?, thinking: String?, clientMode: String?, heldTake: HeldTake?, noMemory: Bool?,
-        mailVerdictKey: String?
-    ) async throws -> PostMessageResponse
-}
-
-extension PaiApiClient: OutboxKeyedSending {}
-
 /// What Undo send needs from the server, kept out of ``OutboxSending``'s required members so a
 /// sender that only ever posts (a test double) need not pretend to withdraw. ``OutboxStore`` asks
 /// for it by cast, and a sender without it is treated exactly like a withdraw request that
@@ -174,13 +161,6 @@ public final class OutboxStore {
     /// the wait" never race a send already in flight: an entry mid-request has no task in here
     /// to cancel at all, so a wake during a real attempt is simply a no-op for it.
     private var backoffTasks: [String: Task<Void, Never>] = [:]
-
-    /// The device's MailVerdict key, read at the moment a message to an assistant session goes out
-    /// and never stored here: a queued send that leaves later carries the key as it is then.
-    @ObservationIgnored public var mailVerdictKey: @MainActor () -> String? = { nil }
-    /// Whether an existing session is a MailVerdict assistant session. A new session names its
-    /// type in its target.
-    @ObservationIgnored public var isMailVerdictSession: @MainActor (String) -> Bool = { _ in false }
 
     public init(api: some OutboxSending, storage: some OutboxStorage, scheduler: DraftScheduler = RealDraftScheduler())
     {
@@ -452,26 +432,14 @@ public final class OutboxStore {
         }
 
         do {
-            let response: PostMessageResponse
-            if let keyed = api as? OutboxKeyedSending, targetsMailVerdict(entry.target) {
-                response = try await keyed.postMessage(
-                    sessionId: entry.target.sessionId, message: entry.text, clientMessageId: entry.clientMessageId,
-                    files: files, draftAttachmentIds: entry.draftAttachmentIds,
-                    supersededUploadIds: entry.supersededUploadIds ?? [], sessionType: entry.target.sessionType,
-                    workingDir: entry.target.workingDir, agent: entry.target.agent, model: entry.target.model,
-                    thinking: entry.target.thinking, clientMode: entry.clientMode, heldTake: entry.heldTake,
-                    noMemory: entry.noMemory, mailVerdictKey: mailVerdictKey()
-                )
-            } else {
-                response = try await api.postMessage(
-                    sessionId: entry.target.sessionId, message: entry.text, clientMessageId: entry.clientMessageId,
-                    files: files, draftAttachmentIds: entry.draftAttachmentIds,
-                    supersededUploadIds: entry.supersededUploadIds ?? [], sessionType: entry.target.sessionType,
-                    workingDir: entry.target.workingDir, agent: entry.target.agent, model: entry.target.model,
-                    thinking: entry.target.thinking, clientMode: entry.clientMode, heldTake: entry.heldTake,
-                    noMemory: entry.noMemory
-                )
-            }
+            let response = try await api.postMessage(
+                sessionId: entry.target.sessionId, message: entry.text, clientMessageId: entry.clientMessageId,
+                files: files, draftAttachmentIds: entry.draftAttachmentIds,
+                supersededUploadIds: entry.supersededUploadIds ?? [], sessionType: entry.target.sessionType,
+                workingDir: entry.target.workingDir, agent: entry.target.agent, model: entry.target.model,
+                thinking: entry.target.thinking, clientMode: entry.clientMode, heldTake: entry.heldTake,
+                noMemory: entry.noMemory
+            )
             guard let current = entries.firstIndex(where: { $0.id == entry.id }) else { return }
             if response.withdrawn {
                 // The server refused it: it was pulled back before it could be delivered. If an
@@ -509,13 +477,6 @@ public final class OutboxStore {
                 persist()
             }
         }
-    }
-
-    /// Only a message to the MailVerdict assistant carries the key; every other send is built
-    /// without one.
-    private func targetsMailVerdict(_ target: OutboxTarget) -> Bool {
-        if let sessionId = target.sessionId { return isMailVerdictSession(sessionId) }
-        return target.sessionType == CreateSessionStore.mailverdictSessionTypeId
     }
 
     private static func isRetryable(_ error: Error) -> Bool {

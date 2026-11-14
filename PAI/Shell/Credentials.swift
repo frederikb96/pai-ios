@@ -34,6 +34,7 @@ struct KeychainTokenStore: OidcTokenSetStore {
 
     private let service: String
     private let legacyPastedAccount = "backend-jwt"
+    private let legacyMailVerdictKeyAccount = "mailverdict-key"
     private let signInAccount = "oidc-token-set"
 
     init(service: String = Bundle.main.bundleIdentifier ?? "com.frederikberg.pai") {
@@ -74,10 +75,12 @@ struct KeychainTokenStore: OidcTokenSetStore {
         discardLegacyCredential()
     }
 
-    /// Removes the pasted token earlier versions stored, so a phone that still holds one asks for
-    /// a sign-in instead of keeping a credential nothing reads.
+    /// Removes the credentials earlier versions stored beside the sign-in (a pasted token, a
+    /// MailVerdict key), so a phone that still holds one asks for a sign-in instead of keeping a
+    /// credential nothing reads.
     func discardLegacyCredential() {
         deleteItem(account: legacyPastedAccount)
+        deleteItem(account: legacyMailVerdictKeyAccount)
     }
 
     func readTokenSet() -> OidcTokenSet? {
@@ -125,51 +128,6 @@ struct KeychainTokenStore: OidcTokenSetStore {
 
     private func deleteItem(account: String) {
         SecItemDelete(baseQuery(account: account) as CFDictionary)
-    }
-}
-
-/// The MailVerdict key of this device, for the assistant sessions.
-///
-/// Kept in the Keychain of this device alone: never synced (not iCloud Keychain, not a backup
-/// restored to another phone), never sent to PAI Cloud except as the header of a message to an
-/// assistant session, and never part of a queued send. Nothing but Settings writes it.
-struct MailVerdictKeyStore {
-    private let service: String
-    private let account = "mailverdict-key"
-
-    init(service: String = Bundle.main.bundleIdentifier ?? "com.frederikberg.pai") {
-        self.service = service
-    }
-
-    private var baseQuery: [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecAttrSynchronizable as String: false,
-        ]
-    }
-
-    func read() -> String? {
-        var query = baseQuery
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-            let data = item as? Data, let key = String(data: data, encoding: .utf8), !key.isEmpty
-        else { return nil }
-        return key
-    }
-
-    /// Writing `nil` or an empty key removes the item.
-    @discardableResult
-    func write(_ key: String?) -> Bool {
-        SecItemDelete(baseQuery as CFDictionary)
-        guard let key, !key.isEmpty else { return true }
-        var query = baseQuery
-        query[kSecValueData as String] = Data(key.utf8)
-        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
     }
 }
 

@@ -251,12 +251,10 @@ if want compact-chip; then
 fi
 
 if want mailverdict; then
-  # The assistant: the new-session screen with it chosen, and the Settings section holding the key.
+  # The assistant: the new-session screen with it chosen.
   screenshot mailverdict-new-session -PaiFixtureRoute createSession -PaiFixtureNewSessionType mailverdict
   fact_assert mailverdict-new-session newSessionType mailverdict
   fact_assert mailverdict-new-session environmentRow "MailVerdict assistant"
-  xcrun simctl terminate "$udid" "$bundle" || true
-  screenshot mailverdict-settings -PaiFixtureRoute settings -PaiFixtureScrollTo mailVerdictKey
   xcrun simctl terminate "$udid" "$bundle" || true
 fi
 

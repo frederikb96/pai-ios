@@ -137,6 +137,12 @@ def distribute_external(app: str, build: dict) -> None:
 
     state = detail["attributes"].get("externalBuildState")
     if state == "READY_FOR_BETA_SUBMISSION":
+        review = call("GET", f"apps/{app}/betaAppReviewDetail")["data"]["attributes"]
+        if not (review.get("contactPhone") and review.get("contactEmail")):
+            # Apple refuses a submission without review contact details, and one that went out
+            # incomplete would be rejected rather than reviewed: wait for the test information.
+            print(f"::warning::build {version} not submitted to Beta App Review: the review contact is not set")
+            return
         call(
             "POST",
             "betaAppReviewSubmissions",

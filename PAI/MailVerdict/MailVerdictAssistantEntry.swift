@@ -4,8 +4,8 @@ import PAIKit
 /// tile today — calls this and nothing else, so the assistant's destination has a single home.
 ///
 /// The assistant is a session of type `mailverdict`, so opening it is opening the new-session
-/// screen with that type chosen; the key it needs is read from this device when a message is sent
-/// (``MailVerdictKeyStore``).
+/// screen with that type chosen. The backend reaches MailVerdict with the caller's own sign-in, so
+/// the phone sends nothing extra.
 @MainActor
 enum MailVerdictAssistantEntry {
     static func open(environment: AppEnvironment, drafts: DraftStore) {
