@@ -53,7 +53,8 @@ Signing in is the only way in: the app has no field for a pasted token, and a ph
 holds one from an earlier version is asked to sign in. Every request carries the phone's name in
 `X-Device-Name` (iOS reports the generic model name, such as "iPhone", unless the device name
 entitlement is granted), so the backend's list of signed-in devices can show it. Signing out
-first ends the phone's sign-in in the backend's device list (best effort, a few seconds at most),
+first ends the phone's sign-in on the backend, which also drops its push token (best effort, a few
+seconds at most),
 then revokes the refresh token at Zitadel as well as clearing the phone, and the phone drops its
 push registration so the next sign-in registers afresh, and a backend that revokes the
 device from that list signs the app out the next time it asks (`401` with `device_revoked`), with

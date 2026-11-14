@@ -207,8 +207,8 @@ final class AppEnvironment {
         connection?.claudeAuth.stopPolling()
         await connection?.voice.stop()
         await connection?.computerCall.end()
-        // While the sign-in still works: end it on the server too. Best effort and short, so an
-        // offline phone signs out all the same.
+        // While the sign-in still works: end it on the backend too, which drops this phone's push
+        // token there. Best effort and short, so an offline phone signs out all the same.
         if let client = connection?.apiClient { await ServerSignOut(api: client).run(timeout: 4) }
         forgetPushRegistration()
         endSignIn()
