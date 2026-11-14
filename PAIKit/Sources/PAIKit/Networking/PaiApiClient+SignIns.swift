@@ -1,32 +1,16 @@
 import Foundation
 
-/// One of the caller's own sign-ins as `GET /api/sign-ins` lists it; `current` marks the sign-in
-/// making the request. Only what sign-out needs.
-public struct PaiSignIn: Codable, Sendable, Equatable, Identifiable {
-    public let id: String
-    public let kind: String
-    public let name: String?
-    public let active: Bool
-    public let current: Bool
+extension PaiApiClient {
 
-    public init(id: String, kind: String, name: String?, active: Bool, current: Bool) {
-        self.id = id
-        self.kind = kind
-        self.name = name
-        self.active = active
-        self.current = current
+    /// Ends this device's own sign-in on the backend, which also drops its push token. The
+    /// backend identifies the sign-in by the bearer and the device name the request carries.
+    public func signOutCurrentSignIn() async throws {
+        let _: PaiSignIn = try await send(path: "/api/sign-ins/current/sign-out", method: "POST")
     }
 }
 
-extension PaiApiClient {
-
-    public func listSignIns() async throws -> [PaiSignIn] {
-        try await send(path: "/api/sign-ins")
-    }
-
-    /// Ends one sign-in; the current one included, whose next request is then refused with
-    /// `device_revoked`.
-    public func revokeSignIn(id: String) async throws {
-        let _: PaiSignIn = try await send(path: "/api/sign-ins/\(id)/revoke", method: "POST")
-    }
+/// A sign-in as the backend answers about it; only what sign-out reads back.
+public struct PaiSignIn: Codable, Sendable, Equatable {
+    public let id: String
+    public let active: Bool
 }

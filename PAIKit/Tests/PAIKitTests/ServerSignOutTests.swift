@@ -29,54 +29,38 @@ final class ServerSignOutTests: XCTestCase {
         super.tearDown()
     }
 
-    func testTheCurrentSignInIsRevoked() async {
+    func testTheCurrentSignInIsEnded() async {
         let calls = Calls()
-        let signOut = ServerSignOut(
-            currentSignInId: { "sign-in-1" }, revokeSignIn: { calls.add("revoke \($0)") })
-        await signOut.run(timeout: 5)
-        XCTAssertEqual(calls.all, ["revoke sign-in-1"])
+        await ServerSignOut(signOutCurrentSignIn: { calls.add("sign-out") }).run(timeout: 5)
+        XCTAssertEqual(calls.all, ["sign-out"])
     }
 
-    func testNoCurrentSignInRevokesNothing() async {
-        let calls = Calls()
-        let signOut = ServerSignOut(currentSignInId: { nil }, revokeSignIn: { calls.add("revoke \($0)") })
+    /// A backend that predates the route answers 404; the phone signs out regardless.
+    func testAFailingServerStillReturns() async {
+        let signOut = ServerSignOut(signOutCurrentSignIn: { throw PaiError.http(statusCode: 404, reason: "Not Found") })
         await signOut.run(timeout: 5)
-        XCTAssertEqual(calls.all, [])
     }
 
     /// Offline, a request can hang until the system gives up; sign-out must not wait for it.
     func testAHangingServerDoesNotHoldSignOutBeyondTheTimeout() async {
-        let signOut = ServerSignOut(
-            currentSignInId: {
-                try await Task.sleep(nanoseconds: 60_000_000_000)
-                return nil
-            },
-            revokeSignIn: { _ in })
+        let signOut = ServerSignOut(signOutCurrentSignIn: { try await Task.sleep(nanoseconds: 60_000_000_000) })
         let started = Date()
         await signOut.run(timeout: 0.2)
         XCTAssertLessThan(Date().timeIntervalSince(started), 5)
     }
 
-    func testSignInsAreListedAndRevokedThroughTheSignInsRoutes() async throws {
+    func testSigningOutPostsToTheCurrentSignInRoute() async throws {
         let factory = try PaiRequestFactory(
             baseURL: "https://pai.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         let client = PaiApiClient(requestFactory: factory, urlSession: PaiStubURLProtocol.makeSession())
-        let row = """
-            {"id":"abc","kind":"app","name":"iPhone","client_id":null,"user_id":null,"display_name":null,
-            "user_agent":null,"first_seen_at":"2026-01-01T00:00:00Z","last_seen_at":"2026-01-01T00:00:00Z",
-            "revoked_at":null,"active":true,"current":true,"agent_slug":null}
-            """
         PaiStubURLProtocol.stub = .init(
-            statusCode: 200, headers: ["Content-Type": "application/json"], body: Data("[\(row)]".utf8))
-        let signIns = try await client.listSignIns()
-        XCTAssertEqual(signIns.first { $0.current }?.id, "abc")
-        XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.url?.path, "/api/sign-ins")
-
-        PaiStubURLProtocol.stub = .init(
-            statusCode: 200, headers: ["Content-Type": "application/json"], body: Data(row.utf8))
-        try await client.revokeSignIn(id: "abc")
-        XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.httpMethod, "POST")
-        XCTAssertEqual(PaiStubURLProtocol.capturedRequest?.url?.path, "/api/sign-ins/abc/revoke")
+            statusCode: 200, headers: ["Content-Type": "application/json"],
+            body: Data(#"{"id":"abc","kind":"app","active":false,"current":true}"#.utf8))
+        try await client.signOutCurrentSignIn()
+        let request = try XCTUnwrap(PaiStubURLProtocol.capturedRequest)
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.url?.path, "/api/sign-ins/current/sign-out")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Device-Name"), "Test iPhone")
     }
 
     @MainActor
