@@ -142,3 +142,10 @@ Push a `v*.*.*` tag, or dispatch the workflow. The tag is the single source of t
 version; the build number is the CI run number. TestFlight builds expire after 90 days;
 dispatching with `refresh_tag` rebuilds an existing release under a new build number to keep an
 installed copy launching.
+
+After each upload the `distribute` job attaches the build to the internal group and to the external
+group named `Friends`, gives it its "What to Test" text and, for a build that has not been
+reviewed yet, submits it to Beta App Review (Apple reviews the first build of each version). The
+external group and its public link, the beta description and the review contact and demo sign-in
+are set up once per app with the App Store Connect API. A build that cannot reach external testers
+fails the job rather than passing silently.

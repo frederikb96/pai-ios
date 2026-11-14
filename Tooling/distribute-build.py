@@ -3,7 +3,8 @@
 # requires-python = ">=3.10"
 # dependencies = ["pyjwt[crypto]"]
 # ///
-"""Attach the newest processed build to a TestFlight beta group.
+"""Attach the newest processed build to the TestFlight beta groups, and get it to external testers
+(their group, "What to Test", Beta App Review).
 
 Uploading a build and distributing it are different acts, and only the first is automated by
 fastlane here: the upload lane sets `skip_waiting_for_build_processing` because waiting costs
@@ -31,6 +32,10 @@ import jwt
 BASE = "https://api.appstoreconnect.apple.com/v1"
 APP_ID = "6806630985"
 GROUP_NAME = "Internal"
+EXTERNAL_GROUP_NAME = "Friends"
+LOCALE = "en-US"
+# Shown to testers with each build. Per-build release notes are not available where this runs.
+WHATS_NEW = "Fixes and improvements."
 # Apple's own processing is the slow part and is not ours to hurry. Generous, because the cost of
 # waiting here is a runner at 1x, and the cost of giving up early is a release nobody can install.
 POLL_SECONDS = 20
@@ -74,6 +79,83 @@ def group_id() -> str:
     raise SystemExit(f"no beta group named {GROUP_NAME!r}")
 
 
+def external_group_id(app: str) -> str:
+    for group in call("GET", f"apps/{app}/betaGroups").get("data", []):
+        attributes = group["attributes"]
+        if attributes["name"] == EXTERNAL_GROUP_NAME:
+            if attributes.get("isInternalGroup"):
+                raise SystemExit(f"beta group {EXTERNAL_GROUP_NAME!r} is an internal group")
+            return group["id"]
+    raise SystemExit(f"no external beta group named {EXTERNAL_GROUP_NAME!r}")
+
+
+def distribute_external(app: str, build: dict) -> None:
+    """Gets the build to the external testers: attach it to their group, give it its "What to
+    Test" text, and submit it to Beta App Review when it has not been reviewed yet.
+
+    External testers install only reviewed builds. Apple reviews the first build of each
+    marketing version and passes later builds of that version without another review, so a
+    build already in a reviewed state needs no submission. The invite emails and the public link
+    work on their own once the build is approved; nothing here invites anyone.
+    """
+    group = external_group_id(app)
+    build_id = build["id"]
+    version = build["attributes"].get("version")
+
+    attached = {b["id"] for b in call("GET", f"betaGroups/{group}/builds").get("data", [])}
+    if build_id not in attached:
+        call(
+            "POST",
+            f"betaGroups/{group}/relationships/builds",
+            {"data": [{"type": "builds", "id": build_id}]},
+        )
+        print(f"build {version} attached to {EXTERNAL_GROUP_NAME}")
+
+    localizations = call("GET", f"builds/{build_id}/betaBuildLocalizations").get("data", [])
+    if not any(loc["attributes"].get("locale") == LOCALE for loc in localizations):
+        call(
+            "POST",
+            "betaBuildLocalizations",
+            {
+                "data": {
+                    "type": "betaBuildLocalizations",
+                    "attributes": {"locale": LOCALE, "whatsNew": WHATS_NEW},
+                    "relationships": {"build": {"data": {"type": "builds", "id": build_id}}},
+                }
+            },
+        )
+        print(f"build {version} given its What to Test text")
+
+    detail = call("GET", f"builds/{build_id}/buildBetaDetail")["data"]
+    # Testers are told when an approved build arrives, instead of having to look.
+    if not detail["attributes"].get("autoNotifyEnabled"):
+        call(
+            "PATCH",
+            f"buildBetaDetails/{detail['id']}",
+            {"data": {"type": "buildBetaDetails", "id": detail["id"], "attributes": {"autoNotifyEnabled": True}}},
+        )
+
+    state = detail["attributes"].get("externalBuildState")
+    if state == "READY_FOR_BETA_SUBMISSION":
+        call(
+            "POST",
+            "betaAppReviewSubmissions",
+            {
+                "data": {
+                    "type": "betaAppReviewSubmissions",
+                    "relationships": {"build": {"data": {"type": "builds", "id": build_id}}},
+                }
+            },
+        )
+        print(f"build {version} submitted to Beta App Review")
+    elif state in {"WAITING_FOR_BETA_REVIEW", "IN_BETA_REVIEW", "READY_FOR_BETA_TESTING", "IN_BETA_TESTING"}:
+        print(f"build {version} for external testers: {state}")
+    else:
+        # Rejected, expired, missing compliance: the build reached nobody outside, which a green
+        # job must not hide.
+        raise SystemExit(f"build {version} cannot reach external testers: {state}")
+
+
 def main() -> None:
     wanted = sys.argv[1] if len(sys.argv) > 1 else None
     group = group_id()
@@ -93,16 +175,17 @@ def main() -> None:
             build = candidates[0]
             state = build["attributes"].get("processingState")
             version = build["attributes"].get("version")
-            if build["id"] in attached:
-                print(f"build {version} is already distributed to {GROUP_NAME}")
-                return
             if state == "VALID":
-                call(
-                    "POST",
-                    f"betaGroups/{group}/relationships/builds",
-                    {"data": [{"type": "builds", "id": build["id"]}]},
-                )
-                print(f"build {version} attached to {GROUP_NAME}")
+                if build["id"] in attached:
+                    print(f"build {version} is already distributed to {GROUP_NAME}")
+                else:
+                    call(
+                        "POST",
+                        f"betaGroups/{group}/relationships/builds",
+                        {"data": [{"type": "builds", "id": build["id"]}]},
+                    )
+                    print(f"build {version} attached to {GROUP_NAME}")
+                distribute_external(APP_ID, build)
                 return
             if state in {"FAILED", "INVALID"}:
                 raise SystemExit(f"build {version} finished processing as {state}; nothing to distribute")
