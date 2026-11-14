@@ -12,7 +12,13 @@ import SwiftUI
 /// The web's "the browser's own right-click already gives copy and save" has no equivalent
 /// gesture affordance on a touchscreen. Saving is that button, never a side effect of opening.
 struct FilePreviewViewer: View {
-    let target: FilePreviewTarget
+    /// What is on screen: the presented target, then each picture a step moved to. Replaced here
+    /// rather than through the presenter's binding, since a new value there opens a fresh cover.
+    @State private var shown: FilePreviewTarget
+
+    init(target: FilePreviewTarget) {
+        _shown = State(initialValue: target)
+    }
 
     @Environment(\.dismiss) private var dismiss
     @State private var shareFile: AttachmentShareFile?
@@ -20,6 +26,7 @@ struct FilePreviewViewer: View {
     @State private var pdfIsAtRest = true
     @State private var isFetching = false
     @State private var fetchError: String?
+    @State private var isStepping = false
 
     /// How close to the resting scale still counts as "not zoomed" for the swipe-to-dismiss gate
     /// below — `UIScrollView` settles fractionally off `1.0` after its own rubber-band animation,
@@ -51,21 +58,44 @@ struct FilePreviewViewer: View {
         // it" rule, translated to the one gesture iOS already gives a modal for free. Gated on
         // resting state, matching Photos: once zoomed in, a downward drag pans inside the content
         // instead of dismissing the screen.
+        //
+        // A sideways swipe at rest steps to the neighbouring picture when the target offers one;
+        // whichever axis the drag mostly follows decides between stepping and dismissing.
         .gesture(
             DragGesture(minimumDistance: 40)
                 .onEnded { value in
                     guard allowsSwipeDismiss else { return }
-                    if value.translation.height > 80 { dismiss() }
+                    let width = value.translation.width
+                    let height = value.translation.height
+                    if abs(width) > abs(height) {
+                        if abs(width) > 80 { stepPicture(width > 0 ? .previous : .next) }
+                    } else if height > 80 {
+                        dismiss()
+                    }
                 }
         )
     }
 
+    /// Swiping right shows the previous (older) picture, as in Photos. One step at a time: a swipe
+    /// while the neighbour is still loading is ignored.
+    private func stepPicture(_ direction: PictureStepDirection) {
+        guard let step = shown.step, !isStepping else { return }
+        isStepping = true
+        Task {
+            defer { isStepping = false }
+            guard let next = await step(direction) else { return }
+            withAnimation(.easeInOut(duration: 0.2)) { shown = next }
+        }
+    }
+
     @ViewBuilder
     private var content: some View {
-        switch target.content {
+        switch shown.content {
         case .image(let image):
             ZoomableImageView(image: image, zoomScale: $zoomScale)
                 .ignoresSafeArea()
+                .id(shown.id)
+                .transition(.opacity)
         case .pdf(let document):
             PDFPreviewView(document: document, isAtRest: $pdfIsAtRest)
                 .ignoresSafeArea(edges: .bottom)
@@ -83,7 +113,7 @@ struct FilePreviewViewer: View {
         VStack(spacing: 12) {
             Image(systemName: "doc.questionmark")
                 .font(.system(size: 44))
-            Text(target.filename)
+            Text(shown.filename)
                 .font(PaiTypography.bodyEmphasized.font)
                 .multilineTextAlignment(.center)
             Text("No preview available")
@@ -101,7 +131,7 @@ struct FilePreviewViewer: View {
                 if isFetching {
                     ProgressView()
                 } else {
-                    Text(target.data == nil ? "Download" : "Share or save")
+                    Text(shown.data == nil ? "Download" : "Share or save")
                 }
             }
             .buttonStyle(.borderedProminent)
@@ -115,7 +145,7 @@ struct FilePreviewViewer: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Text(target.filename)
+            Text(shown.filename)
                 .font(PaiTypography.captionEmphasized.font)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -130,14 +160,14 @@ struct FilePreviewViewer: View {
                 .background(.thinMaterial, in: Capsule())
             Spacer(minLength: 0)
             HStack(spacing: 16) {
-                if target.data != nil {
+                if shown.data != nil {
                     Button {
                         share()
                     } label: {
                         Image(systemName: "square.and.arrow.up")
                             .font(.title3)
                     }
-                    .accessibilityLabel("Share \(target.filename)")
+                    .accessibilityLabel("Share \(shown.filename)")
                 }
                 Button {
                     dismiss()
@@ -155,23 +185,23 @@ struct FilePreviewViewer: View {
     }
 
     private func share() {
-        guard let data = target.data else { return }
-        shareFile = AttachmentSharing.stage(data, filename: target.filename)
+        guard let data = shown.data else { return }
+        shareFile = AttachmentSharing.stage(data, filename: shown.filename)
     }
 
     /// Fetches first when the target carries only a loader, then opens the share sheet.
     private func saveFromCard() async {
-        if target.data != nil {
+        if shown.data != nil {
             share()
             return
         }
-        guard let load = target.load else { return }
+        guard let load = shown.load else { return }
         isFetching = true
         fetchError = nil
         defer { isFetching = false }
         switch await load() {
         case .ok(let data):
-            shareFile = AttachmentSharing.stage(data, filename: target.filename)
+            shareFile = AttachmentSharing.stage(data, filename: shown.filename)
         case .notFound:
             fetchError = "No longer available"
         case .failed(let message):
@@ -209,11 +239,17 @@ struct FilePreviewTarget: Identifiable {
     /// tap on the chip never saves anything.
     let load: (@MainActor () async -> Fetch)?
 
+    /// Produces the picture next to this one, or `nil` when there is none to show. Set only by the
+    /// transcript's pictures; every other caller leaves it `nil` and gets a viewer that does not step.
+    typealias Step = @MainActor (PictureStepDirection) async -> FilePreviewTarget?
+    let step: Step?
+
     /// - Parameter kind: the file's kind when the filename does not say (a canteen PDF whose mail
     ///   name has no extension); defaults to what the filename's extension says.
-    init(data: Data, filename: String, kind: AttachmentPreviewKind? = nil) {
+    init(data: Data, filename: String, kind: AttachmentPreviewKind? = nil, step: Step? = nil) {
         self.data = data
         self.filename = filename
+        self.step = step
         load = nil
         switch kind ?? AttachmentPreviewKind(path: filename) {
         case .image:
@@ -232,6 +268,7 @@ extension FilePreviewTarget {
         data = nil
         self.filename = filename
         self.load = load
+        step = nil
         content = .unavailable
     }
 }

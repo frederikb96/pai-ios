@@ -263,7 +263,7 @@ struct TaskEditorView: View {
                             .multilineTextAlignment(.trailing)
                     }
                     Text(
-                        "Counted from the first deferral. Past it the fire ignores the usage gates above; the gate script still applies."
+                        "Counted from the first deferral. Past it the fire ignores the usage gates above; the gate script still applies. 0 means usage never holds the task back."
                     )
                     .font(PaiTypography.caption.font)
                     .foregroundStyle(PaiPalette.Semantic.textFaint)

@@ -24,6 +24,7 @@ struct SessionInlineImageView: View {
         case failed(String)
     }
 
+    @Environment(TranscriptStore.self) private var transcript
     @State private var state: LoadState = .loading
     @State private var previewTarget: FilePreviewTarget?
 
@@ -44,7 +45,11 @@ struct SessionInlineImageView: View {
         switch shown {
         case .loaded(let entry):
             Button {
-                previewTarget = FilePreviewTarget(data: entry.data, filename: filename)
+                previewTarget = FilePreviewTarget(
+                    data: entry.data, filename: filename,
+                    step: PictureStepper.step(
+                        from: path, sessionID: sessionID, messages: transcript.messages[sessionID] ?? [],
+                        apiClient: apiClient))
             } label: {
                 Image(uiImage: entry.image)
                     .resizable()
