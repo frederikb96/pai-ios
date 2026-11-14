@@ -194,6 +194,7 @@ final class AppEnvironment {
         connection?.claudeAuth.stopPolling()
         await connection?.voice.stop()
         await connection?.computerCall.end()
+        forgetPushRegistration()
         endSignIn()
         connection = nil
         lastAuthFailure = detail
@@ -206,11 +207,22 @@ final class AppEnvironment {
         connection?.claudeAuth.stopPolling()
         await connection?.voice.stop()
         await connection?.computerCall.end()
+        // While the sign-in still works: end it on the server too. Best effort and short, so an
+        // offline phone signs out all the same.
+        if let client = connection?.apiClient { await ServerSignOut(api: client).run(timeout: 4) }
+        forgetPushRegistration()
         endSignIn()
         PlaybackController.shared.reset()
         connection = nil
         lastAuthFailure = nil
         router = Router(gate: .needsConfiguration)
+    }
+
+    /// The backend's record of this device's push registration belongs to the person who signed
+    /// out; the next sign-in registers afresh. APNs is told the app no longer wants pushes.
+    private func forgetPushRegistration() {
+        connection?.push.forgetBackendRegistration()
+        UIApplication.shared.unregisterForRemoteNotifications()
     }
 
     /// Clears the sign-in from this phone, and ends it at the provider too so a copy of the refresh
