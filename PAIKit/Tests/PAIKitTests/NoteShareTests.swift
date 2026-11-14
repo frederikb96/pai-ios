@@ -120,7 +120,8 @@ final class NoteShareWireTests: XCTestCase {
     private func makeClient(stub body: String = "{}") throws -> PaiApiClient {
         PaiStubURLProtocol.stub = .init(
             statusCode: 200, headers: ["Content-Type": "application/json"], body: Data(body.utf8))
-        let factory = try PaiRequestFactory(baseURL: "https://pai.example.com", tokenProvider: { "jwt" })
+        let factory = try PaiRequestFactory(
+            baseURL: "https://pai.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         return PaiApiClient(requestFactory: factory, urlSession: PaiStubURLProtocol.makeSession())
     }
 
@@ -166,7 +167,8 @@ final class NoteShareWireTests: XCTestCase {
 
     func testAMissingSandboxFileIsNotFoundRatherThanAnError() async throws {
         PaiStubURLProtocol.stub = .init(statusCode: 404, headers: [:], body: Data(#"{"detail":"x"}"#.utf8))
-        let factory = try PaiRequestFactory(baseURL: "https://pai.example.com", tokenProvider: { "jwt" })
+        let factory = try PaiRequestFactory(
+            baseURL: "https://pai.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         let client = PaiApiClient(requestFactory: factory, urlSession: PaiStubURLProtocol.makeSession())
         let result = try await client.getNoteShareAttachment(noteId: "n1", blobId: "b1")
         guard case .notFound = result else { return XCTFail("a 404 must read as notFound, got \(result)") }

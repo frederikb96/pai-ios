@@ -24,7 +24,8 @@ final class PaiBrowserStreamClientTests: XCTestCase {
         let chunks = stride(from: 0, to: body.count, by: 777).map { body.subdata(in: $0..<min($0 + 777, body.count)) }
         PaiStubURLProtocol.stub = .init(statusCode: 200, headers: [:], body: body, bodyChunks: chunks)
 
-        let factory = try PaiRequestFactory(baseURL: "https://stub.example.com", tokenProvider: { "jwt" })
+        let factory = try PaiRequestFactory(
+            baseURL: "https://stub.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         let ended = PaiStreamConnectionSignal()
         var events: [BrowserStreamEvent] = []
         let client = PaiBrowserStreamClient(
@@ -54,7 +55,8 @@ final class PaiBrowserStreamClientTests: XCTestCase {
 
     func testARefusedStreamEndsInsteadOfRetrying() async throws {
         PaiStubURLProtocol.stub = .init(statusCode: 403, headers: [:], body: Data())
-        let factory = try PaiRequestFactory(baseURL: "https://stub.example.com", tokenProvider: { "jwt" })
+        let factory = try PaiRequestFactory(
+            baseURL: "https://stub.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         let ended = PaiStreamConnectionSignal()
         var events: [BrowserStreamEvent] = []
         let client = PaiBrowserStreamClient(

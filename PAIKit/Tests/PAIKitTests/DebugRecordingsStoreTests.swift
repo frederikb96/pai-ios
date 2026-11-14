@@ -12,7 +12,8 @@ final class DebugRecordingsStoreTests: XCTestCase {
     }
 
     private static func makeClient() throws -> PaiApiClient {
-        let factory = try PaiRequestFactory(baseURL: "https://pai.example.com", tokenProvider: { "jwt" })
+        let factory = try PaiRequestFactory(
+            baseURL: "https://pai.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         return PaiApiClient(requestFactory: factory, urlSession: PaiStubURLProtocol.makeSession())
     }
 

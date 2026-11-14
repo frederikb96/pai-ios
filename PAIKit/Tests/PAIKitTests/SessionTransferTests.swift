@@ -79,7 +79,8 @@ final class SessionTransferWireTests: XCTestCase {
             """
         PaiStubURLProtocol.stub = .init(
             statusCode: 200, headers: ["Content-Type": "application/json"], body: Data(body.utf8))
-        let factory = try PaiRequestFactory(baseURL: "https://pai.example.com", tokenProvider: { "jwt" })
+        let factory = try PaiRequestFactory(
+            baseURL: "https://pai.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         let client = PaiApiClient(requestFactory: factory, urlSession: PaiStubURLProtocol.makeSession())
 
         _ = try await client.transferSession(sessionId: "s1", toAgent: "laptop", force: true)
@@ -98,7 +99,8 @@ final class SessionTransferWireTests: XCTestCase {
         PaiStubURLProtocol.stub = .init(
             statusCode: 409, headers: ["Content-Type": "application/json"],
             body: Data(#"{"detail":"The other machine is offline.","code":"agent_offline"}"#.utf8))
-        let factory = try PaiRequestFactory(baseURL: "https://pai.example.com", tokenProvider: { "jwt" })
+        let factory = try PaiRequestFactory(
+            baseURL: "https://pai.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         let client = PaiApiClient(requestFactory: factory, urlSession: PaiStubURLProtocol.makeSession())
         do {
             _ = try await client.transferSession(sessionId: "s1", toAgent: "laptop", force: false)

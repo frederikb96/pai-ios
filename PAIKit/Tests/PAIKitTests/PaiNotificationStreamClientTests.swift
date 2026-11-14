@@ -24,7 +24,8 @@ final class PaiNotificationStreamClientTests: XCTestCase {
             "event: notification\r\ndata: \(notificationJson)\r\n\r\nevent: read\r\ndata: {\"unread\":1}\r\n\r\n"
         PaiStubURLProtocol.stub = .init(statusCode: 200, headers: [:], body: Data(raw.utf8))
 
-        let factory = try PaiRequestFactory(baseURL: "https://stub.example.com", tokenProvider: { "jwt" })
+        let factory = try PaiRequestFactory(
+            baseURL: "https://stub.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         let notificationSignal = PaiStreamConnectionSignal()
         let readSignal = PaiStreamConnectionSignal()
         var notifications: [SseNotificationEvent] = []
@@ -63,7 +64,8 @@ final class PaiNotificationStreamClientTests: XCTestCase {
         PaiStubURLProtocol.stub = .init(
             statusCode: 200, headers: [:], body: Data("event: sessions\r\ndata: {}\r\n\r\n".utf8))
 
-        let factory = try PaiRequestFactory(baseURL: "https://stub.example.com", tokenProvider: { "jwt" })
+        let factory = try PaiRequestFactory(
+            baseURL: "https://stub.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         let wakeSignal = PaiStreamConnectionSignal()
         var wakes = 0
 
@@ -99,7 +101,8 @@ final class PaiNotificationStreamClientTests: XCTestCase {
         let raw = "event: ping\r\ndata: \r\n\r\nevent: read\r\ndata: {\"unread\":0}\r\n\r\n"
         PaiStubURLProtocol.stub = .init(statusCode: 200, headers: [:], body: Data(raw.utf8))
 
-        let factory = try PaiRequestFactory(baseURL: "https://stub.example.com", tokenProvider: { "jwt" })
+        let factory = try PaiRequestFactory(
+            baseURL: "https://stub.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         let readSignal = PaiStreamConnectionSignal()
         var notifications: [SseNotificationEvent] = []
         var reads: [SseNotificationReadEvent] = []

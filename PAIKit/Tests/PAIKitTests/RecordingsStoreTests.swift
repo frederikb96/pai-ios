@@ -13,7 +13,8 @@ final class RecordingsStoreTests: XCTestCase {
     }
 
     private func makeSettings(_ storage: InMemorySettingsStorage) -> SettingsStore {
-        let factory = try! PaiRequestFactory(baseURL: "https://example.invalid", tokenProvider: { nil })
+        let factory = try! PaiRequestFactory(
+            baseURL: "https://example.invalid", deviceName: "Test iPhone", tokenProvider: { nil })
         return SettingsStore(apiClient: PaiApiClient(requestFactory: factory), storage: storage)
     }
 

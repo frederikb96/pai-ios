@@ -24,7 +24,8 @@ final class PaiTerminalStreamClientConnectionTests: XCTestCase {
             "data: {\"data\":\"hello\",\"live\":true}\r\n\r\ndata: {\"data\":\"world\",\"live\":false}\r\n\r\n"
         PaiStubURLProtocol.stub = .init(statusCode: 200, headers: [:], body: Data(raw.utf8))
 
-        let factory = try PaiRequestFactory(baseURL: "https://stub.example.com", tokenProvider: { "jwt" })
+        let factory = try PaiRequestFactory(
+            baseURL: "https://stub.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         let firstFrame = PaiStreamConnectionSignal()
         let secondFrame = PaiStreamConnectionSignal()
         var frames: [(chunk: String, live: Bool)] = []

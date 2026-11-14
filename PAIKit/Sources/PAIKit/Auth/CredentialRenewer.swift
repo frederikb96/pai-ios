@@ -1,7 +1,7 @@
 /// Where a sign-in's tokens are kept. The app's is the Keychain; the package cannot name it,
 /// since `Security` does not exist on Linux.
 public protocol OidcTokenSetStore: Sendable {
-    /// `nil` when the app is signed in some other way (a pasted token) or not at all.
+    /// `nil` when the app is signed out.
     func readTokenSet() -> OidcTokenSet?
     /// Whether the write landed.
     @discardableResult func writeTokenSet(_ tokens: OidcTokenSet) -> Bool

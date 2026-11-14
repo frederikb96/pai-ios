@@ -39,6 +39,18 @@ public enum PaiError: Error, Equatable {
         }
     }
 
+    /// The server signed this device out: its entry in the list of signed-in devices was revoked.
+    /// Renewing the token cannot help, since the refusal follows the device, not the token.
+    public var isDeviceRevoked: Bool {
+        if case .detail(Self.deviceRevokedDetail, 401) = self { return true }
+        return false
+    }
+
+    static let deviceRevokedDetail = "device_revoked"
+
+    /// What a signed-out device is told, whichever screen the refusal reached first.
+    public static let deviceRevokedMessage = "This device was signed out"
+
     /// pai-cloud understood the request and said this person may not make it: a JSON 403. The
     /// token stays, and the caller shows `userMessage`.
     public var isRefusal: Bool {
@@ -72,6 +84,7 @@ public enum PaiError: Error, Equatable {
     /// What the user should see. Always non-empty.
     public var userMessage: String {
         switch self {
+        case .detail(Self.deviceRevokedDetail, 401): return Self.deviceRevokedMessage
         case let .detail(text, _): return text
         case let .http(code, reason): return "HTTP \(code): \(reason)"
         case let .transport(text): return text

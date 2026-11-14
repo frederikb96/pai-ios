@@ -49,6 +49,30 @@ public struct OidcTokenClient: Sendable {
         return OidcTokenSet(accessToken: renewed.accessToken, refreshToken: renewed.refreshToken ?? refreshToken)
     }
 
+    /// Ends the session at the provider: the refresh token (the access token when there is none)
+    /// stops working there, so signing out of this phone cannot be undone by anyone holding a
+    /// copy. Best-effort by nature — the caller has already cleared its own copy and does not
+    /// wait on the outcome.
+    public func revoke(_ tokens: OidcTokenSet) async throws(OidcError) {
+        let (token, hint) =
+            tokens.refreshToken.map { ($0, "refresh_token") } ?? (tokens.accessToken, "access_token")
+        var request = URLRequest(url: configuration.revocationEndpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data(
+            Self.formEncode(["token": token, "token_type_hint": hint, "client_id": configuration.clientId]).utf8)
+
+        let response: URLResponse
+        do {
+            (_, response) = try await urlSession.data(for: request)
+        } catch {
+            throw .unavailable(error.localizedDescription)
+        }
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw .unavailable("the sign-in provider did not accept the sign-out")
+        }
+    }
+
     private struct TokenResponse: Decodable {
         let accessToken: String
         let refreshToken: String?

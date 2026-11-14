@@ -8,7 +8,7 @@ final class PaiRequestFactoryTests: XCTestCase {
 
     func testRejectsNonHttpScheme() {
         XCTAssertThrowsError(
-            try PaiRequestFactory(baseURL: "ftp://example.com", tokenProvider: { nil })
+            try PaiRequestFactory(baseURL: "ftp://example.com", deviceName: "Test iPhone", tokenProvider: { nil })
         ) { error in
             XCTAssertEqual(
                 error as? PaiRequestFactory.ConfigurationError,
@@ -19,7 +19,7 @@ final class PaiRequestFactoryTests: XCTestCase {
 
     func testRejectsEmptyBaseURL() {
         XCTAssertThrowsError(
-            try PaiRequestFactory(baseURL: "   ", tokenProvider: { nil })
+            try PaiRequestFactory(baseURL: "   ", deviceName: "Test iPhone", tokenProvider: { nil })
         ) { error in
             XCTAssertEqual(error as? PaiRequestFactory.ConfigurationError, .emptyBaseURL)
         }
@@ -28,7 +28,7 @@ final class PaiRequestFactoryTests: XCTestCase {
     func testTrailingSlashDoesNotDoubleUp() throws {
         let factory = try PaiRequestFactory(
             baseURL: "https://pai.example.com/",
-            tokenProvider: { nil }
+            deviceName: "Test iPhone", tokenProvider: { nil }
         )
         let request = try factory.makeRequest(path: "/api/health")
         XCTAssertEqual(request.url?.absoluteString, "https://pai.example.com/api/health")
@@ -40,7 +40,7 @@ final class PaiRequestFactoryTests: XCTestCase {
         let token = TokenBox()
         let factory = try PaiRequestFactory(
             baseURL: "https://pai.example.com",
-            tokenProvider: { token.value }
+            deviceName: "Test iPhone", tokenProvider: { token.value }
         )
 
         let before = try factory.makeRequest(path: "/api/health")
@@ -51,10 +51,23 @@ final class PaiRequestFactoryTests: XCTestCase {
         XCTAssertEqual(after.value(forHTTPHeaderField: "Authorization"), "Bearer jwt-value")
     }
 
+    func testEveryRequestCarriesTheDeviceName() throws {
+        let factory = try PaiRequestFactory(
+            baseURL: "https://pai.example.com", deviceName: "Frederik's iPhone", tokenProvider: { nil })
+        let request = try factory.makeRequest(path: "/api/health")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Device-Name"), "Frederik's iPhone")
+    }
+
+    func testDeviceNameIsCutToSixtyFourCharactersAndStaysOneLine() {
+        XCTAssertEqual(DeviceName.header(for: String(repeating: "é", count: 80)).count, 64)
+        XCTAssertEqual(DeviceName.header(for: "  Work\nphone  "), "Work phone")
+        XCTAssertEqual(DeviceName.header(for: " \n "), "iPhone")
+    }
+
     func testEmptyTokenSendsNoAuthorizationHeader() throws {
         let factory = try PaiRequestFactory(
             baseURL: "https://pai.example.com",
-            tokenProvider: { "" }
+            deviceName: "Test iPhone", tokenProvider: { "" }
         )
         let request = try factory.makeRequest(path: "/api/health")
         XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
@@ -66,7 +79,7 @@ final class PaiRequestFactoryTests: XCTestCase {
     /// filename containing `+` must round-trip as itself, not as a space.
     func testQueryValueEscapesLiteralPlusRatherThanLeavingItAsASpace() throws {
         let factory = try PaiRequestFactory(
-            baseURL: "https://pai.example.com", tokenProvider: { nil }
+            baseURL: "https://pai.example.com", deviceName: "Test iPhone", tokenProvider: { nil }
         )
         let request = try factory.makeRequest(
             path: "/api/browse",
@@ -83,7 +96,7 @@ final class PaiRequestFactoryTests: XCTestCase {
     /// `%252F`, see `PaiApiClient`'s draft key encoding).
     func testPreEncodedPathSegmentSurvivesWithoutBeingReEncoded() throws {
         let factory = try PaiRequestFactory(
-            baseURL: "https://pai.example.com", tokenProvider: { nil }
+            baseURL: "https://pai.example.com", deviceName: "Test iPhone", tokenProvider: { nil }
         )
         let request = try factory.makeRequest(path: "/api/drafts/a%2Fb")
         let raw = request.url?.absoluteString ?? ""

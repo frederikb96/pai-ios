@@ -162,7 +162,8 @@ private actor RecordingBrowserApi: BrowserApiClient {
 final class BrowserAddressTests: XCTestCase {
     func testAnAddressIsSentAsAGotoAndBlankInputIsDropped() async throws {
         let api = RecordingBrowserApi()
-        let factory = try PaiRequestFactory(baseURL: "https://pai.example.com", tokenProvider: { "jwt" })
+        let factory = try PaiRequestFactory(
+            baseURL: "https://pai.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         let store = BrowserViewStore(name: "b1", api: api, requestFactory: factory)
 
         store.goto("   ")

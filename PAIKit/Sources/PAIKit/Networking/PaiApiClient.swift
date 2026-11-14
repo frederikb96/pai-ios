@@ -383,7 +383,8 @@ public struct PaiApiClient: Sendable {
     ) async throws -> (Data?, URLResponse) {
         let first = try await send(request)
         guard let renewCredential, let http = first.1 as? HTTPURLResponse,
-            PaiError.from(statusCode: http.statusCode, body: first.0 ?? Data()).isAuthenticationFailure
+            case let refusal = PaiError.from(statusCode: http.statusCode, body: first.0 ?? Data()),
+            refusal.isAuthenticationFailure, !refusal.isDeviceRevoked
         else { return first }
         switch await renewCredential(PaiRequestFactory.bearerToken(of: request)) {
         case .renewed:

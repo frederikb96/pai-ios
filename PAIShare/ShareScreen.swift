@@ -45,7 +45,9 @@ struct ShareScreen: View {
     private var client: PaiApiClient? {
         guard let credentials else { return nil }
         let token = credentials.token
-        guard let factory = try? PaiRequestFactory(baseURL: credentials.backendURL, tokenProvider: { token })
+        guard
+            let factory = try? PaiRequestFactory(
+                baseURL: credentials.backendURL, deviceName: UIDevice.current.name, tokenProvider: { token })
         else { return nil }
         return PaiApiClient(requestFactory: factory)
     }

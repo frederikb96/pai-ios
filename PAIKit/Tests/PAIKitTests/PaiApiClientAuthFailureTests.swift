@@ -20,7 +20,8 @@ final class PaiApiClientAuthFailureTests: XCTestCase {
         PaiStubURLProtocol.reset()
         PaiStubURLProtocol.stub = PaiStubURLProtocol.Stub(
             statusCode: status, headers: ["Content-Type": "application/json"], body: Data(body.utf8))
-        let factory = try! PaiRequestFactory(baseURL: "https://example.invalid", tokenProvider: { "stale" })
+        let factory = try! PaiRequestFactory(
+            baseURL: "https://example.invalid", deviceName: "Test iPhone", tokenProvider: { "stale" })
         return PaiApiClient(
             requestFactory: factory,
             urlSession: PaiStubURLProtocol.makeSession(),
@@ -60,7 +61,8 @@ final class PaiApiClientAuthFailureTests: XCTestCase {
         PaiStubURLProtocol.stub = PaiStubURLProtocol.Stub(
             statusCode: 403, headers: ["Content-Type": "text/plain"], body: Data("Forbidden".utf8))
         let box = FailureBox()
-        let factory = try! PaiRequestFactory(baseURL: "https://example.invalid", tokenProvider: { "stale" })
+        let factory = try! PaiRequestFactory(
+            baseURL: "https://example.invalid", deviceName: "Test iPhone", tokenProvider: { "stale" })
         let client = PaiApiClient(
             requestFactory: factory, urlSession: PaiStubURLProtocol.makeSession(),
             onAuthenticationFailure: { box.record($0) })

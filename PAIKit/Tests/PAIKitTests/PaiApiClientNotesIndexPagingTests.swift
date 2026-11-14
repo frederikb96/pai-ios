@@ -85,7 +85,8 @@ final class NotesPagingStubURLProtocol: URLProtocol {
 final class PaiApiClientNotesIndexPagingTests: XCTestCase {
 
     private func makeClient() throws -> PaiApiClient {
-        let factory = try PaiRequestFactory(baseURL: "https://pai.example.com", tokenProvider: { "jwt" })
+        let factory = try PaiRequestFactory(
+            baseURL: "https://pai.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         return PaiApiClient(requestFactory: factory, urlSession: NotesPagingStubURLProtocol.makeSession())
     }
 

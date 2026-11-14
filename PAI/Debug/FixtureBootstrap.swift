@@ -26,7 +26,7 @@ import PAIKit
         static func installIfRequested() {
             guard PaiFixtureLaunch.isEnabled() else { return }
             URLProtocol.registerClass(PaiFixtureURLProtocol.self)
-            KeychainTokenStore().write(placeholderToken)
+            KeychainTokenStore().writeTokenSet(OidcTokenSet(accessToken: placeholderToken, refreshToken: nil))
         }
     }
 

@@ -20,7 +20,8 @@ final class PaiApiClientCredentialRenewalTests: XCTestCase {
     ) -> (PaiApiClient, TokenHolder) {
         BearerStubURLProtocol.configure(accepting: accepted, refusal: refusal)
         let holder = TokenHolder("old")
-        let factory = try! PaiRequestFactory(baseURL: "https://example.invalid", tokenProvider: { holder.token })
+        let factory = try! PaiRequestFactory(
+            baseURL: "https://example.invalid", deviceName: "Test iPhone", tokenProvider: { holder.token })
         let client = PaiApiClient(
             requestFactory: factory,
             urlSession: BearerStubURLProtocol.makeSession(),
@@ -66,6 +67,26 @@ final class PaiApiClientCredentialRenewalTests: XCTestCase {
         XCTAssertEqual(failures.count, 0)
     }
 
+    /// A revoked device is refused for the device, not the token: renewing would only repeat the
+    /// refusal, so the session ends at once and the person is told why.
+    func testARevokedDeviceSignsOutWithoutRenewing() async {
+        let failures = FailureCounter()
+        let (client, _) = client(accepting: "fresh", refusal: .deviceRevoked, renewal: .renewed, failures: failures)
+
+        do {
+            _ = try await client.getSessions()
+            XCTFail("expected an error")
+        } catch let error as PaiError {
+            XCTAssertTrue(error.isDeviceRevoked)
+            XCTAssertEqual(error.userMessage, "This device was signed out")
+        } catch {
+            XCTFail("\(error)")
+        }
+
+        XCTAssertEqual(BearerStubURLProtocol.bearers, ["old"])
+        XCTAssertEqual(failures.count, 1)
+    }
+
     func testACredentialThatCannotBeRenewedSignsOut() async {
         let failures = FailureCounter()
         let (client, _) = client(accepting: "fresh", renewal: .rejected, failures: failures)
@@ -109,6 +130,7 @@ final class BearerStubURLProtocol: URLProtocol {
         case unauthorized
         case proxyForbidden
         case appForbidden
+        case deviceRevoked
     }
 
     private static let lock = NSLock()
@@ -154,6 +176,7 @@ final class BearerStubURLProtocol: URLProtocol {
             case (false, .unauthorized): (401, "application/json", #"{"detail":"invalid token"}"#)
             case (false, .proxyForbidden): (403, "text/plain", "Forbidden")
             case (false, .appForbidden): (403, "application/json", #"{"detail":"owner only"}"#)
+            case (false, .deviceRevoked): (401, "application/json", #"{"detail":"device_revoked"}"#)
             }
         let response = HTTPURLResponse(
             url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": contentType])!

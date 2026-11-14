@@ -9,7 +9,7 @@ import Foundation
 /// Builds every request the app sends.
 ///
 /// Three transports — the REST client, the transcript stream and the terminal stream — share the
-/// `Authorization` header and the URL scheme check. They are built here once, so a change to either
+/// `Authorization` and device-name headers and the URL scheme check. They are built here once, so a change to either
 /// rule is made in one place.
 public struct PaiRequestFactory: Sendable {
 
@@ -20,12 +20,16 @@ public struct PaiRequestFactory: Sendable {
     }
 
     private let baseURL: URL
+    private let deviceName: String
     private let tokenProvider: @Sendable () -> String?
 
+    /// - Parameter deviceName: the user-visible name of this device, sent on every request so the
+    ///   server's list of signed-in devices can show which one a session belongs to.
     /// - Parameter tokenProvider: read at send time rather than captured, so a token entered or
     ///   changed in settings takes effect on the next request without rebuilding the client.
     public init(
         baseURL rawBaseURL: String,
+        deviceName: String,
         tokenProvider: @escaping @Sendable () -> String?
     ) throws {
         let trimmed = rawBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -43,6 +47,7 @@ public struct PaiRequestFactory: Sendable {
         }
 
         self.baseURL = normalizedURL
+        self.deviceName = DeviceName.header(for: deviceName)
         self.tokenProvider = tokenProvider
     }
 
@@ -78,6 +83,7 @@ public struct PaiRequestFactory: Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.httpBody = body
+        request.setValue(deviceName, forHTTPHeaderField: DeviceName.headerField)
 
         if let contentType {
             request.setValue(contentType, forHTTPHeaderField: "Content-Type")

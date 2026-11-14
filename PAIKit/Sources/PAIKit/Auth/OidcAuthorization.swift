@@ -21,6 +21,7 @@ public struct OidcConfiguration: Sendable, Equatable {
 
     public var authorizationEndpoint: URL { issuer.appendingPathComponent("oauth/v2/authorize") }
     public var tokenEndpoint: URL { issuer.appendingPathComponent("oauth/v2/token") }
+    public var revocationEndpoint: URL { issuer.appendingPathComponent("oauth/v2/revoke") }
 
     /// What the web authentication session waits for: the redirect URI's scheme.
     public var callbackScheme: String { redirectURI.scheme ?? "" }
