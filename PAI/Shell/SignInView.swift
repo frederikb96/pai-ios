@@ -1,13 +1,12 @@
 import AuthenticationServices
 import PAIKit
 import SwiftUI
-import UIKit
 
 /// Backend address and sign-in.
 ///
 /// Signing in goes through Zitadel in a system browser sheet and leaves a token set the app
-/// renews by itself, so a person signs in once. Pasting a token stays under Advanced, for a
-/// machine token and for getting in when the identity provider cannot be reached.
+/// renews by itself, so a person signs in once and stays signed in until they sign out or the
+/// server revokes the device.
 ///
 /// One screen serves two situations, because the fields are the same and only the explanation
 /// differs. They are kept as distinct cases rather than one flag, so a rejected sign-in can say
@@ -27,11 +26,9 @@ struct SignInView: View {
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
 
     @State private var url: String = ""
-    @State private var token: String = ""
     @State private var failed = false
     @State private var signingIn = false
     @State private var signInError: String?
-    @State private var showsAdvanced = false
 
     var body: some View {
         NavigationStack {
@@ -40,11 +37,15 @@ struct SignInView: View {
                     Section {
                         Label {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("You were signed out.")
-                                if let detail, !detail.isEmpty {
-                                    Text(detail)
-                                        .font(.footnote)
-                                        .foregroundStyle(.secondary)
+                                if detail == PaiError.deviceRevokedMessage {
+                                    Text(PaiError.deviceRevokedMessage)
+                                } else {
+                                    Text("You were signed out.")
+                                    if let detail, !detail.isEmpty {
+                                        Text(detail)
+                                            .font(.footnote)
+                                            .foregroundStyle(.secondary)
+                                    }
                                 }
                             }
                         } icon: {
@@ -91,34 +92,6 @@ struct SignInView: View {
                         .font(.footnote)
                         .foregroundStyle(PaiPalette.Semantic.errorText)
                 }
-
-                Section {
-                    DisclosureGroup("Advanced", isExpanded: $showsAdvanced) {
-                        // Nobody types a JWT, so paste has to be the obvious path — but the field
-                        // is still secure, because the value is a long-lived credential.
-                        SecureField("Paste an access token", text: $token)
-                            .textContentType(.password)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .accessibilityIdentifier("signin-token")
-
-                        Button("Paste from clipboard") {
-                            if let pasted = UIPasteboard.general.string {
-                                token = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
-                            }
-                        }
-                        .accessibilityIdentifier("signin-paste")
-
-                        Button("Connect with this token") { connect() }
-                            .disabled(token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || url.isEmpty)
-                            .accessibilityIdentifier("signin-connect")
-                    }
-                    .accessibilityIdentifier("signin-advanced")
-                } footer: {
-                    if showsAdvanced {
-                        Text("A pasted token is not renewed: when it is refused, the app signs out.")
-                    }
-                }
             }
             .navigationTitle(title)
             .paiListBackground()
@@ -161,13 +134,5 @@ struct SignInView: View {
         } catch {
             signInError = error.localizedDescription
         }
-    }
-
-    private func connect() {
-        failed = !environment.signIn(
-            backendURL: url,
-            token: token.trimmingCharacters(in: .whitespacesAndNewlines)
-        )
-        if !failed { token = "" }
     }
 }

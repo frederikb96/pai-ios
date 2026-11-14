@@ -49,8 +49,13 @@ refused together, sends the request again, and signs out only when the refresh i
 `PAIKit/Sources/PAIKit/Auth/` holds the flow, the token endpoint and the renewal; the Keychain store
 and the screen are in `PAI/Shell/`.
 
-Advanced on the same screen takes a pasted access token instead: a machine token, or the way in
-when signing in is not possible. A pasted token is not renewed.
+Signing in is the only way in: the app has no field for a pasted token, and a phone that still
+holds one from an earlier version is asked to sign in. Every request carries the phone's name in
+`X-Device-Name` (iOS reports the generic model name, such as "iPhone", unless the device name
+entitlement is granted), so the backend's list of signed-in devices can show it. Signing out
+revokes the refresh token at Zitadel as well as clearing the phone, and a backend that revokes the
+device from that list signs the app out the next time it asks (`401` with `device_revoked`), with
+the message "This device was signed out".
 
 ## The share extension
 

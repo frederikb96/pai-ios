@@ -2,9 +2,8 @@ import Foundation
 import PAIKit
 import Security
 
-/// Where the backend credential lives: the token set of a Zitadel sign-in, or a pasted token
-/// (a machine token, or the way in when signing in is not possible). One at a time; writing either
-/// removes the other.
+/// Where the backend credential lives: the token set of a Zitadel sign-in. A pasted token, which
+/// earlier versions could store, is never read; `discardLegacyCredential()` removes it.
 ///
 /// The Keychain is the only place on the device holding a secret: the speech-to-text key and the
 /// SMTP password are write-only server secrets, posted once and never readable back, so the app
@@ -34,7 +33,7 @@ struct KeychainTokenStore: OidcTokenSetStore {
     #endif
 
     private let service: String
-    private let pastedAccount = "backend-jwt"
+    private let legacyPastedAccount = "backend-jwt"
     private let signInAccount = "oidc-token-set"
 
     init(service: String = Bundle.main.bundleIdentifier ?? "com.frederikberg.pai") {
@@ -52,7 +51,7 @@ struct KeychainTokenStore: OidcTokenSetStore {
         ]
     }
 
-    /// The bearer every request carries, whichever way the app is signed in.
+    /// The bearer every request carries.
     func read() -> String? {
         #if DEBUG
             if PaiFixtureLaunch.isEnabled() {
@@ -61,43 +60,45 @@ struct KeychainTokenStore: OidcTokenSetStore {
                 if let token = Self.fixtureToken { return token }
             }
         #endif
-        if let tokens = readTokenSet() { return tokens.accessToken }
-        return readItem(account: pastedAccount).flatMap { String(data: $0, encoding: .utf8) }.flatMap {
-            $0.isEmpty ? nil : $0
-        }
+        return readTokenSet().map(\.accessToken).flatMap { $0.isEmpty ? nil : $0 }
     }
 
-    /// A pasted token. Writing `nil` signs out, removing a sign-in's token set as well.
-    @discardableResult
-    func write(_ token: String?) -> Bool {
-        deleteItem(account: signInAccount)
-        guard let token, !token.isEmpty else {
-            deleteItem(account: pastedAccount)
-            return true
-        }
-        let status = writeItem(account: pastedAccount, data: Data(token.utf8))
+    /// Signs out: removes the sign-in's token set, and any pasted token an earlier version stored.
+    func clear() {
         #if DEBUG
-            Self.lastWriteStatus = status
-            if status != errSecSuccess, PaiFixtureLaunch.isEnabled() {
-                Self.fixtureLock.lock()
-                Self.fixtureToken = token
-                Self.fixtureLock.unlock()
-                return true
-            }
+            Self.fixtureLock.lock()
+            Self.fixtureToken = nil
+            Self.fixtureLock.unlock()
         #endif
-        return status == errSecSuccess
+        deleteItem(account: signInAccount)
+        discardLegacyCredential()
+    }
+
+    /// Removes the pasted token earlier versions stored, so a phone that still holds one asks for
+    /// a sign-in instead of keeping a credential nothing reads.
+    func discardLegacyCredential() {
+        deleteItem(account: legacyPastedAccount)
     }
 
     func readTokenSet() -> OidcTokenSet? {
         readItem(account: signInAccount).flatMap { try? JSONDecoder().decode(OidcTokenSet.self, from: $0) }
     }
 
-    /// A sign-in's tokens, first or renewed. Replaces a pasted token.
+    /// A sign-in's tokens, first or renewed.
     @discardableResult
     func writeTokenSet(_ tokens: OidcTokenSet) -> Bool {
         guard let data = try? JSONEncoder().encode(tokens) else { return false }
-        deleteItem(account: pastedAccount)
-        return writeItem(account: signInAccount, data: data) == errSecSuccess
+        let status = writeItem(account: signInAccount, data: data)
+        #if DEBUG
+            Self.lastWriteStatus = status
+            if status != errSecSuccess, PaiFixtureLaunch.isEnabled() {
+                Self.fixtureLock.lock()
+                Self.fixtureToken = tokens.accessToken
+                Self.fixtureLock.unlock()
+                return true
+            }
+        #endif
+        return status == errSecSuccess
     }
 
     private func readItem(account: String) -> Data? {

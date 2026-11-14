@@ -14,7 +14,8 @@ final class SettingsStoreTests: XCTestCase {
 
     @MainActor
     private static func makeClient() throws -> PaiApiClient {
-        let factory = try PaiRequestFactory(baseURL: "https://pai.example.com", tokenProvider: { nil })
+        let factory = try PaiRequestFactory(
+            baseURL: "https://pai.example.com", deviceName: "Test iPhone", tokenProvider: { nil })
         return PaiApiClient(requestFactory: factory)
     }
 

@@ -37,6 +37,40 @@ final class OidcTokenClientTests: XCTestCase {
         return Dictionary(uniqueKeysWithValues: pairs)
     }
 
+    func testSignOutRevokesTheRefreshTokenAtTheProvider() async throws {
+        let client = client(status: 200, body: "")
+
+        try await client.revoke(OidcTokenSet(accessToken: "a1", refreshToken: "r+1"))
+
+        let request = try XCTUnwrap(PaiStubURLProtocol.capturedRequest)
+        XCTAssertEqual(request.url?.path, "/oauth/v2/revoke")
+        XCTAssertEqual(request.httpMethod, "POST")
+        let form = try sentForm()
+        XCTAssertEqual(form["token"], "r+1")
+        XCTAssertEqual(form["token_type_hint"], "refresh_token")
+        XCTAssertEqual(form["client_id"], "client-1")
+    }
+
+    func testSignOutWithoutARefreshTokenRevokesTheAccessToken() async throws {
+        let client = client(status: 200, body: "")
+
+        try await client.revoke(OidcTokenSet(accessToken: "a1", refreshToken: nil))
+
+        let form = try sentForm()
+        XCTAssertEqual(form["token"], "a1")
+        XCTAssertEqual(form["token_type_hint"], "access_token")
+    }
+
+    func testARefusedRevocationThrowsForTheCallerToIgnore() async {
+        let client = client(status: 503, body: "")
+        do {
+            try await client.revoke(OidcTokenSet(accessToken: "a1", refreshToken: "r1"))
+            XCTFail("expected an error")
+        } catch {
+            guard case .unavailable = error else { return XCTFail("\(error)") }
+        }
+    }
+
     func testTheExchangeSendsTheVerifierOfItsOwnAttempt() async throws {
         let client = client(status: 200, body: #"{"access_token":"a1","refresh_token":"r1","token_type":"Bearer"}"#)
         let request = OidcAuthorizationRequest(configuration: configuration)

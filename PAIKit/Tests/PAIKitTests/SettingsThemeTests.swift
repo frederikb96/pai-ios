@@ -33,7 +33,8 @@ final class SettingsThemeTests: XCTestCase {
     }
 
     private func makeClient() -> PaiApiClient {
-        let factory = try! PaiRequestFactory(baseURL: "https://example.invalid", tokenProvider: { nil })
+        let factory = try! PaiRequestFactory(
+            baseURL: "https://example.invalid", deviceName: "Test iPhone", tokenProvider: { nil })
         return PaiApiClient(requestFactory: factory)
     }
 }

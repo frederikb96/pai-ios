@@ -12,7 +12,8 @@ final class QuietNotificationsTests: XCTestCase {
     }
 
     private func client() throws -> PaiApiClient {
-        let factory = try PaiRequestFactory(baseURL: "https://pai.example.com", tokenProvider: { "jwt" })
+        let factory = try PaiRequestFactory(
+            baseURL: "https://pai.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         return PaiApiClient(requestFactory: factory, urlSession: PaiStubURLProtocol.makeSession())
     }
 
@@ -179,7 +180,8 @@ final class QuietNotificationsTests: XCTestCase {
                 {"host":"h","port":587,"security":"starttls","username":null,"from_address":null,
                  "recipient":"a@b.c",\(switches),"updated_at":"2026-01-01T00:00:00Z"}
                 """.utf8))
-        let factory = try PaiRequestFactory(baseURL: "https://pai.example.com", tokenProvider: { "jwt" })
+        let factory = try PaiRequestFactory(
+            baseURL: "https://pai.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         let api = PaiApiClient(requestFactory: factory, urlSession: PaiStubURLProtocol.makeSession())
         let store = SmtpSettingsStore(apiClient: api)
         await store.load()

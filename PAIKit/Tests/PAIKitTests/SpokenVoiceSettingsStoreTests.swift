@@ -18,7 +18,7 @@ final class SpokenVoiceSettingsStoreTests: XCTestCase {
     @MainActor
     private static func makeStore() throws -> SpokenVoiceSettingsStore {
         let factory = try PaiRequestFactory(
-            baseURL: "https://pai.example.com", tokenProvider: { "jwt" })
+            baseURL: "https://pai.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         let client = PaiApiClient(
             requestFactory: factory, urlSession: PaiStubURLProtocol.makeSession())
         return SpokenVoiceSettingsStore(apiClient: client)

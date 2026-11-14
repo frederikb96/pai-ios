@@ -23,7 +23,8 @@ final class SettingsSmtpSettingsStoreTests: XCTestCase {
     /// case's own `self` across to `@MainActor`, which a non-`Sendable` `XCTestCase` cannot do.
     @MainActor
     private static func makeStore() throws -> SmtpSettingsStore {
-        let factory = try PaiRequestFactory(baseURL: "https://pai.example.com", tokenProvider: { "jwt" })
+        let factory = try PaiRequestFactory(
+            baseURL: "https://pai.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         let client = PaiApiClient(requestFactory: factory, urlSession: PaiStubURLProtocol.makeSession())
         return SmtpSettingsStore(apiClient: client)
     }

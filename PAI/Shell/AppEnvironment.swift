@@ -158,17 +158,14 @@ final class AppEnvironment {
         self.backendURL = defaults.string(forKey: Self.backendURLKey) ?? Self.defaultBackendURL
         self.router = Router(gate: .needsConfiguration)
 
+        tokens.discardLegacyCredential()
         if tokens.read() != nil {
             connect()
+        } else {
+            // Signed out, or only a pasted token an earlier version stored: the share extension
+            // must not keep a copy of it.
+            shareCredentials()
         }
-    }
-
-    /// Store a pasted token and bring the connection up. Returns false if the URL is unusable.
-    @discardableResult
-    func signIn(backendURL url: String, token: String) -> Bool {
-        backendURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard tokens.write(token) else { return false }
-        return connect()
     }
 
     /// Store a finished Zitadel sign-in and bring the connection up. Returns false if the URL is
@@ -192,8 +189,7 @@ final class AppEnvironment {
         connection?.claudeAuth.stopPolling()
         await connection?.voice.stop()
         await connection?.computerCall.end()
-        tokens.write(nil)
-        shareCredentials()
+        endSignIn()
         connection = nil
         lastAuthFailure = detail
         router.rejectToken()
@@ -205,12 +201,22 @@ final class AppEnvironment {
         connection?.claudeAuth.stopPolling()
         await connection?.voice.stop()
         await connection?.computerCall.end()
-        tokens.write(nil)
-        shareCredentials()
+        endSignIn()
         PlaybackController.shared.reset()
         connection = nil
         lastAuthFailure = nil
         router = Router(gate: .needsConfiguration)
+    }
+
+    /// Clears the sign-in from this phone, and ends it at the provider too so a copy of the refresh
+    /// token anywhere is worthless. The revocation is not waited for: an offline phone still signs
+    /// out, and the session then lives on at the provider until it expires.
+    private func endSignIn() {
+        let ended = tokens.readTokenSet()
+        tokens.clear()
+        shareCredentials()
+        guard let ended else { return }
+        Task.detached { try? await OidcTokenClient(configuration: Self.signInConfiguration).revoke(ended) }
     }
 
     /// Keeps the share extension's copy of the sign-in equal to the app's. Runs on every connect,
@@ -235,6 +241,7 @@ final class AppEnvironment {
         guard
             let factory = try? PaiRequestFactory(
                 baseURL: backendURL,
+                deviceName: UIDevice.current.name,
                 tokenProvider: { [tokens] in tokens.read() }
             )
         else {
@@ -490,7 +497,9 @@ final class AppEnvironment {
     ) -> PaiApiClient? {
         guard tokens.read() != nil else { return nil }
         let url = defaults.string(forKey: Self.backendURLKey) ?? Self.defaultBackendURL
-        guard let factory = try? PaiRequestFactory(baseURL: url, tokenProvider: { tokens.read() })
+        guard
+            let factory = try? PaiRequestFactory(
+                baseURL: url, deviceName: UIDevice.current.name, tokenProvider: { tokens.read() })
         else { return nil }
         return PaiApiClient(
             requestFactory: factory, renewCredential: { await credentialRenewer.renew(rejecting: $0) })

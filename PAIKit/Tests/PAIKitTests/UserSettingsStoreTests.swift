@@ -62,7 +62,8 @@ final class UserSettingsStoreTests: XCTestCase {
     }
 
     func testTheRecordingModeThePressStartsComesFromTheSettings() async throws {
-        let factory = try PaiRequestFactory(baseURL: "https://pai.example.com", tokenProvider: { "jwt" })
+        let factory = try PaiRequestFactory(
+            baseURL: "https://pai.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         let store = SettingsStore(
             apiClient: PaiApiClient(requestFactory: factory), storage: SettingsInMemoryKeyValueStore())
         XCTAssertEqual(store.defaultRecordingMode, .live, "until the person's settings have been read")

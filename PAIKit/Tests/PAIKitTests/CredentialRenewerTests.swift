@@ -40,12 +40,12 @@ final class CredentialRenewerTests: XCTestCase {
         XCTAssertEqual(calls, 0)
     }
 
-    /// A pasted token has no refresh token and nothing to renew it with.
-    func testAPastedTokenCannotBeRenewed() async {
+    /// With no stored sign-in there is nothing to renew with.
+    func testASignedOutAppCannotRenew() async {
         let renewer = CredentialRenewer(
             store: MemoryTokenSetStore(nil), refresh: { _ throws(OidcError) in throw .unavailable("unused") },
             onRenewed: {})
-        let outcome = await renewer.renew(rejecting: "pasted")
+        let outcome = await renewer.renew(rejecting: "stale")
         XCTAssertEqual(outcome, .rejected)
     }
 

@@ -30,7 +30,8 @@ final class PaiSseClientConnectionTests: XCTestCase {
             statusCode: 200, headers: [:], body: Data((status + batch).utf8),
             bodyChunks: [Data(status.utf8), Data(batch.utf8)])
 
-        let factory = try PaiRequestFactory(baseURL: "https://stub.example.com", tokenProvider: { "jwt" })
+        let factory = try PaiRequestFactory(
+            baseURL: "https://stub.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         let outcome = PaiStreamConnectionSignal()
         var receivedBatch = false
 
@@ -63,7 +64,8 @@ final class PaiSseClientConnectionTests: XCTestCase {
             + "event: batch\r\ndata: {\"entries\":[],\"session_tokens\":null}\r\n\r\n"
         PaiStubURLProtocol.stub = .init(statusCode: 200, headers: [:], body: Data(raw.utf8))
 
-        let factory = try PaiRequestFactory(baseURL: "https://stub.example.com", tokenProvider: { "jwt" })
+        let factory = try PaiRequestFactory(
+            baseURL: "https://stub.example.com", deviceName: "Test iPhone", tokenProvider: { "jwt" })
         let initSignal = PaiStreamConnectionSignal()
         let batchSignal = PaiStreamConnectionSignal()
         var receivedInit: SseInitEvent?
