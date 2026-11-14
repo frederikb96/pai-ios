@@ -32,6 +32,7 @@ struct SessionAttachmentChipView: View {
         case error
     }
 
+    @Environment(TranscriptStore.self) private var transcript
     @State private var state: LoadState = .idle
     @State private var errorDetail: String?
     @State private var previewTarget: FilePreviewTarget?
@@ -154,6 +155,10 @@ struct SessionAttachmentChipView: View {
     /// Called both right after a fresh load and on a repeat tap of an already-loaded chip, so a
     /// second tap never re-fetches.
     private func present(_ data: Data) {
-        previewTarget = FilePreviewTarget(data: data, filename: filename)
+        previewTarget = FilePreviewTarget(
+            data: data, filename: filename,
+            step: PictureStepper.step(
+                from: path, sessionID: sessionID, messages: transcript.messages[sessionID] ?? [],
+                apiClient: apiClient))
     }
 }

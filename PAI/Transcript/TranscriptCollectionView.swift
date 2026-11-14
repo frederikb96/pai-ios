@@ -2140,7 +2140,7 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                     onToggleReveal: { _ in },
                     timeSeparator: row.timeSeparator
                 )
-                let hosting = UIHostingController(rootView: content.frame(width: width))
+                let hosting = UIHostingController(rootView: content.frame(width: width).environment(store))
                 let rendered = hosting.sizeThatFits(
                     in: CGSize(width: width, height: .greatestFiniteMagnitude)
                 ).height
@@ -2253,6 +2253,9 @@ final class TranscriptCollectionViewController: UIViewController, UICollectionVi
                 // falls through to `.systemAction` exactly as it did before this row asked for
                 // anything at all.
                 .confirmingExternalLinks()
+                // Read by the pictures in a row, which step the full-screen viewer through the
+                // session's loaded messages; a cell's tree does not inherit the screen's environment.
+                .environment(self.store)
             } else {
                 EmptyView()
             }

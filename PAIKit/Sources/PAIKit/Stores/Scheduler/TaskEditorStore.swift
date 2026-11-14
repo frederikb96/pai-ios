@@ -74,9 +74,56 @@ public final class TaskEditorStore {
 
     /// A one-time run keeps its conversation for the user to resume, which the one-shot policy
     /// would delete — the server refuses the pair, so choosing `.once` moves off it.
+    ///
+    /// On a new task the usage limits follow the mode: a one-time task starts with the server's
+    /// one-time defaults, since the create body names every limit and the server then applies
+    /// exactly what is named. Limits the user already changed stay as typed, and an existing task
+    /// is never touched.
     public func setScheduleMode(_ mode: TaskScheduleMode) {
+        let wasOnce = scheduleMode == .once
         scheduleMode = mode
         if mode == .once && fields.sessionPolicy == .oneShot { fields.sessionPolicy = .fresh }
+        guard taskId == nil, wasOnce != (mode == .once) else { return }
+        let (from, to) =
+            wasOnce ? (UsageLimits.oneTime, UsageLimits.ordinary) : (UsageLimits.ordinary, UsageLimits.oneTime)
+        if UsageLimits(fields) == from { to.write(to: &fields) }
+    }
+
+    /// The usage-limit fields of a task, which one-time and recurring tasks default differently.
+    private struct UsageLimits: Equatable {
+        var sessionGatePercent: Int
+        var weeklyGatePercent: Int
+        var sessionPaceGatePoints: Int?
+        var weeklyPaceGatePoints: Int?
+        var maxDeferMinutes: Int?
+
+        init(sessionGatePercent: Int, weeklyGatePercent: Int, maxDeferMinutes: Int?) {
+            self.sessionGatePercent = sessionGatePercent
+            self.weeklyGatePercent = weeklyGatePercent
+            self.maxDeferMinutes = maxDeferMinutes
+        }
+
+        init(_ fields: TaskWriteFields) {
+            sessionGatePercent = fields.sessionUsageGatePercent
+            weeklyGatePercent = fields.weeklyUsageGatePercent
+            sessionPaceGatePoints = fields.sessionPaceGatePoints
+            weeklyPaceGatePoints = fields.weeklyPaceGatePoints
+            maxDeferMinutes = fields.maxDeferMinutes
+        }
+
+        /// What a new task starts with; `TaskWriteFields.fresh` owns the numbers.
+        static let ordinary = UsageLimits(TaskWriteFields.fresh(timezone: "UTC"))
+        /// What the server applies to a one-time task that names no limit: gates at 100% so usage
+        /// does not hold it, and a defer cap of 0 minutes.
+        static let oneTime = UsageLimits(sessionGatePercent: 100, weeklyGatePercent: 100, maxDeferMinutes: 0)
+
+        func write(to fields: inout TaskWriteFields) {
+            fields.sessionUsageGatePercent = sessionGatePercent
+            fields.weeklyUsageGatePercent = weeklyGatePercent
+            fields.sessionPaceGatePoints = sessionPaceGatePoints
+            fields.weeklyPaceGatePoints = weeklyPaceGatePoints
+            fields.maxDeferMinutes = maxDeferMinutes
+        }
     }
 
     private func adopt(_ loaded: ScheduledTaskDetail) {
